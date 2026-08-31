@@ -24,7 +24,7 @@ use rg_semantic_ir::{
     ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery, ItemStore, ItemStoreBuilder,
     ItemStoreSource, StructData, TraitData, TypeAliasData, TypeAliasSignature,
 };
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use super::super::{
@@ -42,10 +42,18 @@ pub(super) struct TraitSelectionFixture {
     pub(super) store: ItemStore,
     pub(super) target: CrateRef,
     lookup_index: ItemLookupIndex,
+    dependencies: Vec<TraitSelectionDependency>,
     type_names: HashMap<TypeDefRef, String>,
     trait_names: HashMap<TraitDefRef, String>,
     type_refs_by_name: HashMap<String, TypeDefRef>,
     trait_refs_by_name: HashMap<String, TraitDefRef>,
+}
+
+struct TraitSelectionDependency {
+    target: CrateRef,
+    def_map: DefMap,
+    store: ItemStore,
+    lookup_index: ItemLookupIndex,
 }
 
 impl TraitSelectionFixture {
@@ -54,6 +62,12 @@ impl TraitSelectionFixture {
     // snapshots and reviews.
     pub(super) fn new(source: &str) -> Self {
         TraitSelectionFixtureParser::new(source).parse()
+    }
+
+    fn dependency(&self, crate_ref: CrateRef) -> Option<&TraitSelectionDependency> {
+        self.dependencies
+            .iter()
+            .find(|dependency| dependency.target == crate_ref)
     }
 
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
@@ -86,6 +100,95 @@ impl TraitSelectionFixture {
             })
         })
     }
+
+    /// Add one dependency impl whose macro-generated `Self` type could not be resolved.
+    ///
+    /// The declaration still names a trait from the main fixture. This mirrors dependencies such
+    /// as `metal`, whose impl is legal for a local generated type but enters the conservative
+    /// receiver fallback lane because that type's spelling is unavailable to semantic lowering.
+    pub(super) fn with_unknown_self_impl_dependency(
+        mut self,
+        dependency: CrateRef,
+        trait_name: &str,
+    ) -> Self {
+        let dependency_origin = DefMapRef::Crate(dependency);
+        let trait_ref = self
+            .trait_ref_by_name(trait_name)
+            .unwrap_or_else(|| panic!("fixture should contain trait `{trait_name}`"));
+        let trait_data = self
+            .store
+            .trait_data(trait_ref.id)
+            .expect("fixture trait should have declaration data");
+
+        // Let the dependency's written trait path resolve to the declaration in the main fixture.
+        // The impl's self type deliberately stays source-level unknown.
+        let mut def_map_builder = DefMapBuilder::new(dependency);
+        let root_module = def_map_builder.alloc_module(ModuleData {
+            name: None,
+            name_span: None,
+            docs: None,
+            user_facing_attrs: Default::default(),
+            visibility: Visibility::Public,
+            parent: None,
+            children: Vec::new(),
+            local_defs: Vec::new(),
+            impls: vec![LocalImplId(0)],
+            imports: Vec::new(),
+            unresolved_imports: Vec::new(),
+            scope: Default::default(),
+            origin: ModuleOrigin::Root { file_id: FileId(1) },
+        });
+        let dependency_module = ModuleRef {
+            origin: dependency_origin,
+            module: root_module,
+        };
+        let mut scope = ModuleScopeBuilder::default();
+        scope.insert_binding(
+            &trait_data.name,
+            Namespace::Types,
+            ScopeBinding::new(
+                DefId::Local(trait_data.local_def),
+                Visibility::Public,
+                ScopeBindingProvenance::Direct,
+            ),
+        );
+        def_map_builder
+            .module_mut(root_module)
+            .expect("dependency root module should exist")
+            .scope = scope.freeze();
+
+        let mut store_builder = ItemStoreBuilder::new(dependency_origin, 0);
+        store_builder.impls.alloc(ImplData {
+            local_impl: LocalImplRef {
+                origin: dependency_origin,
+                local_impl: LocalImplId(0),
+            },
+            source: ItemSource {
+                file_id: FileId(1),
+                kind: ItemSourceKind::Generated(GeneratedItemRef {
+                    source: GeneratedSourceId(1),
+                    item: ItemTreeId(0),
+                }),
+            },
+            owner: dependency_module,
+            generics: GenericParams::default(),
+            trait_ref: Some(path_ty(trait_name, Vec::new())),
+            self_ty: TypeRef::unknown_from_text("macro generated self type"),
+            resolved_self_ty: ExpectedUnique::new(),
+            resolved_trait_ref: resolved_one(trait_ref),
+            items: Vec::new(),
+            is_unsafe: false,
+        });
+        let store = store_builder.build();
+        let lookup_index = ItemLookupIndex::build_from_store(&store, &HashMap::new());
+        self.dependencies.push(TraitSelectionDependency {
+            target: dependency,
+            def_map: def_map_builder.build(),
+            store,
+            lookup_index,
+        });
+        self
+    }
 }
 
 impl From<&str> for TraitSelectionFixture {
@@ -98,7 +201,13 @@ impl DefMapSource for TraitSelectionFixture {
     type Error = Infallible;
 
     fn def_map_for_origin(&self, origin_ref: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
-        Ok((origin_ref == origin()).then_some(&self.def_map))
+        if origin_ref == DefMapRef::Crate(self.target) {
+            return Ok(Some(&self.def_map));
+        }
+        Ok(origin_ref
+            .as_crate_ref()
+            .and_then(|crate_ref| self.dependency(crate_ref))
+            .map(|dependency| &dependency.def_map))
     }
 
     fn crate_is_proc_macro(&self, _crate_ref: CrateRef) -> Result<bool, Self::Error> {
@@ -121,8 +230,26 @@ impl DefMapSource for TraitSelectionFixture {
         Ok(None)
     }
 
-    fn root_module(&self, _target: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
-        Ok(None)
+    fn item_lookup_dependencies(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+        if crate_ref != self.target {
+            return Ok(UniqueVec::new());
+        }
+        Ok(self
+            .dependencies
+            .iter()
+            .map(|dependency| dependency.target)
+            .collect())
+    }
+
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+        let known = crate_ref == self.target || self.dependency(crate_ref).is_some();
+        Ok(known.then_some(ModuleRef {
+            origin: DefMapRef::Crate(crate_ref),
+            module: ModuleId(0),
+        }))
     }
 }
 
@@ -133,11 +260,19 @@ impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        Ok((origin == DefMapRef::Crate(self.target)).then_some(&self.store))
+        if origin == DefMapRef::Crate(self.target) {
+            return Ok(Some(&self.store));
+        }
+        Ok(origin
+            .as_crate_ref()
+            .and_then(|crate_ref| self.dependency(crate_ref))
+            .map(|dependency| &dependency.store))
     }
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
-        Ok(vec![&self.store])
+        Ok(std::iter::once(&self.store)
+            .chain(self.dependencies.iter().map(|dependency| &dependency.store))
+            .collect())
     }
 }
 
@@ -146,7 +281,12 @@ impl<'a> ItemLookupIndexSource<'a> for &'a TraitSelectionFixture {
         &self,
         crate_ref: CrateRef,
     ) -> Result<Option<&'a ItemLookupIndex>, Self::Error> {
-        Ok((crate_ref == self.target).then_some(&self.lookup_index))
+        if crate_ref == self.target {
+            return Ok(Some(&self.lookup_index));
+        }
+        Ok(self
+            .dependency(crate_ref)
+            .map(|dependency| &dependency.lookup_index))
     }
 }
 
@@ -480,6 +620,7 @@ fn fixture_with_traits_impls_aliases_and_structs(
         store: builder.build(),
         target: target(),
         lookup_index: ItemLookupIndex::default(),
+        dependencies: Vec::new(),
         type_names: HashMap::new(),
         trait_names: HashMap::new(),
         type_refs_by_name: HashMap::new(),

@@ -160,6 +160,7 @@ impl<'a> ProjectSnapshot<'a> {
         targets: &[(CrateRef, FileId)],
         source: &str,
         offset: u32,
+        cancellation: rg_std::CancellationToken,
         checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
         let source = self.prepare_current_source(targets, source)?;
@@ -167,6 +168,7 @@ impl<'a> ProjectSnapshot<'a> {
             targets,
             source,
             CurrentBodySelection::AtOffset(offset),
+            cancellation,
             checkpoint,
         )
     }
@@ -248,6 +250,7 @@ impl<'a> ProjectSnapshot<'a> {
         targets: &[(CrateRef, FileId)],
         current_source_view: CurrentSourceView,
         selection: CurrentBodySelection,
+        cancellation: rg_std::CancellationToken,
         mut checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
         let current_source = current_source_view.source();
@@ -319,6 +322,7 @@ impl<'a> ProjectSnapshot<'a> {
                 current_source,
                 associations,
                 selection,
+                cancellation.clone(),
                 &mut synthetic_body_ref,
                 &mut checkpoint,
             )?;

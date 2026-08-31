@@ -46,6 +46,9 @@ declare_metrics! {
             counter NATIVE_ASSOC_PROJECTIONS = "native.assoc_projections";
             /// Candidate projection probes stopped at an actual recursive impl cycle.
             counter NATIVE_CANDIDATE_CYCLES = "native.candidate_cycles";
+            /// Impl identities rejected before header loading because their crate cannot own an
+            /// implementation for the fully known trait application.
+            counter NATIVE_CANDIDATE_COHERENCE_SKIPS = "native.candidate_coherence_skips";
             /// Candidate projections left for one combined solver goal because the matching impl
             /// had predicates of its own.
             counter NATIVE_CANDIDATE_PREDICATE_DECLINES = "native.candidate_predicate_declines";

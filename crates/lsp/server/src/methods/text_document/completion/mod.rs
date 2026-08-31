@@ -112,7 +112,7 @@ pub(crate) async fn completion(
                             result_count = completions.len(),
                             "completion request answered"
                         );
-                        return Ok(Some(incomplete_response(completions)));
+                        return Ok(Some(complete_response(completions)));
                     }
                     Err(QueryError::EditorChanged) => {
                         tracing::debug!(
@@ -129,10 +129,14 @@ pub(crate) async fn completion(
     }
 }
 
-/// Completion results stay incomplete so the client may ask again as the cursor advances.
-fn incomplete_response(items: Vec<CompletionItem>) -> CompletionResponse {
+/// Return the complete result computed for the final captured document revision.
+///
+/// The retry loop already follows edits that overtake an in-flight request. Claiming that this
+/// same result is incomplete makes clients immediately request the identical position again,
+/// duplicating semantic work and competing with the presentation queries triggered by the edit.
+fn complete_response(items: Vec<CompletionItem>) -> CompletionResponse {
     CompletionResponse::List(CompletionList {
-        is_incomplete: true,
+        is_incomplete: false,
         items,
     })
 }

@@ -57,6 +57,7 @@ impl EngineDispatcher {
 
         while let Ok(queued) = receiver.recv() {
             let queue_elapsed = queued.enqueued_at.elapsed();
+            let cancellation = queued.cancellation;
             let command = queued.command;
             // Keep the protocol-to-subsystem mapping explicit. Most arms are deliberately small:
             // they record request identity here and leave query/recovery policy to `QueryRunner`.
@@ -103,6 +104,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| runner.goto_definition(input, cancellation),
                     );
                 }
@@ -121,6 +123,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| runner.goto_type_definition(input, cancellation),
                     );
                 }
@@ -136,10 +139,12 @@ impl EngineDispatcher {
                         queue_elapsed,
                         &input,
                     );
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.goto_implementation(input)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.goto_implementation(input),
+                    );
                 }
                 EngineCommand::References {
                     input,
@@ -155,10 +160,12 @@ impl EngineDispatcher {
                     );
                     let context =
                         QueryContext::global_operation("references", queue_elapsed, &input);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.references(input, include_declaration)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.references(input, include_declaration),
+                    );
                 }
                 EngineCommand::PrepareRename { input, respond_to } => {
                     tracing::trace!(
@@ -169,10 +176,12 @@ impl EngineDispatcher {
                     );
                     let context =
                         QueryContext::global_operation("prepare_rename", queue_elapsed, &input);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.prepare_rename(input)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.prepare_rename(input),
+                    );
                 }
                 EngineCommand::Rename {
                     input,
@@ -187,10 +196,12 @@ impl EngineDispatcher {
                         "engine command started: rename"
                     );
                     let context = QueryContext::global_operation("rename", queue_elapsed, &input);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.rename(input, new_name)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.rename(input, new_name),
+                    );
                 }
                 EngineCommand::DocumentHighlight { input, respond_to } => {
                     tracing::trace!(
@@ -207,6 +218,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| runner.document_highlight(input, cancellation),
                     );
                 }
@@ -222,6 +234,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| runner.hover(input, cancellation),
                     );
                 }
@@ -246,6 +259,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| {
                             runner.code_action(input, request_context, cancellation)
                         },
@@ -270,6 +284,7 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| {
                             runner.completion(input, client_capabilities, cancellation)
                         },
@@ -285,10 +300,12 @@ impl EngineDispatcher {
                     );
                     let context =
                         QueryContext::target_document("formatting", queue_elapsed, &snapshot);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.formatting(snapshot)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.formatting(snapshot),
+                    );
                 }
                 EngineCommand::DocumentSymbol {
                     snapshot,
@@ -300,10 +317,12 @@ impl EngineDispatcher {
                     );
                     let context =
                         QueryContext::target_document("document_symbol", queue_elapsed, &snapshot);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.document_symbol(snapshot)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.document_symbol(snapshot),
+                    );
                 }
                 EngineCommand::InlayHint { input, respond_to } => {
                     tracing::trace!(
@@ -322,16 +341,19 @@ impl EngineDispatcher {
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
+                        cancellation,
                         |runner, cancellation| runner.inlay_hint(input, cancellation),
                     );
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
                     let context = QueryContext::saved_project("workspace_symbol", queue_elapsed);
-                    self.query_runner()
-                        .respond_to_query(context, respond_to, |runner, _| {
-                            runner.workspace_symbol(&query)
-                        });
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.workspace_symbol(&query),
+                    );
                 }
                 EngineCommand::ReindexWorkspace { respond_to } => {
                     tracing::trace!("engine command started: reindex_workspace");

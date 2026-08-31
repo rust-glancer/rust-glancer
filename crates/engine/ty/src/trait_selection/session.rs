@@ -31,7 +31,7 @@ use rg_ir_model::{
     TraitImplRef, TypeAliasRef,
 };
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
 
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
 use super::declaration_cache::{OpaqueBounds, TraitSelectionDeclarationCache};
@@ -325,6 +325,7 @@ impl TraitSelectionInferenceScope {
 pub struct TraitSelectionSession {
     shared: Arc<TraitSelectionShared>,
     inference_scope: Arc<TraitSelectionInferenceScope>,
+    cancellation: CancellationToken,
 }
 
 impl fmt::Debug for TraitSelectionSession {
@@ -358,7 +359,18 @@ impl TraitSelectionSession {
             inference_scope: Arc::new(TraitSelectionInferenceScope::new(
                 TraitWorkTracker::unbounded(),
             )),
+            cancellation: CancellationToken::new(),
         }
+    }
+
+    /// Stop expensive semantic expansion when the owning request is no longer observable.
+    ///
+    /// Cancellation is fail-soft inside trait selection: the in-progress query receives an
+    /// exhausted result, then its ordinary request checkpoint turns that into the cancellation
+    /// outcome owned by the caller. Saved builds keep the uncancelled default token.
+    pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
     }
 
     pub fn use_site(&self) -> CrateRef {
@@ -377,6 +389,7 @@ impl TraitSelectionSession {
             inference_scope: Arc::new(TraitSelectionInferenceScope::new(
                 TraitWorkTracker::unbounded(),
             )),
+            cancellation: self.cancellation.clone(),
         }
     }
 
@@ -395,6 +408,7 @@ impl TraitSelectionSession {
             inference_scope: Arc::new(TraitSelectionInferenceScope::new(
                 TraitWorkTracker::for_body(body, BODY_TRAIT_WORK_LIMIT),
             )),
+            cancellation: self.cancellation.clone(),
         }
     }
 
@@ -403,6 +417,12 @@ impl TraitSelectionSession {
     /// Standalone editor queries remain governed by their operation-specific limits. Body-owned
     /// sessions additionally share one aggregate allowance across fixed-point rounds and clones.
     pub(super) fn consume_work(&self, kind: TraitWorkKind, amount: usize) -> bool {
+        // Program construction and solver search call this at their bounded work quanta. Returning
+        // an exhausted semantic result lets the surrounding current-body pipeline reach its
+        // request checkpoint without completing a now-useless transitive program.
+        if self.cancellation.is_cancelled() {
+            return false;
+        }
         if self.inference_scope.work.consume(amount) {
             return true;
         }

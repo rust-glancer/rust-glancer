@@ -21,6 +21,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_lsp_proto::{EngineError, QueryError, QueryValue, ServiceNotification};
+use rg_std::CancellationToken;
 use tokio::sync::oneshot;
 
 pub(crate) use self::{command::EngineCommand, project::ProjectConfiguration};
@@ -46,6 +47,7 @@ pub(crate) struct EngineHandle {
 pub(crate) struct QueuedEngineCommand {
     pub(crate) command: EngineCommand,
     pub(crate) enqueued_at: Instant,
+    pub(crate) cancellation: CancellationToken,
 }
 
 impl QueuedEngineCommand {
@@ -53,7 +55,25 @@ impl QueuedEngineCommand {
         Self {
             command,
             enqueued_at: Instant::now(),
+            cancellation: CancellationToken::new(),
         }
+    }
+
+    fn with_cancellation(command: EngineCommand, cancellation: CancellationToken) -> Self {
+        Self {
+            command,
+            enqueued_at: Instant::now(),
+            cancellation,
+        }
+    }
+}
+
+/// Marks synchronous engine work obsolete when its async requester disappears.
+struct RequestCancellationGuard(CancellationToken);
+
+impl Drop for RequestCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
     }
 }
 
@@ -78,9 +98,9 @@ impl EngineHandle {
 
     /// Send one typed command and wait for its response channel.
     ///
-    /// Dropping the waiting RPC future closes the response endpoint. Query lifecycle code notices
-    /// that before starting queued work and can expose the same liveness at feature checkpoints,
-    /// so cancellation does not need a second protocol or another request-state owner.
+    /// Dropping the waiting RPC future closes the response endpoint and marks its cancellation
+    /// token. Query lifecycle code uses the endpoint to skip queued work, while synchronous
+    /// semantic loops use the token to stop bounded work that is already running.
     async fn dispatch<T>(
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> EngineCommand,
@@ -89,8 +109,13 @@ impl EngineHandle {
         T: Send + 'static,
     {
         let (respond_to, response) = oneshot::channel();
+        let cancellation = CancellationToken::new();
+        let _cancellation_guard = RequestCancellationGuard(cancellation.clone());
         self.sender
-            .send(QueuedEngineCommand::new(build(respond_to)))
+            .send(QueuedEngineCommand::with_cancellation(
+                build(respond_to),
+                cancellation,
+            ))
             .context("send LSP engine command")?;
 
         response.await.context("receive LSP engine response")
@@ -127,5 +152,51 @@ impl EngineHandle {
     pub(crate) fn refresh_inlay_hints(&self) {
         self.notifications
             .send(ServiceNotification::InlayHintRefresh);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        future::Future as _,
+        sync::mpsc,
+        task::{Context, Poll},
+    };
+
+    use futures::task::noop_waker_ref;
+    use rg_lsp_proto::ServiceNotification;
+
+    use super::{EngineCommand, EngineHandle};
+    use crate::service::{ServiceNotificationPublisher, ServiceNotificationsSink};
+
+    #[derive(Debug)]
+    struct NoopNotifications;
+
+    impl ServiceNotificationPublisher for NoopNotifications {
+        fn send(&self, _notification: ServiceNotification) {}
+    }
+
+    #[test]
+    fn dropping_dispatch_future_cancels_its_queued_command() {
+        let (sender, receiver) = mpsc::channel();
+        let engine = EngineHandle {
+            sender,
+            notifications: ServiceNotificationsSink::from_publisher(NoopNotifications),
+        };
+        let mut dispatch = Box::pin(engine.dispatch(EngineCommand::Shutdown));
+        let mut context = Context::from_waker(noop_waker_ref());
+
+        assert!(matches!(
+            dispatch.as_mut().poll(&mut context),
+            Poll::Pending
+        ));
+        let queued = receiver
+            .try_recv()
+            .expect("polling dispatch should enqueue the engine command");
+        assert!(!queued.cancellation.is_cancelled());
+
+        drop(dispatch);
+
+        assert!(queued.cancellation.is_cancelled());
     }
 }

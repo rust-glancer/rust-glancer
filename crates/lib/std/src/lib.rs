@@ -9,6 +9,7 @@
 // workspace. It should not be treated as "utils" crate to put stuff you don't know where to put.
 // Putting things here should have good enough justification.
 
+pub mod cancellation;
 pub mod expected_unique;
 pub mod memsize;
 pub mod native_os_string;
@@ -17,6 +18,7 @@ pub mod shrink;
 pub mod unique;
 
 pub use self::{
+    cancellation::CancellationToken,
     expected_unique::ExpectedUnique,
     memsize::{MemoryRecord, MemoryRecordKind, MemoryRecorder, MemoryRecorderMode, MemorySize},
     native_os_string::NativeOsString,

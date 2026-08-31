@@ -318,6 +318,7 @@ impl<'a> QueryRunner<'a> {
                         &body_targets,
                         source_view,
                         body_selection,
+                        cancellation.token(),
                         |checkpoint| {
                             cancellation.checkpoint(Self::current_body_checkpoint(checkpoint))
                         },

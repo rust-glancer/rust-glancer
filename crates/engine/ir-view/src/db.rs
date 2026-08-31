@@ -19,7 +19,7 @@ use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
     TypePathContext, TypePathResolution,
 };
-use rg_std::UniqueVec;
+use rg_std::{CancellationToken, UniqueVec};
 use rg_text::RustEdition;
 use rg_ty::{ItemPathQuery, TraitSelectionSession, TypeLoweringAnchor, TypePathResolver};
 
@@ -82,6 +82,7 @@ impl<'db> IndexedViewDb<'db> {
         current_source: &rg_parse::CurrentSource,
         associations: &rg_parse::DeclarationAssociationIndex,
         selection: CurrentBodySelection,
+        cancellation: CancellationToken,
         synthetic_body_ref: impl FnMut() -> anyhow::Result<rg_ir_model::BodyRef>,
         checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentBodyBuildOutcome> {
@@ -97,7 +98,10 @@ impl<'db> IndexedViewDb<'db> {
             self.item_lookup_cache.clone(),
             selection,
         )
-        .with_trait_selection(self.trait_selection(crate_ref))
+        .with_trait_selection(
+            self.trait_selection(crate_ref)
+                .with_cancellation(cancellation),
+        )
         .build(synthetic_body_ref, checkpoint)
     }
 

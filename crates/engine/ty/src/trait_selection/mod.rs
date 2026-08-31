@@ -20,9 +20,11 @@ mod projection;
 mod session;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability, TraitImplRef, TypeAliasRef};
+use rg_ir_model::{
+    CrateRef, GenericDefRef, ImplRef, TraitApplicability, TraitImplRef, TypeAliasRef,
+};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use self::candidate::TraitCandidate;
 use self::chalk::ChalkOutcome;
@@ -103,6 +105,64 @@ impl TraitGoal {
     /// constraints, such as `<Self as Iterator>::Item = User`.
     pub fn iter_positional_args(&self) -> impl Iterator<Item = &GenericArg> {
         self.application.args.iter().skip(1)
+    }
+
+    /// Return the crates that can possibly own an impl for this fully known application.
+    ///
+    /// Rust coherence requires the impl crate to own either the trait or a local type participating
+    /// in its application. We deliberately recurse through every known type constructor instead of
+    /// reproducing the exact fundamental-type rules here. That over-approximation may retain an
+    /// impossible candidate, but it cannot discard a legal one.
+    ///
+    /// An unresolved type disables the optimization. In particular, a later solution for a type
+    /// parameter or projection can introduce an owning crate that is not visible in the current
+    /// shape, so filtering that goal would turn incomplete inference into a negative proof.
+    fn possible_impl_origins(&self, table: &InferenceTable) -> Option<UniqueVec<CrateRef>> {
+        let mut origins = UniqueVec::new();
+        origins.push(self.trait_ref().origin.origin_crate());
+
+        for arg in &self.application.args {
+            let GenericArg::Type(ty) = arg else {
+                continue;
+            };
+            let ty = table.canonicalize(ty);
+            if !Self::collect_possible_impl_origins(&ty, &mut origins) {
+                return None;
+            }
+        }
+        Some(origins)
+    }
+
+    fn collect_possible_impl_origins(ty: &Ty, origins: &mut UniqueVec<CrateRef>) -> bool {
+        match ty {
+            Ty::Unit | Ty::Never | Ty::Primitive(_) => true,
+            Ty::Tuple(fields) => fields
+                .iter()
+                .all(|field| Self::collect_possible_impl_origins(field, origins)),
+            Ty::Array { inner, .. }
+            | Ty::Slice(inner)
+            | Ty::Reference { inner, .. }
+            | Ty::RawPointer { inner, .. } => Self::collect_possible_impl_origins(inner, origins),
+            Ty::FnPointer { params, ret } => {
+                params
+                    .iter()
+                    .all(|param| Self::collect_possible_impl_origins(param, origins))
+                    && Self::collect_possible_impl_origins(ret, origins)
+            }
+            Ty::Adt(adt) => {
+                origins.push(adt.def.origin.origin_crate());
+                adt.args.iter().all(|arg| match arg {
+                    GenericArg::Type(ty) => Self::collect_possible_impl_origins(ty, origins),
+                    GenericArg::Lifetime(_) | GenericArg::Const(_) => true,
+                })
+            }
+            Ty::Param(_)
+            | Ty::Alias(_)
+            | Ty::Closure(_)
+            | Ty::FnDef(_)
+            | Ty::Unknown
+            | Ty::InferVar { .. } => false,
+        }
     }
 
     pub(crate) fn without_assoc_type_constraints(&self) -> Self {

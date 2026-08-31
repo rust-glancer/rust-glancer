@@ -4,7 +4,6 @@ import * as vscode from "vscode";
 import type { CompletionObservation } from "../src/test-support/completion-observer";
 import {
   currentCompletionObservations,
-  delay,
   readySession,
   waitForClientState,
   waitForCompletionObservation,
@@ -47,10 +46,11 @@ export class CompletionScenario {
       await scenario.enableImmediateQuickSuggestions();
       scenario.keyboard = await RendererKeyboard.connect();
 
-      // Reuse the same open document and LSP session. The later runs specifically check that an
-      // earlier incomplete refresh did not leave sticky completion state behind for its successor.
+      // Reuse the same open document and LSP session. Each run checks that VS Code can keep
+      // filtering one complete semantic list locally without starting a provider refresh for
+      // every additional character.
       for (let run = 1; run <= 3; run += 1) {
-        await scenario.completeThroughRapidIncompleteRefresh(run);
+        await scenario.completeThroughRapidClientFiltering(run);
       }
       await scenario.dismissWithoutOpeningASuccessor();
     } finally {
@@ -73,12 +73,12 @@ export class CompletionScenario {
     await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
   }
 
-  private async completeThroughRapidIncompleteRefresh(run: number): Promise<void> {
+  private async completeThroughRapidClientFiltering(run: number): Promise<void> {
     await this.prepareScratch();
     const before = await currentCompletionObservations();
 
-    // Ordinary quick suggestions first produce one semantic incomplete list. Continuing by one
-    // character starts its native incomplete refresh, then the remaining text arrives immediately.
+    // Ordinary quick suggestions produce one complete semantic list. The remaining prefix arrives
+    // through the renderer's native input path and should be filtered from that list client-side.
     await this.type("Comp");
     const initial = this.currentPoint();
     const initialReady = await waitForCompletionObservation(
@@ -87,51 +87,34 @@ export class CompletionScenario {
         observation.phase === "finish" &&
         observation.outcome === "ready" &&
         observation.observedVersion === initial.version &&
-        observation.incomplete === true &&
+        observation.incomplete === false &&
         hasSemanticFixture(observation),
       `run ${run} initial semantic quick suggestion`,
     );
     assert.equal(initialReady.outcome, "ready");
 
     await this.type("l");
-    const refresh = this.currentPoint();
-    await waitForCompletionObservation(
-      before.length,
-      (observation) => observation.phase === "start" && isAt(observation, refresh),
-      `run ${run} incomplete-list refresh start`,
-    );
-
     await this.type("etion");
     await this.type("Fix");
-    const final = this.currentPoint();
+    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(true);
 
-    // A fast provider may finish the one-character refresh before the renderer sends the rest of
-    // the word; a slower provider may be overtaken and cancelled. Both are valid. What matters at
-    // the client boundary is that native typing reaches a semantic result for the final version.
-    await waitForClientState((state) => {
-      const observations = state.session?.completionObservations.slice(before.length) ?? [];
-      return (
-        state.session?.activeCompletionAttempts === 0 &&
-        observations.some(
-          (observation) =>
-            observation.phase === "finish" &&
-            observation.outcome === "ready" &&
-            observation.observedVersion === final.version &&
-            hasSemanticFixture(observation),
-        )
-      );
-    });
+    // Accepting the only matching semantic item gives this completion session a concrete end. By
+    // the time the exact edit and the hidden widget are observed, any refresh belonging to the
+    // session must already have entered the provider middleware.
+    const acceptedText = `${this.originalText}\nimpl CompletionFixture`;
+    const accepted = waitForDocumentText(this.editor.document, acceptedText);
+    await this.keyboardOrThrow().acceptSelectedSuggestion();
+    await accepted;
+    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(false);
+    await waitForClientState((state) => state.session?.activeCompletionAttempts === 0);
 
     const observations = (await currentCompletionObservations()).slice(before.length);
-    assert.ok(
-      observations.some(
-        (observation) =>
-          observation.phase === "finish" &&
-          observation.outcome === "ready" &&
-          observation.observedVersion === final.version &&
-          hasSemanticFixture(observation),
-      ),
-      `run ${run} must return semantic candidates against the final document version: ${JSON.stringify(observations)}`,
+    assert.deepEqual(
+      observations
+        .filter((observation) => observation.phase === "start")
+        .map((observation) => observation.attempt),
+      [initialReady.attempt],
+      `run ${run} must filter the complete semantic result without another provider request: ${JSON.stringify(observations)}`,
     );
   }
 
@@ -146,38 +129,27 @@ export class CompletionScenario {
       (observation) =>
         observation.phase === "finish" &&
         observation.outcome === "ready" &&
-        observation.observedVersion === initial.version,
+        observation.observedVersion === initial.version &&
+        observation.incomplete === false &&
+        hasSemanticFixture(observation),
       "dismissal setup semantic result",
     );
 
     await this.type("l");
     const unchanged = this.currentPoint();
-    const active = await waitForCompletionObservation(
-      before.length,
-      (observation) => observation.phase === "start" && isAt(observation, unchanged),
-      "dismissal provider start",
-    );
     await this.keyboardOrThrow().escape();
+    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(false);
 
     const state = await waitForClientState(
       (candidate) => candidate.session?.activeCompletionAttempts === 0,
     );
     assert.equal(state.session?.activeCompletionAttempts, 0);
-    await delay(100);
     const observations = (await currentCompletionObservations()).slice(before.length);
     assert.ok(
       !observations.some(
-        (observation) =>
-          observation.phase === "start" &&
-          observation.attempt !== active.attempt &&
-          isAt(observation, unchanged),
+        (observation) => observation.phase === "start" && isAt(observation, unchanged),
       ),
-      `Escape must not open another provider request at the unchanged point: ${JSON.stringify(observations)}`,
-    );
-    assert.equal(
-      await this.keyboardOrThrow().suggestWidgetVisible(),
-      false,
-      "Escape must leave suggestions closed",
+      `complete results and Escape must not open a provider request at the unchanged point: ${JSON.stringify(observations)}`,
     );
   }
 
