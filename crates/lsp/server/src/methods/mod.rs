@@ -30,7 +30,7 @@ pub(crate) mod workspace;
 
 // Cargo package versions intentionally stay at 0.0.0. Release Please updates this artifact version
 // so the server reports the same version as the published extension.
-pub const SERVER_VERSION: &str = "0.1.1"; // x-release-please-version
+pub const SERVER_VERSION: &str = "0.2.0"; // x-release-please-version
 
 pub(crate) fn initialize() -> InitializeResult {
     InitializeResult {
