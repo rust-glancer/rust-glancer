@@ -27,7 +27,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_def_map::{
-    DefMapBuildProgress, DefMapBuildSession, DefMapDb, DefMapReadTxn,
+    DefMapBuildOutput, DefMapBuildProgress, DefMapBuildSession, DefMapDb, DefMapReadTxn,
     MacroExpansionPerformancePreference, MacroSourceFileRequest, PackageSlot,
 };
 use rg_item_tree::ItemTreeDb;
@@ -65,7 +65,7 @@ pub(super) fn build_packages(
     names: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
     memory_hooks: &dyn ProjectMemoryHooks,
-) -> anyhow::Result<DefMapDb> {
+) -> anyhow::Result<DefMapBuildOutput> {
     // Different requests can resolve to the same package-local file, even in different waves. The
     // session coalesces request identity; this separate map coalesces captured path identity.
     let mut captured_files_by_path = HashMap::<(PackageSlot, PathBuf), FileId>::new();
@@ -99,7 +99,7 @@ pub(super) fn build_packages(
 
         let requests = match progress {
             DefMapBuildProgress::NeedsMacroSourceFiles(requests) => requests,
-            DefMapBuildProgress::Complete(db) => return Ok(db),
+            DefMapBuildProgress::Complete(output) => return Ok(output),
         };
         metric::MACRO_SOURCE_FILE_DISCOVERY_WAVES.inc();
         metric::MACRO_SOURCE_FILE_REQUESTS.add(requests.len().try_into().unwrap_or(u64::MAX));

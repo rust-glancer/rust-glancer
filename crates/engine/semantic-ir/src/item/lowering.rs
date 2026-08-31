@@ -22,6 +22,10 @@ use rg_text::Name;
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
 pub trait ItemStoreSourceReader<'item> {
     fn item(&self, source: ItemSource) -> anyhow::Result<&'item ItemNode>;
+
+    fn associated_macro_expansion(&self, _source: ItemSource) -> Option<&[ItemSource]> {
+        None
+    }
 }
 
 /// Lowers a collected DefMap into item-shaped semantic storage.
@@ -288,9 +292,9 @@ where
                 return;
             }
             // Clone the small sparse replacement list before recursing so mutable semantic
-            // lowering does not retain a borrow into the DefMap that owns the expansion graph.
+            // lowering does not retain a borrow into the transient expansion store.
             let generated_items = self
-                .def_map
+                .reader
                 .associated_macro_expansion(source)
                 .unwrap_or_default()
                 .to_vec();

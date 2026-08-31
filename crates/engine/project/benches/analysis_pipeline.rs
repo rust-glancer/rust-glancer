@@ -77,11 +77,16 @@ fn semantic_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             (
                 fixture.item_tree_after_def_map.clone(),
                 fixture.def_map.clone(),
+                fixture.generated_items.clone(),
             )
         })
-        .bench_local_values(|(item_tree, def_map)| {
-            let semantic_ir = rg_project::bench_support::build_semantic_ir(&item_tree, &def_map)
-                .expect("semantic IR should build");
+        .bench_local_values(|(item_tree, def_map, generated_items)| {
+            let semantic_ir = rg_project::bench_support::build_semantic_ir(
+                &item_tree,
+                &def_map,
+                &generated_items,
+            )
+            .expect("semantic IR should build");
             black_box_drop(semantic_ir);
         });
 }

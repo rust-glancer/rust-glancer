@@ -7,7 +7,10 @@
 use anyhow::Context as _;
 
 use crate::ItemStore;
-use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
+use rg_def_map::{
+    DefMapDb, DefMapReadTxn, GeneratedItemStore, GeneratedItemStores, ItemSource, ItemSourceKind,
+    PackageSlot,
+};
 use rg_ir_model::{CrateId, CrateRef};
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 
@@ -16,6 +19,7 @@ use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
 pub(super) fn build_package(
     item_tree: &ItemTreeDb,
     def_map: &DefMapDb,
+    generated_items: &GeneratedItemStores,
     package: PackageSlot,
 ) -> anyhow::Result<PackageIr> {
     let def_map_package = def_map
@@ -32,12 +36,20 @@ pub(super) fn build_package(
             package,
             crate_id: CrateId(crate_idx),
         };
+        let crate_generated_items = generated_items.crate_items(crate_ref).with_context(|| {
+            format!("while attempting to fetch generated declarations for crate {crate_idx}")
+        })?;
         crates.push(
-            CrateLowering::new(item_tree_package, crate_ref, &def_map_txn)
-                .lower()
-                .with_context(|| {
-                    format!("while attempting to lower semantic IR for crate {crate_idx}")
-                })?,
+            CrateLowering::new(
+                item_tree_package,
+                crate_generated_items,
+                crate_ref,
+                &def_map_txn,
+            )
+            .lower()
+            .with_context(|| {
+                format!("while attempting to lower semantic IR for crate {crate_idx}")
+            })?,
         );
     }
 
@@ -46,6 +58,7 @@ pub(super) fn build_package(
 
 struct CrateLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
+    generated_items: &'a GeneratedItemStore,
     crate_ref: CrateRef,
     def_map_txn: &'a DefMapReadTxn<'db>,
 }
@@ -53,11 +66,13 @@ struct CrateLowering<'a, 'db> {
 impl<'a, 'db> CrateLowering<'a, 'db> {
     fn new(
         item_tree: &'a ItemTreePackage,
+        generated_items: &'a GeneratedItemStore,
         crate_ref: CrateRef,
         def_map_txn: &'a DefMapReadTxn<'db>,
     ) -> Self {
         Self {
             item_tree,
+            generated_items,
             crate_ref,
             def_map_txn,
         }
@@ -91,25 +106,20 @@ impl<'a, 'db> ItemStoreSourceReader<'a> for CrateLowering<'a, 'db> {
                     )
                 })?
             }
-            ItemSourceKind::Generated(item_ref) => self
-                .def_map_txn
-                .def_map(self.crate_ref)
-                .with_context(|| {
-                    format!(
-                        "while attempting to fetch generated item {:?} from generated source {:?}",
-                        item_ref.item, item_ref.source
-                    )
-                })?
-                .and_then(|def_map| def_map.generated_source(item_ref.source))
-                .and_then(|source| source.item(item_ref.item))
-                .with_context(|| {
+            ItemSourceKind::Generated(item_ref) => {
+                self.generated_items.item(item_ref).with_context(|| {
                     format!(
                         "while attempting to find generated item {:?} from generated source {:?}",
                         item_ref.item, item_ref.source
                     )
-                })?,
+                })?
+            }
             ItemSourceKind::Body(_) => anyhow::bail!("Body is not supported"),
         };
         Ok(item)
+    }
+
+    fn associated_macro_expansion(&self, source: ItemSource) -> Option<&[ItemSource]> {
+        self.generated_items.associated_macro_expansion(source)
     }
 }

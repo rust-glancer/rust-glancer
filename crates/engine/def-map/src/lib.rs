@@ -19,7 +19,10 @@ pub use rg_workspace::PackageSlot;
 pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
-    build::{DefMapBuildProgress, DefMapBuildSession, MacroSourceFileRequest},
+    build::{
+        DefMapBuildOutput, DefMapBuildProgress, DefMapBuildSession, GeneratedItemStores,
+        MacroSourceFileRequest,
+    },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
@@ -47,7 +50,7 @@ pub use self::{
         ScopeResolutionRef, Visibility,
     },
     source::{
-        BodyItemSourceRef, GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ItemSource,
+        BodyItemSourceRef, GeneratedItemRef, GeneratedItemStore, GeneratedSourceId, ItemSource,
         ItemSourceKind,
     },
     store::{

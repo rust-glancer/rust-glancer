@@ -26,24 +26,29 @@ impl SemanticIrFixture {
         Self::build_from_def_map(DefMapFixture::build_with_fake_sysroot(fixture))
     }
 
-    pub fn build_from_def_map(def_map: DefMapFixture) -> Self {
+    pub fn build_from_def_map(mut def_map: DefMapFixture) -> Self {
         let package_count = def_map.parse_db().package_count();
         let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
         let subset = PackageSubset::all(package_count);
         let baseline = SemanticIrDb::from_package_store(PackageStore::all_offloaded(package_count));
+        let generated_items = def_map.take_generated_items();
 
         // Fixtures build every package from source, but still enter Semantic IR through the same
-        // baseline-replacement path used by project construction.
+        // baseline-replacement path used by project construction. The generated declaration store
+        // is dropped immediately afterward so every downstream fixture query exercises the same
+        // retained-state boundary as a real project.
         let semantic_ir = baseline
             .build_packages(
                 def_map.item_tree_db(),
                 def_map.def_map_db(),
+                &generated_items,
                 &packages,
                 rg_def_map::DefMapLoader::resident_only("fixture DefMap"),
                 crate::SemanticIrLoader::resident_only("fixture Semantic IR"),
                 &subset,
             )
             .expect("fixture semantic ir db should build");
+        drop(generated_items);
 
         Self {
             def_map,

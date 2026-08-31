@@ -6,12 +6,16 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use crate::{DefMapBuildProgress, DefMapDb, MacroExpansionPerformancePreference, PackageSlot};
+use crate::{
+    DefMapBuildOutput, DefMapBuildProgress, DefMapDb, GeneratedItemStores,
+    MacroExpansionPerformancePreference, PackageSlot,
+};
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
     item_tree: ItemTreeFixture,
     def_map: DefMapDb,
+    generated_items: GeneratedItemStores,
     workspace: WorkspaceMetadata,
 }
 
@@ -56,16 +60,18 @@ impl DefMapFixture {
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
         let item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
         let mut names = PackageNameInterners::new(item_tree.parse_db().package_count());
-        let def_map = build_source_closed_def_map(
+        let output = build_source_closed_def_map(
             &workspace,
             item_tree.parse_db(),
             item_tree.item_tree_db(),
             &mut names,
         );
+        let (def_map, generated_items) = output.into_parts();
 
         Self {
             item_tree,
             def_map,
+            generated_items,
             workspace,
         }
     }
@@ -80,6 +86,10 @@ impl DefMapFixture {
 
     pub fn def_map_db(&self) -> &DefMapDb {
         &self.def_map
+    }
+
+    pub fn take_generated_items(&mut self) -> GeneratedItemStores {
+        std::mem::take(&mut self.generated_items)
     }
 
     pub fn workspace(&self) -> &WorkspaceMetadata {
@@ -154,7 +164,7 @@ pub(crate) fn build_source_closed_def_map(
     parse: &ParseDb,
     item_tree: &ItemTreeDb,
     names: &mut PackageNameInterners,
-) -> DefMapDb {
+) -> DefMapBuildOutput {
     let package_count = parse.package_count();
     let baseline = DefMapDb::all_offloaded(package_count);
     let baseline_read = baseline.read_txn(crate::DefMapLoader::resident_only(
@@ -178,7 +188,7 @@ pub(crate) fn build_source_closed_def_map(
         .advance(&baseline_read, parse, item_tree, names)
         .expect("fixture DefMap session should advance")
     {
-        DefMapBuildProgress::Complete(def_map) => def_map,
+        DefMapBuildProgress::Complete(output) => output,
         DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
             "fixture requested {} macro source file(s); use an rg_project fixture for source-discovery behavior",
             requests.len(),

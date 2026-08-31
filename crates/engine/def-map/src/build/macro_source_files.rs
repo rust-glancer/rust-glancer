@@ -22,15 +22,15 @@
 //! immutable DefMap.
 //!
 //! A “macro source file” is the real file at the far end of one of these edges. This keeps it
-//! distinct from [`crate::GeneratedSourceData`], which is the in-memory syntax produced by the
-//! macro itself.
+//! distinct from [`crate::source::GeneratedSourceData`], which is the in-memory syntax produced by
+//! the macro itself.
 
 use std::{collections::HashMap, sync::Arc};
 
 use rg_item_tree::IncludePathExpression;
 use rg_parse::{FileId, ModuleFileContext};
 
-use crate::{DefMapDb, PackageSlot};
+use crate::{DefMapBuildOutput, PackageSlot};
 
 /// One coalesced project-layer lookup requested while DefMap is collecting expanded syntax.
 ///
@@ -147,5 +147,5 @@ pub enum DefMapBuildProgress {
     /// Construction paused until the project loads or rejects these macro source files.
     NeedsMacroSourceFiles(Vec<MacroSourceFileRequest>),
     /// Every macro source-file request has been resolved and the immutable snapshot is complete.
-    Complete(DefMapDb),
+    Complete(DefMapBuildOutput),
 }

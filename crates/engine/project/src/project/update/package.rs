@@ -93,7 +93,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     let copy_compact_packages = state
         .split_indexing_mode
         .copy_compact_packages(&state.package_residency, packages.as_slice());
-    let def_map = macro_source_files::build_packages(
+    let def_map_output = macro_source_files::build_packages(
         &state.def_map,
         &old_def_map_txn,
         &state.workspace,
@@ -106,6 +106,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         memory_hooks.as_ref(),
     )
     .context("while attempting to rebuild affected def-map packages")?;
+    let (def_map, generated_items) = def_map_output.into_parts();
     drop(old_def_map_txn);
     // The selected package file tables now contain only sources reachable from this rebuild,
     // including late macro source files and excluding generated paths that disappeared.
@@ -117,12 +118,14 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .build_packages(
             &item_tree,
             &def_map,
+            &generated_items,
             packages.as_slice(),
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
         .context("while attempting to rebuild affected semantic IR packages")?;
+    drop(generated_items);
 
     let body_builder = state
         .body_ir

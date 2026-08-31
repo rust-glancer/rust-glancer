@@ -28,7 +28,10 @@ use super::{
     },
     implicit_roots::build_implicit_roots,
 };
-use crate::{DefMapBuildProgress, DefMapDb, DefMapReadTxn, MacroSourceFileRequest, PackageSlot};
+use crate::{
+    DefMapBuildOutput, DefMapBuildProgress, DefMapDb, DefMapReadTxn, GeneratedItemStores,
+    MacroSourceFileRequest, PackageSlot,
+};
 
 /// Selected-package construction retained across project-owned source capture waves.
 ///
@@ -244,21 +247,26 @@ impl DefMapBuildSession {
         }
 
         let mut next = self.baseline.clone();
+        let mut generated_items = GeneratedItemStores::default();
         for package_slot in self.packages.iter().copied() {
-            let package_states = self.crate_states.package(package_slot).with_context(|| {
-                format!(
-                    "while attempting to fetch completed crate states for package {}",
-                    package_slot.0
-                )
-            })?;
+            let package_states =
+                self.crate_states
+                    .take_package(package_slot)
+                    .with_context(|| {
+                        format!(
+                            "while attempting to fetch completed crate states for package {}",
+                            package_slot.0
+                        )
+                    })?;
             let parse_package = parse.package(package_slot.0).with_context(|| {
                 format!(
                     "while attempting to fetch parsed package {}",
                     package_slot.0
                 )
             })?;
+            let package = freeze_package(parse_package, package_states, &mut generated_items);
             next.mutator()
-                .replace_package(package_slot, freeze_package(parse_package, package_states))
+                .replace_package(package_slot, package)
                 .with_context(|| {
                     format!(
                         "while attempting to replace def-map package {}",
@@ -268,7 +276,10 @@ impl DefMapBuildSession {
         }
         next.mutator().compact_packages(&self.copy_compact_packages);
         self.complete = true;
-        Ok(DefMapBuildProgress::Complete(next))
+        Ok(DefMapBuildProgress::Complete(DefMapBuildOutput::new(
+            next,
+            generated_items,
+        )))
     }
 }
 

@@ -171,7 +171,7 @@ pub(super) fn build(
     // mutable while the coordinator answers complete batches and resumes the same DefMap
     // construction state. The coordinator preserves the semantic difference: modules receive a
     // child context, while includes keep the call-site module context.
-    let def_map = macro_source_files::build_packages(
+    let def_map_output = macro_source_files::build_packages(
         &baseline_def_map,
         &baseline_def_map_txn,
         workspace,
@@ -184,6 +184,7 @@ pub(super) fn build(
         memory_hooks,
     )
     .context("while attempting to build def map db")?;
+    let (def_map, generated_items) = def_map_output.into_parts();
     drop(baseline_def_map_txn);
 
     // The fixed point has finalized every source-built package file table, including files reached
@@ -226,6 +227,7 @@ pub(super) fn build(
         item_tree,
         source_fingerprints,
         def_map,
+        generated_items,
     );
     memory.checkpoint(sampler, metric::DEF_MAP_MEMORY, &def_map);
 
@@ -238,6 +240,7 @@ pub(super) fn build(
         .build_packages(
             &item_tree,
             &def_map,
+            &generated_items,
             build_plan.source_packages.as_slice(),
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
@@ -251,16 +254,18 @@ pub(super) fn build(
         item_tree,
         source_fingerprints,
         def_map,
+        generated_items,
         semantic_ir,
     );
     memory.checkpoint(sampler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
 
     // ----------------------------
-    // 8. Drop transient item trees
+    // 8. Drop transient declaration stores
     // ----------------------------
-    // ItemTree is a lowering input, not retained project state. Cache-backed builds only populate
-    // packages that missed the artifact cache, but even that sparse tree should disappear before
-    // body lowering so retained-memory checkpoints stay focused on durable phase state.
+    // ItemTree and macro-generated item stores are lowering inputs, not retained project state.
+    // Cache-backed builds only populate packages that missed the artifact cache, but even those
+    // sparse stores should disappear before body lowering and cache writing.
+    drop(generated_items);
     drop(item_tree);
     let memory = checkpoint_memory!(
         names,

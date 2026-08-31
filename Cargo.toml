@@ -45,6 +45,7 @@ exclude = [
   "test_targets/bench_fixtures/synthetic_def_map_heavy",
   "test_targets/bench_fixtures/synthetic_body_heavy",
   "test_targets/bench_fixtures/rust-analyzer",
+  "reference"
 ]
 resolver = "3"
 

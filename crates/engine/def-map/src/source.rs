@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rg_arena::Arena;
 use rg_item_tree::{ItemNode, ItemTreeId, ItemTreeRef};
 use rg_parse::{FileId, Span};
@@ -6,7 +8,10 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::BodyRef;
 
-/// Stable identifier of one retained macro expansion payload.
+/// Stable identifier of one macro expansion payload produced during crate construction.
+///
+/// The id remains part of compact source provenance after the payload is discarded, just as an
+/// [`ItemTreeRef`] remains useful after the transient ItemTree phase has finished.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
 #[shrink(leaf)]
@@ -22,7 +27,10 @@ impl rg_arena::ArenaId for GeneratedSourceId {
     }
 }
 
-/// Crate-local reference to one generated item payload.
+/// Crate-local source identity for one generated item.
+///
+/// During Semantic IR lowering this addresses [`GeneratedItemStore`]. Later phases retain it only
+/// as provenance and use the semantic declaration data copied during lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct GeneratedItemRef {
@@ -118,18 +126,71 @@ impl From<ItemTreeRef> for ItemSource {
     }
 }
 
-/// Item-tree-shaped payload retained for one declarative macro expansion.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct GeneratedSourceData {
-    pub origin_file_id: FileId,
-    pub origin_span: Span,
-    pub origin_source: ItemTreeRef,
-    pub top_level: Vec<ItemTreeId>,
-    pub items: Arena<ItemTreeId, ItemNode>,
+/// Item-tree-shaped payload produced for one declarative macro expansion.
+///
+/// This data is intentionally construction-only. DefMap uses it while collecting scopes and
+/// Semantic IR copies the declaration facts it needs before the surrounding store is dropped.
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
+pub(crate) struct GeneratedSourceData {
+    pub(crate) origin_file_id: FileId,
+    pub(crate) origin_span: Span,
+    pub(crate) origin_source: ItemTreeRef,
+    pub(crate) top_level: Vec<ItemTreeId>,
+    pub(crate) items: Arena<ItemTreeId, ItemNode>,
 }
 
 impl GeneratedSourceData {
-    pub fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
+    pub(crate) fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
         self.items.get(item_id)
+    }
+}
+
+/// Crate-local generated declarations retained only between DefMap and Semantic IR construction.
+///
+/// Macro expansion needs item-tree-shaped declarations while it discovers modules, definitions,
+/// imports, and associated items. Those declarations are substantially larger than the resulting
+/// semantic facts, so this store travels beside the frozen DefMap instead of becoming part of it.
+#[derive(Debug, Clone, Default, MemorySize, Shrink)]
+pub struct GeneratedItemStore {
+    sources: Arena<GeneratedSourceId, GeneratedSourceData>,
+    /// Generated associated items keyed by the macro call they replace.
+    ///
+    /// For `impl User { methods!(); }`, the call source maps to its generated functions, types,
+    /// consts, and any retained nested macro calls.
+    associated_macro_expansions: HashMap<ItemSource, Vec<ItemSource>>,
+}
+
+impl GeneratedItemStore {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.sources.is_empty() && self.associated_macro_expansions.is_empty()
+    }
+
+    pub(crate) fn alloc_source(&mut self, source: GeneratedSourceData) -> GeneratedSourceId {
+        self.sources.alloc(source)
+    }
+
+    pub(crate) fn source(&self, source: GeneratedSourceId) -> Option<&GeneratedSourceData> {
+        self.sources.get(source)
+    }
+
+    pub(crate) fn insert_associated_macro_expansion(
+        &mut self,
+        call: ItemSource,
+        generated_items: Vec<ItemSource>,
+    ) {
+        self.associated_macro_expansions
+            .insert(call, generated_items);
+    }
+
+    pub fn item(&self, item: GeneratedItemRef) -> Option<&ItemNode> {
+        self.sources
+            .get(item.source)
+            .and_then(|source| source.item(item.item))
+    }
+
+    pub fn associated_macro_expansion(&self, call: ItemSource) -> Option<&[ItemSource]> {
+        self.associated_macro_expansions
+            .get(&call)
+            .map(Vec::as_slice)
     }
 }

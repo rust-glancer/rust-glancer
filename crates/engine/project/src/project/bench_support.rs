@@ -6,7 +6,7 @@
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb, PackageBodiesCoverage};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::{DefMapBuildOutput, DefMapDb, GeneratedItemStores, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
@@ -34,7 +34,7 @@ pub fn build_def_map(
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
     names: &mut PackageNameInterners,
-) -> anyhow::Result<DefMapDb> {
+) -> anyhow::Result<DefMapBuildOutput> {
     let source_packages =
         PhasePackageSet::from_packages((0..parse.package_count()).map(PackageSlot).collect());
     let baseline = DefMapDb::all_offloaded(parse.package_count());
@@ -65,6 +65,7 @@ pub fn build_def_map(
 pub fn build_semantic_ir(
     item_tree: &ItemTreeDb,
     def_map: &DefMapDb,
+    generated_items: &GeneratedItemStores,
 ) -> anyhow::Result<SemanticIrDb> {
     let package_count = def_map.package_count();
     let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
@@ -75,6 +76,7 @@ pub fn build_semantic_ir(
         .build_packages(
             item_tree,
             def_map,
+            generated_items,
             &packages,
             rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),
             rg_semantic_ir::SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),

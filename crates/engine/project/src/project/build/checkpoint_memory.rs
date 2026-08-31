@@ -1,5 +1,5 @@
 use rg_body_ir::BodyIrDb;
-use rg_def_map::DefMapDb;
+use rg_def_map::{DefMapDb, GeneratedItemStores};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_profile::{MemorySnapshotMetric, ProfileMemoryRecord, ProfileMemorySnapshot};
@@ -26,6 +26,7 @@ pub(super) struct CheckpointMemory<'a> {
     item_tree: Option<&'a ItemTreeDb>,
     source_fingerprints: Option<&'a Vec<Option<Fingerprint>>>,
     def_map: Option<&'a DefMapDb>,
+    generated_items: Option<&'a GeneratedItemStores>,
     semantic_ir: Option<&'a SemanticIrDb>,
     body_ir: Option<&'a BodyIrDb>,
 }
@@ -52,6 +53,7 @@ impl<'a> CheckpointMemory<'a> {
             item_tree: self.item_tree.or(other.item_tree),
             source_fingerprints: self.source_fingerprints.or(other.source_fingerprints),
             def_map: self.def_map.or(other.def_map),
+            generated_items: self.generated_items.or(other.generated_items),
             semantic_ir: self.semantic_ir.or(other.semantic_ir),
             body_ir: self.body_ir.or(other.body_ir),
         }
@@ -136,6 +138,8 @@ impl<'a> CheckpointMemory<'a> {
                 .and_then(|value| sampler.measure_retained(value)),
             self.def_map
                 .and_then(|value| sampler.measure_retained(value)),
+            self.generated_items
+                .and_then(|value| sampler.measure_retained(value)),
             self.semantic_ir
                 .and_then(|value| sampler.measure_retained(value)),
             self.body_ir
@@ -150,6 +154,7 @@ impl<'a> CheckpointMemory<'a> {
         Self::record_memory_value(recorder, "item_tree", self.item_tree);
         Self::record_memory_value(recorder, "source_fingerprints", self.source_fingerprints);
         Self::record_memory_value(recorder, "def_map", self.def_map);
+        Self::record_memory_value(recorder, "generated_items", self.generated_items);
         Self::record_memory_value(recorder, "semantic_ir", self.semantic_ir);
         Self::record_memory_value(recorder, "body_ir", self.body_ir);
     }
@@ -183,5 +188,6 @@ impl_checkpoint_memory_from!(PackageBuildPlan, build_plan);
 impl_checkpoint_memory_from!(ItemTreeDb, item_tree);
 impl_checkpoint_memory_from!(Vec<Option<Fingerprint>>, source_fingerprints);
 impl_checkpoint_memory_from!(DefMapDb, def_map);
+impl_checkpoint_memory_from!(GeneratedItemStores, generated_items);
 impl_checkpoint_memory_from!(SemanticIrDb, semantic_ir);
 impl_checkpoint_memory_from!(BodyIrDb, body_ir);

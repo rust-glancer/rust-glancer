@@ -5,7 +5,7 @@ mod lower;
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapLoader, PackageSlot};
+use rg_def_map::{DefMapLoader, GeneratedItemStores, PackageSlot};
 use rg_package_store::PackageSubset;
 
 use crate::{SemanticIrDb, SemanticIrLoader};
@@ -20,6 +20,7 @@ impl SemanticIrDb {
         &'db self,
         item_tree: &'db rg_item_tree::ItemTreeDb,
         def_map: &'db rg_def_map::DefMapDb,
+        generated_items: &'db GeneratedItemStores,
         packages: &'db [PackageSlot],
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
@@ -31,7 +32,7 @@ impl SemanticIrDb {
         {
             let mut mutator = next.mutator();
             for package in &packages {
-                let rebuilt = lower::build_package(item_tree, def_map, *package)?;
+                let rebuilt = lower::build_package(item_tree, def_map, generated_items, *package)?;
                 mutator
                     .replace_package(*package, rebuilt)
                     .with_context(|| {
