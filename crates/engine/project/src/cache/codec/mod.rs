@@ -57,7 +57,7 @@ pub(crate) const PACKAGE_CACHE_CONTAINER_PREFIX_BYTES: usize = 8 + 4 * size_of::
 // Protect one independently decoded allocation from corrupted lengths while leaving ample room for
 // realistic crate/file payloads. Aggregate phase sections may exceed this because they are nested
 // lazy containers; their manifests and individual shards remain bounded.
-const PACKAGE_CACHE_DECODE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+const PACKAGE_CACHE_DECODE_LIMIT_BYTES: usize = 384 * 1024 * 1024;
 
 type PackageCacheWincodeConfig =
     wincode::config::Configuration<true, PACKAGE_CACHE_DECODE_LIMIT_BYTES>;

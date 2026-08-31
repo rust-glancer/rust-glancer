@@ -17,10 +17,12 @@ mod implicit_roots;
 mod imports;
 mod macro_source_files;
 mod macros;
+mod output;
 mod session;
 
 pub(crate) use self::macro_source_files::{MacroSourceFileResolution, MacroSourceFileResolutions};
 pub use self::{
     macro_source_files::{DefMapBuildProgress, MacroSourceFileRequest},
+    output::{DefMapBuildOutput, GeneratedItemStores},
     session::DefMapBuildSession,
 };

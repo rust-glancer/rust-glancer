@@ -126,14 +126,9 @@ impl ExternPreludeBuilder {
     }
 
     /// Freeze the two construction sources into the query-facing extern prelude.
-    pub(super) fn freeze(&self) -> HashMap<Name, ModuleRef> {
-        let mut roots = self.implicit_roots.clone();
-        roots.extend(
-            self.explicit_aliases
-                .iter()
-                .map(|(name, module)| (name.clone(), *module)),
-        );
-        roots
+    pub(super) fn freeze(mut self) -> HashMap<Name, ModuleRef> {
+        self.implicit_roots.extend(self.explicit_aliases);
+        self.implicit_roots
     }
 }
 

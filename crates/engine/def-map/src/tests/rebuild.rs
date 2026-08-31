@@ -203,9 +203,10 @@ impl RebuildFixture {
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
                 .expect("fixture workspace metadata should build");
         let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
-        let mut old = crate::testonly::build_source_closed_def_map(
+        let output = crate::testonly::build_source_closed_def_map(
             &workspace, &parse, &item_tree, &mut names,
         );
+        let (mut old, _) = output.into_parts();
         let clean_package = package_slot(&parse, clean_package);
         let clean_payload = Arc::new(
             old.resident_package(clean_package)
@@ -251,7 +252,7 @@ impl RebuildFixture {
             .advance(&old_read, &parse, &item_tree, &mut names)
             .expect("fixture DefMap package rebuild session should advance")
         {
-            DefMapBuildProgress::Complete(def_map) => def_map,
+            DefMapBuildProgress::Complete(output) => output.into_parts().0,
             DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
                 "source-closed rebuild fixture requested {} macro source file(s)",
                 requests.len(),

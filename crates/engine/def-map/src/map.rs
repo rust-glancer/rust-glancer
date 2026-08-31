@@ -20,7 +20,7 @@ use crate::{
     },
     module::ModuleData,
     scope::{Namespace, NamespaceSet, PerNs, Visibility},
-    source::{GeneratedSourceData, GeneratedSourceId},
+    source::{GeneratedItemStore, GeneratedSourceData, GeneratedSourceId},
 };
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -31,37 +31,35 @@ struct DefMapData {
     macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     /// Sparse ownership for declarations collected through an extern block.
     foreign_blocks: HashMap<LocalDefId, ItemSource>,
-    /// Generated associated items keyed by the macro call they replace.
-    ///
-    /// For `impl User { methods!(); }`, the call source maps to its generated functions, types,
-    /// consts, and any retained nested macro calls.
-    associated_macro_expansions: HashMap<ItemSource, Vec<ItemSource>>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
-    generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct DefMapBuilder {
     def_map: DefMap,
+    generated_items: GeneratedItemStore,
 }
 
 impl DefMapBuilder {
     pub fn new(crate_ref: CrateRef) -> Self {
         Self {
             def_map: DefMap::krate(crate_ref),
+            generated_items: GeneratedItemStore::default(),
         }
     }
 
     pub fn new_body(body_ref: BodyRef) -> Self {
         Self {
             def_map: DefMap::body(body_ref),
+            generated_items: GeneratedItemStore::default(),
         }
     }
 
     pub fn partial(&self) -> PartialDefMap<'_> {
         PartialDefMap {
             def_map: &self.def_map,
+            generated_items: &self.generated_items,
         }
     }
 
@@ -135,26 +133,24 @@ impl DefMapBuilder {
     }
 
     /// Records the generated items that replace one trait/impl macro invocation.
-    pub fn insert_associated_macro_expansion(
+    pub(crate) fn insert_associated_macro_expansion(
         &mut self,
         call: ItemSource,
         generated_items: Vec<ItemSource>,
     ) {
-        self.def_map
-            .data
-            .associated_macro_expansions
-            .insert(call, generated_items);
+        self.generated_items
+            .insert_associated_macro_expansion(call, generated_items);
     }
 
     pub fn alloc_import(&mut self, import: ImportData) -> ImportId {
         self.def_map.data.imports.alloc(import)
     }
 
-    pub fn alloc_generated_source(
+    pub(crate) fn alloc_generated_source(
         &mut self,
         generated_source: GeneratedSourceData,
     ) -> GeneratedSourceId {
-        self.def_map.data.generated_sources.alloc(generated_source)
+        self.generated_items.alloc_source(generated_source)
     }
 
     /// Resolves source-level visibility into the module identity used by scope lookup.
@@ -291,7 +287,16 @@ impl DefMapBuilder {
     }
 
     pub fn build(self) -> DefMap {
+        debug_assert!(
+            self.generated_items.is_empty(),
+            "generated crate declarations must be handed to Semantic IR",
+        );
         self.def_map
+    }
+
+    /// Separates frozen resolution data from the generated declarations consumed by Semantic IR.
+    pub(crate) fn into_parts(self) -> (DefMap, GeneratedItemStore) {
+        (self.def_map, self.generated_items)
     }
 }
 
@@ -302,6 +307,7 @@ impl DefMapBuilder {
 #[derive(Debug, Clone, Copy)]
 pub struct PartialDefMap<'a> {
     def_map: &'a DefMap,
+    generated_items: &'a GeneratedItemStore,
 }
 
 impl<'a> PartialDefMap<'a> {
@@ -348,12 +354,12 @@ impl<'a> PartialDefMap<'a> {
         self.def_map.imports_with_ids()
     }
 
-    /// Returns a retained generated source allocated so far during macro collection.
-    pub fn generated_source(
+    /// Returns a generated source allocated so far during macro collection.
+    pub(crate) fn generated_source(
         &self,
         generated_source: GeneratedSourceId,
     ) -> Option<&'a GeneratedSourceData> {
-        self.def_map.generated_source(generated_source)
+        self.generated_items.source(generated_source)
     }
 }
 
@@ -475,14 +481,6 @@ impl DefMap {
         self.data.foreign_blocks.get(&local_def).copied()
     }
 
-    /// Returns generated items that replace one associated-item macro call.
-    pub fn associated_macro_expansion(&self, call: ItemSource) -> Option<&[ItemSource]> {
-        self.data
-            .associated_macro_expansions
-            .get(&call)
-            .map(Vec::as_slice)
-    }
-
     /// Returns impl block data by id.
     pub fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
         self.data.local_impls.get(local_impl)
@@ -507,19 +505,6 @@ impl DefMap {
 
     pub fn import(&self, import: ImportId) -> Option<&ImportData> {
         self.data.imports.get(import)
-    }
-
-    /// Returns one retained generated source by id.
-    pub fn generated_source(
-        &self,
-        generated_source: GeneratedSourceId,
-    ) -> Option<&GeneratedSourceData> {
-        self.data.generated_sources.get(generated_source)
-    }
-
-    /// Returns all retained generated sources in stable generated-source-id order.
-    pub fn generated_sources(&self) -> &[GeneratedSourceData] {
-        self.data.generated_sources.as_slice()
     }
 
     pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {

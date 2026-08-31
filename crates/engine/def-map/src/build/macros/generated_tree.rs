@@ -7,7 +7,7 @@
 
 use anyhow::{Context as _, Result};
 
-use crate::GeneratedSourceData;
+use crate::source::GeneratedSourceData;
 use rg_arena::Arena;
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst,

@@ -194,7 +194,7 @@ pub(super) fn build(
 
         let baseline_def_map_txn =
             def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-        let next_def_map = macro_source_files::build_packages(
+        let next_def_map_output = macro_source_files::build_packages(
             &def_map,
             &baseline_def_map_txn,
             workspace,
@@ -208,6 +208,7 @@ pub(super) fn build(
         )
         .context("while attempting to build package batch def maps")?;
         drop(baseline_def_map_txn);
+        let (next_def_map, generated_items) = next_def_map_output.into_parts();
         def_map = next_def_map;
 
         macro_expansion_limit_summary.extend(MacroExpansionLimitBuildSummary::capture(
@@ -252,6 +253,7 @@ pub(super) fn build(
             def_map,
             semantic_ir,
             body_ir,
+            generated_items,
         )
         .checkpoint(sampler, metric::DEF_MAP_MEMORY, &def_map);
 
@@ -259,6 +261,7 @@ pub(super) fn build(
             .build_packages(
                 &item_tree,
                 &def_map,
+                &generated_items,
                 batch.as_slice(),
                 loaders.def_map.clone(),
                 loaders.semantic_ir.clone(),
@@ -274,9 +277,11 @@ pub(super) fn build(
             def_map,
             semantic_ir,
             body_ir,
+            generated_items,
         )
         .checkpoint(sampler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
 
+        drop(generated_items);
         drop(item_tree);
         checkpoint_memory!(
             names,

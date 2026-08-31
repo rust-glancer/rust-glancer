@@ -16,10 +16,10 @@ use std::sync::Arc;
 use anyhow::Context as _;
 
 use crate::{
-    CrateData, CrateResolutionEnv, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    MacroDefinitionEnv, MacroDefinitionView, MacroExpansionLimitReport, ModuleData,
-    ModuleScopeBuilder, Namespace, PackageDefMaps as DefMapPackage, ScopeBindingProvenance,
-    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    CrateData, CrateResolutionEnv, GeneratedItemStores, LocalDefData, LocalEnumVariantData,
+    LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView, MacroExpansionLimitReport,
+    ModuleData, ModuleScopeBuilder, Namespace, PackageDefMaps as DefMapPackage,
+    ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
 };
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path,
@@ -83,6 +83,10 @@ impl FinalizeCrateStates {
 
     pub(super) fn package(&self, package: PackageSlot) -> Option<&[CrateState]> {
         self.packages.get(package.0)?.as_deref()
+    }
+
+    pub(super) fn take_package(&mut self, package: PackageSlot) -> Option<Vec<CrateState>> {
+        self.packages.get_mut(package.0)?.take()
     }
 
     pub(super) fn iter_packages(&self) -> impl Iterator<Item = Option<&[CrateState]>> + '_ {
@@ -1032,38 +1036,49 @@ fn freeze_crate_scopes(
 }
 
 /// Freezes collected crate states into the package payload stored by `DefMapDb`.
-pub(super) fn freeze_package(package: &Package, package_states: &[CrateState]) -> DefMapPackage {
+pub(super) fn freeze_package(
+    package: &Package,
+    package_states: Vec<CrateState>,
+    generated_items: &mut GeneratedItemStores,
+) -> DefMapPackage {
     let package_name = package.package_name().to_string();
-    let macro_expansion_limits = package_states
-        .iter()
-        .filter_map(|state| {
-            let report = state.macro_expansion_limit.as_ref()?;
-            Some(MacroExpansionLimitReport {
+    let mut crates = Vec::with_capacity(package_states.len());
+    let mut macro_expansion_limits = Vec::new();
+
+    // Split each builder by moving its frozen DefMap into the package and its generated syntax into
+    // the transient phase output. This avoids both cloning the expansion arena and materializing an
+    // intermediate collection that the session would immediately consume.
+    for state in package_states {
+        if let Some(report) = &state.macro_expansion_limit {
+            macro_expansion_limits.push(MacroExpansionLimitReport {
                 package_name: package_name.clone(),
                 crate_name: state.crate_name.clone(),
                 groups: report.groups.clone(),
                 omitted_call_count: report.omitted_call_count,
-            })
-        })
-        .collect();
+            });
+        }
+
+        let crate_ref = state.crate_ref;
+        let (def_map, crate_generated_items) = state.def_map_builder.into_parts();
+        generated_items.insert(crate_ref, crate_generated_items);
+
+        // Persist both Cargo-provided roots and explicit crate-root aliases. Queries read this as a
+        // prelude rather than pretending any of these names are child modules of the crate root.
+        crates.push(CrateData::new(
+            state.cargo_target,
+            state.target_kind,
+            state.crate_name,
+            Some(state.root_module),
+            state.extern_prelude.freeze(),
+            state.prelude,
+            def_map,
+        ));
+    }
+
     DefMapPackage::new(
         package_name,
         package.edition(),
-        package_states.iter().map(freeze_crate_data).collect(),
+        crates,
         macro_expansion_limits,
-    )
-}
-
-fn freeze_crate_data(state: &CrateState) -> CrateData {
-    // Persist both Cargo-provided roots and explicit crate-root aliases. Queries read this as a
-    // prelude rather than pretending any of these names are child modules of the crate root.
-    CrateData::new(
-        state.cargo_target,
-        state.target_kind.clone(),
-        state.crate_name.clone(),
-        Some(state.root_module),
-        state.extern_prelude.freeze(),
-        state.prelude,
-        state.def_map_builder.clone().build(),
     )
 }

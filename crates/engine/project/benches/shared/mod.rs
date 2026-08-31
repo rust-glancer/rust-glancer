@@ -7,7 +7,7 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use rg_def_map::DefMapDb;
+use rg_def_map::{DefMapDb, GeneratedItemStores};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
@@ -189,6 +189,7 @@ pub(crate) struct BenchFixture {
     pub(crate) item_tree_after_def_map: ItemTreeDb,
     pub(crate) names_after_semantic_ir: PackageNameInterners,
     pub(crate) def_map: DefMapDb,
+    pub(crate) generated_items: GeneratedItemStores,
     pub(crate) semantic_ir: SemanticIrDb,
     pub(crate) source_files: usize,
     pub(crate) source_bytes: u64,
@@ -253,18 +254,22 @@ impl BenchFixture {
         // measured DefMap iterations, while downstream benchmarks receive the completed state.
         let mut parse_after_def_map = parse_before_def_map.clone();
         let mut item_tree_after_def_map = item_tree_before_def_map.clone();
-        let def_map = rg_project::bench_support::build_def_map(
+        let def_map_output = rg_project::bench_support::build_def_map(
             &workspace,
             &mut parse_after_def_map,
             &mut item_tree_after_def_map,
             &mut names,
         )
         .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
+        let (def_map, generated_items) = def_map_output.into_parts();
         let def_map_imports = def_map.stats(&workspace).import_count;
 
-        let semantic_ir =
-            rg_project::bench_support::build_semantic_ir(&item_tree_after_def_map, &def_map)
-                .unwrap_or_else(|error| panic!("{target} semantic IR should build: {error}"));
+        let semantic_ir = rg_project::bench_support::build_semantic_ir(
+            &item_tree_after_def_map,
+            &def_map,
+            &generated_items,
+        )
+        .unwrap_or_else(|error| panic!("{target} semantic IR should build: {error}"));
         let semantic_stats = semantic_ir.stats();
         let semantic_items = semantic_stats.struct_count
             + semantic_stats.union_count
@@ -296,6 +301,7 @@ impl BenchFixture {
             item_tree_after_def_map,
             names_after_semantic_ir,
             def_map,
+            generated_items,
             semantic_ir,
             source_files,
             source_bytes,
