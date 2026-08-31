@@ -65,7 +65,7 @@ async fn did_change_retries_completion_at_rebased_position() {
     let CompletionResponse::List(response) = response else {
         panic!("completion response should be a list");
     };
-    assert!(response.is_incomplete);
+    assert!(!response.is_incomplete);
     let [item] = response.items.as_slice() else {
         panic!("completion response should contain one item");
     };

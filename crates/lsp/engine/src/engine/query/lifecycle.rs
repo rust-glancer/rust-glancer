@@ -28,6 +28,7 @@ use rg_lsp_proto::{
     EditorDocumentSnapshot, EngineError, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue,
 };
 use rg_project::Project;
+use rg_std::CancellationToken;
 
 use super::QueryRunner;
 use crate::{engine::command::QueryResponder, memory::MemoryReporter};
@@ -60,24 +61,33 @@ impl From<anyhow::Error> for QueryRunError {
 
 /// Lets expensive query phases check whether anyone still wants the result.
 ///
-/// Dropping the RPC future closes the engine response channel. Long-running queries use this value
-/// to check that channel between expensive phases. It carries no document ids and keeps no second
-/// cancellation flag that could disagree with the channel.
+/// Dropping the RPC future cancels the request token and closes the engine response channel.
+/// Ordinary query phases check both here. The token can also enter bounded semantic loops where
+/// polling the response endpoint would cross an engine-layer ownership boundary.
 pub(crate) struct QueryCancellation<'a> {
-    is_cancelled: &'a dyn Fn() -> bool,
+    request: &'a CancellationToken,
+    response_is_closed: &'a dyn Fn() -> bool,
 }
 
 impl<'a> QueryCancellation<'a> {
-    fn new(is_cancelled: &'a dyn Fn() -> bool) -> Self {
-        Self { is_cancelled }
+    fn new(request: &'a CancellationToken, response_is_closed: &'a dyn Fn() -> bool) -> Self {
+        Self {
+            request,
+            response_is_closed,
+        }
     }
 
     /// Stop at a named query boundary if nobody can receive the result anymore.
     pub(crate) fn checkpoint(&self, checkpoint: &'static str) -> anyhow::Result<()> {
-        if (self.is_cancelled)() {
+        if self.request.is_cancelled() || (self.response_is_closed)() {
             return Err(QueryCancelled { checkpoint }.into());
         }
         Ok(())
+    }
+
+    /// Share the request signal with synchronous work that has its own bounded checkpoints.
+    pub(crate) fn token(&self) -> CancellationToken {
+        self.request.clone()
     }
 }
 
@@ -158,6 +168,7 @@ impl QueryRunner<'_> {
         &mut self,
         context: QueryContext,
         respond_to: QueryResponder<T>,
+        cancellation: CancellationToken,
         query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> Result<T, QueryRunError>,
     ) where
         T: Send + 'static,
@@ -171,7 +182,7 @@ impl QueryRunner<'_> {
         // LSP cancellation drops the RPC handler waiting on this response. The command may still
         // be in the dispatcher queue, but there is no reason to materialize packages or run
         // analysis once nobody can receive the result.
-        if respond_to.is_closed() {
+        if respond_to.is_closed() || cancellation.is_cancelled() {
             tracing::debug!(
                 label,
                 queued_ms = queue_elapsed.as_millis(),
@@ -205,8 +216,11 @@ impl QueryRunner<'_> {
         let memory_control = Arc::clone(&self.memory_control);
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
         let result = {
-            let is_cancelled = || respond_to.is_closed();
-            query(self, &QueryCancellation::new(&is_cancelled))
+            let response_is_closed = || respond_to.is_closed();
+            query(
+                self,
+                &QueryCancellation::new(&cancellation, &response_is_closed),
+            )
         };
         let cancelled_checkpoint = result
             .as_ref()
@@ -336,6 +350,7 @@ mod tests {
         DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
         OpenDocumentsRevision, QueryError, QueryScope, QueryValue, ServiceNotification,
     };
+    use rg_std::CancellationToken;
     use tokio::sync::oneshot;
 
     use super::QueryContext;
@@ -365,6 +380,7 @@ mod tests {
         runner.respond_to_query(
             QueryContext::saved_project("workspace_symbol", Duration::ZERO),
             respond_to,
+            CancellationToken::new(),
             |_, _| {
                 query_ran.set(true);
                 Ok(vec![1])
@@ -395,7 +411,9 @@ mod tests {
         let (respond_to, response) = oneshot::channel();
         let context = QueryContext::global_operation("references", Duration::ZERO, &snapshot);
 
-        runner.respond_to_query(context, respond_to, |_, _| Ok(vec![1_usize]));
+        runner.respond_to_query(context, respond_to, CancellationToken::new(), |_, _| {
+            Ok(vec![1_usize])
+        });
 
         let result =
             futures::executor::block_on(response).expect("document query should send a response");
@@ -420,6 +438,7 @@ mod tests {
         runner.respond_to_query(
             QueryContext::saved_project("workspace_symbol", Duration::ZERO),
             respond_to,
+            CancellationToken::new(),
             |_, _| Ok(Vec::<usize>::new()),
         );
 
@@ -442,6 +461,7 @@ mod tests {
         runner.respond_to_query(
             QueryContext::saved_project("completion", Duration::ZERO),
             respond_to,
+            CancellationToken::new(),
             |_, cancellation| {
                 // Model the RPC task disappearing after the engine has already entered the query.
                 drop(response);
@@ -456,6 +476,37 @@ mod tests {
         assert!(
             !work_after_checkpoint_ran.get(),
             "work after a closed-response checkpoint should not run",
+        );
+    }
+
+    #[test]
+    fn query_stops_when_request_token_is_cancelled_during_analysis() {
+        let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+        let mut project = test_project(Arc::clone(&memory_control));
+        let mut runner = QueryRunner::new(&mut project, memory_control);
+        let (respond_to, _response) =
+            oneshot::channel::<Result<QueryValue<Vec<usize>>, QueryError>>();
+        let cancellation = CancellationToken::new();
+        let request_owner = cancellation.clone();
+        let work_after_checkpoint_ran = Cell::new(false);
+
+        runner.respond_to_query(
+            QueryContext::saved_project("inlay_hint", Duration::ZERO),
+            respond_to,
+            cancellation,
+            |_, cancellation| {
+                request_owner.cancel();
+                cancellation
+                    .checkpoint("test semantic work")
+                    .context("stop test query after request cancellation")?;
+                work_after_checkpoint_ran.set(true);
+                Ok(vec![1])
+            },
+        );
+
+        assert!(
+            !work_after_checkpoint_ran.get(),
+            "work after a cancelled request checkpoint should not run",
         );
     }
 

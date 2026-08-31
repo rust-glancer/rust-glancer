@@ -3,13 +3,16 @@ mod utils;
 use std::fmt::Write as _;
 
 use expect_test::expect;
-use rg_ir_model::{TypeAliasId, TypeAliasRef};
+use rg_ir_model::{
+    CrateId, CrateRef, DefMapRef, PackageSlot, StructId, TypeAliasId, TypeAliasRef, TypeDefRef,
+};
 use rg_semantic_ir::CrateItemQuery;
+use rg_std::CancellationToken;
 
 use self::utils::*;
-use super::TraitSelectionSession;
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
 use super::projection::NORMALIZATION_DEPTH_LIMIT;
+use super::{TraitCandidate, TraitGoal, TraitSelectionSession};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, Clause, GenericArg, ImplMatcher, ItemPathQuery, ProjectionTy, Ty, TyContext,
@@ -144,6 +147,183 @@ fn projection_cycle_identity_ignores_fresh_inference_slots() {
 }
 
 #[test]
+fn possible_impl_origins_include_nested_known_type_owners() {
+    let outer_crate = CrateRef {
+        package: PackageSlot(1),
+        crate_id: CrateId(0),
+    };
+    let nested_sibling_crate = CrateRef {
+        package: PackageSlot(1),
+        crate_id: CrateId(1),
+    };
+    let positional_crate = CrateRef {
+        package: PackageSlot(2),
+        crate_id: CrateId(0),
+    };
+    let nested_ty = Ty::adt(AdtTy::bare(TypeDefRef::new_struct(
+        DefMapRef::Crate(nested_sibling_crate),
+        StructId(0),
+    )));
+    let mut table = InferenceTable::new();
+    let nested_slot = table.new_type_var();
+    assert!(table.unify(&nested_slot, &nested_ty));
+
+    let outer_ty = Ty::adt(AdtTy {
+        def: TypeDefRef::new_struct(DefMapRef::Crate(outer_crate), StructId(0)),
+        args: vec![GenericArg::Type(Box::new(nested_slot))].into(),
+    });
+    let positional_ty = Ty::Tuple(vec![Ty::adt(AdtTy::bare(TypeDefRef::new_struct(
+        DefMapRef::Crate(positional_crate),
+        StructId(0),
+    )))]);
+    let mut goal = TraitGoal::new(
+        outer_ty,
+        trait_ref(0),
+        vec![GenericArg::Type(Box::new(positional_ty))],
+    );
+    // Output constraints do not participate in orphan ownership.
+    goal.associated_types.push(crate::AssocTypeBinding {
+        associated_ty: TypeAliasRef {
+            origin: origin(),
+            id: TypeAliasId(0),
+        },
+        ty: Ty::Unknown,
+    });
+
+    let origins = goal
+        .possible_impl_origins(&table)
+        .expect("solved nested inference should leave a fully known application");
+    let expected_origins = [
+        target(),
+        outer_crate,
+        nested_sibling_crate,
+        positional_crate,
+    ];
+    assert_eq!(origins.len(), expected_origins.len());
+    for expected_origin in expected_origins {
+        assert!(
+            origins.contains(&expected_origin),
+            "expected owner collection to include {expected_origin:?}"
+        );
+    }
+}
+
+#[test]
+fn possible_impl_origins_decline_unresolved_applications() {
+    let outer_ty = |argument| {
+        Ty::adt(AdtTy {
+            def: type_def(0),
+            args: vec![GenericArg::Type(Box::new(argument))].into(),
+        })
+    };
+    let mut table = InferenceTable::new();
+    let unresolved_slot = table.new_type_var();
+    let unresolved_projection = Ty::Alias(AliasTy::Projection(ProjectionTy {
+        associated_ty: TypeAliasRef {
+            origin: origin(),
+            id: TypeAliasId(0),
+        },
+        args: Vec::new().into(),
+    }));
+
+    for (argument, error) in [
+        (Ty::Unknown, "semantic unknown"),
+        (unresolved_slot, "inference variable"),
+        (unresolved_projection, "associated projection"),
+    ] {
+        let goal = TraitGoal::new(outer_ty(argument), trait_ref(0), Vec::new());
+        assert!(
+            goal.possible_impl_origins(&table).is_none(),
+            "{error} should disable coherence filtering"
+        );
+    }
+}
+
+#[test]
+fn coherence_filter_retains_unknown_impl_from_goal_type_owner() {
+    let dependency = CrateRef {
+        package: PackageSlot(1),
+        crate_id: CrateId(0),
+    };
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Iterator
+        "#,
+    )
+    .with_unknown_self_impl_dependency(dependency, "Iterator");
+    let goal = TraitGoal::new(
+        Ty::adt(AdtTy::bare(TypeDefRef::new_struct(
+            DefMapRef::Crate(dependency),
+            StructId(0),
+        ))),
+        fixture
+            .trait_ref_by_name("Iterator")
+            .expect("fixture should contain Iterator"),
+        Vec::new(),
+    );
+    let lookup = fixture.lookup_query();
+    let candidates = TraitCandidate::plausible_impls(
+        &lookup,
+        &TraitSelectionSession::new(fixture.target),
+        &goal,
+        &InferenceTable::new(),
+    )
+    .expect("candidate lookup should not exhaust work");
+
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(
+        candidates
+            .as_one()
+            .map(|candidate| candidate.impl_ref.origin),
+        Some(DefMapRef::Crate(dependency))
+    );
+}
+
+#[test]
+fn concrete_projection_skips_unrelated_unknown_impl_origin() {
+    let profile = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "ty.trait_selection.chalk",
+    );
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Iterator
+            structs
+              struct#0 Wrapper<T>
+              struct#1 User
+            type aliases
+              type#0 trait#0::Item
+        "#,
+    )
+    .with_unknown_self_impl_dependency(
+        CrateRef {
+            package: PackageSlot(1),
+            crate_id: CrateId(0),
+        },
+        "Iterator",
+    );
+    let parsed = TraitSelectionQueryParser::new(&fixture)
+        .parse_assoc_goal("<Wrapper<User> as Iterator>::Item");
+
+    let result = query(&fixture)
+        .normalize_assoc_type(&parsed.goal, &parsed.assoc_name, &parsed.table)
+        .expect("concrete negative projection should complete natively");
+    assert!(result.is_none());
+
+    let profile = profile.finish();
+    profile.assert_counter(crate::profile::metric::NATIVE_CANDIDATE_COHERENCE_SKIPS, 1);
+    assert_eq!(
+        profile
+            .inner()
+            .counter(crate::profile::metric::PROGRAM_BUILDS.path()),
+        None,
+        "coherence-excluded candidates should not construct a Chalk program",
+    );
+}
+
+#[test]
 fn body_work_exhaustion_keeps_candidate_search_incomplete() {
     let profile = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
@@ -227,6 +407,55 @@ fn program_work_exhaustion_does_not_publish_a_partial_extension() {
             &parsed.table,
         )
         .expect("retry after bounded Chalk discovery should not fail");
+    assert!(matches!(outcome, ChalkOutcome::Proven(_)));
+}
+
+#[test]
+fn cancelled_trait_program_stops_without_publishing_a_partial_extension() {
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 User
+            impls
+              impl#0 impl Marker for User
+        "#,
+    );
+    let parsed = TraitSelectionQueryParser::new(&fixture).parse_goal("User: Marker");
+    let clauses = [Clause::Implemented(parsed.goal.application)];
+    let item_paths = ItemPathQuery::new(&fixture, &fixture);
+    let crate_items = CrateItemQuery::new(&fixture, &fixture, fixture.target);
+    let solver = ChalkTraitSolver::new();
+    let lookup_query = fixture.lookup_query();
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+
+    let cancelled = TraitSelectionSession::new(fixture.target).with_cancellation(cancellation);
+    let outcome = solver
+        .prove_clauses(
+            &item_paths,
+            &crate_items,
+            &lookup_query,
+            &cancelled,
+            &ChalkInferenceCache::new(),
+            &clauses,
+            &parsed.table,
+        )
+        .expect("cancelled Chalk query should fail soft");
+    assert!(matches!(outcome, ChalkOutcome::Exhausted));
+
+    let outcome = solver
+        .prove_clauses(
+            &item_paths,
+            &crate_items,
+            &lookup_query,
+            &TraitSelectionSession::new(fixture.target),
+            &ChalkInferenceCache::new(),
+            &clauses,
+            &parsed.table,
+        )
+        .expect("retry after cancelled Chalk discovery should not fail");
     assert!(matches!(outcome, ChalkOutcome::Proven(_)));
 }
 

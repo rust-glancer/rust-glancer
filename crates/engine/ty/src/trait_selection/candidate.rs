@@ -53,7 +53,26 @@ impl TraitCandidate {
         // lookup cannot drift into different candidate universes.
         let self_ty = table.resolve_root_var(goal.self_ty());
         let trait_ref = goal.trait_ref();
-        session.trait_impl_candidates_for_ty(item_lookup, trait_ref, &self_ty)
+        let candidates = session.trait_impl_candidates_for_ty(item_lookup, trait_ref, &self_ty)?;
+        let Some(possible_origins) = goal.possible_impl_origins(table) else {
+            return Some(candidates);
+        };
+
+        // An unresolved impl header still belongs to one known crate. Coherence can reject that
+        // identity before we restore and lower its declaration when the crate owns neither the
+        // trait nor any nominal type participating in this concrete application.
+        let candidate_count = candidates.len();
+        let candidates = candidates
+            .into_iter()
+            .filter(|candidate| {
+                possible_origins.contains(&candidate.impl_ref.origin.origin_crate())
+            })
+            .collect::<UniqueVec<_>>();
+        let skipped = candidate_count - candidates.len();
+        if skipped > 0 {
+            crate::profile::metric::NATIVE_CANDIDATE_COHERENCE_SKIPS.add(skipped as u64);
+        }
+        Some(candidates)
     }
 
     /// Match one plausible impl against the goal using an isolated trial table.

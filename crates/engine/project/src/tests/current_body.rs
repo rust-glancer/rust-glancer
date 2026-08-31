@@ -1,5 +1,6 @@
 use rg_analysis::{CompletionItem, CompletionQuery, CompletionSource, SavedSourceRelationship};
 use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection, CurrentBodyUnavailable};
+use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
 use crate::{
@@ -111,7 +112,13 @@ pub fn inspect() {
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current source should produce completion syntax");
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
+            .analysis_for_current_bodies_at_offset(
+                &targets,
+                current.text(),
+                offset,
+                CancellationToken::new(),
+                |_| Ok(()),
+            )
             .expect("early-start current body should build");
         let labels = targets
             .iter()
@@ -500,7 +507,13 @@ fn current_declaration_headers_use_request_local_semantics() {
     let snapshot = fixture.fixture.project().snapshot();
     let targets = fixture.targets();
     let (analysis, _) = snapshot
-        .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
+        .analysis_for_current_bodies_at_offset(
+            &targets,
+            current.text(),
+            offset,
+            CancellationToken::new(),
+            |_| Ok(()),
+        )
         .expect("current impl header should build");
     for (crate_ref, file) in targets {
         let hover = analysis
@@ -920,6 +933,7 @@ pub fn inspect() {
             &targets,
             current.text(),
             offset,
+            CancellationToken::new(),
             |checkpoint| {
                 visited.push(checkpoint);
                 if checkpoint == stop_at {
@@ -991,6 +1005,7 @@ pub fn unselected() {
             &targets,
             source,
             CurrentBodySelection::AtOffset(offset),
+            CancellationToken::new(),
             |_| Ok(()),
         )
         .expect("selected exact body should build");
@@ -1079,6 +1094,7 @@ fn unfinished
             &targets,
             source,
             CurrentBodySelection::IntersectingRange(range),
+            CancellationToken::new(),
             |_| Ok(()),
         )
         .expect("current bodies in the requested range should build");
@@ -1140,6 +1156,7 @@ pub fn inspect() {
             &targets,
             source,
             CurrentBodySelection::IntersectingRange(range),
+            CancellationToken::new(),
             |_| Ok(()),
         )
         .expect("ambiguous current roots should fail closed without breaking the request");
@@ -1193,7 +1210,13 @@ impl CurrentBodyFixture {
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current body should produce completion syntax");
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(&targets, current.text(), offset, |_| Ok(()))
+            .analysis_for_current_bodies_at_offset(
+                &targets,
+                current.text(),
+                offset,
+                CancellationToken::new(),
+                |_| Ok(()),
+            )
             .expect("current body should build against the saved fixture");
         let mut items = Vec::new();
 
@@ -1223,9 +1246,13 @@ impl CurrentBodyFixture {
             .expect("current-body marker should fit into u32");
         let before = self.fixture.project().stats();
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(&self.targets(), current.text(), offset, |_| {
-                Ok(())
-            })
+            .analysis_for_current_bodies_at_offset(
+                &self.targets(),
+                current.text(),
+                offset,
+                CancellationToken::new(),
+                |_| Ok(()),
+            )
             .expect("current-body build summary should be returned");
         drop(analysis);
         assert_eq!(
