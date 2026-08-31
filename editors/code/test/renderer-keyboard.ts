@@ -58,15 +58,12 @@ export class RendererKeyboard {
   }
 
   public async escape(): Promise<void> {
-    await this.focusEditorInput();
-    const key = {
-      key: "Escape",
-      code: "Escape",
-      windowsVirtualKeyCode: 27,
-      nativeVirtualKeyCode: 27,
-    };
-    await this.send("Input.dispatchKeyEvent", { type: "keyDown", ...key });
-    await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+    await this.pressKey("Escape", "Escape", 27);
+  }
+
+  /** Accept the selected suggestion through the renderer's ordinary keyboard path. */
+  public async acceptSelectedSuggestion(): Promise<void> {
+    await this.pressKey("Tab", "Tab", 9);
   }
 
   public async activeElementDescription(): Promise<string> {
@@ -86,6 +83,19 @@ export class RendererKeyboard {
     return response.result?.value === true;
   }
 
+  /** Wait for a concrete renderer state; the deadline only bounds a broken test run. */
+  public async waitForSuggestWidgetVisibility(expected: boolean): Promise<void> {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 10_000) {
+      if ((await this.suggestWidgetVisible()) === expected) {
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    throw new Error(`suggest widget did not become ${expected ? "visible" : "hidden"}`);
+  }
+
   public dispose(): void {
     this.socket.close();
     for (const pending of this.pending.values()) {
@@ -101,6 +111,18 @@ export class RendererKeyboard {
       this.pending.set(id, { resolve, reject });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
+  }
+
+  private async pressKey(key: string, code: string, keyCode: number): Promise<void> {
+    await this.focusEditorInput();
+    const event = {
+      key,
+      code,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    };
+    await this.send("Input.dispatchKeyEvent", { type: "keyDown", ...event });
+    await this.send("Input.dispatchKeyEvent", { type: "keyUp", ...event });
   }
 
   private async focusEditorInput(): Promise<void> {
