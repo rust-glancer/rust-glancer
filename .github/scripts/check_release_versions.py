@@ -14,6 +14,14 @@ SERVER_VERSION = re.compile(
     r'^pub const SERVER_VERSION: &str = "([^"]+)"; // x-release-please-version$',
     re.MULTILINE,
 )
+ZED_EXTENSION_VERSION = re.compile(
+    r'^version = "([^"]+)" # x-release-please-version$',
+    re.MULTILINE,
+)
+ZED_MANAGED_SERVER_VERSION = re.compile(
+    r'^const MANAGED_SERVER_VERSION: &str = "([^"]+)"; // x-release-please-version$',
+    re.MULTILINE,
+)
 
 
 def main() -> None:
@@ -36,6 +44,30 @@ def main() -> None:
     elif server_version.group(1) != version:
         failures.append(
             f"LSP server has version {server_version.group(1)!r}, expected {version}"
+        )
+
+    zed_manifest = (WORKSPACE_ROOT / "editors/zed/extension.toml").read_text(
+        encoding="utf-8"
+    )
+    zed_extension_version = ZED_EXTENSION_VERSION.search(zed_manifest)
+    if zed_extension_version is None:
+        failures.append("Zed extension release version marker is missing")
+    elif zed_extension_version.group(1) != version:
+        failures.append(
+            "Zed extension has version "
+            f"{zed_extension_version.group(1)!r}, expected {version}"
+        )
+
+    zed_server = (WORKSPACE_ROOT / "editors/zed/src/server/mod.rs").read_text(
+        encoding="utf-8"
+    )
+    zed_managed_server_version = ZED_MANAGED_SERVER_VERSION.search(zed_server)
+    if zed_managed_server_version is None:
+        failures.append("Zed managed server release version marker is missing")
+    elif zed_managed_server_version.group(1) != version:
+        failures.append(
+            "Zed managed server has version "
+            f"{zed_managed_server_version.group(1)!r}, expected {version}"
         )
 
     package_json = read_json(WORKSPACE_ROOT / "editors/code/package.json")
@@ -76,7 +108,7 @@ def main() -> None:
 
     print(
         f"Release version {version} is synchronized across the LSP server "
-        "and VS Code extension."
+        "and editor extensions."
     )
 
 

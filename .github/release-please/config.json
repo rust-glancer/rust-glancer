@@ -10,6 +10,8 @@
   "bump-patch-for-minor-pre-major": true,
   "extra-files": [
     "crates/lsp/server/src/methods/mod.rs",
+    "editors/zed/extension.toml",
+    "editors/zed/src/server/mod.rs",
     {
       "type": "json",
       "path": "editors/code/package.json",
