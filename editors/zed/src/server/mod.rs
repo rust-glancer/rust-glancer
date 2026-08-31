@@ -20,9 +20,9 @@ pub(crate) const SERVER_BINARY: &str = "rust-glancer";
 const GITHUB_REPOSITORY: &str = "rust-glancer/rust-glancer";
 const SERVER_CACHE_ROOT: &str = "servers";
 
-// An extension build requests one exact server release instead of following "latest". This
-// makes a repeated installation reproducible while the Zed and server versions move independently.
-const MANAGED_SERVER_VERSION: &str = "0.1.2";
+// An extension build requests one exact server release instead of following "latest". Release
+// automation advances this pin with the extension, so a repeated installation stays reproducible.
+const MANAGED_SERVER_VERSION: &str = "0.1.1"; // x-release-please-version
 
 const MANUAL_INSTALLATION_HINT: &str =
     "install rust-glancer manually and configure lsp.rust-glancer.binary.path to use it";
