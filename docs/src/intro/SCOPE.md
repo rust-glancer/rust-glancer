@@ -18,7 +18,7 @@ As a result, the following things are expected:
 
 - Type inference is not expected to be complete.
 - Trait solving is not expected to be complete.
-- No proc macro support.
+- No "traditional" proc macro support via remote code execution.
 - No proactive/interactive build script resolving.
 - New or changed module-level things (declarations, impls, derives, imports, and so on) become fully
   available after save. While the file is dirty, we still analyze the current function body using

@@ -20,34 +20,35 @@ help us build a very reliable project long term.
 
 Frozen workspace analysis can work on each keystroke, and it is actually usable, but it falls
 into a category that is workable but annoying enough to drive one insane. So to mitigate that,
-dirty buffers use partial analysis: we recompute the bodies that were affected, and
-we perform a somewhat "shallow" analysis.
+dirty buffers cheat a bit: when hover/completion/etc is requested in a dirty buffer, we take
+the _current entity around the cursor_ and analyze its current state against the saved project.
 
-It means that we can infer types as you type inside of the function, the completions for
-already known structures/functions/traits will work, but we cannot see new items.
-If you type the following without saving:
-
-```rust
-struct FooBar;
-
-impl Foo$
-```
-
-you will not see `FooBar` in completions, because adding structure to analysis will require doing
-a lot of extra work. Similarly, we cannot add imports to the scope as you type, so the `HashMap`
-will not be suggested if you will type the following without saving:
+This is already enough for typing, and in this example (`$` denotes the cursor) you will see
+the completions:
 
 ```rust
-use std::collections::HashMap;
-
-fn foo(h: HashMa$)
+fn calculate_something() {
+    let foo = SomeComplicatedType::new();
+    foo.do_some$
+}
 ```
 
-So it's important to obtain a mental model where you need to save whenever you add something meaningful
--- struct, trait, import, function.
+Local variables, types, methods are also available.
 
-It might take a bit of time to adjust, but if your flow wasn't like this already, I can promise that it
-might feel pretty natural after a bit of time.
+However, it gets tricky with new impl blocks. We try to recover new items based on syntax,
+but we don't add them to the project-wise analysis, so, for example, you will see methods from a
+newly typed `impl` block as you type them, same for the trait impls, but they will only work while
+you are inside of the corresponding block. If you will move to a different `impl`, it will not see
+the changes from the `impl` you edited before until you save.
+
+Module-level changes, such as adding a new import, are also not automatically resolved, they only
+take effect after saving a file.
+
+So for almost all the normal flows it should be convenient, but you will need to save the file when
+you need a change you made to take effect outside of the place where you type. 
+
+If it sounds scary, just try it -- it really isn't,
+and you can get used to it pretty quickly. And thanks to that, editing experience remains smooth.
 
 ## Build scripts
 
