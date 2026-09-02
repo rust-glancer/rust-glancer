@@ -499,23 +499,28 @@ fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<Normalized
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
-    // Fallback if empty workspace_folders try rootUri
-    #[allow(deprecated, reason = "check deprecated fields")]
-    if folders.is_empty() {
-        if let Some(ref uri) = params.root_uri {
-            let path = rg_lsp_proto::file_uri_to_path(uri)
-                .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?;
-            folders
-                .push(NormalizedPathBuf::from_absolute(&path).with_context(|| {
-                    format!("while normalizing root path `{}`", path.display())
-                })?);
-        } else if let Some(ref path_str) = params.root_path {
-            let path = std::path::PathBuf::from(path_str);
-            folders
-                .push(NormalizedPathBuf::from_absolute(&path).with_context(|| {
-                    format!("while normalizing root path `{}`", path.display())
-                })?);
-        }
+    // Some clients advertise workspace-folder support but still send the project only through
+    // the deprecated single-root fields. Use those fields only when the modern list is empty.
+    #[allow(
+        deprecated,
+        reason = "support legacy single-root initialization fields"
+    )]
+    let fallback_root = if !folders.is_empty() {
+        None
+    } else if let Some(uri) = params.root_uri.as_ref() {
+        Some(
+            rg_lsp_proto::file_uri_to_path(uri)
+                .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?,
+        )
+    } else {
+        params.root_path.as_deref().map(std::path::PathBuf::from)
+    };
+
+    if let Some(path) = fallback_root {
+        folders.push(
+            NormalizedPathBuf::from_absolute(&path)
+                .with_context(|| format!("while normalizing root path `{}`", path.display()))?,
+        );
     }
 
     folders.sort();
@@ -555,6 +560,27 @@ mod tests {
         assert_eq!(
             workspace_folders(&params).expect("workspace folders should normalize"),
             vec![project_a, project_b],
+        );
+    }
+
+    #[test]
+    #[allow(deprecated, reason = "exercise the legacy root URI fallback")]
+    fn workspace_folders_fall_back_to_root_uri_when_empty() {
+        let root = std::env::current_dir()
+            .expect("test process should have a current directory")
+            .join("legacy-server-workspace");
+        let params = InitializeParams {
+            root_uri: Some(
+                rg_lsp_proto::path_to_file_uri(&root).expect("test root should convert to a URI"),
+            ),
+            workspace_folders: Some(Vec::new()),
+            ..Default::default()
+        };
+
+        let root = NormalizedPathBuf::from_absolute(root).expect("test root should normalize");
+        assert_eq!(
+            workspace_folders(&params).expect("root URI should be used as the workspace"),
+            vec![root],
         );
     }
 
