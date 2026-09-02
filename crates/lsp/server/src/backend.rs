@@ -498,6 +498,26 @@ fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<Normalized
                 .with_context(|| format!("while normalizing workspace path `{}`", path.display()))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
+
+    // Fallback if empty workspace_folders try rootUri
+    #[allow(deprecated, reason = "check deprecated fields")]
+    if folders.is_empty() {
+        if let Some(ref uri) = params.root_uri {
+            let path = rg_lsp_proto::file_uri_to_path(uri)
+                .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?;
+            folders
+                .push(NormalizedPathBuf::from_absolute(&path).with_context(|| {
+                    format!("while normalizing root path `{}`", path.display())
+                })?);
+        } else if let Some(ref path_str) = params.root_path {
+            let path = std::path::PathBuf::from(path_str);
+            folders
+                .push(NormalizedPathBuf::from_absolute(&path).with_context(|| {
+                    format!("while normalizing root path `{}`", path.display())
+                })?);
+        }
+    }
+
     folders.sort();
     folders.dedup();
     Ok(folders)
