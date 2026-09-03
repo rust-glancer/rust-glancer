@@ -9,7 +9,8 @@ use std::path::PathBuf;
 
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
-    DocumentRangeSnapshot, EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
+    DocumentRangeSnapshot, EditorDocumentSnapshot, FoldingClientCapabilities,
+    GlobalPositionSnapshot, QueryError, QueryValue,
 };
 use rg_project::SavedFileChange;
 use tokio::sync::oneshot;
@@ -94,6 +95,11 @@ pub(crate) enum EngineCommand {
     DocumentSymbol {
         snapshot: EditorDocumentSnapshot,
         respond_to: QueryResponder<Vec<ls_types::DocumentSymbol>>,
+    },
+    FoldingRange {
+        snapshot: EditorDocumentSnapshot,
+        client_capabilities: FoldingClientCapabilities,
+        respond_to: QueryResponder<Vec<ls_types::FoldingRange>>,
     },
     InlayHint {
         input: DocumentRangeSnapshot,

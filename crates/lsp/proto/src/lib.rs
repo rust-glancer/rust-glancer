@@ -11,6 +11,7 @@ mod completion;
 mod config;
 mod error;
 mod file_uri;
+mod folding;
 mod notifications;
 mod query;
 mod saved_source;
@@ -31,6 +32,7 @@ pub use self::{
     },
     error::EngineError,
     file_uri::{FileUriError, file_uri_to_path, path_for_editor, path_to_file_uri},
+    folding::FoldingClientCapabilities,
     notifications::{
         DeferredIndexingOutcome, IndexingProgress, IndexingStage, ServiceLogLevel,
         ServiceNotification,

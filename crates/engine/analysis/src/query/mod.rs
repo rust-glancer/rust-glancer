@@ -7,6 +7,7 @@
 
 pub(crate) mod code_action;
 pub(crate) mod completion;
+pub(crate) mod folding;
 pub(crate) mod hover;
 pub(crate) mod import;
 pub(crate) mod inlay_hints;

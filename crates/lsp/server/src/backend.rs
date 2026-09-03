@@ -450,6 +450,22 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
+        fields(rg.method = "foldingRange", rg.uri = %params.text_document.uri.as_str())
+    )]
+    async fn folding_range(&self, params: FoldingRangeParams) -> Result<Option<Vec<FoldingRange>>> {
+        let context = self.document_context_for(&params.text_document.uri).await?;
+        let client_capabilities = self
+            .client_capabilities
+            .get()
+            .copied()
+            .unwrap_or_default()
+            .folding;
+        methods::text_document::folding_range::folding_range(context, params, client_capabilities)
+            .await
+    }
+
+    #[tracing::instrument(
+        skip_all,
         fields(rg.method = "inlayHint", rg.uri = %params.text_document.uri.as_str())
     )]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {

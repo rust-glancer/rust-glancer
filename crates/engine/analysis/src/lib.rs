@@ -35,8 +35,8 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 pub use self::model::{
     CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
     CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
-    DocumentOutline, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
-    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+    DocumentOutline, DocumentSymbol, Fold, FoldKind, HoverBlock, HoverInfo, InlayHint,
+    InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
     NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
     SyntheticCompletionTarget, WorkspaceSymbol,
 };
@@ -496,6 +496,11 @@ impl<'a> Analysis<'a> {
     /// Returns an outline directly from syntax, without requiring a saved file identity.
     pub fn document_symbols_from_syntax(syntax: &SourceFile) -> Vec<DocumentSymbol> {
         query::symbols::SymbolCollector::document_symbols_from_syntax(syntax)
+    }
+
+    /// Returns folding ranges directly from syntax, without requiring a saved file identity.
+    pub fn folding_ranges_from_syntax(syntax: &SourceFile) -> Vec<Fold> {
+        query::folding::SyntaxFoldCollector::collect(syntax)
     }
 
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
