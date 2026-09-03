@@ -324,6 +324,24 @@ impl EngineDispatcher {
                         |runner, _| runner.document_symbol(snapshot),
                     );
                 }
+                EngineCommand::FoldingRange {
+                    snapshot,
+                    client_capabilities,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %snapshot.path().display(),
+                        "engine command started: folding_range"
+                    );
+                    let context =
+                        QueryContext::target_document("folding_range", queue_elapsed, &snapshot);
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, _| runner.folding_range(snapshot, client_capabilities),
+                    );
+                }
                 EngineCommand::InlayHint { input, respond_to } => {
                     tracing::trace!(
                         path = %input.document().path().display(),

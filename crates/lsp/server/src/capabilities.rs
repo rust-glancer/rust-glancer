@@ -38,6 +38,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
         // The VS Code extension sends this request directly, so keep the internal command out of
         // the editor command registry.
         execute_command_provider: None,
@@ -137,6 +138,12 @@ mod tests {
     fn advertises_document_formatting_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.document_formatting_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_folding_range_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.folding_range_provider.is_some());
     }
 
     #[test]

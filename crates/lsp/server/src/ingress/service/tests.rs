@@ -26,7 +26,12 @@ use crate::{
     tests::synthetic_test_path,
 };
 
-use super::{EditorIngress, completion_request, document_request};
+use super::{EditorIngress, completion_request, document_request, is_document_request};
+
+#[test]
+fn folding_range_is_a_document_request() {
+    assert!(is_document_request("textDocument/foldingRange"));
+}
 
 #[tokio::test(flavor = "current_thread")]
 async fn transport_calls_service_in_wire_order_while_futures_finish_in_reverse() {

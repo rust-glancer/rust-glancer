@@ -12,8 +12,8 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Context as _;
 use rg_lsp_proto::{
     DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig,
-    EngineError, EngineResult, EngineService, GlobalPositionSnapshot, QueryError, QueryValue,
-    SaveProposal, SavedProjectChanges,
+    EngineError, EngineResult, EngineService, FoldingClientCapabilities, GlobalPositionSnapshot,
+    QueryError, QueryValue, SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
@@ -317,6 +317,21 @@ impl EngineService for Service {
         self.engine
             .query(|respond_to| EngineCommand::DocumentSymbol {
                 snapshot,
+                respond_to,
+            })
+            .await
+    }
+
+    async fn folding_range(
+        self,
+        _: context::Context,
+        snapshot: EditorDocumentSnapshot,
+        client_capabilities: FoldingClientCapabilities,
+    ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::FoldingRange {
+                snapshot,
+                client_capabilities,
                 respond_to,
             })
             .await

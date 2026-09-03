@@ -13,6 +13,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rg_ir_model::CrateRef;
 use rg_project::{FileContext, ProjectSnapshot};
+use rg_text::RustEdition;
 
 use super::QueryRunner;
 use crate::proto::position;
@@ -82,6 +83,23 @@ impl QueryRunner<'_> {
         );
 
         Ok(contexts)
+    }
+
+    /// Resolve the Rust edition used to parse a source path.
+    ///
+    /// A routed document normally inherits its owning package's edition. Standalone Rust files
+    /// have no package metadata, so syntax-only queries parse them with the newest supported
+    /// edition instead of rejecting the request.
+    pub(super) fn rust_edition_for_path(
+        snapshot: ProjectSnapshot<'_>,
+        path: &Path,
+    ) -> anyhow::Result<RustEdition> {
+        let contexts =
+            Self::file_contexts(snapshot, path).context("resolve edition file contexts")?;
+        Ok(contexts
+            .first()
+            .and_then(|context| snapshot.package_edition(context.package))
+            .unwrap_or(RustEdition::Edition2024))
     }
 
     /// Convert one editor position with the line index owned by this file context.

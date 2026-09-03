@@ -349,6 +349,7 @@ fn is_document_request(method: &str) -> bool {
             | "textDocument/completion"
             | "textDocument/formatting"
             | "textDocument/documentSymbol"
+            | "textDocument/foldingRange"
             | "textDocument/inlayHint"
     )
 }

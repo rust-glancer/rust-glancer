@@ -12,15 +12,15 @@ use std::{
 use expect_test::Expect;
 use ls_types::{
     CodeAction, CompletionItem, CompletionTextEdit, DocumentChanges, DocumentHighlight,
-    DocumentHighlightKind, DocumentSymbol, Hover, HoverContents, InlayHint, InlayHintKind,
-    InlayHintLabel, Location, Position, Range, TextEdit, WorkspaceEdit,
+    DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Hover, HoverContents,
+    InlayHint, InlayHintKind, InlayHintLabel, Location, Position, Range, TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
     DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
-    GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryValue,
-    SaveProposal, SavedProjectChanges, ServiceNotification, SysrootDiscovery,
-    TargetDocumentRevision,
+    FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
+    QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
+    SysrootDiscovery, TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -564,6 +564,31 @@ impl LspEngineFixture {
         let mut rendered = String::new();
         writeln!(rendered, "{title}").expect("snapshot should be writable");
         self.render_formatting_edits(&mut rendered, path, edits.as_deref());
+        expect.assert_eq(&rendered);
+    }
+
+    pub(super) async fn check_folding(
+        &self,
+        title: &'static str,
+        path: &'static str,
+        line_folding_only: bool,
+        expect: Expect,
+    ) {
+        let outcome = self
+            .service
+            .clone()
+            .folding_range(
+                context::current(),
+                self.document_snapshot(self.fixture.path(path)),
+                FoldingClientCapabilities { line_folding_only },
+            )
+            .await
+            .expect("folding range query should succeed");
+        let ranges = outcome.into_value();
+
+        let mut rendered = String::new();
+        writeln!(rendered, "{title}").expect("snapshot should be writable");
+        Self::render_folding_ranges(&mut rendered, &ranges);
         expect.assert_eq(&rendered);
     }
 
@@ -1130,6 +1155,36 @@ impl LspEngineFixture {
             if let Some(children) = &symbol.children {
                 self.render_document_symbols(rendered, children, depth + 1);
             }
+        }
+    }
+
+    fn render_folding_ranges(rendered: &mut String, ranges: &[FoldingRange]) {
+        if ranges.is_empty() {
+            writeln!(rendered, "- none").expect("snapshot should be writable");
+            return;
+        }
+
+        for range in ranges {
+            let kind = match range.kind {
+                Some(FoldingRangeKind::Comment) => "comment",
+                Some(FoldingRangeKind::Imports) => "imports",
+                Some(_) => "other",
+                None => "code",
+            };
+            let start_character = range
+                .start_character
+                .map(|character| character.to_string())
+                .unwrap_or_else(|| "*".to_string());
+            let end_character = range
+                .end_character
+                .map(|character| character.to_string())
+                .unwrap_or_else(|| "*".to_string());
+            writeln!(
+                rendered,
+                "- {kind} {}:{start_character}-{}:{end_character}",
+                range.start_line, range.end_line,
+            )
+            .expect("snapshot should be writable");
         }
     }
 

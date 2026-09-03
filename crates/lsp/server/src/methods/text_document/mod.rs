@@ -17,6 +17,7 @@ pub(crate) mod did_open;
 pub(crate) mod did_save;
 pub(crate) mod document_highlight;
 pub(crate) mod document_symbol;
+pub(crate) mod folding_range;
 pub(crate) mod formatting;
 pub(crate) mod hover;
 pub(crate) mod implementation;
