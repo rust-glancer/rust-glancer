@@ -26,8 +26,7 @@ use crate::{
 };
 
 use super::{
-    body_def_map::BodyDefMapCollector,
-    body_item_store::BodyItemStoreCollector,
+    local_items::LocalItemSource,
     lower::{
         BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, LoweredBodyTask,
         LoweredCrateBodies,
@@ -434,12 +433,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             &self.body_slots,
             &self.body_local_items,
         );
-        let def_map = BodyDefMapCollector::new(body_ref, body)
-            .collect()
-            .finalize(source)?;
-        let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
-
-        Ok(BodyLocalItems::new(def_map, item_store))
+        LocalItemSource::for_body(body)
+            .collect(body_ref, source)
+            .context("collect body-local declarations")
     }
 
     fn nested_body_tasks(

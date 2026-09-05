@@ -15,26 +15,14 @@ use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{CurrentSource, FileId, Span};
 use rg_text::NameInterner;
 
+use crate::build::current::declaration::CurrentRootItems;
+
 use crate::BodyOwner;
 
 use super::{
     LoweredCrateBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
 };
-
-/// Current declarations that body lowering should copy into the root's temporary item store.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CurrentRootItems {
-    /// The root and all of its declaration context already exist in saved or parent-body storage.
-    None,
-    /// Copy a new or changed free declaration, or one associated with a trait declaration.
-    Declaration,
-    /// Copy the current enclosing impl and its associated-item signatures.
-    ///
-    /// An unchanged selected member keeps its saved identity and is omitted from the temporary
-    /// impl. A new or changed member has no saved identity, so the impl must own it as well.
-    EnclosingImpl { include_selected: bool },
-}
 
 /// A function body or item initializer that should become immutable `BodyData`.
 #[derive(Debug, Clone, Copy)]

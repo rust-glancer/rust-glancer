@@ -9,8 +9,8 @@ use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
-use super::super::syntax::associated_item_owner;
-use super::CurrentBodySelection;
+use super::CurrentSourceSelection;
+use super::declaration::CurrentDeclarationBuilder;
 
 /// A function, const, or static that has a body in the editor's syntax tree.
 ///
@@ -29,13 +29,17 @@ impl SyntaxBodyOwner {
         file: &SourceFile,
         source: &str,
         errors: &[rg_syntax::SyntaxError],
-        selection: CurrentBodySelection,
+        selection: CurrentSourceSelection,
     ) -> Vec<Self> {
         match selection {
-            CurrentBodySelection::AtOffset(offset) => Self::at_cursor(file, source, offset, errors)
-                .into_iter()
-                .collect(),
-            CurrentBodySelection::IntersectingRange(range) => Self::intersecting_range(file, range),
+            CurrentSourceSelection::AtOffset(offset) => {
+                Self::at_cursor(file, source, offset, errors)
+                    .into_iter()
+                    .collect()
+            }
+            CurrentSourceSelection::IntersectingRange(range) => {
+                Self::intersecting_range(file, range)
+            }
         }
     }
 
@@ -58,7 +62,8 @@ impl SyntaxBodyOwner {
 
     /// Return whether this declaration is an associated item of an impl block.
     pub(super) fn belongs_to_impl(&self) -> bool {
-        associated_item_owner(self.syntax()).is_some_and(|owner| ast::Impl::can_cast(owner.kind()))
+        CurrentDeclarationBuilder::associated_owner(self.syntax())
+            .is_some_and(|owner| ast::Impl::can_cast(owner.kind()))
     }
 
     /// Find the declaration that owns the cursor, including its header and an unfinished body at

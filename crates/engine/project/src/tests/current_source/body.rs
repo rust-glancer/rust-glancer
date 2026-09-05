@@ -1,10 +1,10 @@
 use rg_analysis::{CompletionItem, CompletionQuery, CompletionSource, SavedSourceRelationship};
-use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection, CurrentBodyUnavailable};
+use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable};
 use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
 use crate::{
-    CurrentBodyBuildSummary, Project, SplitIndexingMode,
+    CurrentSourceBuildSummary, Project, SplitIndexingMode,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -112,10 +112,12 @@ pub fn inspect() {
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current source should produce completion syntax");
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(
+            .analysis_for_current_source(
                 &targets,
-                current.text(),
-                offset,
+                snapshot
+                    .prepare_current_source(&targets, current.text())
+                    .expect("capture current source"),
+                CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),
                 |_| Ok(()),
             )
@@ -408,7 +410,7 @@ pub fn inspect() {
             .unavailable(),
         &[(
             ambiguous.crate_ref(),
-            CurrentBodyUnavailable::AmbiguousSavedOwner,
+            CurrentSourceUnavailable::AmbiguousSavedOwner,
         )],
     );
 }
@@ -507,10 +509,12 @@ fn current_declaration_headers_use_request_local_semantics() {
     let snapshot = fixture.fixture.project().snapshot();
     let targets = fixture.targets();
     let (analysis, _) = snapshot
-        .analysis_for_current_bodies_at_offset(
+        .analysis_for_current_source(
             &targets,
-            current.text(),
-            offset,
+            snapshot
+                .prepare_current_source(&targets, current.text())
+                .expect("capture current source"),
+            CurrentSourceSelection::AtOffset(offset),
             CancellationToken::new(),
             |_| Ok(()),
         )
@@ -886,12 +890,9 @@ pub mod nested {
 
     for (current, expected) in [(root, "RootSaved"), (nested, "NestedSaved")] {
         let (labels, summary) = fixture.completion_labels(&current, "cursor");
-        assert_eq!(
-            summary.unavailable(),
-            &[(
-                fixture.crate_ref(),
-                CurrentBodyUnavailable::NoBodyAtPosition,
-            )],
+        assert!(
+            summary.is_complete(),
+            "the impl header is a prepared declaration: {summary:?}"
         );
         assert!(
             labels.iter().any(|label| label == expected),
@@ -918,21 +919,24 @@ pub fn inspect() {
         .try_into()
         .expect("current-body marker should fit into u32");
     let checkpoints = [
-        CurrentBodyBuildCheckpoint::SourceParsed,
-        CurrentBodyBuildCheckpoint::OwnerAssociated,
-        CurrentBodyBuildCheckpoint::BodyLowered,
-        CurrentBodyBuildCheckpoint::BodyLocalItemsCollected,
-        CurrentBodyBuildCheckpoint::ImplHeadersResolved,
-        CurrentBodyBuildCheckpoint::PatternBindingsMaterialized,
-        CurrentBodyBuildCheckpoint::BodyResolved,
+        CurrentSourceBuildCheckpoint::SourceParsed,
+        CurrentSourceBuildCheckpoint::OwnerAssociated,
+        CurrentSourceBuildCheckpoint::BodyLowered,
+        CurrentSourceBuildCheckpoint::BodyLocalItemsCollected,
+        CurrentSourceBuildCheckpoint::ImplHeadersResolved,
+        CurrentSourceBuildCheckpoint::PatternBindingsMaterialized,
+        CurrentSourceBuildCheckpoint::BodyResolved,
+        CurrentSourceBuildCheckpoint::DeclarationsPrepared,
     ];
 
     for (index, stop_at) in checkpoints.into_iter().enumerate() {
         let mut visited = Vec::new();
-        let error = match snapshot.analysis_for_current_bodies_at_offset(
+        let error = match snapshot.analysis_for_current_source(
             &targets,
-            current.text(),
-            offset,
+            snapshot
+                .prepare_current_source(&targets, current.text())
+                .expect("capture current source"),
+            CurrentSourceSelection::AtOffset(offset),
             CancellationToken::new(),
             |checkpoint| {
                 visited.push(checkpoint);
@@ -1001,10 +1005,10 @@ pub fn unselected() {
         );
     }
     let (analysis, summary) = snapshot
-        .analysis_for_current_bodies_from_source(
+        .analysis_for_current_source(
             &targets,
             source,
-            CurrentBodySelection::AtOffset(offset),
+            CurrentSourceSelection::AtOffset(offset),
             CancellationToken::new(),
             |_| Ok(()),
         )
@@ -1090,10 +1094,10 @@ fn unfinished
         .prepare_current_source(&targets, current.text())
         .expect("current range source should prepare");
     let (analysis, summary) = snapshot
-        .analysis_for_current_bodies_from_source(
+        .analysis_for_current_source(
             &targets,
             source,
-            CurrentBodySelection::IntersectingRange(range),
+            CurrentSourceSelection::IntersectingRange(range),
             CancellationToken::new(),
             |_| Ok(()),
         )
@@ -1152,10 +1156,10 @@ pub fn inspect() {
         .prepare_current_source(&targets, current)
         .expect("current range source should prepare");
     let (analysis, summary) = snapshot
-        .analysis_for_current_bodies_from_source(
+        .analysis_for_current_source(
             &targets,
             source,
-            CurrentBodySelection::IntersectingRange(range),
+            CurrentSourceSelection::IntersectingRange(range),
             CancellationToken::new(),
             |_| Ok(()),
         )
@@ -1167,7 +1171,7 @@ pub fn inspect() {
         summary
             .unavailable()
             .iter()
-            .all(|(_, reason)| *reason == CurrentBodyUnavailable::AmbiguousSavedOwner),
+            .all(|(_, reason)| *reason == CurrentSourceUnavailable::AmbiguousSavedOwner),
     );
     drop(analysis);
 }
@@ -1187,7 +1191,7 @@ impl CurrentBodyFixture {
         &self,
         current: &MarkedText,
         marker: &str,
-    ) -> (Vec<String>, CurrentBodyBuildSummary) {
+    ) -> (Vec<String>, CurrentSourceBuildSummary) {
         let (items, summary) = self.completion_items(current, marker);
         let mut labels = items.into_iter().map(|item| item.label).collect::<Vec<_>>();
         labels.sort();
@@ -1199,7 +1203,7 @@ impl CurrentBodyFixture {
         &self,
         current: &MarkedText,
         marker: &str,
-    ) -> (Vec<CompletionItem>, CurrentBodyBuildSummary) {
+    ) -> (Vec<CompletionItem>, CurrentSourceBuildSummary) {
         let snapshot = self.fixture.project().snapshot();
         let before = self.fixture.project().stats();
         let targets = self.targets();
@@ -1210,10 +1214,12 @@ impl CurrentBodyFixture {
         let completion_source = CompletionSource::new(current.text(), offset)
             .expect("current body should produce completion syntax");
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(
+            .analysis_for_current_source(
                 &targets,
-                current.text(),
-                offset,
+                snapshot
+                    .prepare_current_source(&targets, current.text())
+                    .expect("capture current source"),
+                CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),
                 |_| Ok(()),
             )
@@ -1238,18 +1244,21 @@ impl CurrentBodyFixture {
         (items, summary)
     }
 
-    fn build_summary(&self, current: &MarkedText, marker: &str) -> CurrentBodyBuildSummary {
+    fn build_summary(&self, current: &MarkedText, marker: &str) -> CurrentSourceBuildSummary {
         let snapshot = self.fixture.project().snapshot();
+        let targets = self.targets();
         let offset = current
             .offset(marker)
             .try_into()
             .expect("current-body marker should fit into u32");
         let before = self.fixture.project().stats();
         let (analysis, summary) = snapshot
-            .analysis_for_current_bodies_at_offset(
-                &self.targets(),
-                current.text(),
-                offset,
+            .analysis_for_current_source(
+                &targets,
+                snapshot
+                    .prepare_current_source(&targets, current.text())
+                    .expect("capture current source"),
+                CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),
                 |_| Ok(()),
             )

@@ -1,6 +1,6 @@
-//! Collects and finalizes body-local DefMap facts.
+//! Collects and finalizes lexical declaration scopes as DefMap facts.
 //!
-//! Body scopes become synthetic modules. Direct declarations are collected first, then imports are
+//! Declaration scopes become synthetic modules. Direct declarations are collected first, then imports are
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
 use rg_def_map::{
@@ -22,11 +22,11 @@ use rg_item_tree::{
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::BodyData;
+use super::LocalItemSource;
 
-pub(crate) struct BodyDefMapCollector<'body> {
+pub(crate) struct LocalDefMapCollector<'source> {
     body_ref: BodyRef,
-    body: &'body BodyData,
+    source: LocalItemSource<'source>,
     builder: DefMapBuilder,
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
@@ -34,26 +34,26 @@ pub(crate) struct BodyDefMapCollector<'body> {
     base_scopes: Vec<ModuleScopeBuilder>,
 }
 
-impl<'body> BodyDefMapCollector<'body> {
-    pub fn new(body_ref: BodyRef, body: &'body BodyData) -> Self {
+impl<'source> LocalDefMapCollector<'source> {
+    pub fn new(body_ref: BodyRef, source: LocalItemSource<'source>) -> Self {
         Self {
             body_ref,
-            body,
+            source,
             builder: DefMapBuilder::new_body(body_ref),
-            modules_by_scope: Vec::with_capacity(body.scopes().len()),
-            base_scopes: Vec::with_capacity(body.scopes().len()),
+            modules_by_scope: Vec::with_capacity(source.scopes.len()),
+            base_scopes: Vec::with_capacity(source.scopes.len()),
         }
     }
 
-    /// Collects direct body-local scope facts. Imports are finalized in a separate fixed-point step.
-    pub fn collect(mut self) -> BodyDefMapBuildState {
+    /// Collects direct local scope facts. Imports are finalized in a separate fixed-point step.
+    pub fn collect(mut self) -> LocalDefMapBuildState {
         // First, go through all the scopes and allocate synthetic modules.
-        for (_, scope) in self.body.scopes_with_ids() {
+        for scope in self.source.scopes {
             // Body scopes are synthetic modules. They carry lexical scope data, but they do not
             // correspond to Rust module declarations and lookup must treat them differently.
             let origin = ModuleOrigin::Synthetic {
-                file_id: self.body.source().file_id,
-                span: self.body.source().span,
+                file_id: self.source.source.file_id,
+                span: self.source.source.span,
             };
 
             // Note: we're going through scopes in order, so we process all the parents first.
@@ -82,17 +82,17 @@ impl<'body> BodyDefMapCollector<'body> {
         // Second, go through all the items in each scope and collect them too.
         // Note that we are collecting _items_ from scopes, but here we do not
         // recurse: even if an item has a body, we do not start to analyze it.
-        for (scope_id, scope) in self.body.scopes_with_ids() {
+        for (scope_id, scope) in self.source.scopes.iter().enumerate() {
             let module = *self
                 .modules_by_scope
-                .get(scope_id.0)
+                .get(scope_id)
                 .expect("Must be provided");
             for item in &scope.source_items {
                 self.collect_item(module, *item);
             }
         }
 
-        BodyDefMapBuildState {
+        LocalDefMapBuildState {
             body_ref: self.body_ref,
             builder: self.builder,
             base_scopes: self.base_scopes,
@@ -108,7 +108,7 @@ impl<'body> BodyDefMapCollector<'body> {
     }
 
     fn collect_item(&mut self, module: ModuleId, item_id: ItemTreeId) {
-        let Some(item) = self.body.source_item(item_id) else {
+        let Some(item) = self.source.items.item(item_id) else {
             return;
         };
 
@@ -139,7 +139,7 @@ impl<'body> BodyDefMapCollector<'body> {
     ) {
         let block_source = self.item_source(block_id, block);
         for child_id in &extern_block.items {
-            let Some(child) = self.body.source_item(*child_id).cloned() else {
+            let Some(child) = self.source.items.item(*child_id).cloned() else {
                 continue;
             };
             // Body-local macro calls remain retained source items, but the ordinary local-def
@@ -365,13 +365,13 @@ impl<'body> BodyDefMapCollector<'body> {
 }
 
 /// Body-local DefMap state before imports have been fixed up and frozen.
-pub(crate) struct BodyDefMapBuildState {
+pub(crate) struct LocalDefMapBuildState {
     body_ref: BodyRef,
     builder: DefMapBuilder,
     base_scopes: Vec<ModuleScopeBuilder>,
 }
 
-impl BodyDefMapBuildState {
+impl LocalDefMapBuildState {
     pub(crate) fn finalize<S>(mut self, def_maps: S) -> Result<DefMap, PackageStoreError>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
@@ -405,7 +405,7 @@ impl BodyDefMapBuildState {
 
         loop {
             let mut next_scopes = self.base_scopes.clone();
-            let env = BodyDefMapFinalizationEnv {
+            let env = LocalDefMapFinalizationEnv {
                 def_maps,
                 state: self,
                 current_scopes: &current_scopes,
@@ -427,7 +427,7 @@ impl BodyDefMapBuildState {
     /// and hidden trait imports on that shared path.
     fn apply_imports<S>(
         &self,
-        env: &BodyDefMapFinalizationEnv<'_, S>,
+        env: &LocalDefMapFinalizationEnv<'_, S>,
         next_scopes: &mut [ModuleScopeBuilder],
     ) -> Result<(), PackageStoreError>
     where
@@ -462,7 +462,7 @@ impl BodyDefMapBuildState {
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
         let mut module_imports = vec![Vec::new(); self.builder.partial().module_count()];
-        let env = BodyDefMapFinalizationEnv {
+        let env = LocalDefMapFinalizationEnv {
             def_maps,
             state: self,
             current_scopes: final_scopes,
@@ -497,13 +497,13 @@ impl BodyDefMapBuildState {
     }
 }
 
-struct BodyDefMapFinalizationEnv<'state, S> {
+struct LocalDefMapFinalizationEnv<'state, S> {
     def_maps: S,
-    state: &'state BodyDefMapBuildState,
+    state: &'state LocalDefMapBuildState,
     current_scopes: &'state [ModuleScopeBuilder],
 }
 
-impl<S> BodyDefMapFinalizationEnv<'_, S>
+impl<S> LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {
@@ -512,7 +512,7 @@ where
     }
 }
 
-impl<S> ScopeResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
+impl<S> ScopeResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {
@@ -615,7 +615,7 @@ where
     }
 }
 
-impl<S> MacroDefinitionEnv for BodyDefMapFinalizationEnv<'_, S>
+impl<S> MacroDefinitionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {
@@ -648,7 +648,7 @@ where
     }
 }
 
-impl<S> CrateResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
+impl<S> CrateResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {

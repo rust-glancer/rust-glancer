@@ -1,7 +1,7 @@
 //! Builds and rebuilds Body IR snapshots.
 
-mod body_def_map;
-mod body_item_store;
+mod current;
+mod local_items;
 mod lower;
 mod materialization;
 mod pattern_binding;
@@ -24,9 +24,9 @@ use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile, PackageBodies};
 
 use self::materialization::BodyIrMaterializationPlan;
 
-pub use self::lower::{
-    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection,
-    CurrentBodyUnavailable,
+pub use self::current::{
+    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
+    CurrentSourceSelection, CurrentSourceUnavailable,
 };
 
 /// Package-local stage of one Body IR build.

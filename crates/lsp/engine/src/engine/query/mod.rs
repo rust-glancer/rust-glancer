@@ -1,8 +1,8 @@
 //! Runs editor queries against one saved project.
 //!
 //! A feature method first finds every crate context in which the target file appears. It loads any
-//! saved package data needed by the feature, optionally rebuilds the body around the cursor from
-//! the editor text, runs `rg_analysis`, and converts the result to LSP types. Rebuilt bodies belong
+//! saved package data needed by the feature, prepares selected bodies and declarations from the
+//! editor text, runs `rg_analysis`, and converts the result to LSP types. Current semantics belong
 //! only to that request; they do not turn the saved project into an unsaved copy.
 //!
 //! The `lifecycle` module wraps this feature work with cancellation, stale-source recovery, result
@@ -30,7 +30,7 @@ use rg_lsp_proto::{
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
-    AnalysisSurface, CurrentBodyBuildCheckpoint, CurrentBodySelection, DocumentSourceView,
+    AnalysisSurface, CurrentSourceBuildCheckpoint, CurrentSourceSelection, DocumentSourceView,
     FileContext, ProjectSnapshot,
 };
 use rg_std::UniqueVec;
@@ -68,11 +68,14 @@ enum DocumentSelection {
 }
 
 impl DocumentSelection {
-    fn to_current_body_selection(&self, line_index: &LineIndex) -> Option<CurrentBodySelection> {
+    fn to_current_source_selection(
+        &self,
+        line_index: &LineIndex,
+    ) -> Option<CurrentSourceSelection> {
         match self {
             Self::Position(position) => line_index
                 .offset_from_utf16_position(crate::proto::position::parse_position(*position))
-                .map(CurrentBodySelection::AtOffset),
+                .map(CurrentSourceSelection::AtOffset),
             Self::Range(range) => {
                 let start = line_index.offset_from_utf16_position(
                     crate::proto::position::parse_position(range.start),
@@ -80,7 +83,7 @@ impl DocumentSelection {
                 let end = line_index.offset_from_utf16_position(
                     crate::proto::position::parse_position(range.end),
                 )?;
-                Some(CurrentBodySelection::IntersectingRange(
+                Some(CurrentSourceSelection::IntersectingRange(
                     rg_parse::TextSpan { start, end },
                 ))
             }
@@ -122,14 +125,14 @@ struct DocumentAnalysis<'project> {
     analysis: Analysis<'project>,
     targets: Vec<DocumentTarget>,
     source: DocumentAnalysisSource,
-    selection: CurrentBodySelection,
+    selection: CurrentSourceSelection,
 }
 
 impl DocumentAnalysis<'_> {
     fn offset(&self) -> u32 {
         match self.selection {
-            CurrentBodySelection::AtOffset(offset) => offset,
-            CurrentBodySelection::IntersectingRange(_) => {
+            CurrentSourceSelection::AtOffset(offset) => offset,
+            CurrentSourceSelection::IntersectingRange(_) => {
                 unreachable!("position query should retain a cursor selection")
             }
         }
@@ -137,8 +140,8 @@ impl DocumentAnalysis<'_> {
 
     fn range(&self) -> rg_parse::TextSpan {
         match self.selection {
-            CurrentBodySelection::IntersectingRange(range) => range,
-            CurrentBodySelection::AtOffset(_) => {
+            CurrentSourceSelection::IntersectingRange(range) => range,
+            CurrentSourceSelection::AtOffset(_) => {
                 unreachable!("range query should retain a range selection")
             }
         }
@@ -156,22 +159,25 @@ impl<'a> QueryRunner<'a> {
         }
     }
 
-    /// Give cancellation logs a stable name for each shared current-body build boundary.
-    fn current_body_checkpoint(checkpoint: CurrentBodyBuildCheckpoint) -> &'static str {
+    /// Give cancellation logs a stable name for each shared current-source preparation boundary.
+    fn current_source_checkpoint(checkpoint: CurrentSourceBuildCheckpoint) -> &'static str {
         match checkpoint {
-            CurrentBodyBuildCheckpoint::SourceParsed => "after current source parsing",
-            CurrentBodyBuildCheckpoint::OwnerAssociated => "after current body owner association",
-            CurrentBodyBuildCheckpoint::BodyLowered => "after current body lowering",
-            CurrentBodyBuildCheckpoint::BodyLocalItemsCollected => {
+            CurrentSourceBuildCheckpoint::DeclarationsPrepared => {
+                "after current declaration preparation"
+            }
+            CurrentSourceBuildCheckpoint::SourceParsed => "after current source parsing",
+            CurrentSourceBuildCheckpoint::OwnerAssociated => "after current body owner association",
+            CurrentSourceBuildCheckpoint::BodyLowered => "after current body lowering",
+            CurrentSourceBuildCheckpoint::BodyLocalItemsCollected => {
                 "after current body-local item collection"
             }
-            CurrentBodyBuildCheckpoint::ImplHeadersResolved => {
+            CurrentSourceBuildCheckpoint::ImplHeadersResolved => {
                 "after current body-local impl header resolution"
             }
-            CurrentBodyBuildCheckpoint::PatternBindingsMaterialized => {
+            CurrentSourceBuildCheckpoint::PatternBindingsMaterialized => {
                 "after current pattern binding resolution"
             }
-            CurrentBodyBuildCheckpoint::BodyResolved => "after current body resolution",
+            CurrentSourceBuildCheckpoint::BodyResolved => "after current body resolution",
         }
     }
 
@@ -221,7 +227,7 @@ impl<'a> QueryRunner<'a> {
         Ok(None)
     }
 
-    /// Prepare saved or current-body analysis for one editor source selection.
+    /// Prepare saved or current-source analysis for one editor source selection.
     ///
     /// Exact captured text can use the saved line index and Body IR directly. Changed text follows
     /// the request-local body path. Cursor and range queries share this source decision but retain
@@ -237,7 +243,7 @@ impl<'a> QueryRunner<'a> {
 
         // Resolve every saved interpretation, then choose its source coordinate space once. Exact
         // text returns before current syntax or declaration associations are built.
-        let (targets, body_targets, source, body_selection) = {
+        let (targets, source_targets, source, source_selection) = {
             let snapshot = self
                 .project
                 .saved_snapshot()
@@ -259,18 +265,18 @@ impl<'a> QueryRunner<'a> {
             if targets.is_empty() {
                 return Ok(None);
             }
-            let body_targets = targets
+            let source_targets = targets
                 .iter()
                 .map(|target| (target.crate_ref, target.context.file))
                 .collect::<Vec<_>>();
             let source = snapshot
-                .prepare_document_source(&body_targets, document.text())
+                .prepare_document_source(&source_targets, document.text())
                 .context("prepare document source")?;
-            let Some(body_selection) = selection.to_current_body_selection(source.line_index())
+            let Some(source_selection) = selection.to_current_source_selection(source.line_index())
             else {
                 return Ok(None);
             };
-            (targets, body_targets, source, body_selection)
+            (targets, source_targets, source, source_selection)
         };
 
         let prepared = match source {
@@ -305,7 +311,7 @@ impl<'a> QueryRunner<'a> {
                     analysis,
                     targets,
                     source: DocumentAnalysisSource::SavedExact(line_index),
-                    selection: body_selection,
+                    selection: source_selection,
                 }
             }
             DocumentSourceView::Current(source_view) => {
@@ -316,19 +322,19 @@ impl<'a> QueryRunner<'a> {
                     .context("borrow saved project for current document")?;
                 let source = source_view.shared_source();
                 let (analysis, build_summary) = snapshot
-                    .analysis_for_current_bodies_from_source(
-                        &body_targets,
+                    .analysis_for_current_source(
+                        &source_targets,
                         source_view,
-                        body_selection,
+                        source_selection,
                         cancellation.token(),
                         |checkpoint| {
-                            cancellation.checkpoint(Self::current_body_checkpoint(checkpoint))
+                            cancellation.checkpoint(Self::current_source_checkpoint(checkpoint))
                         },
                     )
-                    .context("build current document body analysis")?;
+                    .context("prepare current document analysis")?;
                 tracing::trace!(
                     query,
-                    complete_current_body_build = build_summary.is_complete(),
+                    complete_current_source_build = build_summary.is_complete(),
                     "current document bodies prepared"
                 );
                 DocumentAnalysis {
@@ -336,7 +342,7 @@ impl<'a> QueryRunner<'a> {
                     analysis,
                     targets,
                     source: DocumentAnalysisSource::Current(source),
-                    selection: body_selection,
+                    selection: source_selection,
                 }
             }
         };

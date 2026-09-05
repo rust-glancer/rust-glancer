@@ -1,5 +1,5 @@
 mod cargo_build_outputs;
-mod current_body;
+mod current_source;
 mod generated_modules;
 mod split_indexing;
 mod utils;

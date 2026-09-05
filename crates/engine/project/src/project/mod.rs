@@ -40,7 +40,7 @@ use rg_std::MemorySize;
 pub use self::state::ProjectGenerationId;
 pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
-    snapshot::{CurrentBodyBuildSummary, DocumentSourceView, ProjectSnapshot},
+    snapshot::{DocumentSourceView, ProjectSnapshot},
     split_indexing::{
         AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
         SplitIndexingProgress, SplitIndexingStage,

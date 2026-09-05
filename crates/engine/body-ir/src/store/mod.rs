@@ -1,12 +1,14 @@
 //! Body IR snapshot storage and lazy package access.
 
-mod current_body;
+pub(crate) mod current;
 mod db;
 mod package;
 mod txn;
 
+pub(crate) use self::current::CurrentBody;
+
 pub use self::{
-    current_body::{CurrentBody, CurrentBodySet},
+    current::CurrentSourceStore,
     db::{BodyIrDb, BodyIrStats},
     package::{
         BodyFileEntry, BodyFileShard, BodyLocalItems, CrateBodies, CrateBodiesCoverage,

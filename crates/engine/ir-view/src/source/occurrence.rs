@@ -389,7 +389,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+        for origin in self.db.current_signature_origins(crate_ref, file_id) {
             for candidate in
                 SignatureSourceScanner::at_origin(self.db, origin, file_id, offset).scan()?
             {

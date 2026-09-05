@@ -629,7 +629,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
-        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+        for origin in self.db.current_signature_origins(crate_ref, file_id) {
             let Some(site) =
                 SignatureSourceScanner::implicit_associated_type_binding_site_at_origin(
                     self.db, origin, file_id, offset,

@@ -11,11 +11,13 @@ use rg_ir_model::CrateRef;
 use rg_parse::FileId;
 
 pub use self::profile::profile_descriptors;
+pub(crate) use self::store::CurrentBody;
 pub use rg_ir_model::FieldKey;
 
 pub use self::build::{
-    BodyIrBuildProgress, BodyIrBuildStage, BodyIrDbBuilder, CurrentBodyBuildCheckpoint,
-    CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection, CurrentBodyUnavailable,
+    BodyIrBuildProgress, BodyIrBuildStage, BodyIrDbBuilder, CurrentSourceBuildCheckpoint,
+    CurrentSourceBuildSummary, CurrentSourceBuilder, CurrentSourceSelection,
+    CurrentSourceUnavailable,
 };
 
 #[cfg(test)]
@@ -36,7 +38,7 @@ pub use self::{
     store::{
         BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
         BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
-        CurrentBody, CurrentBodySet, LoadBodyIr, PackageBodies, PackageBodiesCoverage,
+        CurrentSourceStore, LoadBodyIr, PackageBodies, PackageBodiesCoverage,
         PackageBodiesManifest,
     },
 };

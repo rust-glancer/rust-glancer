@@ -30,7 +30,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedSignatureTypeSite>> {
-        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+        for origin in self.db.current_signature_origins(crate_ref, file_id) {
             if let Some(site) =
                 SignatureSourceScanner::completion_site_at_origin(self.db, origin, file_id, offset)
                     .context("scan current signature type completion site")?
@@ -242,7 +242,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         member_prefix_span: Span,
         member_prefix: String,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
-        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+        for origin in self.db.current_signature_origins(crate_ref, file_id) {
             let scope = SignatureSourceScanner::empty_type_scope_at_origin(
                 self.db, origin, file_id, offset,
             )

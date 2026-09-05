@@ -143,35 +143,58 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         // Lowering the header produces the substitution that turns trait-owned `T` and `Self`
         // references into syntax appropriate for this concrete impl. Compare its trait identity
         // as a second guard before applying that substitution to member signatures.
-        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
-        let Some(header) = signatures
-            .impl_header(impl_ref)
-            .context("lower trait impl completion header")?
+        let Some(application) = self
+            .trait_application(impl_ref)
+            .context("resolve saved trait impl application")?
         else {
             return Ok(Vec::new());
         };
-        let Some(trait_lowering) = header.trait_ref else {
-            return Ok(Vec::new());
-        };
-        let application = trait_lowering.application;
         if application.def != trait_ref {
             return Ok(Vec::new());
         }
 
-        self.missing_members_for_application(impl_ref, trait_ref, &application)
+        self.missing_members_for_application(impl_ref, &application)
+            .context("project saved trait impl members")
     }
 
-    /// Project members after the caller has already lowered the selected impl header.
+    /// Return missing members for the complete impl selected during current-source preparation.
     ///
-    /// Current-source impls need a path resolver that falls back to their saved containing module.
-    /// Passing the resulting application here keeps that lookup policy out of the shared member
-    /// projection below.
-    pub(crate) fn missing_members_for_application(
+    /// Preparation may choose saved semantics or collect current declarations. Either way, the
+    /// selected impl's header supplies the trait identity and substitution for this query.
+    pub fn missing_members_for_prepared_impl(
         &self,
         impl_ref: ImplRef,
-        trait_ref: TraitDefRef,
+    ) -> anyhow::Result<Vec<MissingTraitMember>> {
+        let Some(application) = self
+            .trait_application(impl_ref)
+            .context("resolve prepared trait impl application")?
+        else {
+            return Ok(Vec::new());
+        };
+        self.missing_members_for_application(impl_ref, &application)
+            .context("project prepared trait impl members")
+    }
+
+    /// The database resolves current signatures in their containing scope, so saved and prepared
+    /// impls use the same header query to instantiate trait-owned `T` and `Self` references.
+    fn trait_application(&self, impl_ref: ImplRef) -> anyhow::Result<Option<TraitApplication>> {
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
+        let Some(header) = signatures
+            .impl_header(impl_ref)
+            .context("lower trait impl header")?
+        else {
+            return Ok(None);
+        };
+        Ok(header.trait_ref.map(|lowering| lowering.application))
+    }
+
+    /// Project supported declarations after resolving the impl's trait identity and substitution.
+    fn missing_members_for_application(
+        &self,
+        impl_ref: ImplRef,
         application: &TraitApplication,
     ) -> anyhow::Result<Vec<MissingTraitMember>> {
+        let trait_ref = application.def;
         let items = ItemStoreQuery::new(self.db);
         let Some(impl_data) = items
             .impl_data(impl_ref)

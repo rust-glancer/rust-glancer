@@ -8,6 +8,8 @@ use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
+use crate::build::current::declaration::CurrentDeclarationBuilder;
+
 use crate::ir::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::{
@@ -73,6 +75,25 @@ impl<'a> BodyLowering<'a> {
         }
     }
 
+    fn lower_current_declaration(
+        &mut self,
+        item: ast::Item,
+        role: CurrentRootItems,
+        scope: ScopeId,
+    ) {
+        let declaration = CurrentDeclarationBuilder {
+            file: self.body_source.file_id,
+            line_index: self.line_index,
+            cfg: self.cfg,
+            interner: self.interner,
+            items: &mut self.builder.source_items,
+        }
+        .root(item, role);
+        if let Some(declaration) = declaration {
+            self.builder.scopes[scope].source_items.push(declaration);
+        }
+    }
+
     pub(super) fn lower_function(
         mut self,
         function: ast::Fn,
@@ -82,19 +103,11 @@ impl<'a> BodyLowering<'a> {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
-        match current_root_items {
-            CurrentRootItems::None => {}
-            CurrentRootItems::Declaration => {
-                self.lower_request_root_function(&function, param_scope);
-            }
-            CurrentRootItems::EnclosingImpl { include_selected } => {
-                self.lower_current_enclosing_impl(
-                    ast::AssocItem::Fn(function.clone()),
-                    param_scope,
-                    include_selected,
-                );
-            }
-        }
+        self.lower_current_declaration(
+            ast::Item::Fn(function.clone()),
+            current_root_items,
+            param_scope,
+        );
         let function_params = self.lower_params(function.param_list(), param_scope);
         let params = function_params
             .iter()
@@ -121,19 +134,11 @@ impl<'a> BodyLowering<'a> {
         current_root_items: CurrentRootItems,
     ) -> LoweredBodyData {
         let root_scope = self.builder.alloc_scope(None);
-        match current_root_items {
-            CurrentRootItems::None => {}
-            CurrentRootItems::Declaration => {
-                self.lower_request_root_const(&konst, root_scope);
-            }
-            CurrentRootItems::EnclosingImpl { include_selected } => {
-                self.lower_current_enclosing_impl(
-                    ast::AssocItem::Const(konst.clone()),
-                    root_scope,
-                    include_selected,
-                );
-            }
-        }
+        self.lower_current_declaration(
+            ast::Item::Const(konst.clone()),
+            current_root_items,
+            root_scope,
+        );
         self.lower_initializer(expr, root_scope)
     }
 
@@ -144,15 +149,11 @@ impl<'a> BodyLowering<'a> {
         current_root_items: CurrentRootItems,
     ) -> LoweredBodyData {
         let root_scope = self.builder.alloc_scope(None);
-        match current_root_items {
-            CurrentRootItems::None => {}
-            CurrentRootItems::Declaration => {
-                self.lower_request_root_static(&static_, root_scope);
-            }
-            CurrentRootItems::EnclosingImpl { .. } => {
-                unreachable!("a static declaration cannot belong to an impl")
-            }
-        }
+        self.lower_current_declaration(
+            ast::Item::Static(static_.clone()),
+            current_root_items,
+            root_scope,
+        );
         self.lower_initializer(expr, root_scope)
     }
 

@@ -7,11 +7,10 @@ use rg_syntax::{
 
 use rg_ir_model::{ExprId, Mutability, ScopeId, StmtId};
 use rg_item_tree::{
-    ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _,
-    FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId,
-    MacroCallItem, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind,
-    StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
-    VisibilityLevel,
+    Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _, FunctionItem,
+    ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallItem,
+    MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem,
+    StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_parse::Span;
 use rg_text::Name;
@@ -22,6 +21,7 @@ use crate::ir::{
 };
 
 use super::body::BodyLowering;
+use crate::build::local_items::LocalItemLowering;
 
 impl BodyLowering<'_> {
     pub(super) fn lower_params(
@@ -400,19 +400,7 @@ impl BodyLowering<'_> {
                 None,
                 item.syntax(),
             )),
-            ast::Item::Const(item) => {
-                let kind = ItemKind::Const(ConstItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
+            ast::Item::Const(_) => self.lower_source_declaration(item),
             ast::Item::Enum(item) => {
                 let kind = ItemKind::Enum(EnumItem::from_ast(
                     item,
@@ -449,19 +437,7 @@ impl BodyLowering<'_> {
                     self.source(item.syntax()),
                 ))
             }
-            ast::Item::Fn(item) => {
-                let kind = ItemKind::Function(FunctionItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
+            ast::Item::Fn(_) => self.lower_source_declaration(item),
             ast::Item::Impl(item) => {
                 let items = self.lower_source_assoc_items(item.assoc_item_list());
                 let kind = ItemKind::Impl(ImplItem::from_ast(
@@ -490,19 +466,7 @@ impl BodyLowering<'_> {
                     item.syntax(),
                 ))
             }
-            ast::Item::Static(item) => {
-                let kind = ItemKind::Static(StaticItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
+            ast::Item::Static(_) => self.lower_source_declaration(item),
             ast::Item::Struct(item) => {
                 let kind = ItemKind::Struct(StructItem::from_ast(
                     item,
@@ -534,19 +498,7 @@ impl BodyLowering<'_> {
                     item.syntax(),
                 ))
             }
-            ast::Item::TypeAlias(item) => {
-                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                    item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
+            ast::Item::TypeAlias(_) => self.lower_source_declaration(item),
             ast::Item::Union(item) => {
                 let kind = ItemKind::Union(UnionItem::from_ast(
                     item,
@@ -726,48 +678,15 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
-        match item {
-            ast::AssocItem::Const(item) => {
-                let kind = ItemKind::Const(ConstItem::from_ast(
-                    &item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
-            ast::AssocItem::Fn(item) => {
-                let kind = ItemKind::Function(FunctionItem::from_ast(
-                    &item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
-            ast::AssocItem::TypeAlias(item) => {
-                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                    &item,
-                    (self.line_index, &mut *self.interner),
-                ));
-                Some(self.named_source_item_node(
-                    kind,
-                    item.name(),
-                    VisibilityLevel::from_ast(&item.visibility(), ()),
-                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
-                    item.syntax(),
-                ))
-            }
-            ast::AssocItem::MacroCall(_) => None,
-        }
+        let item = LocalItemLowering::associated(item)?;
+        self.lower_source_declaration(&item)
+    }
+
+    fn lower_source_declaration(&mut self, item: &ast::Item) -> Option<ItemNode> {
+        let source = self.source(item.syntax());
+        let name_span =
+            LocalItemLowering::name_syntax(item).map(|name| self.source(name.syntax()).span);
+        LocalItemLowering::declaration(item, self.line_index, self.interner, source, name_span)
     }
 
     pub(super) fn named_source_item_node(
