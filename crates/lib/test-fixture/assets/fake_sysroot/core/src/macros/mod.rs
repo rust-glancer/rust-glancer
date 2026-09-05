@@ -50,6 +50,12 @@ macro_rules! format_args_nl {
 
 #[rustc_builtin_macro]
 #[macro_export]
+macro_rules! include {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+#[rustc_builtin_macro]
+#[macro_export]
 macro_rules! include_bytes {
     ($($args:tt)*) => {{ /* compiler built-in */ }};
 }

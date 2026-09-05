@@ -1,6 +1,8 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+};
 
 #[test]
 fn resolves_body_references_to_definition_targets() {
@@ -853,7 +855,7 @@ fn main() {
 
 #[test]
 fn resolves_standard_prelude_signature_paths() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -862,27 +864,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub fn use_it(_: Std$goto_prelude$Prelude) {}
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod marker {
-    pub struct StdPrelude;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::marker::StdPrelude;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
+pub fn use_it(_: Str$goto_prelude$ing) {}
 "#,
         &[
             AnalysisQuery::goto("goto prelude type", "goto_prelude")
@@ -890,14 +872,14 @@ pub struct TokenStream;
         ],
         expect![[r#"
             goto prelude type
-            - struct StdPrelude @ 2:16-2:26
+            - struct String @ 1:12-1:18
         "#]],
     );
 }
 
 #[test]
 fn resolves_standard_prelude_signature_paths_shadowed_by_non_type_names() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -906,37 +888,17 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-const StdPrelude: u8 = 0;
+const String: u8 = 0;
 
-pub fn value_shadow(_: Std$goto_value_shadow$Prelude) {}
+pub fn value_shadow(_: Str$goto_value_shadow$ing) {}
 
 mod macro_shadow {
-    macro_rules! StdPrelude {
+    macro_rules! String {
         () => {};
     }
 
-    pub fn use_it(_: Std$goto_macro_shadow$Prelude) {}
+    pub fn use_it(_: Str$goto_macro_shadow$ing) {}
 }
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod marker {
-    pub struct StdPrelude;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::marker::StdPrelude;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
 "#,
         &[
             AnalysisQuery::goto("goto prelude type shadowed by value", "goto_value_shadow")
@@ -946,10 +908,10 @@ pub struct TokenStream;
         ],
         expect![[r#"
             goto prelude type shadowed by value
-            - struct StdPrelude @ 2:16-2:26
+            - struct String @ 1:12-1:18
 
             goto prelude type shadowed by macro
-            - struct StdPrelude @ 2:16-2:26
+            - struct String @ 1:12-1:18
         "#]],
     );
 }

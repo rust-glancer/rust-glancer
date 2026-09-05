@@ -22,6 +22,19 @@ fn cache_instances_claim_distinct_live_slots() {
     assert_ne!(first.root(), second.root());
     assert!(first.root().join("instance.lock").exists());
     assert!(second.root().join("instance.lock").exists());
+
+    let cache_plan = WorkspaceCachePlan::build(&workspace);
+    let first_store =
+        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &first);
+    let second_store =
+        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &second);
+    let header = package_header(&workspace, &cache_plan);
+
+    assert_ne!(
+        first_store.package_artifact_path(&header.package),
+        second_store.package_artifact_path(&header.package),
+        "live cache instances should store package artifacts under distinct paths",
+    );
 }
 
 #[test]
@@ -40,27 +53,6 @@ fn cache_instances_reuse_unlocked_slots() {
 
     assert_eq!(reused.slot_for_tests(), 1);
     assert_eq!(reused.root(), first_root.as_path());
-}
-
-#[test]
-fn cache_stores_under_distinct_instances_use_distinct_artifact_paths() {
-    let fixture = instance_fixture();
-    let workspace = fixture.workspace_metadata();
-    let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let first = PackageCacheInstance::for_workspace(&workspace)
-        .expect("first cache instance should claim a slot");
-    let second = PackageCacheInstance::for_workspace(&workspace)
-        .expect("second cache instance should claim a slot");
-    let first_store =
-        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &first);
-    let second_store =
-        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &second);
-    let header = package_header(&workspace, &cache_plan);
-
-    assert_ne!(
-        first_store.package_artifact_path(&header.package),
-        second_store.package_artifact_path(&header.package),
-    );
 }
 
 fn instance_fixture() -> ProjectSourceFixture {

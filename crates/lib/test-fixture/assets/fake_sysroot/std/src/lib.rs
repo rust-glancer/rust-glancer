@@ -6,7 +6,7 @@ pub mod prelude;
 pub mod sync;
 
 pub use core::{
-    cfg, cfg_select, column, concat, env, file, format_args, format_args_nl, include_bytes,
+    cfg, cfg_select, column, concat, env, file, format_args, format_args_nl, include, include_bytes,
     include_str, line, module_path, option_env, stringify,
 };
 pub use core::cell;

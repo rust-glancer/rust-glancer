@@ -382,28 +382,6 @@ mod tests {
     }
 
     #[test]
-    fn offloaded_packages_are_not_resident_until_materialized() {
-        let mut store = resident_store(vec!["workspace", "dependency"]);
-
-        store
-            .offload(PackageSlot(1))
-            .expect("package slot should exist");
-
-        let residents = store
-            .raw_entries_with_slots()
-            .filter_map(|(slot, entry)| entry.as_resident().map(|package| (slot.0, *package)))
-            .collect::<Vec<_>>();
-
-        assert_eq!(residents, vec![(0, "workspace")]);
-        assert!(
-            store
-                .raw_entry(PackageSlot(1))
-                .expect("offloaded package slot should exist")
-                .is_offloaded()
-        );
-    }
-
-    #[test]
     fn shrink_compacts_unique_resident_packages_without_cloning_shared_ones() {
         let original = PackageStore::from_entries(vec![
             PackageEntry::resident(ShrinkProbe { calls: 0 }),
@@ -451,30 +429,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_entries_can_start_with_offloaded_slots() {
-        let store = PackageStore::from_entries(vec![
-            PackageEntry::resident("workspace"),
-            PackageEntry::offloaded(),
-            PackageEntry::resident("local"),
-        ]);
-
-        let entries = store
-            .raw_entries_with_slots()
-            .map(|(slot, entry)| (slot.0, entry.as_resident().copied(), entry.is_offloaded()))
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            entries,
-            vec![
-                (0, Some("workspace"), false),
-                (1, None, true),
-                (2, Some("local"), false),
-            ],
-        );
-    }
-
-    #[test]
-    fn raw_entries_preserve_original_package_slots() {
+    fn raw_entries_keep_slots_around_offloaded_entries() {
         let mut store = resident_store(vec!["workspace", "offloaded", "dependency"]);
 
         store

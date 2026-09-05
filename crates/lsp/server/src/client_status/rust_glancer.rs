@@ -172,7 +172,10 @@ mod tests {
                     state: ActiveWorkspaceState::Indexing,
                     message: None,
                 },
-                "root: workspace/project_a\nstate: indexing",
+                serde_json::json!({
+                    "root": "workspace/project_a",
+                    "state": "indexing",
+                }),
             ),
             (
                 ActiveWorkspaceStatus {
@@ -180,7 +183,10 @@ mod tests {
                     state: ActiveWorkspaceState::Ready,
                     message: None,
                 },
-                "root: workspace/project_b\nstate: ready",
+                serde_json::json!({
+                    "root": "workspace/project_b",
+                    "state": "ready",
+                }),
             ),
             (
                 ActiveWorkspaceStatus {
@@ -188,13 +194,16 @@ mod tests {
                     state: ActiveWorkspaceState::Failed,
                     message: Some("engine process exited unexpectedly".to_string()),
                 },
-                "message: engine process exited unexpectedly\nroot: workspace/project_c\nstate: failed",
+                serde_json::json!({
+                    "root": "workspace/project_c",
+                    "state": "failed",
+                    "message": "engine process exited unexpectedly",
+                }),
             ),
         ];
 
         for (status, expected) in cases {
-            let actual = render_params(ActiveWorkspaceChanged::params(&status));
-            assert_eq!(actual, expected);
+            assert_eq!(ActiveWorkspaceChanged::params(&status), expected);
         }
     }
 
@@ -202,42 +211,28 @@ mod tests {
     fn deferred_indexing_params_render_root_and_terminal_outcome() {
         let root = Path::new("workspace/project_a");
         assert_eq!(
-            render_params(DeferredIndexingStarted::params(root)),
-            "root: workspace/project_a"
+            DeferredIndexingStarted::params(root),
+            serde_json::json!({ "root": "workspace/project_a" })
         );
         assert_eq!(
-            render_params(DeferredIndexingFinished::params(
-                root,
-                &DeferredIndexingOutcome::Succeeded,
-            )),
-            "outcome: succeeded\nroot: workspace/project_a"
+            DeferredIndexingFinished::params(root, &DeferredIndexingOutcome::Succeeded,),
+            serde_json::json!({
+                "root": "workspace/project_a",
+                "outcome": "succeeded",
+            })
         );
         assert_eq!(
-            render_params(DeferredIndexingFinished::params(
+            DeferredIndexingFinished::params(
                 root,
                 &DeferredIndexingOutcome::Failed {
                     message: "body indexing failed".to_string(),
                 },
-            )),
-            "message: body indexing failed\noutcome: failed\nroot: workspace/project_a"
-        );
-    }
-
-    fn render_params(params: LSPAny) -> String {
-        let LSPAny::Object(params) = params else {
-            panic!("active workspace notification params should be an object");
-        };
-
-        let mut entries = params
-            .into_iter()
-            .map(|(key, value)| {
-                let LSPAny::String(value) = value else {
-                    panic!("active workspace notification field `{key}` should be a string");
-                };
-                format!("{key}: {value}")
+            ),
+            serde_json::json!({
+                "root": "workspace/project_a",
+                "outcome": "failed",
+                "message": "body indexing failed",
             })
-            .collect::<Vec<_>>();
-        entries.sort();
-        entries.join("\n")
+        );
     }
 }

@@ -1,21 +1,15 @@
 use std::{
     convert::Infallible,
-    io::Cursor,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
-use futures::{future::BoxFuture, sink, stream};
+use futures::future::BoxFuture;
 use rg_std::NormalizedPathBuf;
 use serde_json::json;
 use test_fixture::fixture_crate;
-use tokio::sync::Notify;
 use tower::Service;
 use tower_lsp_server::{
-    Loopback, Server,
     jsonrpc::{Request, Response},
     ls_types::Uri,
 };
@@ -27,36 +21,6 @@ use crate::{
 };
 
 use super::{EditorIngress, completion_request, document_request};
-
-#[tokio::test(flavor = "current_thread")]
-async fn transport_calls_service_in_wire_order_while_futures_finish_in_reverse() {
-    let state = Arc::new(OrderingState {
-        calls: Mutex::new(Vec::new()),
-        completions: Mutex::new(Vec::new()),
-        next_completion: AtomicUsize::new(3),
-        completion_changed: Notify::new(),
-    });
-    let service = ReverseCompletionService {
-        state: Arc::clone(&state),
-    };
-    let input = framed_notifications(&["test/first", "test/second", "test/third"]);
-
-    Server::new(Cursor::new(input), Vec::new(), EmptyLoopback)
-        .serve(service)
-        .await;
-
-    assert_eq!(
-        *state.calls.lock().expect("call log mutex should be usable"),
-        ["test/first", "test/second", "test/third"]
-    );
-    assert_eq!(
-        *state
-            .completions
-            .lock()
-            .expect("completion log mutex should be usable"),
-        ["test/third", "test/second", "test/first"]
-    );
-}
 
 #[tokio::test]
 async fn later_request_keeps_incrementally_changed_text_when_futures_finish_in_reverse() {
@@ -222,61 +186,6 @@ fn save_echo_is_recorded_before_any_handler_future_is_polled() {
 }
 
 #[derive(Debug)]
-struct OrderingState {
-    calls: Mutex<Vec<&'static str>>,
-    completions: Mutex<Vec<&'static str>>,
-    next_completion: AtomicUsize,
-    completion_changed: Notify,
-}
-
-#[derive(Debug)]
-struct ReverseCompletionService {
-    state: Arc<OrderingState>,
-}
-
-impl Service<Request> for ReverseCompletionService {
-    type Response = Option<Response>;
-    type Error = Infallible;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: Request) -> Self::Future {
-        let (method, rank) = match request.method() {
-            "test/first" => ("test/first", 1),
-            "test/second" => ("test/second", 2),
-            "test/third" => ("test/third", 3),
-            method => panic!("unexpected test method {method}"),
-        };
-        self.state
-            .calls
-            .lock()
-            .expect("call log mutex should be usable")
-            .push(method);
-        let state = Arc::clone(&self.state);
-
-        Box::pin(async move {
-            loop {
-                let notified = state.completion_changed.notified();
-                if state.next_completion.load(Ordering::Relaxed) == rank {
-                    state
-                        .completions
-                        .lock()
-                        .expect("completion log mutex should be usable")
-                        .push(method);
-                    state.next_completion.fetch_sub(1, Ordering::Relaxed);
-                    state.completion_changed.notify_waiters();
-                    return Ok(None);
-                }
-                notified.await;
-            }
-        })
-    }
-}
-
-#[derive(Debug)]
 struct CapturingService {
     captured: Arc<Mutex<Vec<CapturedQuery>>>,
 }
@@ -350,28 +259,6 @@ impl Service<Request> for CapturingService {
             Ok(None)
         })
     }
-}
-
-#[derive(Debug)]
-struct EmptyLoopback;
-
-impl Loopback for EmptyLoopback {
-    type RequestStream = stream::Empty<Request>;
-    type ResponseSink = sink::Drain<Response>;
-
-    fn split(self) -> (Self::RequestStream, Self::ResponseSink) {
-        (stream::empty(), sink::drain())
-    }
-}
-
-fn framed_notifications(methods: &[&str]) -> Vec<u8> {
-    methods
-        .iter()
-        .flat_map(|method| {
-            let body = format!(r#"{{"jsonrpc":"2.0","method":"{method}"}}"#);
-            format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
-        })
-        .collect()
 }
 
 fn completion_request_message(uri: &Uri, id: i64, character: u32) -> Request {

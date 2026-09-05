@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{DocumentSymbolsQuery, check_document_symbols};
+use super::utils::{DocumentSymbolsQuery, check_document_symbol_queries, check_document_symbols};
 
 #[test]
 fn outlines_macro_generated_items_at_call_site() {
@@ -244,7 +244,7 @@ pub fn run() {}
 
 #[test]
 fn outlines_module_declarations_and_inline_module_children() {
-    check_document_symbols(
+    check_document_symbol_queries(
         r#"
 //- /Cargo.toml
 [package]
@@ -270,7 +270,10 @@ pub struct Root;
 //- /src/generated.rs
 pub struct Generated;
 "#,
-        DocumentSymbolsQuery::new("module document symbols", "/src/lib.rs"),
+        &[
+            DocumentSymbolsQuery::new("module document symbols", "/src/lib.rs"),
+            DocumentSymbolsQuery::new("out-of-line module file symbols", "/src/generated.rs"),
+        ],
         expect![[r#"
             module document symbols
             - module api @ 1:1-9:2 selection 1:5-1:8
@@ -280,37 +283,7 @@ pub struct Generated;
                 - fn run @ 7:9-7:24 selection 7:16-7:19
             - module generated @ 11:1-11:15 selection 11:5-11:14
             - struct Root @ 13:1-13:17 selection 13:12-13:16
-        "#]],
-    );
 
-    check_document_symbols(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod api {
-    pub struct User {
-        pub id: u32,
-    }
-
-    mod nested {
-        pub fn run() {}
-    }
-}
-
-mod generated;
-
-pub struct Root;
-
-//- /src/generated.rs
-pub struct Generated;
-"#,
-        DocumentSymbolsQuery::new("out-of-line module file symbols", "/src/generated.rs"),
-        expect![[r#"
             out-of-line module file symbols
             - struct Generated @ 1:1-1:22 selection 1:12-1:21
         "#]],

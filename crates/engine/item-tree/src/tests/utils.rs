@@ -23,13 +23,6 @@ pub(super) fn check_project_item_tree_with_declarations(fixture: &str, expect: E
     expect.assert_eq(&actual);
 }
 
-pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) {
-    let db = ItemTreeFixtureDb::build(fixture);
-    let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Spans).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
-}
-
 type ItemTreeFixtureDb = ItemTreeFixture;
 
 /// Project-level item-tree snapshot context.
@@ -184,26 +177,6 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         if let ItemKind::MacroCall(macro_call) = &item.kind {
             let path = macro_call.path.as_deref().unwrap_or("<missing>");
             line.push_str(&format!(" [{path}]"));
-        }
-
-        if matches!(self.mode, SnapshotMode::Spans) {
-            let line_column = item.span.line_column(
-                self.package
-                    .parsed_file(item.file_id)
-                    .expect("item file should exist while rendering source span")
-                    .line_index()
-                    .expect("item file line index should load while rendering source span"),
-            );
-            line.push_str(&format!(
-                " [{} {}:{}-{}:{} ({}..{})]",
-                self.file_label(item.file_id),
-                line_column.start.line + 1,
-                line_column.start.column + 1,
-                line_column.end.line + 1,
-                line_column.end.column + 1,
-                item.span.text.start,
-                item.span.text.end,
-            ));
         }
 
         writeln!(dump, "{line}").expect("string writes should not fail");
@@ -488,7 +461,6 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 enum SnapshotMode {
     Structure,
     Declarations,
-    Spans,
 }
 
 fn render_param(param: &crate::ParamItem) -> String {

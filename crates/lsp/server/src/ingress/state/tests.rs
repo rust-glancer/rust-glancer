@@ -55,7 +55,7 @@ fn internal_revisions_ignore_repeated_reset_and_missing_client_versions() {
 }
 
 #[test]
-fn close_and_reopen_allocates_a_new_session_even_when_client_version_resets() {
+fn close_and_reopen_establishes_a_new_session_boundary() {
     let path = synthetic_test_path("workspace/src/lib.rs");
     let state = EditorStateHandle::default();
 
@@ -64,6 +64,11 @@ fn close_and_reopen_allocates_a_new_session_even_when_client_version_resets() {
         LifecycleEvent::Open { document, .. } => document.session(),
         event => panic!("expected open event, got {event:?}"),
     };
+    let captured = state
+        .document(Some(path.clone()))
+        .expect("opened document should be captured");
+    let invalidation = captured.document_revision_watch();
+
     let closed = state.close(&path).expect("open document should close");
     let reopened = state.open(path.clone(), Some(1), "fn second() {}".to_string());
     let second_session = match reopened.event() {
@@ -81,6 +86,16 @@ fn close_and_reopen_allocates_a_new_session_even_when_client_version_resets() {
             .text(),
         "fn second() {}"
     );
+    assert!(invalidation.is_superseded());
+    assert!(!captured.is_global_operation_current(
+        captured.document().target(),
+        captured.open_documents_revision(),
+    ));
+    assert!(!captured.is_target_current(captured.document().target()));
+    assert!(matches!(
+        captured.recapture_position(Position::new(0, 8)),
+        Err(PositionRecaptureError::SessionEnded)
+    ));
 }
 
 #[test]
@@ -333,27 +348,6 @@ fn sibling_edit_invalidates_only_the_open_document_set_identity() {
 }
 
 #[test]
-fn close_and_reopen_invalidates_the_captured_session_signal() {
-    let path = synthetic_test_path("workspace/src/lib.rs");
-    let state = EditorStateHandle::default();
-    state.open(path.clone(), Some(7), "fn old_session() {}".to_string());
-    let captured = state
-        .document(Some(path.clone()))
-        .expect("opened document should be captured");
-    let invalidation = captured.document_revision_watch();
-
-    state.close(&path).expect("open document should close");
-    state.open(path, Some(1), "fn new_session() {}".to_string());
-
-    assert!(invalidation.is_superseded());
-    assert!(!captured.is_global_operation_current(
-        captured.document().target(),
-        captured.open_documents_revision(),
-    ));
-    assert!(!captured.is_target_current(captured.document().target()));
-}
-
-#[test]
 fn saved_diagnostics_require_exact_open_editor_text() {
     let path = synthetic_test_path("workspace/src/lib.rs");
     let source_path = normalized_test_path("workspace/src/lib.rs");
@@ -547,24 +541,6 @@ fn full_replacement_never_reuses_an_unproven_numeric_position() {
 
     assert!(matches!(error, PositionRecaptureError::Unavailable(_)));
     assert!(error.reason().contains("cannot be mapped"));
-}
-
-#[test]
-fn recapture_never_crosses_a_close_and_reopen_boundary() {
-    let path = synthetic_test_path("workspace/src/lib.rs");
-    let state = EditorStateHandle::default();
-    state.open(path.clone(), Some(1), "impl Old".to_string());
-    let captured = state
-        .document(Some(path.clone()))
-        .expect("opened document should be captured");
-
-    state.close(&path).expect("open document should close");
-    state.open(path, Some(1), "impl New".to_string());
-
-    assert!(matches!(
-        captured.recapture_position(Position::new(0, 8)),
-        Err(PositionRecaptureError::SessionEnded)
-    ));
 }
 
 #[test]

@@ -43,16 +43,18 @@ fn successful_validation_discards_existence_probes() {
             .probe_exists(&missing_module_path)
             .expect("module existence should be captured")
     );
+    let with_existence_probe = inventory.memory_size();
     inventory.seal();
 
     inventory
         .validate_saved()
         .expect("unchanged source observations should validate");
+    let after_validation = inventory.memory_size();
 
-    assert!(matches!(
-        inventory.probe_exists(&missing_module_path),
-        Err(SourceError::Sealed { .. })
-    ));
+    assert!(
+        after_validation < with_existence_probe,
+        "successful validation should release existence-map keys and capacity",
+    );
 }
 
 #[test]
@@ -124,14 +126,12 @@ fn candidate_fork_does_not_replace_published_source() {
 }
 
 #[test]
-fn captured_saved_source_keeps_canonical_path_text_and_revision_together() {
+fn captured_saved_source_validation_checks_disk_without_replacing_captured_text() {
     let dir = tempfile::tempdir().expect("temporary source directory should be created");
     let path = dir.path().join("lib.rs");
-    let text = "pub struct Captured;\n";
+    let text = "pub struct Capturé;\n";
     fs::write(&path, text).expect("fixture source should be written");
-
-    let change = CapturedSource::new(&path, text)
-        .expect("saved source should capture from an existing path");
+    let change = CapturedSource::new(&path, text).expect("saved source should capture");
 
     assert_eq!(
         change.path(),
@@ -144,15 +144,8 @@ fn captured_saved_source_keeps_canonical_path_text_and_revision_together() {
         SourceRevision::from_bytes(text.as_bytes())
     );
     assert_eq!(change.byte_len(), text.len() as u64);
-}
+    assert_ne!(text.len(), text.chars().count());
 
-#[test]
-fn captured_saved_source_validation_checks_disk_without_replacing_captured_text() {
-    let dir = tempfile::tempdir().expect("temporary source directory should be created");
-    let path = dir.path().join("lib.rs");
-    fs::write(&path, "pub struct Captured;\n").expect("fixture source should be written");
-    let change =
-        CapturedSource::new(&path, "pub struct Captured;\n").expect("saved source should capture");
     let inventory = SourceInventory::new();
     let entry = inventory
         .replace_saved(&change)
@@ -169,6 +162,6 @@ fn captured_saved_source_validation_checks_disk_without_replacing_captured_text(
             .text()
             .expect("resident captured text should remain readable")
             .as_ref(),
-        "pub struct Captured;\n"
+        text
     );
 }

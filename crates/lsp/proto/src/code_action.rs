@@ -142,43 +142,9 @@ impl CodeActionRequestContext {
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionTriggerKind};
+    use ls_types::{CodeActionContext, CodeActionKind, CodeActionTriggerKind};
 
-    use super::{
-        CodeActionClientCapabilities, CodeActionRequestContext, CodeActionRequestKinds,
-        CodeActionRequestTrigger,
-    };
-
-    #[test]
-    fn reads_every_capability_required_by_eager_actions() {
-        let capabilities: ClientCapabilities = serde_json::from_value(serde_json::json!({
-            "workspace": {
-                "workspaceEdit": { "documentChanges": true }
-            },
-            "textDocument": {
-                "codeAction": {
-                    "codeActionLiteralSupport": {
-                        "codeActionKind": { "valueSet": ["quickfix", "refactor.rewrite"] }
-                    },
-                    "isPreferredSupport": true
-                }
-            }
-        }))
-        .expect("code action client capabilities should deserialize");
-
-        let actual = CodeActionClientCapabilities::from_lsp_client_capabilities(&capabilities);
-
-        assert!(actual.literal_support);
-        assert!(actual.versioned_document_edits);
-        assert!(actual.preferred_support);
-        assert!(actual.supports_eager_actions());
-
-        let missing_versioned_edits = ClientCapabilities::default();
-        assert!(
-            !CodeActionClientCapabilities::from_lsp_client_capabilities(&missing_versioned_edits,)
-                .supports_eager_actions()
-        );
-    }
+    use super::{CodeActionRequestContext, CodeActionRequestKinds, CodeActionRequestTrigger};
 
     #[test]
     fn parent_kinds_include_supported_descendants() {

@@ -135,9 +135,10 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             return Ok(None);
         }
 
-        // TODO: If the trait signature refers to `protocol::Request`, the shared renderer inserts
-        // only `Request`. Before this action can always produce compiling source, either render a
-        // path visible from the impl module or add the required imports.
+        // TODO: Decide how generated signatures should handle names that are not visible from the
+        // impl module. Fully qualified paths become noisy for traits with many members, while
+        // inserting imports can conflict with the surrounding module. Until that policy exists,
+        // keep the name as written in the trait and let the user qualify or import it if needed.
         //
         // 3. Render the remaining members together and replace only whitespace before the closing
         // brace. Everything else in the possibly-unsaved impl stays untouched.

@@ -269,61 +269,107 @@ impl<'a> CargoDiagnosticMapper<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use test_fixture::fixture_crate;
 
-    use ls_types::{Diagnostic, Position, Range};
-    use rg_std::UniqueVec;
-
-    use super::CargoDiagnosticMapper;
+    use super::{CargoDiagnosticMapper, CargoDiagnostics};
 
     #[test]
     fn deduplicates_identical_cargo_diagnostics() {
-        let diagnostic = Diagnostic {
-            range: Range::new(Position::new(0, 0), Position::new(0, 3)),
-            severity: None,
-            code: None,
-            code_description: None,
-            source: Some("cargo check".to_string()),
-            message: "unused variable".to_string(),
-            related_information: None,
-            tags: None,
-            data: None,
-        };
-        let mut diagnostics = UniqueVec::new();
+        let fixture = fixture_crate(
+            r#"
+            //- /Cargo.toml
+            [package]
+            name = "diagnostics"
+            version = "0.1.0"
+            edition = "2024"
 
-        diagnostics.push(diagnostic.clone());
-        diagnostics.push(diagnostic);
+            //- /src/lib.rs
+            pub fn demo() {}
+            "#,
+        );
+        let message = serde_json::json!({
+            "reason": "compiler-message",
+            "package_id": "path+file:///diagnostics#0.1.0",
+            "target": {
+                "kind": ["lib"],
+                "crate_types": ["lib"],
+                "name": "diagnostics",
+                "src_path": fixture.path("src/lib.rs"),
+                "edition": "2024",
+                "doc": true,
+                "doctest": true,
+                "test": true
+            },
+            "message": {
+                "rendered": null,
+                "children": [],
+                "code": null,
+                "level": "warning",
+                "message": "unused variable",
+                "spans": [{
+                    "file_name": "src/lib.rs",
+                    "byte_start": 7,
+                    "byte_end": 11,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "column_start": 8,
+                    "column_end": 12,
+                    "is_primary": true,
+                    "text": [{
+                        "text": "pub fn demo() {}",
+                        "highlight_start": 8,
+                        "highlight_end": 12
+                    }],
+                    "label": null,
+                    "suggested_replacement": null,
+                    "suggestion_applicability": null,
+                    "expansion": null
+                }]
+            }
+        });
+        let message = serde_json::to_vec(&message).expect("compiler message should serialize");
 
-        assert_eq!(diagnostics.len(), 1);
+        // Cargo and wrappers can mirror one compiler message to both output streams.
+        let diagnostics =
+            CargoDiagnostics::parse(&fixture.path(""), "cargo check", &message, &message)
+                .into_inner();
+
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "one source should receive diagnostics"
+        );
+        let published = diagnostics
+            .values()
+            .next()
+            .expect("source should receive diagnostics");
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].message, "unused variable");
     }
 
     #[test]
     fn derives_package_root_from_target_src_path() {
-        let temp_root = std::env::temp_dir().join(format!(
-            "rust-glancer-check-diagnostics-{}",
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time should be after Unix epoch")
-                .as_nanos()
-        ));
-        let package_root = temp_root.join("crates/member");
-        let src_dir = package_root.join("src/bin");
-        fs::create_dir_all(&src_dir).expect("test package directory should be created");
-        fs::write(
-            package_root.join("Cargo.toml"),
-            "[package]\nname = \"member\"\n",
-        )
-        .expect("test manifest should be written");
+        let fixture = fixture_crate(
+            r#"
+            //- /Cargo.toml
+            [workspace]
+            members = ["crates/member"]
 
-        let target_src_path = src_dir.join("tool.rs");
-        assert_eq!(
-            CargoDiagnosticMapper::package_root_from_target_src_path(&target_src_path),
-            Some(package_root)
+            //- /crates/member/Cargo.toml
+            [package]
+            name = "member"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /crates/member/src/bin/tool.rs
+            fn main() {}
+            "#,
         );
 
-        fs::remove_dir_all(temp_root).expect("test package directory should be removed");
+        let target_src_path = fixture.path("crates/member/src/bin/tool.rs");
+        assert_eq!(
+            CargoDiagnosticMapper::package_root_from_target_src_path(&target_src_path),
+            Some(fixture.path("crates/member"))
+        );
     }
 }

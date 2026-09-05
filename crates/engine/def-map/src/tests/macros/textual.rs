@@ -1,7 +1,7 @@
 use super::super::utils;
 
 #[test]
-fn parent_textual_macro_rules_is_visible_in_later_child_module() {
+fn parent_textual_macro_rules_respects_child_module_source_order() {
     let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
@@ -11,55 +11,32 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-macro_rules! make_user {
+mod earlier {
+    make_item!();
+}
+
+macro_rules! make_item {
     () => {
-        pub struct User;
+        pub struct Item;
     };
 }
 
-mod child {
-    make_user!();
+mod later {
+    make_item!();
 }
 
-pub use child::User;
+pub use earlier::Item as BeforeDefinition;
+pub use later::Item as AfterDefinition;
 "#,
     );
     let target = project.lib("textual_parent_macro_fixture");
 
     target
-        .entry("User")
-        .assert_type_exists("parent textual macro_rules should be visible in later child modules");
-}
-
-#[test]
-fn parent_textual_macro_rules_is_not_visible_in_earlier_child_module() {
-    let project = utils::DefMapFixtureDb::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "textual_late_parent_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod child {
-    make_hidden!();
-}
-
-macro_rules! make_hidden {
-    () => {
-        pub struct Hidden;
-    };
-}
-
-pub use child::Hidden;
-"#,
-    );
-    let target = project.lib("textual_late_parent_macro_fixture");
-
-    target
-        .entry("Hidden")
+        .entry("BeforeDefinition")
         .assert_missing("parent textual macro_rules should not be visible before its definition");
+    target.entry("AfterDefinition").assert_type_exists(
+        "parent textual macro_rules should be visible in child modules after its definition",
+    );
 }
 
 #[test]

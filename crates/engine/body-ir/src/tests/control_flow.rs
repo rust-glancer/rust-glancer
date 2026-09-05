@@ -374,7 +374,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 }
 
 #[test]
-fn propagates_for_loop_items_from_method_returned_slice() {
+fn propagates_for_loop_items_from_slices_and_slice_iterators() {
     check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
@@ -411,117 +411,13 @@ storage = { path = "../storage" }
 //- /app/src/lib.rs
 use storage::DefMap;
 
-pub fn use_it(def_map: &DefMap) {
+pub fn use_direct(def_map: &DefMap) {
     for import in def_map.imports() {
         import;
     }
 }
-"#,
-        expect![[r#"
-            package alloc
 
-            alloc [lib]
-            skipped
-
-            package app
-
-            app [lib]
-            body b0 fn app[lib]::crate::use_it @ 3:1-7:2
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            - s2 parent s1: v1
-            - s3 parent s2: <none>
-            bindings
-            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 3:15-3:22
-            - v1 let import `import` => &nominal struct storage[lib]::crate::ImportData @ 4:9-4:15
-            body
-            expr e5 block s1 => () @ 3:33-7:2
-              tail
-                expr e4 for s2 v1 => () @ 4:5-6:6
-                  iterable
-                    expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 4:19-4:36
-                      receiver
-                        expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 4:19-4:26
-                  body
-                    expr e3 block s3 => () @ 4:37-6:6
-                      stmt s0 expr; @ 5:9-5:16
-                        expr e2 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
-
-
-            package core
-
-            core [lib]
-            skipped
-
-            package proc_macro
-
-            proc_macro [lib]
-            skipped
-
-            package std
-
-            std [lib]
-            skipped
-
-            package storage
-
-            storage [lib]
-            body b0 fn impl DefMap::imports @ 6:5-8:6
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            bindings
-            - v0 self_param self `&self` => &nominal struct storage[lib]::crate::DefMap @ 6:20-6:25
-            body
-            expr e2 block s1 => &[nominal struct storage[lib]::crate::ImportData] @ 6:44-8:6
-              tail
-                expr e1 call => &[nominal struct storage[lib]::crate::ImportData] @ 7:9-7:18
-                  callee
-                    expr e0 path missing => <unknown> @ 7:9-7:16
-        "#]],
-    );
-}
-
-#[test]
-fn propagates_for_loop_items_from_slice_iter_method() {
-    check_project_body_ir_with_fake_sysroot(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
-pub struct ImportData;
-
-pub struct DefMap;
-
-impl DefMap {
-    pub fn imports(&self) -> &[ImportData] {
-        missing()
-    }
-}
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
-use storage::DefMap;
-
-pub fn use_it(def_map: &DefMap) {
+pub fn use_iter(def_map: &DefMap) {
     for import in def_map.imports().iter() {
         import;
     }
@@ -536,29 +432,52 @@ pub fn use_it(def_map: &DefMap) {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::use_it @ 3:1-7:2
+            body b0 fn app[lib]::crate::use_direct @ 3:1-7:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             - s2 parent s1: v1
             - s3 parent s2: <none>
             bindings
-            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 3:15-3:22
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 3:19-3:26
             - v1 let import `import` => &nominal struct storage[lib]::crate::ImportData @ 4:9-4:15
             body
-            expr e6 block s1 => () @ 3:33-7:2
+            expr e5 block s1 => () @ 3:37-7:2
               tail
-                expr e5 for s2 v1 => () @ 4:5-6:6
+                expr e4 for s2 v1 => () @ 4:5-6:6
                   iterable
-                    expr e2 method_call iter -> fn impl [T]::iter => nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 4:19-4:43
+                    expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 4:19-4:36
                       receiver
-                        expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 4:19-4:36
-                          receiver
-                            expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 4:19-4:26
+                        expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 4:19-4:26
                   body
-                    expr e4 block s3 => () @ 4:44-6:6
+                    expr e3 block s3 => () @ 4:37-6:6
                       stmt s0 expr; @ 5:9-5:16
-                        expr e3 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
+                        expr e2 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 5:9-5:15
+
+
+            body b1 fn app[lib]::crate::use_iter @ 9:1-13:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            - s2 parent s1: v1
+            - s3 parent s2: <none>
+            bindings
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 9:17-9:24
+            - v1 let import `import` => &nominal struct storage[lib]::crate::ImportData @ 10:9-10:15
+            body
+            expr e6 block s1 => () @ 9:35-13:2
+              tail
+                expr e5 for s2 v1 => () @ 10:5-12:6
+                  iterable
+                    expr e2 method_call iter -> fn impl [T]::iter => nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 10:19-10:43
+                      receiver
+                        expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 10:19-10:36
+                          receiver
+                            expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 10:19-10:26
+                  body
+                    expr e4 block s3 => () @ 10:44-12:6
+                      stmt s0 expr; @ 11:9-11:16
+                        expr e3 path import -> local v1 => &nominal struct storage[lib]::crate::ImportData @ 11:9-11:15
 
 
             package core

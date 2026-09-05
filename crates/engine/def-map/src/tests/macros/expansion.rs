@@ -39,7 +39,7 @@ make_user!();
 }
 
 #[test]
-fn keeps_proc_macro_calls_out_of_declarative_expansion() {
+fn unsupported_proc_macro_calls_do_not_block_ordinary_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
@@ -447,33 +447,6 @@ pub struct After;
     assert_eq!(recursive.generated_call_count, 1);
     assert!(recursive.chain_truncated);
     assert!(recursive.example_chain.iter().all(|name| name == "recurse"));
-}
-
-#[test]
-fn local_macro_can_shadow_builtin_macro_name() {
-    let project = utils::DefMapFixtureDb::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "builtin_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! include {
-    () => {
-        pub struct LocalInclude;
-    };
-}
-
-include!();
-"#,
-    );
-    let target = project.lib("builtin_shadow_fixture");
-
-    target.entry("LocalInclude").assert_type_exists(
-        "resolved local macros should expand even when their name matches a builtin macro",
-    );
 }
 
 #[test]

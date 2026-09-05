@@ -1998,6 +1998,7 @@ dependencies = [
  "rg_std",
  "rg_text",
  "rg_workspace",
+ "serde_json",
  "tarpc",
  "test_fixture",
  "tokio",

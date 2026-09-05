@@ -816,7 +816,7 @@ fn checkpoint_optional_bytes(checkpoint: &rg_profile::ProfileCheckpoint, key: &s
 }
 
 #[test]
-fn dynamic_profile_records_timing_only_project_build_checkpoints() {
+fn project_build_checkpoints_share_shape_across_profile_modes() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -829,65 +829,108 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let workspace = fixture.workspace_metadata();
-    let run =
-        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
 
-    Project::builder(workspace)
-        .build()
-        .expect("project build should succeed");
-    let snapshot = run.finish();
-    let checkpoints = project_build_checkpoints(&snapshot);
-    let labels = checkpoints
-        .iter()
-        .map(|checkpoint| checkpoint.label.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        labels,
-        [
-            "after parse",
-            "after cache probe",
-            "after item-tree",
-            "after item-tree syntax eviction",
-            "after cache source fingerprints",
-            "after def-map",
-            "after semantic-ir",
-            "after item-tree drop",
-            "after body-ir",
-            "after parse syntax eviction",
-            "after project",
-        ],
-        "dynamic profile should report the same build checkpoints as memory profiling",
-    );
-    assert!(
-        checkpoints
-            .iter()
-            .all(|checkpoint| checkpoint.phase_elapsed <= checkpoint.elapsed),
-        "phase durations should be bounded by cumulative elapsed time"
-    );
-    for checkpoint in checkpoints {
+    const LABELS: [&str; 11] = [
+        "after parse",
+        "after cache probe",
+        "after item-tree",
+        "after item-tree syntax eviction",
+        "after cache source fingerprints",
+        "after def-map",
+        "after semantic-ir",
+        "after item-tree drop",
+        "after body-ir",
+        "after parse syntax eviction",
+        "after project",
+    ];
+    const MEMORY_COLUMNS: [&str; 6] = [
+        "retained_bytes",
+        "active_retained_bytes",
+        "allocated_bytes",
+        "active_bytes",
+        "resident_bytes",
+        "mapped_bytes",
+    ];
+
+    for measure_retained_memory in [false, true] {
+        let mode = if measure_retained_memory {
+            "retained-memory"
+        } else {
+            "timing-only"
+        };
+        let run = rg_profile::test_support::ProfileTest::start(
+            crate::profile_descriptors(),
+            "project.build",
+        );
+        let mut builder = Project::builder(fixture.workspace_metadata());
+        if measure_retained_memory {
+            builder = builder.measure_retained_memory(true);
+        }
+        builder
+            .build()
+            .unwrap_or_else(|error| panic!("{mode} project build should succeed: {error:#}"));
+
+        let snapshot = run.finish();
+        let checkpoints = project_build_checkpoints(&snapshot);
         assert_eq!(
-            checkpoint
-                .values
+            checkpoints
                 .iter()
-                .map(|value| value.key.as_str())
+                .map(|checkpoint| checkpoint.label.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "retained_bytes",
-                "active_retained_bytes",
-                "allocated_bytes",
-                "active_bytes",
-                "resident_bytes",
-                "mapped_bytes",
-            ],
-            "timing-only checkpoints should keep the memory column shape",
+            LABELS,
+            "{mode} profiling should use the shared build checkpoint order",
         );
         assert!(
-            checkpoint
-                .values
+            checkpoints
                 .iter()
-                .all(|value| value.value == rg_profile::ProfileMeasurement::Empty),
-            "timing-only profiling should not run memory samplers",
+                .all(|checkpoint| checkpoint.phase_elapsed <= checkpoint.elapsed),
+            "{mode} phase durations should be bounded by cumulative elapsed time",
+        );
+        for checkpoint in checkpoints {
+            assert_eq!(
+                checkpoint
+                    .values
+                    .iter()
+                    .map(|value| value.key.as_str())
+                    .collect::<Vec<_>>(),
+                MEMORY_COLUMNS,
+                "{mode} checkpoints should keep the shared memory column shape",
+            );
+        }
+
+        if !measure_retained_memory {
+            assert!(
+                checkpoints
+                    .iter()
+                    .flat_map(|checkpoint| &checkpoint.values)
+                    .all(|value| value.value == rg_profile::ProfileMeasurement::Empty),
+                "timing-only profiling should not run memory samplers",
+            );
+            continue;
+        }
+
+        assert!(
+            checkpoints
+                .iter()
+                .filter_map(|checkpoint| checkpoint_optional_bytes(checkpoint, "retained_bytes"))
+                .all(|bytes| bytes > 0),
+            "retained checkpoints should record non-zero memory",
+        );
+        assert!(
+            checkpoints.iter().all(|checkpoint| {
+                checkpoint_optional_bytes(checkpoint, "active_retained_bytes").is_some()
+            }),
+            "retained profiling should record active live-state memory for every checkpoint",
+        );
+
+        let item_tree_drop = checkpoints
+            .iter()
+            .find(|checkpoint| checkpoint.label == "after item-tree drop")
+            .expect("profile should contain item-tree drop checkpoint");
+        assert_eq!(
+            checkpoint_optional_bytes(item_tree_drop, "retained_bytes"),
+            None,
+            "process-only checkpoints should not pretend to sample a dropped phase object",
         );
     }
 }
@@ -951,7 +994,7 @@ pub fn value() -> usize {
 }
 
 #[test]
-fn lower_memory_build_finishes_body_ir_inside_package_batches() {
+fn lower_memory_configuration_builds_body_ir() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -1986,79 +2029,6 @@ pub struct Independent;
 }
 
 #[test]
-fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "profile_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-    let run =
-        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
-
-    Project::builder(workspace)
-        .measure_retained_memory(true)
-        .build()
-        .expect("profiled project build should succeed");
-    let snapshot = run.finish();
-    let checkpoints = project_build_checkpoints(&snapshot);
-    let labels = checkpoints
-        .iter()
-        .map(|checkpoint| checkpoint.label.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        labels,
-        [
-            "after parse",
-            "after cache probe",
-            "after item-tree",
-            "after item-tree syntax eviction",
-            "after cache source fingerprints",
-            "after def-map",
-            "after semantic-ir",
-            "after item-tree drop",
-            "after body-ir",
-            "after parse syntax eviction",
-            "after project",
-        ]
-    );
-
-    assert!(
-        checkpoints
-            .iter()
-            .filter_map(|checkpoint| checkpoint_optional_bytes(checkpoint, "retained_bytes"))
-            .all(|bytes| bytes > 0),
-        "retained checkpoints should record non-zero memory"
-    );
-    assert!(
-        checkpoints
-            .iter()
-            .all(
-                |checkpoint| checkpoint_optional_bytes(checkpoint, "active_retained_bytes")
-                    .is_some()
-            ),
-        "retained profiling should record active live-state memory for every checkpoint"
-    );
-
-    let item_tree_drop = checkpoints
-        .iter()
-        .find(|checkpoint| checkpoint.label == "after item-tree drop")
-        .expect("profile should contain item-tree drop checkpoint");
-    assert_eq!(
-        checkpoint_optional_bytes(item_tree_drop, "retained_bytes"),
-        None,
-        "process-only checkpoints should not pretend to sample a dropped phase object"
-    );
-}
-
-#[test]
 fn build_memory_snapshot_captures_requested_transient_point() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -2847,59 +2817,6 @@ pub struct Root;
 }
 
 #[test]
-fn reports_reverse_dependent_packages_as_affected() {
-    let mut fixture = HostFixture::build(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
-pub struct Api;
-
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
-pub fn use_dep(_: dep::Api) {}
-"#,
-    );
-
-    fixture.check_save(
-        r#"
-//- /crates/dep/src/lib.rs
-pub struct Api;
-pub struct Extra;
-"#,
-        &[],
-        expect![[r#"
-            changed files
-            - dep crates/dep/src/lib.rs
-
-            affected packages
-            - app
-            - dep
-
-            changed targets
-            - dep[lib]
-        "#]],
-    );
-}
-
-#[test]
 fn rebuilds_reverse_dependent_packages_after_dependency_changes() {
     let mut fixture = HostFixture::build(
         r#"
@@ -3029,10 +2946,7 @@ pub struct Renamed;
     );
 }
 
-#[test]
-fn queries_report_missing_offloaded_package_cache_artifacts() {
-    let fixture = HostFixture::build_with_package_residency_policy(
-        r#"
+const OFFLOADED_ARTIFACT_FIXTURE: &str = r#"
 //- /Cargo.toml
 [package]
 name = "app"
@@ -3043,7 +2957,9 @@ edition = "2024"
 dep = { path = "dep" }
 
 //- /src/lib.rs
-pub fn use_dep(_: dep::Api) {}
+use dep::Api;
+pub struct Before;
+pub fn use_dep(_: Api) {}
 
 //- /dep/Cargo.toml
 [package]
@@ -3053,119 +2969,69 @@ edition = "2024"
 
 //- /dep/src/lib.rs
 pub struct Api;
-"#,
-        PackageResidencyPolicy::WorkspaceResident,
-    );
+"#;
 
-    assert!(fixture.package_cache_artifact_exists("dep"));
-    fixture.remove_package_cache_artifacts();
-    assert!(!fixture.package_cache_artifact_exists("dep"));
+#[derive(Debug, Clone, Copy)]
+enum OffloadedArtifactDamage {
+    Missing,
+    Corrupt,
+}
 
-    let error = fixture.workspace_symbols_error("Api");
-    assert!(
-        error.contains("offloaded package slot PackageSlot(1) is missing from backing storage"),
-        "{error}",
-    );
-    assert!(!fixture.package_cache_artifact_exists("dep"));
+impl OffloadedArtifactDamage {
+    const ALL: [Self; 2] = [Self::Missing, Self::Corrupt];
+
+    fn apply(self, fixture: &HostFixture) {
+        match self {
+            Self::Missing => fixture.remove_package_cache_artifacts(),
+            Self::Corrupt => fixture.corrupt_package_cache_artifact("dep"),
+        }
+    }
+
+    fn query_error_fragment(self) -> &'static str {
+        match self {
+            Self::Missing => {
+                "offloaded package slot PackageSlot(1) is missing from backing storage"
+            }
+            Self::Corrupt => "offloaded package slot PackageSlot(1) has malformed cache data",
+        }
+    }
+
+    fn artifact_remains_on_disk(self) -> bool {
+        matches!(self, Self::Corrupt)
+    }
 }
 
 #[test]
-fn queries_report_corrupt_offloaded_package_cache_artifacts() {
-    let fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
+fn queries_report_missing_and_corrupt_offloaded_package_cache_artifacts() {
+    for damage in OffloadedArtifactDamage::ALL {
+        let fixture = HostFixture::build_with_package_residency_policy(
+            OFFLOADED_ARTIFACT_FIXTURE,
+            PackageResidencyPolicy::WorkspaceResident,
+        );
 
-[dependencies]
-dep = { path = "dep" }
+        assert!(fixture.package_cache_artifact_exists("dep"));
+        damage.apply(&fixture);
+        assert_eq!(
+            fixture.package_cache_artifact_exists("dep"),
+            damage.artifact_remains_on_disk(),
+            "unexpected artifact state after {damage:?} damage",
+        );
 
-//- /src/lib.rs
-pub fn use_dep(_: dep::Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#,
-        PackageResidencyPolicy::WorkspaceResident,
-    );
-
-    fixture.corrupt_package_cache_artifact("dep");
-
-    let error = fixture.workspace_symbols_error("Api");
-    assert!(
-        error.contains("offloaded package slot PackageSlot(1) has malformed cache data"),
-        "{error}",
-    );
-    assert!(fixture.package_cache_artifact_exists("dep"));
+        let error = fixture.workspace_symbols_error("Api");
+        assert!(
+            error.contains(damage.query_error_fragment()),
+            "unexpected query error after {damage:?} damage: {error}",
+        );
+        assert_eq!(
+            fixture.package_cache_artifact_exists("dep"),
+            damage.artifact_remains_on_disk(),
+            "querying should not change artifact state after {damage:?} damage",
+        );
+    }
 }
 
 #[test]
-fn file_local_queries_do_not_materialize_unrelated_offloaded_packages() {
-    let fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "dep", "unrelated"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /app/src/lib.rs
-pub struct Local;
-pub fn use_dep(_: dep::Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-
-//- /unrelated/Cargo.toml
-[package]
-name = "unrelated"
-version = "0.1.0"
-edition = "2024"
-
-//- /unrelated/src/lib.rs
-pub struct Unrelated;
-"#,
-        PackageResidencyPolicy::AllOffloadable,
-    );
-
-    assert!(fixture.package_cache_artifact_exists("unrelated"));
-    fixture.remove_package_cache_artifact("unrelated");
-    assert!(!fixture.package_cache_artifact_exists("unrelated"));
-
-    assert_eq!(
-        fixture.document_symbol_names("app/src/lib.rs"),
-        vec!["Local", "use_dep"],
-    );
-    assert!(
-        !fixture.package_cache_artifact_exists("unrelated"),
-        "narrow file-local queries should not recover artifacts outside their package subset",
-    );
-}
-
-#[test]
-fn source_updates_do_not_materialize_unrelated_offloaded_packages() {
+fn narrow_queries_and_source_updates_avoid_unrelated_offloaded_packages() {
     let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
@@ -3210,6 +3076,15 @@ pub struct Unrelated;
     assert!(fixture.package_cache_artifact_exists("unrelated"));
     fixture.remove_package_cache_artifact("unrelated");
     assert!(!fixture.package_cache_artifact_exists("unrelated"));
+
+    assert_eq!(
+        fixture.document_symbol_names("app/src/lib.rs"),
+        vec!["Before", "use_dep"],
+    );
+    assert!(
+        !fixture.package_cache_artifact_exists("unrelated"),
+        "narrow file-local queries should not recover artifacts outside their package subset",
+    );
 
     fixture.check_save(
         r#"
@@ -3246,129 +3121,47 @@ pub fn use_dep(_: dep::Api) {}
 }
 
 #[test]
-fn source_updates_rebuild_missing_offloaded_package_cache_artifacts() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
+fn source_updates_rebuild_missing_and_corrupt_offloaded_package_cache_artifacts() {
+    for damage in OffloadedArtifactDamage::ALL {
+        let mut fixture = HostFixture::build_with_package_residency_policy(
+            OFFLOADED_ARTIFACT_FIXTURE,
+            PackageResidencyPolicy::WorkspaceResident,
+        );
+        damage.apply(&fixture);
 
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-use dep::Api;
-pub struct Before;
-pub fn use_dep(_: Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#,
-        PackageResidencyPolicy::WorkspaceResident,
-    );
-
-    fixture.remove_package_cache_artifacts();
-
-    fixture.check_save(
-        r#"
+        fixture.check_save(
+            r#"
 //- /src/lib.rs
 use dep::Api;
 pub struct After;
 pub fn use_dep(_: Api) {}
 "#,
-        &[
-            HostObservation::workspace_symbols("After"),
-            HostObservation::workspace_symbols("Api"),
-        ],
-        expect![[r#"
-            changed files
-            - app src/lib.rs
+            &[
+                HostObservation::workspace_symbols("After"),
+                HostObservation::workspace_symbols("Api"),
+            ],
+            expect![[r#"
+                changed files
+                - app src/lib.rs
 
-            affected packages
-            - app
+                affected packages
+                - app
 
-            changed targets
-            - app[lib]
+                changed targets
+                - app[lib]
 
-            workspace symbols `After`
-            - struct After @ app[lib] src/lib.rs
+                workspace symbols `After`
+                - struct After @ app[lib] src/lib.rs
 
-            workspace symbols `Api`
-            - struct Api @ dep[lib] dep/src/lib.rs
-        "#]],
-    );
-    assert!(fixture.package_cache_artifact_exists("dep"));
-}
-
-#[test]
-fn source_updates_rebuild_corrupt_offloaded_package_cache_artifacts() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-use dep::Api;
-pub struct Before;
-pub fn use_dep(_: Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#,
-        PackageResidencyPolicy::WorkspaceResident,
-    );
-
-    fixture.corrupt_package_cache_artifact("dep");
-
-    fixture.check_save(
-        r#"
-//- /src/lib.rs
-use dep::Api;
-pub struct After;
-pub fn use_dep(_: Api) {}
-"#,
-        &[
-            HostObservation::workspace_symbols("After"),
-            HostObservation::workspace_symbols("Api"),
-        ],
-        expect![[r#"
-            changed files
-            - app src/lib.rs
-
-            affected packages
-            - app
-
-            changed targets
-            - app[lib]
-
-            workspace symbols `After`
-            - struct After @ app[lib] src/lib.rs
-
-            workspace symbols `Api`
-            - struct Api @ dep[lib] dep/src/lib.rs
-        "#]],
-    );
-    assert!(fixture.package_cache_artifact_exists("dep"));
+                workspace symbols `Api`
+                - struct Api @ dep[lib] dep/src/lib.rs
+            "#]],
+        );
+        assert!(
+            fixture.package_cache_artifact_exists("dep"),
+            "source update should recover dependency artifact after {damage:?} damage",
+        );
+    }
 }
 
 #[test]

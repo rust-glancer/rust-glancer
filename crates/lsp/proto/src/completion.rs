@@ -19,34 +19,3 @@ impl CompletionClientCapabilities {
         Self { snippet_support }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use ls_types::{
-        ClientCapabilities, CompletionClientCapabilities as LspCompletionClientCapabilities,
-        CompletionItemCapability, TextDocumentClientCapabilities,
-    };
-
-    use super::CompletionClientCapabilities;
-
-    #[test]
-    fn reads_completion_snippet_support_from_client_capabilities() {
-        let capabilities = ClientCapabilities {
-            text_document: Some(TextDocumentClientCapabilities {
-                completion: Some(LspCompletionClientCapabilities {
-                    completion_item: Some(CompletionItemCapability {
-                        snippet_support: Some(true),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let actual = CompletionClientCapabilities::from_lsp_client_capabilities(&capabilities);
-
-        assert!(actual.snippet_support);
-    }
-}

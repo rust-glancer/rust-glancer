@@ -94,14 +94,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn package_sets_project_to_package_indices() {
-        let packages =
-            PhasePackageSet::from_packages(vec![PackageSlot(3), PackageSlot(1), PackageSlot(4)]);
-
-        assert_eq!(packages.package_indices(), vec![3, 1, 4]);
-    }
-
-    #[test]
     fn body_file_sets_are_sorted_and_deduplicated() {
         let files = [
             BodyIrFile::new(

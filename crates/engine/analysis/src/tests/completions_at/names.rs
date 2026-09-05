@@ -1,8 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot,
-};
+use super::super::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_unqualified_values_from_lexical_and_module_scope() {
     check_analysis_queries(
@@ -567,7 +565,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_unqualified_type_args_in_generic_type_paths() {
-    check_analysis_queries_with_sysroot(
+    check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
@@ -580,30 +578,20 @@ pub struct Session;
 pub struct State;
 pub struct String;
 
+pub mod collections {
+    pub struct Map<K, V>;
+}
+
 pub enum Maybe<T> {
     Some(T),
     None,
 }
 
 pub fn use_it() {
-    let _values: std::collections::HashMap<String, S$value_arg$>;
+    let _values: collections::Map<String, S$value_arg$>;
     let _variant = Maybe::<S$value_path_arg$>::None;
-    let _keys: std::collections::HashMap<S$key_arg$
+    let _keys: collections::Map<S$key_arg$
 }
-
-//- /sysroot/library/core/src/lib.rs
-pub struct Core;
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod collections {
-    pub struct HashMap<K, V>;
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
 "#,
         &[
             AnalysisQuery::complete("first generic arg completions", "key_arg")
@@ -619,27 +607,21 @@ pub struct TokenStream;
             - struct Session
             - struct State
             - struct String
-            - module alloc
-            - module core
-            - module std
+            - module collections
 
             second generic arg completions
             - enum Maybe
             - struct Session
             - struct State
             - struct String
-            - module alloc
-            - module core
-            - module std
+            - module collections
 
             value path generic arg completions
             - enum Maybe
             - struct Session
             - struct State
             - struct String
-            - module alloc
-            - module core
-            - module std
+            - module collections
         "#]],
     );
 }

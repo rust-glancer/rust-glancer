@@ -137,14 +137,14 @@ mod tests {
     fn parses_indexing_preference() {
         let options = json!({
             "indexing": {
-                "performancePreference": "faster-builds",
+                "performancePreference": "lower-peak-memory",
             },
         });
 
         let config = IndexingPerformancePreference::from_initialization_options(Some(&options))
             .expect("indexing config should parse");
 
-        assert_eq!(config, IndexingPerformancePreference::FasterBuilds);
+        assert_eq!(config, IndexingPerformancePreference::LowerPeakMemory);
     }
 
     #[test]

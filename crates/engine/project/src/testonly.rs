@@ -27,10 +27,10 @@ impl ProjectSourceFixture {
         }
     }
 
-    pub fn build_with_sysroot(spec: &str) -> Self {
+    pub fn build_with_fake_sysroot(spec: &str) -> Self {
         let (fixture, markers) = fixture_crate_with_markers(spec);
         Self {
-            fixture,
+            fixture: fixture.with_fake_sysroot(),
             markers,
             has_sysroot: true,
         }
@@ -98,8 +98,8 @@ impl ProjectFixture {
         Self { source, project }
     }
 
-    pub fn build_with_sysroot(spec: &str) -> Self {
-        let source = ProjectSourceFixture::build_with_sysroot(spec);
+    pub fn build_with_fake_sysroot(spec: &str) -> Self {
+        let source = ProjectSourceFixture::build_with_fake_sysroot(spec);
         let project = source.build_project();
         Self { source, project }
     }

@@ -33,6 +33,7 @@ tracing.workspace = true
 [dev-dependencies]
 divan.workspace = true
 expect-test.workspace = true
+serde_json.workspace = true
 test_fixture.workspace = true
 
 [[bench]]

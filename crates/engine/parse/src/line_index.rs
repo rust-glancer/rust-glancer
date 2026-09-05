@@ -105,24 +105,6 @@ impl LineIndex {
         }
     }
 
-    pub fn to_snapshot(&self) -> LineIndexSnapshot {
-        LineIndexSnapshot {
-            line_endings: self.line_endings,
-            lines: self.lines.as_slice().to_vec(),
-            non_ascii_lines: self.non_ascii_lines.as_slice().to_vec(),
-            non_ascii_ranges: self.non_ascii_ranges.as_slice().to_vec(),
-        }
-    }
-
-    pub fn from_snapshot(snapshot: LineIndexSnapshot) -> Self {
-        Self {
-            line_endings: snapshot.line_endings,
-            lines: LineIndexStorage::Owned(snapshot.lines),
-            non_ascii_lines: LineIndexStorage::Owned(snapshot.non_ascii_lines),
-            non_ascii_ranges: LineIndexStorage::Owned(snapshot.non_ascii_ranges),
-        }
-    }
-
     /// Converts a byte offset into a zero-based line/column position.
     pub fn position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
@@ -262,14 +244,6 @@ impl LineIndex {
             non_ascii_ranges: non_ascii_range,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct LineIndexSnapshot {
-    pub(crate) line_endings: LineEndings,
-    pub(crate) lines: Vec<LineInfo>,
-    pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
-    pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
 #[derive(Debug, Clone, MemorySize)]
@@ -520,11 +494,6 @@ mod tests {
         for (case, source, expected) in cases {
             let index = LineIndex::new(source);
             assert_eq!(index.line_endings(), expected, "{case}");
-            assert_eq!(
-                LineIndex::from_snapshot(index.to_snapshot()).line_endings(),
-                expected,
-                "{case} snapshot"
-            );
         }
     }
 
@@ -584,85 +553,53 @@ mod tests {
     }
 
     #[test]
-    fn packed_line_indexes_preserve_offset_conversion() {
+    fn packed_line_indexes_preserve_file_local_conversions() {
         let mut first = LineIndex::new("é\n𝄞a");
-        let mut second = LineIndex::new("a\r\nbb\n");
+        let mut second = LineIndex::new("prefix\r\n𝄞a\n");
+        let first_offsets = [0, 2, 3, 7, 8].map(|offset| (offset, first.utf16_position(offset)));
+        let second_offsets =
+            [0, 6, 8, 12, 13, 14].map(|offset| (offset, second.utf16_position(offset)));
+        let second_positions = [
+            Position { line: 0, column: 6 },
+            Position { line: 1, column: 0 },
+            Position { line: 1, column: 3 },
+            Position { line: 2, column: 0 },
+        ]
+        .map(|position| (position, second.offset_from_utf16_position(position)));
+        let line_endings = [first.line_endings(), second.line_endings()];
+
         LineIndex::pack_many(&mut [&mut first, &mut second]);
 
-        assert_eq!(first.line_endings(), LineEndings::Lf);
-        assert_eq!(second.line_endings(), LineEndings::Crlf);
-
-        assert!(matches!(
-            &first.lines,
-            super::LineIndexStorage::Shared { .. }
-        ));
         assert!(matches!(
             &second.non_ascii_ranges,
             super::LineIndexStorage::Shared { .. }
         ));
-
-        let first_cases = [
-            ("accent start", 0, Position { line: 0, column: 0 }),
-            ("after accent", 2, Position { line: 0, column: 1 }),
-            ("second line start", 3, Position { line: 1, column: 0 }),
-            ("after surrogate pair", 7, Position { line: 1, column: 2 }),
-            ("after ascii", 8, Position { line: 1, column: 3 }),
-        ];
-        for (label, offset, expected) in first_cases {
-            assert_eq!(first.utf16_position(offset), expected, "{label}");
+        assert_eq!([first.line_endings(), second.line_endings()], line_endings);
+        for (offset, position) in first_offsets {
+            assert_eq!(first.utf16_position(offset), position, "first file offset");
             assert_eq!(
-                first.offset_from_utf16_position(expected),
+                first.offset_from_utf16_position(position),
                 Some(offset),
-                "{label}"
+                "first file position"
             );
         }
-
-        let second_cases = [
-            ("first line end", Position { line: 0, column: 1 }, Some(1)),
-            (
-                "second line start",
-                Position { line: 1, column: 0 },
-                Some(3),
-            ),
-            ("second line end", Position { line: 1, column: 2 }, Some(5)),
-            (
-                "trailing empty line",
-                Position { line: 2, column: 0 },
-                Some(6),
-            ),
-        ];
-        for (label, position, expected) in second_cases {
+        for (offset, position) in second_offsets {
+            assert_eq!(
+                second.utf16_position(offset),
+                position,
+                "second file offset"
+            );
             assert_eq!(
                 second.offset_from_utf16_position(position),
-                expected,
-                "{label}"
+                Some(offset),
+                "second file position"
             );
         }
-    }
-
-    #[test]
-    fn packed_line_indexes_keep_non_ascii_ranges_file_local() {
-        let mut first = LineIndex::new("é");
-        let mut second = LineIndex::new("prefix\n𝄞a");
-        LineIndex::pack_many(&mut [&mut first, &mut second]);
-
-        let cases = [
-            ("second file start", 0, Position { line: 0, column: 0 }),
-            (
-                "second file non-ascii line",
-                7,
-                Position { line: 1, column: 0 },
-            ),
-            ("after surrogate pair", 11, Position { line: 1, column: 2 }),
-            ("after ascii", 12, Position { line: 1, column: 3 }),
-        ];
-
-        for (label, offset, expected) in cases {
-            assert_eq!(second.utf16_position(offset), expected, "{label}");
+        for (position, offset) in second_positions {
             assert_eq!(
-                second.offset_from_utf16_position(expected),
-                Some(offset),
-                "{label}"
+                second.offset_from_utf16_position(position),
+                offset,
+                "second file line-boundary position"
             );
         }
     }

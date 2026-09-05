@@ -2,8 +2,15 @@ use crate::{profile::metric, profile_descriptors};
 
 use super::utils;
 
-fn macro_fixture() -> &'static str {
-    r#"
+#[test]
+fn profile_snapshot_records_macro_finalization_metrics() {
+    let run = rg_profile::test_support::ProfileTest::start(
+        profile_descriptors(),
+        "def_map.finalization,def_map.macros.by_name",
+    );
+
+    let project = utils::DefMapFixtureDb::build(
+        r#"
 //- /Cargo.toml
 [package]
 name = "def_map_profile_fixture"
@@ -19,17 +26,8 @@ macro_rules! make_item {
 
 make_item!(User);
 make_item!(Admin);
-"#
-}
-
-#[test]
-fn profile_snapshot_records_macro_finalization_metrics() {
-    let run = rg_profile::test_support::ProfileTest::start(
-        profile_descriptors(),
-        "def_map.finalization,def_map.macros.by_name",
+"#,
     );
-
-    let project = utils::DefMapFixtureDb::build(macro_fixture());
     let snapshot = run.finish();
     let target = project.lib("def_map_profile_fixture");
 
@@ -67,27 +65,6 @@ fn profile_snapshot_records_macro_finalization_metrics() {
         metric::EXPANSION_PASS_LIMIT,
         128,
         "finalization gauges should be available in the snapshot",
-    );
-}
-
-#[test]
-fn filtered_profile_records_requested_macro_scope() {
-    let run = rg_profile::test_support::ProfileTest::start(
-        profile_descriptors(),
-        "def_map.macros.by_name",
-    );
-
-    let project = utils::DefMapFixtureDb::build(macro_fixture());
-    let snapshot = run.finish();
-    let target = project.lib("def_map_profile_fixture");
-
-    target
-        .entry("User")
-        .assert_type_exists("profile collection should not change def-map output");
-    snapshot.assert_counter_with_message(
-        metric::MACRO_CALLS_EXPANDED,
-        2,
-        "profile collection should not depend on retaining legacy stats",
     );
 }
 

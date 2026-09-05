@@ -112,17 +112,37 @@ mod tests {
     use super::TextSpan;
 
     #[test]
-    fn checks_half_open_span_containment() {
+    fn distinguishes_half_open_containment_from_cursor_touches() {
         let cases = [
-            ("before start", TextSpan { start: 10, end: 20 }, 9, false),
-            ("at start", TextSpan { start: 10, end: 20 }, 10, true),
-            ("inside", TextSpan { start: 10, end: 20 }, 15, true),
-            ("at end", TextSpan { start: 10, end: 20 }, 20, false),
-            ("after end", TextSpan { start: 10, end: 20 }, 21, false),
+            (
+                "before start",
+                TextSpan { start: 10, end: 20 },
+                9,
+                false,
+                false,
+            ),
+            ("at start", TextSpan { start: 10, end: 20 }, 10, true, true),
+            ("inside", TextSpan { start: 10, end: 20 }, 15, true, true),
+            ("at end", TextSpan { start: 10, end: 20 }, 20, false, true),
+            (
+                "after end",
+                TextSpan { start: 10, end: 20 },
+                21,
+                false,
+                false,
+            ),
+            (
+                "empty at start",
+                TextSpan { start: 10, end: 10 },
+                10,
+                false,
+                true,
+            ),
         ];
 
-        for (label, span, offset, expected) in cases {
-            assert_eq!(span.contains(offset), expected, "{label}");
+        for (label, span, offset, contains, touches) in cases {
+            assert_eq!(span.contains(offset), contains, "{label}: contains");
+            assert_eq!(span.touches(offset), touches, "{label}: touches");
         }
     }
 
@@ -144,31 +164,16 @@ mod tests {
     }
 
     #[test]
-    fn checks_cursor_friendly_span_touches() {
+    fn reports_span_range_shapes() {
         let cases = [
-            ("before start", TextSpan { start: 10, end: 20 }, 9, false),
-            ("at start", TextSpan { start: 10, end: 20 }, 10, true),
-            ("inside", TextSpan { start: 10, end: 20 }, 15, true),
-            ("at end", TextSpan { start: 10, end: 20 }, 20, true),
-            ("after end", TextSpan { start: 10, end: 20 }, 21, false),
-            ("empty at start", TextSpan { start: 10, end: 10 }, 10, true),
+            ("normal", TextSpan { start: 10, end: 20 }, 10, false),
+            ("empty", TextSpan { start: 10, end: 10 }, 0, true),
+            ("inverted", TextSpan { start: 20, end: 10 }, 0, true),
         ];
 
-        for (label, span, offset, expected) in cases {
-            assert_eq!(span.touches(offset), expected, "{label}");
-        }
-    }
-
-    #[test]
-    fn reports_saturating_span_lengths() {
-        let cases = [
-            ("normal", TextSpan { start: 10, end: 20 }, 10),
-            ("empty", TextSpan { start: 10, end: 10 }, 0),
-            ("invalid", TextSpan { start: 20, end: 10 }, 0),
-        ];
-
-        for (label, span, expected) in cases {
-            assert_eq!(span.len(), expected, "{label}");
+        for (label, span, len, is_empty) in cases {
+            assert_eq!(span.len(), len, "{label}: len");
+            assert_eq!(span.is_empty(), is_empty, "{label}: is_empty");
         }
     }
 }

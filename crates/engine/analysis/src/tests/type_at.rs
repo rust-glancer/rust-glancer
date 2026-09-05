@@ -5,7 +5,7 @@ use super::utils::{
 };
 
 #[test]
-fn returns_body_expression_types() {
+fn returns_basic_body_expression_and_binding_types() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -22,13 +22,23 @@ pub fn helper() -> User {
 }
 
 pub fn use_it() {
-    let local: User = helper();
-    let _typed: User = loc$type_at$al;
+    let local$type_decl$: User = helper()$type_initializer$;
+    let _typed: User = loc$type_use$al;
 }
 "#,
-        &[AnalysisQuery::ty("type at local", "type_at")],
+        &[
+            AnalysisQuery::ty("binding declaration", "type_decl"),
+            AnalysisQuery::ty("binding initializer", "type_initializer"),
+            AnalysisQuery::ty("binding use", "type_use"),
+        ],
         expect![[r#"
-            type at local
+            binding declaration
+            - nominal struct analysis_type_at[lib]::crate::User
+
+            binding initializer
+            - nominal struct analysis_type_at[lib]::crate::User
+
+            binding use
             - nominal struct analysis_type_at[lib]::crate::User
         "#]],
     );
@@ -650,38 +660,6 @@ pub fn use_it(user_box: &Box<User>, ref_box: &Box<&User>) {
 
             field through &*&Box<&User>
             - nominal struct app[lib]::crate::Id
-        "#]],
-    );
-}
-
-#[test]
-fn returns_binding_declaration_types() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_binding_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-
-pub fn helper() -> User {
-    User
-}
-
-pub fn use_it() {
-    let typed$type_decl$: User = helper();
-}
-"#,
-        &[AnalysisQuery::ty(
-            "type at declaration binding",
-            "type_decl",
-        )],
-        expect![[r#"
-            type at declaration binding
-            - nominal struct analysis_binding_type[lib]::crate::User
         "#]],
     );
 }
@@ -1384,70 +1362,6 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
 }
 
 #[test]
-fn shared_fake_sysroot_provides_prelude_and_slice_iteration() {
-    check_analysis_queries_with_fake_sysroot(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
-pub struct ImportData;
-
-pub struct DefMap;
-
-impl DefMap {
-    pub fn imports(&self) -> &[ImportData] {
-        missing()
-    }
-}
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
-use storage::{DefMap, ImportData};
-
-pub fn missing<T>() -> T {}
-
-pub fn use_it(def_map: &DefMap) {
-    let values: Vec<ImportData> = missing();
-    let _values = val$type_values$ues;
-
-    for import in def_map.imports() {
-        let _import = imp$type_import$ort;
-    }
-}
-"#,
-        &[
-            AnalysisQuery::ty("prelude Vec from fake sysroot", "type_values").in_lib("app"),
-            AnalysisQuery::ty("for item from fake sysroot slice iterator", "type_import")
-                .in_lib("app"),
-        ],
-        expect![[r#"
-            prelude Vec from fake sysroot
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
-
-            for item from fake sysroot slice iterator
-            - &nominal struct storage[lib]::crate::ImportData
-        "#]],
-    );
-}
-
-#[test]
 fn fake_sysroot_iterator_chain_infers_map_and_collect_types() {
     check_analysis_queries_with_fake_sysroot(
         r#"
@@ -1994,10 +1908,13 @@ impl Builder {
 }
 
 pub fn use_it(builder: Builder) {
+    struct Local;
+
     let free = make::<User>()$type_free$;
     let associated = Builder::build::<Project>()$type_associated$;
     let method = builder.get::<User>()$type_method$;
     let pair = builder.pair::<User, Project>()$type_pair$;
+    let local = make::<Local>()$type_local$;
 }
 "#,
         &[
@@ -2005,6 +1922,7 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("explicit associated function return", "type_associated"),
             AnalysisQuery::ty("explicit method return", "type_method"),
             AnalysisQuery::ty("explicit multi-param method return", "type_pair"),
+            AnalysisQuery::ty("explicit body-local call return", "type_local"),
         ],
         expect![[r#"
             explicit free function return
@@ -2018,42 +1936,9 @@ pub fn use_it(builder: Builder) {
 
             explicit multi-param method return
             - (nominal struct analysis_explicit_generic_call_args[lib]::crate::User, nominal struct analysis_explicit_generic_call_args[lib]::crate::Project)
-        "#]],
-    );
-}
 
-#[test]
-fn resolves_explicit_generic_call_arguments_from_body_scope() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_explicit_generic_call_body_scope"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-fn missing<T>() -> T {
-    loop {}
-}
-
-pub fn make<T>() -> T {
-    missing()
-}
-
-pub fn use_it() {
-    struct Local;
-
-    let local = make::<Local>()$type_local$;
-}
-"#,
-        &[AnalysisQuery::ty(
-            "explicit call arg from body scope",
-            "type_local",
-        )],
-        expect![[r#"
-            explicit call arg from body scope
-            - nominal struct fn analysis_explicit_generic_call_body_scope[lib]::crate::use_it::Local
+            explicit body-local call return
+            - nominal struct fn analysis_explicit_generic_call_args[lib]::crate::use_it::Local
         "#]],
     );
 }
@@ -2461,7 +2346,7 @@ pub fn use_it(generic: Wrapper<Error>, concrete: Wrapper<Error>) {
 }
 
 #[test]
-fn returns_direct_trait_method_call_types() {
+fn propagates_trait_method_return_types_through_bindings() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -2494,11 +2379,11 @@ pub fn use_it(user: User) {
 }
 "#,
         &[AnalysisQuery::ty(
-            "direct trait method return",
+            "trait method return through binding",
             "type_direct_trait",
         )],
         expect![[r#"
-            direct trait method return
+            trait method return through binding
             - nominal struct analysis_direct_trait_type_at[lib]::crate::UserId
         "#]],
     );
@@ -3223,45 +3108,6 @@ pub fn make() {
 
     let default$type_assoc_const_binding$ = User::DEFAULT;
     let typed$type_assoc_type_binding$: User::Id = GlobalId;
-}
-"#,
-        &[
-            AnalysisQuery::ty(
-                "type at associated const result",
-                "type_assoc_const_binding",
-            ),
-            AnalysisQuery::ty("type at associated type result", "type_assoc_type_binding"),
-        ],
-        expect![[r#"
-            type at associated const result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
-
-            type at associated type result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
-        "#]],
-    );
-}
-
-#[test]
-fn returns_parent_body_local_associated_item_types_from_nested_body() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_parent_assoc_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn make() {
-    struct User;
-
-    impl User {
-        const DEFAULT: GlobalId = GlobalId;
-        type Id = GlobalId;
-    }
 
     fn helper() {
         let default$type_nested_assoc_const$ = User::DEFAULT;
@@ -3270,6 +3116,11 @@ pub fn make() {
 }
 "#,
         &[
+            AnalysisQuery::ty(
+                "type at associated const result",
+                "type_assoc_const_binding",
+            ),
+            AnalysisQuery::ty("type at associated type result", "type_assoc_type_binding"),
             AnalysisQuery::ty(
                 "type at nested associated const result",
                 "type_nested_assoc_const",
@@ -3280,11 +3131,17 @@ pub fn make() {
             ),
         ],
         expect![[r#"
+            type at associated const result
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+
+            type at associated type result
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+
             type at nested associated const result
-            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
 
             type at nested associated type result
-            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
         "#]],
     );
 }

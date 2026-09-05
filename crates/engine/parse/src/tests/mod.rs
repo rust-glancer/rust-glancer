@@ -86,40 +86,6 @@ fn dumps_workspace_packages_targets_and_dependencies() {
 }
 
 #[test]
-fn parses_shared_files_once_across_targets() {
-    check_parse_db(
-        r#"
-        //- /Cargo.toml
-        [package]
-        name = "shared_root"
-        version = "0.1.0"
-        edition = "2024"
-
-        [lib]
-        path = "src/shared.rs"
-
-        [[bin]]
-        name = "shared-bin"
-        path = "src/shared.rs"
-
-        //- /src/shared.rs
-        pub fn shared() {}
-        fn main() {}
-        "#,
-        expect![[r#"
-            packages 1 (workspace members: 1, dependencies: 0)
-
-            package shared_root [member]
-            targets
-            - shared_root [lib] -> src/shared.rs
-            - shared-bin [bin] -> src/shared.rs
-            files
-            - src/shared.rs
-        "#]],
-    );
-}
-
-#[test]
 fn module_discovery_parses_reachable_out_of_line_files() {
     check_parse_db_after_module_discovery(
         r#"
@@ -135,6 +101,10 @@ fn module_discovery_parses_reachable_out_of_line_files() {
         pub mod inline {
             pub mod child;
         }
+        pub mod r#type;
+        pub mod r#async {
+            pub mod r#match;
+        }
         #[path = "generated/api.rs"]
         pub mod api;
         pub mod missing;
@@ -148,6 +118,12 @@ fn module_discovery_parses_reachable_out_of_line_files() {
         //- /src/inline/child.rs
         pub struct Child;
 
+        //- /src/type.rs
+        pub struct RawType;
+
+        //- /src/async/match.rs
+        pub struct RawMatch;
+
         //- /src/generated/api.rs
         pub struct Api;
         "#,
@@ -158,11 +134,13 @@ fn module_discovery_parses_reachable_out_of_line_files() {
             targets
             - module_discovery [lib] -> src/lib.rs
             files
+            - src/async/match.rs
             - src/flat.rs
             - src/generated/api.rs
             - src/inline/child.rs
             - src/lib.rs
             - src/nested/mod.rs
+            - src/type.rs
         "#]],
     );
 }
@@ -214,7 +192,7 @@ fn module_discovery_carries_module_path_provenance() {
 }
 
 #[test]
-fn module_discovery_shares_files_across_targets() {
+fn deduplicates_package_files_across_target_roots_and_module_discovery() {
     check_parse_db_after_module_discovery(
         r#"
         //- /Cargo.toml
@@ -229,6 +207,10 @@ fn module_discovery_shares_files_across_targets() {
         [[bin]]
         name = "shared-discovery"
         path = "src/main.rs"
+
+        [[bin]]
+        name = "shared-root-alias"
+        path = "src/lib.rs"
 
         //- /src/lib.rs
         pub mod shared;
@@ -248,46 +230,11 @@ fn module_discovery_shares_files_across_targets() {
             targets
             - shared_discovery [lib] -> src/lib.rs
             - shared-discovery [bin] -> src/main.rs
+            - shared-root-alias [bin] -> src/lib.rs
             files
             - src/lib.rs
             - src/main.rs
             - src/shared.rs
-        "#]],
-    );
-}
-
-#[test]
-fn module_discovery_uses_semantic_identifier_spelling_for_file_paths() {
-    check_parse_db_after_module_discovery(
-        r#"
-        //- /Cargo.toml
-        [package]
-        name = "raw_module_discovery"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
-        pub mod r#type;
-        pub mod r#async {
-            pub mod r#match;
-        }
-
-        //- /src/type.rs
-        pub struct Item;
-
-        //- /src/async/match.rs
-        pub struct Nested;
-        "#,
-        expect![[r#"
-            packages 1 (workspace members: 1, dependencies: 0)
-
-            package raw_module_discovery [member]
-            targets
-            - raw_module_discovery [lib] -> src/lib.rs
-            files
-            - src/async/match.rs
-            - src/lib.rs
-            - src/type.rs
         "#]],
     );
 }

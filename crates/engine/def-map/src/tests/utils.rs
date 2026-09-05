@@ -18,13 +18,6 @@ pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     expect.assert_eq(&actual);
 }
 
-pub(super) fn check_project_def_map_with_sysroot(fixture: &str, expect: Expect) {
-    let db = DefMapFixtureDb::build_with_sysroot(fixture);
-    let actual = ProjectDefMapSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
-}
-
 pub(super) fn check_project_path_resolution(
     fixture: &str,
     queries: &[PathResolutionQuery],
@@ -233,7 +226,7 @@ impl<'a> FixtureCrate<'a> {
         }
     }
 
-    fn def_map(&self) -> &'a DefMap {
+    pub(super) fn def_map(&self) -> &'a DefMap {
         self.db
             .resident_def_map(self.crate_ref)
             .expect("crate def map should exist in fixture db")
@@ -430,18 +423,29 @@ impl FixtureBindingOrigin<'_> {
     }
 
     fn source_file_name(&self) -> Option<String> {
-        let DefId::Local(local_def_ref) = self.def else {
-            return None;
+        let (crate_ref, file_id) = match self.def {
+            DefId::Local(local_def_ref) => {
+                let crate_ref = local_def_ref.origin.as_crate_ref()?;
+                let local_def = self
+                    .db
+                    .resident_def_map(crate_ref)?
+                    .local_def(local_def_ref.local_def)?;
+                (crate_ref, local_def.file_id)
+            }
+            DefId::EnumVariant(variant_ref) => {
+                let crate_ref = variant_ref.origin.as_crate_ref()?;
+                let def_map = self.db.resident_def_map(crate_ref)?;
+                let variant = def_map.local_enum_variant(variant_ref.local_enum_variant)?;
+                let enum_def = def_map.local_def(variant.enum_def)?;
+                (crate_ref, enum_def.file_id)
+            }
+            DefId::Module(_) => return None,
         };
-        let crate_ref = local_def_ref.origin.as_crate_ref()?;
-        let local_def = self
-            .db
-            .resident_def_map(crate_ref)?
-            .local_def(local_def_ref.local_def)?;
+
         self.db
             .parse_db()
             .package(crate_ref.package.0)?
-            .file_path(local_def.file_id)?
+            .file_path(file_id)?
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
     }

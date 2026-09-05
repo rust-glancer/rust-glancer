@@ -220,7 +220,7 @@ pub struct Thing;
 
 #[test]
 fn resolves_injected_sysroot_extern_roots() {
-    utils::check_project_path_resolution_with_sysroot(
+    utils::check_project_path_resolution_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -236,74 +236,34 @@ pub struct App;
 pub mod local_shadow {
     pub struct Vec;
 }
-
-//- /sysroot/library/core/src/lib.rs
-pub mod marker {
-    pub struct Core;
-    pub struct CorePrelude;
-}
-
-pub mod option {
-    pub enum Option {}
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::marker::CorePrelude;
-    }
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub mod marker {
-    pub struct Alloc;
-    pub struct Vec;
-}
-
-//- /sysroot/library/std/src/lib.rs
-pub mod marker {
-    pub struct Std;
-    pub struct StdPrelude;
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::marker::StdPrelude;
-        pub use core::marker::CorePrelude;
-        pub use core::option::Option;
-        pub use alloc::marker::Vec;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
 "#,
         &[
-            PathResolutionQuery::lib("app", "crate", "std::marker::Std"),
-            PathResolutionQuery::lib("app", "crate", "core::marker::Core"),
-            PathResolutionQuery::lib("app", "crate", "alloc::marker::Alloc"),
-            PathResolutionQuery::lib("app", "crate", "StdPrelude"),
-            PathResolutionQuery::lib("app", "crate", "CorePrelude"),
+            PathResolutionQuery::lib("app", "crate", "std::string::String"),
+            PathResolutionQuery::lib("app", "crate", "core::option::Option"),
+            PathResolutionQuery::lib("app", "crate", "alloc::vec::Vec"),
+            PathResolutionQuery::lib("app", "crate", "String"),
+            PathResolutionQuery::lib("app", "crate", "Iterator"),
             PathResolutionQuery::lib("app", "crate", "Vec"),
             PathResolutionQuery::lib("app", "crate", "Maybe"),
             PathResolutionQuery::lib("app", "crate::local_shadow", "Vec"),
-            PathResolutionQuery::lib("app", "crate", "::StdPrelude"),
-            PathResolutionQuery::lib("std", "crate", "core::marker::Core"),
-            PathResolutionQuery::lib("std", "crate", "alloc::marker::Alloc"),
-            PathResolutionQuery::lib("alloc", "crate", "core::marker::Core"),
+            PathResolutionQuery::lib("app", "crate", "::String"),
+            PathResolutionQuery::lib("std", "crate", "core::option::Option"),
+            PathResolutionQuery::lib("std", "crate", "alloc::vec::Vec"),
+            PathResolutionQuery::lib("alloc", "crate", "core::option::Option"),
         ],
         expect![[r#"
-            app [lib] crate resolves std::marker::Std -> struct std[lib]::crate::marker::Std
-            app [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
-            app [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
-            app [lib] crate resolves StdPrelude -> struct std[lib]::crate::marker::StdPrelude
-            app [lib] crate resolves CorePrelude -> struct core[lib]::crate::marker::CorePrelude
-            app [lib] crate resolves Vec -> struct alloc[lib]::crate::marker::Vec
+            app [lib] crate resolves std::string::String -> struct alloc[lib]::crate::string::String
+            app [lib] crate resolves core::option::Option -> enum core[lib]::crate::option::Option
+            app [lib] crate resolves alloc::vec::Vec -> struct alloc[lib]::crate::vec::Vec
+            app [lib] crate resolves String -> struct alloc[lib]::crate::string::String
+            app [lib] crate resolves Iterator -> trait core[lib]::crate::iter::Iterator
+            app [lib] crate resolves Vec -> struct alloc[lib]::crate::vec::Vec
             app [lib] crate resolves Maybe -> enum core[lib]::crate::option::Option
             app [lib] crate::local_shadow resolves Vec -> struct app[lib]::crate::local_shadow::Vec
-            app [lib] crate resolves ::StdPrelude -> <none> (unresolved at segment #0)
-            std [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
-            std [lib] crate resolves alloc::marker::Alloc -> struct alloc[lib]::crate::marker::Alloc
-            alloc [lib] crate resolves core::marker::Core -> struct core[lib]::crate::marker::Core
+            app [lib] crate resolves ::String -> <none> (unresolved at segment #0)
+            std [lib] crate resolves core::option::Option -> enum core[lib]::crate::option::Option
+            std [lib] crate resolves alloc::vec::Vec -> struct alloc[lib]::crate::vec::Vec
+            alloc [lib] crate resolves core::option::Option -> enum core[lib]::crate::option::Option
         "#]],
     );
 }
