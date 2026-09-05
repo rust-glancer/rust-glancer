@@ -3,6 +3,7 @@ mod dirty_flow;
 mod document_read_flow;
 mod external_flow;
 mod flow;
+mod folding_flow;
 mod formatting_flow;
 mod global_operation_flow;
 mod rename_flow;

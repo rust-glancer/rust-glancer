@@ -26,7 +26,7 @@ use rg_analysis::{
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
     DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot,
-    GlobalPositionSnapshot,
+    FoldingClientCapabilities, GlobalPositionSnapshot,
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
@@ -34,12 +34,14 @@ use rg_project::{
     FileContext, ProjectSnapshot,
 };
 use rg_std::UniqueVec;
-use rg_text::RustEdition;
 
 use crate::{
     engine::project::ProjectCoordinator,
     memory::MemoryControl,
-    proto::{code_action, completion, formatting as formatting_proto, hover, inlay_hint, symbols},
+    proto::{
+        code_action, completion, folding as folding_proto, formatting as formatting_proto, hover,
+        inlay_hint, symbols,
+    },
 };
 
 /// Borrows the engine state used by one dispatched analysis request.
@@ -655,14 +657,8 @@ impl<'a> QueryRunner<'a> {
             .project
             .saved_snapshot()
             .context("borrow saved project for document symbols")?;
-        let contexts =
-            Self::file_contexts(snapshot, &path).context("resolve document-symbol path")?;
-        // The saved package is needed only for its Rust edition. A standalone Rust file may have
-        // no package, so parse it with the newest supported edition and still return its outline.
-        let edition = contexts
-            .first()
-            .and_then(|context| snapshot.package_edition(context.package))
-            .unwrap_or(RustEdition::Edition2024);
+        let edition = Self::rust_edition_for_path(snapshot, &path)
+            .context("resolve document-symbol edition")?;
         let syntax = rg_parse::parse_source_file(document.text(), edition).tree();
         let line_index = LineIndex::new(document.text());
         let lsp_symbols = Analysis::document_symbols_from_syntax(&syntax)
@@ -678,6 +674,44 @@ impl<'a> QueryRunner<'a> {
         );
 
         Ok(lsp_symbols)
+    }
+
+    /// Build folding ranges directly from the syntax shown by the editor.
+    pub(super) fn folding_range(
+        &mut self,
+        document: EditorDocumentSnapshot,
+        client_capabilities: FoldingClientCapabilities,
+    ) -> Result<Vec<ls_types::FoldingRange>, QueryRunError> {
+        let path = document.source_path().to_path_buf();
+        let started = Instant::now();
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project for folding ranges")?;
+        let edition = Self::rust_edition_for_path(snapshot, &path)
+            .context("resolve folding-range edition")?;
+        let syntax = rg_parse::parse_source_file(document.text(), edition).tree();
+        let line_index = LineIndex::new(document.text());
+        let lsp_ranges = Analysis::folding_ranges_from_syntax(&syntax)
+            .into_iter()
+            .filter_map(|fold| {
+                folding_proto::folding_range(
+                    document.text(),
+                    &line_index,
+                    client_capabilities.line_folding_only,
+                    fold,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        tracing::trace!(
+            path = %path.display(),
+            result_count = lsp_ranges.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "folding range query finished"
+        );
+
+        Ok(lsp_ranges)
     }
 
     /// Format the live editor text using the owning package's Rust edition.
@@ -696,15 +730,7 @@ impl<'a> QueryRunner<'a> {
                 .project
                 .saved_snapshot()
                 .context("borrow saved project for formatting")?;
-            let contexts =
-                Self::file_contexts(snapshot, &path).context("resolve formatting path")?;
-
-            // Some routed documents may not map to package metadata. We use an explicit fallback
-            // here so formatting can still run without reading Cargo.toml from disk.
-            contexts
-                .first()
-                .and_then(|context| snapshot.package_edition(context.package))
-                .unwrap_or(RustEdition::Edition2024)
+            Self::rust_edition_for_path(snapshot, &path).context("resolve formatting edition")?
         };
         let line_index = LineIndex::new(text);
         let formatted_text = crate::formatting::rustfmt(text, edition, line_index.line_endings())

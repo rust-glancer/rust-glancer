@@ -9,8 +9,8 @@ use futures::StreamExt as _;
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
     DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
-    EngineServiceClient, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue, SaveProposal,
-    SavedProjectChanges,
+    EngineServiceClient, FoldingClientCapabilities, GlobalPositionSnapshot, QueryError, QueryScope,
+    QueryValue, SaveProposal, SavedProjectChanges,
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::{
@@ -29,7 +29,7 @@ use tower_lsp_server::{
     ls_types::{
         CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
         CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
-        DocumentHighlight, DocumentSymbol, Hover, InitializeParams, InitializeResult,
+        DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InitializeParams, InitializeResult,
         InitializedParams, InlayHint, Location, Position, Range, TextEdit, Uri, WorkspaceEdit,
         WorkspaceSymbol,
     },
@@ -758,6 +758,15 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: EditorDocumentSnapshot,
     ) -> Result<QueryValue<Vec<DocumentSymbol>>, QueryError> {
+        panic!("test engine only supports completion")
+    }
+
+    async fn folding_range(
+        self,
+        _: context::Context,
+        _: EditorDocumentSnapshot,
+        _: FoldingClientCapabilities,
+    ) -> Result<QueryValue<Vec<FoldingRange>>, QueryError> {
         panic!("test engine only supports completion")
     }
 

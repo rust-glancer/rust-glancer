@@ -20,7 +20,12 @@ use crate::{
     tests::synthetic_test_path,
 };
 
-use super::{EditorIngress, completion_request, document_request};
+use super::{EditorIngress, completion_request, document_request, is_document_request};
+
+#[test]
+fn folding_range_is_a_document_request() {
+    assert!(is_document_request("textDocument/foldingRange"));
+}
 
 #[tokio::test]
 async fn later_request_keeps_incrementally_changed_text_when_futures_finish_in_reverse() {

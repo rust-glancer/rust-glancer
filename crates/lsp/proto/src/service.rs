@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use crate::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
     DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
-    GlobalPositionSnapshot, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
-    ServiceNotification,
+    FoldingClientCapabilities, GlobalPositionSnapshot, QueryError, QueryValue, SaveProposal,
+    SavedProjectChanges, ServiceNotification,
 };
 
 pub type EngineResult<T> = Result<T, EngineError>;
@@ -90,6 +90,11 @@ pub trait EngineService {
     async fn document_symbol(
         snapshot: EditorDocumentSnapshot,
     ) -> Result<QueryValue<Vec<ls_types::DocumentSymbol>>, QueryError>;
+
+    async fn folding_range(
+        snapshot: EditorDocumentSnapshot,
+        client_capabilities: FoldingClientCapabilities,
+    ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError>;
 
     async fn inlay_hint(
         input: DocumentRangeSnapshot,
