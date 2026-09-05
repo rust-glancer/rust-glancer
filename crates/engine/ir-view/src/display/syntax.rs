@@ -185,16 +185,31 @@ mod tests {
     use super::SyntaxRenderer;
 
     #[test]
-    fn name_rendering_uses_the_use_site_edition_without_allocated_state() {
-        let edition_2021 = SyntaxRenderer::new(RustEdition::Edition2021);
-        let edition_2024 = SyntaxRenderer::new(RustEdition::Edition2024);
-
-        assert_eq!(edition_2021.identifier("type").to_string(), "r#type");
-        assert_eq!(edition_2021.identifier("gen").to_string(), "gen");
-        assert_eq!(edition_2024.identifier("gen").to_string(), "r#gen");
-        assert_eq!(edition_2024.identifier("Self").to_string(), "Self");
-        assert_eq!(edition_2024.name("'fn").to_string(), "'r#fn");
-        assert_eq!(edition_2024.name("'static").to_string(), "'static");
+    fn renders_raw_identifiers_for_the_use_site_edition() {
+        for (edition, identifier, expected) in [
+            (RustEdition::Edition2021, "type", "r#type"),
+            (RustEdition::Edition2021, "gen", "gen"),
+            (RustEdition::Edition2024, "gen", "r#gen"),
+            (RustEdition::Edition2024, "Self", "Self"),
+        ] {
+            assert_eq!(
+                SyntaxRenderer::new(edition)
+                    .identifier(identifier)
+                    .to_string(),
+                expected,
+                "unexpected rendering for identifier `{identifier}` in {edition}",
+            );
+        }
+        for (edition, name, expected) in [
+            (RustEdition::Edition2024, "'fn", "'r#fn"),
+            (RustEdition::Edition2024, "'static", "'static"),
+        ] {
+            assert_eq!(
+                SyntaxRenderer::new(edition).name(name).to_string(),
+                expected,
+                "unexpected rendering for name `{name}` in {edition}",
+            );
+        }
 
         let ty = TypeRef::Reference {
             lifetime: Some(Name::new("'fn")),
@@ -203,7 +218,7 @@ mod tests {
                 "'gen",
             ))])),
         };
-        assert_eq!(ty.to_string(), "&'fn impl 'gen");
+        let edition_2024 = SyntaxRenderer::new(RustEdition::Edition2024);
         assert_eq!(edition_2024.type_ref(&ty).to_string(), "&'r#fn impl 'r#gen");
     }
 }

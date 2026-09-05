@@ -1,75 +1,8 @@
 use super::super::utils;
-use expect_test::{Expect, expect};
-
-const BUILTIN_MACRO_SYSROOT: &str = r#"
-//- /sysroot/library/core/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! cfg_select {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::cfg_select;
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! cfg_select {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::cfg_select;
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
-"#;
-
-fn builtin_macro_fixture(fixture: &str) -> String {
-    format!("{fixture}\n{BUILTIN_MACRO_SYSROOT}")
-}
+use expect_test::expect;
 
 fn build_builtin_macro_fixture(fixture: &str) -> utils::DefMapFixtureDb {
-    let fixture = builtin_macro_fixture(fixture);
-    utils::DefMapFixtureDb::build_with_sysroot(&fixture)
-}
-
-fn check_builtin_macro_project_def_map(fixture: &str, expect: Expect) {
-    let fixture = builtin_macro_fixture(fixture);
-    utils::check_project_def_map_with_sysroot(&fixture, expect);
-}
-
-fn check_builtin_macro_path_resolution(
-    fixture: &str,
-    queries: &[utils::PathResolutionQuery],
-    expect: Expect,
-) {
-    let fixture = builtin_macro_fixture(fixture);
-    utils::check_project_path_resolution_with_sysroot(&fixture, queries, expect);
+    utils::DefMapFixtureDb::build_with_fake_sysroot(fixture)
 }
 
 #[test]
@@ -362,7 +295,7 @@ cfg_select! {
 
 #[test]
 fn cfg_select_collects_out_of_line_modules_relative_to_call_site() {
-    check_builtin_macro_path_resolution(
+    utils::check_project_path_resolution_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -393,8 +326,7 @@ pub struct Unix;
 
 #[test]
 fn cfg_select_collects_impls_and_extern_crates_as_source_items() {
-    check_builtin_macro_project_def_map(
-        r#"
+    let fixture = r#"
 //- /Cargo.toml
 [package]
 name = "cfg_select_source_items_fixture"
@@ -427,68 +359,43 @@ edition = "2024"
 
 //- /dep/src/lib.rs
 pub struct Dep;
-"#,
+"#;
+    let project = build_builtin_macro_fixture(fixture);
+    let target = project.lib("cfg_select_source_items_fixture");
+
+    target
+        .entry("User")
+        .assert_type_exists("the selected cfg_select arm should contribute ordinary items");
+    target.entry("nested").assert_module_named(
+        "nested",
+        "the selected arm should contribute nested modules",
+    );
+
+    let [local_impl] = target.def_map().local_impls() else {
+        panic!("the selected cfg_select arm should contribute exactly one impl");
+    };
+    assert!(
+        matches!(local_impl.source.kind, crate::ItemSourceKind::ItemTree(_)),
+        "cfg_select should retain the impl's real source identity"
+    );
+
+    utils::check_project_path_resolution_with_fake_sysroot(
+        fixture,
+        &[
+            utils::PathResolutionQuery::lib(
+                "cfg_select_source_items_fixture",
+                "crate",
+                "dep_alias",
+            ),
+            utils::PathResolutionQuery::lib(
+                "cfg_select_source_items_fixture",
+                "crate::nested",
+                "Dep",
+            ),
+        ],
         expect![[r#"
-            package alloc
-
-            alloc [lib]
-            crate
-            - Alloc : type [pub struct alloc[lib]::crate::Alloc] | value [pub struct alloc[lib]::crate::Alloc]
-
-            package cfg_select_source_items_fixture
-
-            cfg_select_source_items_fixture [lib]
-            crate
-            - User : type [pub struct cfg_select_source_items_fixture[lib]::crate::User] | value [pub struct cfg_select_source_items_fixture[lib]::crate::User]
-            - dep_alias : type [module dep[lib]::crate]
-            - nested : type [pub module cfg_select_source_items_fixture[lib]::crate::nested]
-            impls
-            - impl lib.rs#2
-
-            crate::nested
-            - Dep : type [pub struct dep[lib]::crate::Dep] | value [pub struct dep[lib]::crate::Dep]
-
-            package core
-
-            core [lib]
-            crate
-            - cfg_select : macro [macro_definition core[lib]::crate::cfg_select; pub macro_definition core[lib]::crate::cfg_select]
-            - include : macro [macro_definition core[lib]::crate::include; pub macro_definition core[lib]::crate::include]
-            - prelude : type [pub module core[lib]::crate::prelude]
-
-            crate::prelude
-            - rust_2024 : type [pub module core[lib]::crate::prelude::rust_2024]
-
-            crate::prelude::rust_2024
-            - cfg_select : macro [pub macro_definition core[lib]::crate::cfg_select]
-            - include : macro [pub macro_definition core[lib]::crate::include]
-
-            package dep
-
-            dep [lib]
-            crate
-            - Dep : type [pub struct dep[lib]::crate::Dep] | value [pub struct dep[lib]::crate::Dep]
-
-            package proc_macro
-
-            proc_macro [lib]
-            crate
-            - TokenStream : type [pub struct proc_macro[lib]::crate::TokenStream] | value [pub struct proc_macro[lib]::crate::TokenStream]
-
-            package std
-
-            std [lib]
-            crate
-            - cfg_select : macro [macro_definition std[lib]::crate::cfg_select; pub macro_definition std[lib]::crate::cfg_select]
-            - include : macro [macro_definition std[lib]::crate::include; pub macro_definition std[lib]::crate::include]
-            - prelude : type [pub module std[lib]::crate::prelude]
-
-            crate::prelude
-            - rust_2024 : type [pub module std[lib]::crate::prelude::rust_2024]
-
-            crate::prelude::rust_2024
-            - cfg_select : macro [pub macro_definition std[lib]::crate::cfg_select]
-            - include : macro [pub macro_definition std[lib]::crate::include]
+            cfg_select_source_items_fixture [lib] crate resolves dep_alias -> module dep[lib]::crate
+            cfg_select_source_items_fixture [lib] crate::nested resolves Dep -> struct dep[lib]::crate::Dep
         "#]],
     );
 }

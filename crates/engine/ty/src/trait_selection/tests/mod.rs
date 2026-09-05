@@ -594,21 +594,30 @@ fn recursive_projection_normalization_stops_at_its_depth_limit() {
 }
 
 #[test]
-fn probe_selects_direct_from_iterator_impl_and_solves_destination_arg() {
+fn probe_matches_direct_generic_impl_evidence() {
     check_trait_selection_queries(
         r#"
             traits
               trait#0 FromIterator<T>
             structs
               struct#0 Vec<T>
-              struct#1 User
+              struct#1 OtherVec<T>
+              struct#2 User
+              struct#3 Other
             impls
               impl#0 impl<T> FromIterator<T> for Vec<T>
         "#,
-        vec![TraitSelectionCase::probe(
-            "select direct impl",
-            "Vec<?item>: FromIterator<User>",
-        )],
+        vec![
+            TraitSelectionCase::probe("select direct impl", "Vec<?item>: FromIterator<User>"),
+            TraitSelectionCase::probe(
+                "reject mismatched self",
+                "OtherVec<?item>: FromIterator<User>",
+            ),
+            TraitSelectionCase::probe(
+                "reject conflicting repeated type param",
+                "Vec<User>: FromIterator<Other>",
+            ),
+        ],
         expect![[r#"
             select direct impl
               query: selection
@@ -618,12 +627,22 @@ fn probe_selects_direct_from_iterator_impl_and_solves_destination_arg() {
                 applicability: yes
                 vars
                   ?item = User
+
+            reject mismatched self
+              query: selection
+              goal: OtherVec<?item>: FromIterator<User>
+              result: empty
+
+            reject conflicting repeated type param
+              query: selection
+              goal: Vec<User>: FromIterator<Other>
+              result: empty
         "#]],
     );
 }
 
 #[test]
-fn normalize_assoc_type_projects_generic_impl_value() {
+fn normalizes_generic_associated_types_across_selection_and_chalk() {
     check_trait_selection_queries(
         r#"
             traits
@@ -637,18 +656,46 @@ fn normalize_assoc_type_projects_generic_impl_value() {
               type#0 trait#0::Item
               type#1 impl#0::Item = T
         "#,
-        vec![TraitSelectionCase::normalize_assoc(
-            "project generic impl Item",
-            "<Iter<User> as Iterator>::Item",
-        )],
+        vec![
+            TraitSelectionCase::normalize_assoc(
+                "selection projects generic impl Item",
+                "<Iter<User> as Iterator>::Item",
+            ),
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects generic impl Item",
+                "<Iter<User> as Iterator>::Item",
+            ),
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk preserves projection variable",
+                "<Iter<?item> as Iterator>::Item",
+            ),
+        ],
         expect![[r#"
-            project generic impl Item
+            selection projects generic impl Item
               query: selection
               goal: <Iter<User> as Iterator>::Item
               result: projected
                 infer: User
                 final: User
                 applicability: yes
+
+            chalk projects generic impl Item
+              query: chalk
+              goal: <Iter<User> as Iterator>::Item
+              result: projected
+                infer: User
+                final: User
+                applicability: yes
+
+            chalk preserves projection variable
+              query: chalk
+              goal: <Iter<?item> as Iterator>::Item
+              result: projected
+                infer: ?item
+                final: _
+                applicability: yes
+                vars
+                  ?item = _
         "#]],
     );
 }
@@ -699,38 +746,6 @@ fn probe_checks_goal_associated_type_equality_constraints() {
             solve receiver slot from associated equality
               query: selection
               goal: Iter<?item>: Iterator<Item = User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
-        "#]],
-    );
-}
-
-#[test]
-fn probe_checks_custom_trait_associated_type_equality_constraints() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Source
-            structs
-              struct#0 Bag<T>
-              struct#1 User
-            impls
-              impl#0 impl<T> Source for Bag<T>
-            type aliases
-              type#0 trait#0::Output
-              type#1 impl#0::Output = T
-        "#,
-        vec![TraitSelectionCase::probe(
-            "solve custom associated equality",
-            "Bag<?item>: Source<Output = User>",
-        )],
-        expect![[r#"
-            solve custom associated equality
-              query: selection
-              goal: Bag<?item>: Source<Output = User>
               result: one
                 impl: impl#0
                 applicability: yes
@@ -832,69 +847,6 @@ fn probe_prefers_definite_impl_over_maybe_headers() {
 }
 
 #[test]
-fn chalk_solver_normalizes_generic_associated_type_value() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Iterator
-            structs
-              struct#0 Iter<T>
-              struct#1 User
-            impls
-              impl#0 impl<T> Iterator for Iter<T>
-            type aliases
-              type#0 trait#0::Item
-              type#1 impl#0::Item = T
-        "#,
-        vec![TraitSelectionCase::chalk_normalize_assoc(
-            "chalk project generic impl Item",
-            "<Iter<User> as Iterator>::Item",
-        )],
-        expect![[r#"
-            chalk project generic impl Item
-              query: chalk
-              goal: <Iter<User> as Iterator>::Item
-              result: projected
-                infer: User
-                final: User
-                applicability: yes
-        "#]],
-    );
-}
-
-#[test]
-fn chalk_solver_normalizes_associated_type_to_existing_inference_var() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Iterator
-            structs
-              struct#0 Iter<T>
-            impls
-              impl#0 impl<T> Iterator for Iter<T>
-            type aliases
-              type#0 trait#0::Item
-              type#1 impl#0::Item = T
-        "#,
-        vec![TraitSelectionCase::chalk_normalize_assoc(
-            "chalk preserves projection variable",
-            "<Iter<?item> as Iterator>::Item",
-        )],
-        expect![[r#"
-            chalk preserves projection variable
-              query: chalk
-              goal: <Iter<?item> as Iterator>::Item
-              result: projected
-                infer: ?item
-                final: _
-                applicability: yes
-                vars
-                  ?item = _
-        "#]],
-    );
-}
-
-#[test]
 fn chalk_solver_commits_projection_answer_evidence_to_inference_table() {
     check_trait_selection_queries(
         r#"
@@ -928,68 +880,52 @@ fn chalk_solver_commits_projection_answer_evidence_to_inference_table() {
 }
 
 #[test]
-fn chalk_solver_normalizes_array_associated_type_value() {
+fn chalk_solver_raises_associated_type_constructor_shapes() {
     check_trait_selection_queries(
         r#"
             traits
-              trait#0 ArrayProvider
+              trait#0 Shapes
             structs
               struct#0 Holder<T>
+              struct#1 User
             impls
-              impl#0 impl<T> ArrayProvider for Holder<T>
+              impl#0 impl<T> Shapes for Holder<T>
             type aliases
-              type#0 trait#0::Item
-              type#1 impl#0::Item = [T; 3]
+              type#0 trait#0::Array
+              type#1 impl#0::Array = [T; 3]
+              type#2 trait#0::Pointer
+              type#3 impl#0::Pointer = *const T
+              type#4 trait#0::Callback
+              type#5 impl#0::Callback = fn(T) -> T
         "#,
-        vec![TraitSelectionCase::chalk_normalize_assoc(
-            "chalk projects array impl Item",
-            "<Holder<?item> as ArrayProvider>::Item",
-        )],
+        vec![
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects array value",
+                "<Holder<?item> as Shapes>::Array",
+            ),
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects raw pointer",
+                "<Holder<User> as Shapes>::Pointer",
+            ),
+            TraitSelectionCase::chalk_normalize_assoc(
+                "chalk projects function pointer",
+                "<Holder<User> as Shapes>::Callback",
+            ),
+        ],
         expect![[r#"
-            chalk projects array impl Item
+            chalk projects array value
               query: chalk
-              goal: <Holder<?item> as ArrayProvider>::Item
+              goal: <Holder<?item> as Shapes>::Array
               result: projected
                 infer: [?item; 3]
                 final: [_; 3]
                 applicability: yes
                 vars
                   ?item = _
-        "#]],
-    );
-}
 
-#[test]
-fn chalk_solver_raises_raw_pointer_and_function_pointer_values() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Shapes
-            structs
-              struct#0 Holder
-              struct#1 User
-            impls
-              impl#0 impl Shapes for Holder
-            type aliases
-              type#0 trait#0::Pointer
-              type#1 impl#0::Pointer = *const User
-              type#2 trait#0::Callback
-              type#3 impl#0::Callback = fn(User) -> User
-        "#,
-        vec![
-            TraitSelectionCase::chalk_normalize_assoc(
-                "chalk projects raw pointer",
-                "<Holder as Shapes>::Pointer",
-            ),
-            TraitSelectionCase::chalk_normalize_assoc(
-                "chalk projects function pointer",
-                "<Holder as Shapes>::Callback",
-            ),
-        ],
-        expect![[r#"
             chalk projects raw pointer
               query: chalk
-              goal: <Holder as Shapes>::Pointer
+              goal: <Holder<User> as Shapes>::Pointer
               result: projected
                 infer: *const User
                 final: *const User
@@ -997,7 +933,7 @@ fn chalk_solver_raises_raw_pointer_and_function_pointer_values() {
 
             chalk projects function pointer
               query: chalk
-              goal: <Holder as Shapes>::Callback
+              goal: <Holder<User> as Shapes>::Callback
               result: projected
                 infer: fn(User) -> User
                 final: fn(User) -> User
@@ -1199,58 +1135,6 @@ fn probe_rejects_bare_inference_receiver_for_all_impl_shapes() {
 }
 
 #[test]
-fn probe_rejects_concrete_self_mismatch() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 FromIterator<T>
-            structs
-              struct#0 Vec<T>
-              struct#1 OtherVec<T>
-              struct#2 User
-            impls
-              impl#0 impl<T> FromIterator<T> for Vec<T>
-        "#,
-        vec![TraitSelectionCase::probe(
-            "reject mismatched self",
-            "OtherVec<?item>: FromIterator<User>",
-        )],
-        expect![[r#"
-            reject mismatched self
-              query: selection
-              goal: OtherVec<?item>: FromIterator<User>
-              result: empty
-        "#]],
-    );
-}
-
-#[test]
-fn probe_rejects_conflicting_repeated_type_param_evidence() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 FromIterator<T>
-            structs
-              struct#0 Vec<T>
-              struct#1 User
-              struct#2 Other
-            impls
-              impl#0 impl<T> FromIterator<T> for Vec<T>
-        "#,
-        vec![TraitSelectionCase::probe(
-            "reject conflicting repeated type param",
-            "Vec<User>: FromIterator<Other>",
-        )],
-        expect![[r#"
-            reject conflicting repeated type param
-              query: selection
-              goal: Vec<User>: FromIterator<Other>
-              result: empty
-        "#]],
-    );
-}
-
-#[test]
 fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
     check_trait_selection_queries(
         r#"
@@ -1278,7 +1162,7 @@ fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
 }
 
 #[test]
-fn probe_rejects_impls_with_unproven_bounds() {
+fn impl_bounds_distinguish_proven_unproved_and_candidate_queries() {
     check_trait_selection_queries(
         r#"
             traits
@@ -1287,18 +1171,48 @@ fn probe_rejects_impls_with_unproven_bounds() {
             structs
               struct#0 Vec<T>
               struct#1 User
+              struct#2 Other
             impls
               impl#0 impl<T: Clone> FromIterator<T> for Vec<T>
+              impl#1 impl Clone for User
         "#,
-        vec![TraitSelectionCase::probe(
-            "reject unproven impl bound",
-            "Vec<?item>: FromIterator<User>",
-        )],
+        vec![
+            TraitSelectionCase::probe(
+                "prove concrete Clone bound",
+                "Vec<?item>: FromIterator<User>",
+            ),
+            TraitSelectionCase::probe(
+                "reject unproved Clone bound",
+                "Vec<?item>: FromIterator<Other>",
+            ),
+            TraitSelectionCase::candidate_probe(
+                "candidate retains unproved Clone bound",
+                "Vec<?item>: FromIterator<Other>",
+            ),
+        ],
         expect![[r#"
-            reject unproven impl bound
+            prove concrete Clone bound
               query: selection
               goal: Vec<?item>: FromIterator<User>
+              result: one
+                impl: impl#0
+                applicability: yes
+                vars
+                  ?item = User
+
+            reject unproved Clone bound
+              query: selection
+              goal: Vec<?item>: FromIterator<Other>
               result: empty
+
+            candidate retains unproved Clone bound
+              query: candidate
+              goal: Vec<?item>: FromIterator<Other>
+              result: one
+                impl: impl#0
+                applicability: yes
+                vars
+                  ?item = Other
         "#]],
     );
 }
@@ -1333,37 +1247,6 @@ fn probe_does_not_infer_unconstrained_impl_parameter_from_visible_impls() {
                 applicability: maybe
                 vars
                   ?item = _
-        "#]],
-    );
-}
-
-#[test]
-fn probe_proves_impl_type_param_bounds() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Clone
-              trait#1 FromIterator<T>
-            structs
-              struct#0 Vec<T>
-              struct#1 User
-            impls
-              impl#0 impl<T: Clone> FromIterator<T> for Vec<T>
-              impl#1 impl Clone for User
-        "#,
-        vec![TraitSelectionCase::probe(
-            "prove concrete Clone bound",
-            "Vec<?item>: FromIterator<User>",
-        )],
-        expect![[r#"
-            prove concrete Clone bound
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
         "#]],
     );
 }
@@ -1428,80 +1311,6 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
               query: selection
               goal: User: UsesAdapter
               result: empty
-        "#]],
-    );
-}
-
-#[test]
-fn candidate_discovery_does_not_prove_impl_type_param_bounds() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Clone
-              trait#1 FromIterator<T>
-            structs
-              struct#0 Vec<T>
-              struct#1 User
-            impls
-              impl#0 impl<T: Clone> FromIterator<T> for Vec<T>
-              impl#1 impl Clone for User
-        "#,
-        vec![
-            TraitSelectionCase::probe(
-                "default proves Clone bound",
-                "Vec<?item>: FromIterator<User>",
-            ),
-            TraitSelectionCase::candidate_probe(
-                "candidate leaves Clone bound unproved",
-                "Vec<?item>: FromIterator<User>",
-            ),
-        ],
-        expect![[r#"
-            default proves Clone bound
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
-
-            candidate leaves Clone bound unproved
-              query: candidate
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
-        "#]],
-    );
-}
-
-#[test]
-fn candidate_discovery_retains_impl_with_unproved_type_param_bound() {
-    check_trait_selection_queries(
-        r#"
-            traits
-              trait#0 Clone
-              trait#1 FromIterator<T>
-            structs
-              struct#0 Vec<T>
-              struct#1 User
-            impls
-              impl#0 impl<T: Clone> FromIterator<T> for Vec<T>
-        "#,
-        vec![TraitSelectionCase::candidate_probe(
-            "candidate retains unproved inline bound",
-            "Vec<User>: FromIterator<User>",
-        )],
-        expect![[r#"
-            candidate retains unproved inline bound
-              query: candidate
-              goal: Vec<User>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
         "#]],
     );
 }

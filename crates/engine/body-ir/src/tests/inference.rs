@@ -752,12 +752,12 @@ pub fn use_it(flag: bool, user: User) -> User {
 }
 
 #[test]
-fn self_referential_if_result_does_not_recurse() {
+fn self_referential_branch_results_do_not_recurse() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml
 [package]
-name = "body_self_referential_if_inference"
+name = "body_self_referential_branch_inference"
 version = "0.1.0"
 edition = "2024"
 
@@ -772,80 +772,6 @@ pub enum Mode {
     Second,
 }
 
-pub fn use_it(flag: bool) {
-    let mut value = Maybe::Some(Mode::First);
-    value = if flag {
-        value
-    } else {
-        Maybe::Some(Mode::Second)
-    };
-    value;
-}
-"#,
-        expect![[r#"
-            package body_self_referential_if_inference
-
-            body_self_referential_if_inference [lib]
-            body b0 fn body_self_referential_if_inference[lib]::crate::use_it @ 11:1-19:2
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: v1
-            - s2 parent s1: <none>
-            - s3 parent s1: <none>
-            bindings
-            - v0 param flag `flag`: bool => bool @ 11:15-11:19
-            - v1 let value `mut value` => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 12:9-12:18 name @ 12:13-12:18
-            body
-            expr e14 block s1 => () @ 11:27-19:2
-              stmt s0 let v1 @ 12:5-12:46
-                initializer
-                  expr e2 call => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 12:21-12:45
-                    callee
-                      expr e0 path Maybe::Some -> variant enum body_self_referential_if_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<<unknown>> @ 12:21-12:32
-                    arg
-                      expr e1 path Mode::First -> variant enum body_self_referential_if_inference[lib]::crate::Mode::First => nominal enum body_self_referential_if_inference[lib]::crate::Mode @ 12:33-12:44
-              stmt s1 expr; @ 13:5-17:7
-                expr e12 assign = => () @ 13:5-17:6
-                  target
-                    expr e3 path value -> local v1 => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 13:5-13:10
-                  value
-                    expr e11 if => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 13:13-17:6
-                      condition
-                        expr e4 path flag -> local v0 => bool @ 13:16-13:20
-                      then
-                        expr e6 block s2 => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 13:21-15:6
-                          tail
-                            expr e5 path value -> local v1 => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 14:9-14:14
-                      else
-                        expr e10 block s3 => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 15:12-17:6
-                          tail
-                            expr e9 call => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 16:9-16:34
-                              callee
-                                expr e7 path Maybe::Some -> variant enum body_self_referential_if_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<<unknown>> @ 16:9-16:20
-                              arg
-                                expr e8 path Mode::Second -> variant enum body_self_referential_if_inference[lib]::crate::Mode::Second => nominal enum body_self_referential_if_inference[lib]::crate::Mode @ 16:21-16:33
-              stmt s2 expr; @ 18:5-18:11
-                expr e13 path value -> local v1 => nominal enum body_self_referential_if_inference[lib]::crate::Maybe<nominal enum body_self_referential_if_inference[lib]::crate::Mode> @ 18:5-18:10
-        "#]],
-    );
-}
-
-#[test]
-fn self_referential_match_result_does_not_recurse() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_self_referential_match_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub enum Maybe<T> {
-    Some(T),
-    None,
-}
-
 pub enum MergeBehavior {
     Crate,
     Module,
@@ -857,7 +783,17 @@ pub enum Guess {
     Nested,
 }
 
-pub fn use_it(guess: Guess) {
+pub fn use_if(flag: bool) {
+    let mut value = Maybe::Some(Mode::First);
+    value = if flag {
+        value
+    } else {
+        Maybe::Some(Mode::Second)
+    };
+    value;
+}
+
+pub fn use_match(guess: Guess) {
     let mut mb = Maybe::Some(MergeBehavior::Crate);
     mb = match guess {
         Guess::Keep => mb,
@@ -871,10 +807,52 @@ pub fn use_it(guess: Guess) {
 }
 "#,
         expect![[r#"
-            package body_self_referential_match_inference
+            package body_self_referential_branch_inference
 
-            body_self_referential_match_inference [lib]
-            body b0 fn body_self_referential_match_inference[lib]::crate::use_it @ 17:1-28:2
+            body_self_referential_branch_inference [lib]
+            body b0 fn body_self_referential_branch_inference[lib]::crate::use_if @ 22:1-30:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            - s2 parent s1: <none>
+            - s3 parent s1: <none>
+            bindings
+            - v0 param flag `flag`: bool => bool @ 22:15-22:19
+            - v1 let value `mut value` => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 23:9-23:18 name @ 23:13-23:18
+            body
+            expr e14 block s1 => () @ 22:27-30:2
+              stmt s0 let v1 @ 23:5-23:46
+                initializer
+                  expr e2 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 23:21-23:45
+                    callee
+                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 23:21-23:32
+                    arg
+                      expr e1 path Mode::First -> variant enum body_self_referential_branch_inference[lib]::crate::Mode::First => nominal enum body_self_referential_branch_inference[lib]::crate::Mode @ 23:33-23:44
+              stmt s1 expr; @ 24:5-28:7
+                expr e12 assign = => () @ 24:5-28:6
+                  target
+                    expr e3 path value -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 24:5-24:10
+                  value
+                    expr e11 if => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 24:13-28:6
+                      condition
+                        expr e4 path flag -> local v0 => bool @ 24:16-24:20
+                      then
+                        expr e6 block s2 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 24:21-26:6
+                          tail
+                            expr e5 path value -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 25:9-25:14
+                      else
+                        expr e10 block s3 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 26:12-28:6
+                          tail
+                            expr e9 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 27:9-27:34
+                              callee
+                                expr e7 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 27:9-27:20
+                              arg
+                                expr e8 path Mode::Second -> variant enum body_self_referential_branch_inference[lib]::crate::Mode::Second => nominal enum body_self_referential_branch_inference[lib]::crate::Mode @ 27:21-27:33
+              stmt s2 expr; @ 29:5-29:11
+                expr e13 path value -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::Mode> @ 29:5-29:10
+
+
+            body b1 fn body_self_referential_branch_inference[lib]::crate::use_match @ 32:1-43:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -884,43 +862,43 @@ pub fn use_it(guess: Guess) {
             - s5 parent s4: <none>
             - s6 parent s4: <none>
             bindings
-            - v0 param guess `guess`: Guess => nominal enum body_self_referential_match_inference[lib]::crate::Guess @ 17:15-17:20
-            - v1 let mb `mut mb` => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 18:9-18:15 name @ 18:13-18:15
+            - v0 param guess `guess`: Guess => nominal enum body_self_referential_branch_inference[lib]::crate::Guess @ 32:18-32:23
+            - v1 let mb `mut mb` => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 33:9-33:15 name @ 33:13-33:15
             body
-            expr e16 block s1 => () @ 17:29-28:2
-              stmt s0 let v1 @ 18:5-18:52
+            expr e16 block s1 => () @ 32:32-43:2
+              stmt s0 let v1 @ 33:5-33:52
                 initializer
-                  expr e2 call => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 18:18-18:51
+                  expr e2 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 33:18-33:51
                     callee
-                      expr e0 path Maybe::Some -> variant enum body_self_referential_match_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<<unknown>> @ 18:18-18:29
+                      expr e0 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 33:18-33:29
                     arg
-                      expr e1 path MergeBehavior::Crate -> variant enum body_self_referential_match_inference[lib]::crate::MergeBehavior::Crate => nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior @ 18:30-18:50
-              stmt s1 expr; @ 19:5-26:7
-                expr e14 assign = => () @ 19:5-26:6
+                      expr e1 path MergeBehavior::Crate -> variant enum body_self_referential_branch_inference[lib]::crate::MergeBehavior::Crate => nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior @ 33:30-33:50
+              stmt s1 expr; @ 34:5-41:7
+                expr e14 assign = => () @ 34:5-41:6
                   target
-                    expr e3 path mb -> local v1 => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 19:5-19:7
+                    expr e3 path mb -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 34:5-34:7
                   value
-                    expr e13 match => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 19:10-26:6
+                    expr e13 match => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 34:10-41:6
                       scrutinee
-                        expr e4 path guess -> local v0 => nominal enum body_self_referential_match_inference[lib]::crate::Guess @ 19:16-19:21
+                        expr e4 path guess -> local v0 => nominal enum body_self_referential_branch_inference[lib]::crate::Guess @ 34:16-34:21
                       arm s2
-                        expr e5 path mb -> local v1 => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 20:24-20:26
+                        expr e5 path mb -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 35:24-35:26
                       arm s3
-                        expr e6 path Maybe::None -> variant enum body_self_referential_match_inference[lib]::crate::Maybe::None => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<<unknown>> @ 21:25-21:36
+                        expr e6 path Maybe::None -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::None => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 36:25-36:36
                       arm s4
-                        expr e12 match => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 22:26-25:10
+                        expr e12 match => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 37:26-40:10
                           scrutinee
-                            expr e7 path mb -> local v1 => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 22:32-22:34
+                            expr e7 path mb -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 37:32-37:34
                           arm s5
-                            expr e8 path mb -> local v1 => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 23:31-23:33
+                            expr e8 path mb -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 38:31-38:33
                           arm s6
-                            expr e11 call => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 24:28-24:62
+                            expr e11 call => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 39:28-39:62
                               callee
-                                expr e9 path Maybe::Some -> variant enum body_self_referential_match_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<<unknown>> @ 24:28-24:39
+                                expr e9 path Maybe::Some -> variant enum body_self_referential_branch_inference[lib]::crate::Maybe::Some => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<<unknown>> @ 39:28-39:39
                               arg
-                                expr e10 path MergeBehavior::Module -> variant enum body_self_referential_match_inference[lib]::crate::MergeBehavior::Module => nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior @ 24:40-24:61
-              stmt s2 expr; @ 27:5-27:8
-                expr e15 path mb -> local v1 => nominal enum body_self_referential_match_inference[lib]::crate::Maybe<nominal enum body_self_referential_match_inference[lib]::crate::MergeBehavior> @ 27:5-27:7
+                                expr e10 path MergeBehavior::Module -> variant enum body_self_referential_branch_inference[lib]::crate::MergeBehavior::Module => nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior @ 39:40-39:61
+              stmt s2 expr; @ 42:5-42:8
+                expr e15 path mb -> local v1 => nominal enum body_self_referential_branch_inference[lib]::crate::Maybe<nominal enum body_self_referential_branch_inference[lib]::crate::MergeBehavior> @ 42:5-42:7
         "#]],
     );
 }

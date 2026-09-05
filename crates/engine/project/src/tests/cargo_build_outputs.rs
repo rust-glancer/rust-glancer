@@ -2,43 +2,9 @@ use std::{fs, path::Path};
 
 use crate::{PackageResidencyPolicy, Project, SavedFileChange, testonly::ProjectSourceFixture};
 
-const INCLUDE_SYSROOT: &str = r#"
-//- /sysroot/library/core/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
-"#;
-
 #[test]
 fn passively_recovered_out_dir_sources_enter_semantic_analysis() {
-    let fixture = fixture_with_include_sysroot(
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -193,7 +159,7 @@ pub struct GeneratedChild;
 
 #[test]
 fn restores_a_valid_historical_build_output_until_manual_reindex() {
-    let fixture = fixture_with_include_sysroot(
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -309,7 +275,7 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
 
 #[test]
 fn macro_generated_include_reuses_one_file_under_distinct_module_contexts() {
-    let fixture = fixture_with_include_sysroot(
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -350,10 +316,6 @@ pub struct RightGeneratedChild;
     let project = fixture.build_project();
     assert_symbol_count(&project, "LeftGeneratedChild", 1);
     assert_symbol_count(&project, "RightGeneratedChild", 1);
-}
-
-fn fixture_with_include_sysroot(spec: &str) -> ProjectSourceFixture {
-    ProjectSourceFixture::build_with_sysroot(&format!("{spec}\n{INCLUDE_SYSROOT}"))
 }
 
 fn write_cargo_build_output_fixture(

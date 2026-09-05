@@ -1,10 +1,11 @@
 mod utils;
 
 use crate::{
-    FromAst, GenericArg, GenericParams, TraitBoundModifier, TypeBound, TypePathAnchor, TypeRef,
+    FromAst, GenericArg, GenericParams, ItemKind, TraitBoundModifier, TypeBound, TypePathAnchor,
+    TypeRef,
 };
 use expect_test::expect;
-use rg_parse::LineIndex;
+use rg_parse::{LineColumnSpan, LineIndex, Position, TextSpan};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 
@@ -123,78 +124,6 @@ fn lower_alias_ty(source: &str) -> TypeRef {
 }
 
 #[test]
-fn dumps_lib_and_bin_item_trees() {
-    utils::check_project_item_tree(
-        r#"
-//- /Cargo.toml
-[package]
-name = "moderate_crate"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "moderate_crate"
-path = "src/main.rs"
-
-//- /src/lib.rs
-pub mod cli;
-pub mod model;
-
-//- /src/model.rs
-pub struct Model;
-
-impl Model {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-//- /src/cli.rs
-pub fn run() {}
-
-//- /src/main.rs
-use std::path::PathBuf;
-use moderate_crate::cli::run;
-
-fn main() {
-    let _path = PathBuf::new();
-    run();
-}
-"#,
-        expect![[r#"
-            package moderate_crate
-
-            targets
-            - moderate_crate [lib] -> lib.rs
-
-            - moderate_crate [bin] -> main.rs
-
-            files
-            file cli.rs
-            - pub fn run
-
-            file lib.rs
-            - pub module cli [out_of_line]
-            - pub module model [out_of_line]
-
-            file main.rs
-            - use
-              - import named std::path::PathBuf
-            - use
-              - import named moderate_crate::cli::run
-            - fn main
-
-            file model.rs
-            - pub struct Model
-            - impl
-        "#]],
-    );
-}
-
-#[test]
 fn lowers_raw_identifier_tokens_to_semantic_names() {
     utils::check_project_item_tree_with_declarations(
         r#"
@@ -275,7 +204,7 @@ pub fn gen() {}
 }
 
 #[test]
-fn lowers_distinct_out_of_line_modules_for_lib_and_bin_roots() {
+fn lowers_target_specific_and_shared_module_files_once() {
     utils::check_project_item_tree(
         r#"
 //- /Cargo.toml
@@ -293,17 +222,22 @@ path = "src/main.rs"
 
 //- /src/lib.rs
 pub mod library;
+pub mod shared;
 
 //- /src/library.rs
 pub struct LibraryThing;
 
 //- /src/main.rs
 mod cli;
+mod shared;
 
 fn main() {}
 
 //- /src/cli.rs
 pub struct CliThing;
+
+//- /src/shared.rs
+pub struct Shared;
 "#,
         expect![[r#"
             package target_module_fixture
@@ -319,58 +253,13 @@ pub struct CliThing;
 
             file lib.rs
             - pub module library [out_of_line]
+            - pub module shared [out_of_line]
 
             file library.rs
             - pub struct LibraryThing
 
             file main.rs
             - module cli [out_of_line]
-            - fn main
-        "#]],
-    );
-}
-
-#[test]
-fn lowers_shared_out_of_line_file_once_for_multiple_target_roots() {
-    utils::check_project_item_tree(
-        r#"
-//- /Cargo.toml
-[package]
-name = "shared_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "shared-module-fixture"
-path = "src/main.rs"
-
-//- /src/lib.rs
-pub mod shared;
-
-//- /src/main.rs
-mod shared;
-
-fn main() {}
-
-//- /src/shared.rs
-pub struct Shared;
-"#,
-        expect![[r#"
-            package shared_module_fixture
-
-            targets
-            - shared_module_fixture [lib] -> lib.rs
-
-            - shared-module-fixture [bin] -> main.rs
-
-            files
-            file lib.rs
-            - pub module shared [out_of_line]
-
-            file main.rs
             - module shared [out_of_line]
             - fn main
 
@@ -462,45 +351,6 @@ pub struct Leaf;
 }
 
 #[test]
-fn resolves_out_of_line_files_inside_inline_modules() {
-    utils::check_project_item_tree(
-        r#"
-//- /Cargo.toml
-[package]
-name = "nested_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub mod outer {
-    pub mod child;
-}
-
-pub use outer::child::work;
-
-//- /src/outer/child.rs
-pub fn work() {}
-"#,
-        expect![[r#"
-            package nested_module_fixture
-
-            targets
-            - nested_module_fixture [lib] -> lib.rs
-
-            files
-            file lib.rs
-            - pub module outer [inline]
-              - pub module child [out_of_line]
-            - pub use
-              - import named outer::child::work
-
-            file child.rs
-            - pub fn work
-        "#]],
-    );
-}
-
-#[test]
 fn resolves_path_attribute_modules() {
     utils::check_project_item_tree(
         r#"
@@ -515,15 +365,21 @@ edition = "2024"
 pub mod api;
 
 pub mod outer {
+    pub mod child;
+
     #[path = "implementation.rs"]
     pub mod implementation;
 }
 
 pub use api::Api;
+pub use outer::child::Child;
 pub use outer::implementation::work;
 
 //- /src/generated/api_file.rs
 pub struct Api;
+
+//- /src/outer/child.rs
+pub struct Child;
 
 //- /src/outer/implementation.rs
 pub fn work() {}
@@ -541,11 +397,17 @@ pub fn work() {}
             file lib.rs
             - pub module api [out_of_line]
             - pub module outer [inline]
+              - pub module child [out_of_line]
               - pub module implementation [out_of_line]
             - pub use
               - import named api::Api
             - pub use
+              - import named outer::child::Child
+            - pub use
               - import named outer::implementation::work
+
+            file child.rs
+            - pub struct Child
 
             file implementation.rs
             - pub fn work
@@ -637,42 +499,7 @@ enum CliInvocation {
 }
 
 #[test]
-fn dumps_macro_item_trees() {
-    utils::check_project_item_tree(
-        r#"
-//- /Cargo.toml
-[package]
-name = "complex_crate"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! label_result {
-    ($value:expr) => {
-        $value
-    };
-}
-
-pub fn decorate(input: &str) -> &str {
-    label_result!(input)
-}
-"#,
-        expect![[r#"
-            package complex_crate
-
-            targets
-            - complex_crate [lib] -> lib.rs
-
-            files
-            file lib.rs
-            - macro_definition label_result
-            - pub fn decorate
-        "#]],
-    );
-}
-
-#[test]
-fn dumps_item_macro_calls() {
+fn lowers_item_position_macro_calls_only() {
     utils::check_project_item_tree_with_declarations(
         r#"
 //- /Cargo.toml
@@ -690,6 +517,10 @@ macro_rules! make_user {
 }
 
 make_user!();
+
+pub fn use_it() {
+    make_user!();
+}
 "#,
         expect![[r#"
             package macro_crate
@@ -704,6 +535,8 @@ make_user!();
               - body {() => {pub struct User ;} ;}
             - macro_call [make_user]
               - args ()
+            - pub fn use_it
+              - params ()
         "#]],
     );
 }
@@ -1008,8 +841,8 @@ pub static mut CACHE_READY: bool = false;
 }
 
 #[test]
-fn dumps_item_spans() {
-    utils::check_project_item_tree_with_spans(
+fn stores_item_source_spans() {
+    let db = crate::testonly::ItemTreeFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -1022,16 +855,43 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
     left + right
 }
 "#,
-        expect![[r#"
-            package simple_crate
+    );
+    let package = db
+        .item_tree_db()
+        .package(0)
+        .expect("fixture item-tree package should exist");
+    let [target_root] = package.target_roots() else {
+        panic!("fixture should contain one target root");
+    };
+    let file_tree = package
+        .file(target_root.root_file)
+        .expect("target root item tree should exist");
+    let function = file_tree
+        .top_level
+        .iter()
+        .filter_map(|item| file_tree.item(*item))
+        .find(|item| {
+            item.name
+                .as_ref()
+                .is_some_and(|name| name == "add_two_numbers")
+        })
+        .expect("fixture function should be lowered");
 
-            targets
-            - simple_crate [lib] -> lib.rs
+    assert!(matches!(function.kind, ItemKind::Function(_)));
+    assert_eq!(function.span.text, TextSpan { start: 0, end: 73 });
 
-            files
-            file lib.rs
-            - pub fn add_two_numbers [lib.rs 1:1-3:2 (0..73)]
-        "#]],
+    let parsed_file = db.parse_db().packages()[0]
+        .parsed_file(file_tree.file)
+        .expect("fixture source should be parsed");
+    let line_index = parsed_file
+        .line_index()
+        .expect("fixture line index should load");
+    assert_eq!(
+        function.span.line_column(line_index),
+        LineColumnSpan {
+            start: Position { line: 0, column: 0 },
+            end: Position { line: 2, column: 1 },
+        }
     );
 }
 

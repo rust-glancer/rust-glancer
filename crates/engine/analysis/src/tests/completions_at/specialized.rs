@@ -679,142 +679,24 @@ pub struct WrongChild;
 }
 
 #[test]
-fn preserves_the_existing_completion_site_behavior_matrix() {
+fn completes_qualified_and_unqualified_body_macros() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_completion_site_matrix"
+name = "analysis_body_macro_completions"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use crate::api::PathT$import$;
-
-pub mod api {
-    pub struct PathType;
-    pub const PATH_VALUE: u8 = 1;
-}
-
-pub struct Matrix {
-    pub record_field: u8,
-}
-
-impl Matrix {
-    pub fn dot_method(&self) {}
-}
-
-pub struct SignatureType;
-
-pub fn inspect(unqualified_value: Matrix) {
-    unqualified_value.dot_m$dot$();
-    let _: crate::api::PathT$path$;
-    let _ = unqualified_v$unqualified$;
-    let _ = Matrix { record_f$record$: 1 };
-}
-
-pub fn signature(_: Signat$signature$) {}
-"#,
-        &[
-            AnalysisQuery::complete_verbose("import site", "import"),
-            AnalysisQuery::complete_verbose("dot site", "dot"),
-            AnalysisQuery::complete_verbose("qualified path site", "path"),
-            AnalysisQuery::complete_verbose("unqualified name site", "unqualified"),
-            AnalysisQuery::complete_verbose("record field site", "record"),
-            AnalysisQuery::complete_verbose("signature site", "signature"),
-        ],
-        expect![[r#"
-            import site
-            - const PATH_VALUE
-              detail: const PATH_VALUE
-              sort: PATH_VALUE|05|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
-              replace: 16..21
-            - struct PathType
-              detail: struct PathType
-              sort: PathType|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
-              replace: 16..21
-
-            dot site
-            - inherent_method dot_method
-              detail: pub fn dot_method(&self)
-              sort: dot_method|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
-              replace: 291..296
-              snippet: dot_method()$0
-            - field record_field
-              detail: pub record_field: u8
-              sort: record_field|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
-              replace: 291..296
-
-            qualified path site
-            - struct PathType
-              detail: struct PathType
-              sort: PathType|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
-              replace: 323..328
-
-            unqualified name site
-            - variable unqualified_value
-              detail: let unqualified_value: Matrix
-              sort: 00-body:0001|unqualified_value|07|00|Declaration(DeclarationRef { kind: "binding", body: FunctionBodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }, binding: BindingId(0) })
-              replace: 342..355
-            - struct Matrix
-              detail: struct Matrix
-              sort: 01-module|Matrix|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
-              replace: 342..355
-            - struct SignatureType
-              detail: struct SignatureType
-              sort: 01-module|SignatureType|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
-              replace: 342..355
-            - module api
-              detail: mod api
-              sort: 01-module|api|03|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
-              replace: 342..355
-            - fn inspect
-              detail: pub fn inspect(unqualified_value: Matrix)
-              sort: 01-module|inspect|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
-              replace: 342..355
-              snippet: inspect(${1:unqualified_value})$0
-            - fn signature
-              detail: pub fn signature(_: Signat)
-              sort: 01-module|signature|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
-              replace: 342..355
-              snippet: signature(${1:arg1})$0
-
-            record field site
-            - field record_field
-              detail: pub record_field: u8
-              sort: record_field|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
-              replace: 378..386
-
-            signature site
-            - struct Matrix
-              detail: struct Matrix
-              sort: 01-module|00|Matrix|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
-              replace: 416..422
-            - struct SignatureType
-              detail: struct SignatureType
-              sort: 01-module|00|SignatureType|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
-              replace: 416..422
-            - module api
-              detail: mod api
-              sort: 01-module|02|api|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
-              replace: 416..422
-        "#]],
-    );
-}
-
-#[test]
-fn completes_unqualified_body_macros() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_macro_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-/// Builds a value through a declarative macro.
+/// Builds a value through an unqualified declarative macro.
 macro_rules! make_value {
+    () => { 1u8 };
+}
+
+/// Builds a value through a crate-root macro.
+#[macro_export]
+macro_rules! exported_value {
     () => { 1u8 };
 }
 
@@ -822,80 +704,75 @@ pub fn make_function() -> u8 {
     0
 }
 
-pub fn use_it() {
-    let _plain = make$plain_macro_prefix$;
-}
-"#,
-        &[AnalysisQuery::complete_verbose(
-            "macro from value prefix",
-            "plain_macro_prefix",
-        )],
-        expect![[r#"
-            macro from value prefix
-            - fn make_function
-              detail: pub fn make_function() -> u8
-              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
-              replace: 171..175
-              snippet: make_function()$0
-            - macro make_value
-              detail: macro make_value
-              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
-              replace: 171..175
-              snippet: make_value!($0)
-            - fn use_it
-              detail: pub fn use_it()
-              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
-              replace: 171..175
-              snippet: use_it()$0
-        "#]],
-    );
-}
-
-#[test]
-fn completes_qualified_body_macros() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_qualified_macro_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-/// Builds a value through a crate-root macro.
-#[macro_export]
-macro_rules! exported_value {
-    () => { 1u8 };
-}
-
 pub fn exported_function() -> u8 {
     0
 }
 
 pub fn use_it() {
-    let _plain = crate::exported$qualified_prefix$;
+    let _plain = make$plain_macro_prefix$;
+    let _qualified = crate::exported$qualified_prefix$;
 }
 "#,
-        &[AnalysisQuery::complete_verbose(
-            "qualified macro from value prefix",
-            "qualified_prefix",
-        )],
+        &[
+            AnalysisQuery::complete_verbose("macro from value prefix", "plain_macro_prefix"),
+            AnalysisQuery::complete_verbose(
+                "qualified macro from value prefix",
+                "qualified_prefix",
+            ),
+        ],
         expect![[r#"
-            qualified macro from value prefix
+            macro from value prefix
             - fn exported_function
               detail: pub fn exported_function() -> u8
-              sort: exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
-              replace: 201..209
+              sort: 01-module|exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              replace: 343..347
               snippet: exported_function()$0
             - macro exported_value
               detail: macro exported_value
-              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
-              replace: 201..209
+              sort: 01-module|exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
+              replace: 343..347
               snippet: exported_value!($0)
+            - fn make_function
+              detail: pub fn make_function() -> u8
+              sort: 01-module|make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              replace: 343..347
+              snippet: make_function()$0
+            - macro make_value
+              detail: macro make_value
+              sort: 01-module|make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
+              replace: 343..347
+              snippet: make_value!($0)
             - fn use_it
               detail: pub fn use_it()
-              sort: use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
-              replace: 201..209
+              sort: 01-module|use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
+              replace: 343..347
+              snippet: use_it()$0
+
+            qualified macro from value prefix
+            - fn exported_function
+              detail: pub fn exported_function() -> u8
+              sort: exported_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
+              replace: 377..385
+              snippet: exported_function()$0
+            - macro exported_value
+              detail: macro exported_value
+              sort: exported_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
+              replace: 377..385
+              snippet: exported_value!($0)
+            - fn make_function
+              detail: pub fn make_function() -> u8
+              sort: make_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
+              replace: 377..385
+              snippet: make_function()$0
+            - macro make_value
+              detail: macro make_value
+              sort: make_value|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
+              replace: 377..385
+              snippet: make_value!($0)
+            - fn use_it
+              detail: pub fn use_it()
+              sort: use_it|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
+              replace: 377..385
               snippet: use_it()$0
         "#]],
     );

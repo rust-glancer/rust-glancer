@@ -86,31 +86,19 @@ mod tests {
     use super::AnalysisCfgConfig;
 
     #[test]
-    fn parses_cfg_test() {
-        let options = json!({
-            "cfg": {
-                "test": true,
-            },
-        });
+    fn parses_explicit_cfg_test_values() {
+        for expected in [true, false] {
+            let options = json!({
+                "cfg": {
+                    "test": expected,
+                },
+            });
 
-        let config = AnalysisCfgConfig::from_initialization_options(Some(&options))
-            .expect("cfg config should parse");
+            let config = AnalysisCfgConfig::from_initialization_options(Some(&options))
+                .expect("explicit cfg.test value should parse");
 
-        assert!(config.test);
-    }
-
-    #[test]
-    fn parses_disabled_cfg_test() {
-        let options = json!({
-            "cfg": {
-                "test": false,
-            },
-        });
-
-        let config = AnalysisCfgConfig::from_initialization_options(Some(&options))
-            .expect("cfg config should parse");
-
-        assert!(!config.test);
+            assert_eq!(config.test, expected, "cfg.test = {expected}");
+        }
     }
 
     #[test]

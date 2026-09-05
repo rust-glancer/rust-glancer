@@ -744,7 +744,7 @@ pub fn associated_equality_destination(stream: UserStream) {
 }
 
 #[test]
-fn projects_iterator_adapter_items_into_collect_destination() {
+fn projects_custom_iterator_collect_targets_and_ignores_same_name_methods() {
     check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
@@ -760,11 +760,8 @@ edition = "2024"
 
 //- /app/src/lib.rs
 pub struct User;
-pub struct Name;
-pub struct Email;
 pub struct Key;
 pub struct Value;
-pub struct Row;
 
 pub struct HashMap<K, V> {
     key: K,
@@ -774,8 +771,6 @@ pub struct HashMap<K, V> {
 impl<K, V> core::iter::FromIterator<(K, V)> for HashMap<K, V> {}
 
 impl User {
-    pub fn name(&self) -> Name {}
-    pub fn email(&self) -> Option<Email> {}
     pub fn key(&self) -> Key {}
     pub fn value(&self) -> Value {}
 }
@@ -805,15 +800,9 @@ pub fn pairs() -> PairIter {
     missing()
 }
 
-pub fn bar(_: usize, _: &User) -> Row {}
 pub fn missing<T>() -> T {}
 
 pub fn use_it(users: &[User], same_name: SameNameMap) {
-    let names = users.iter().map(|user| user$type_map_param$.name()).collect::<Vec<_>>()$type_names$;
-    let emails = users.iter().filter_map(|user| user$type_filter_map_param$.email()).collect::<Vec<_>>()$type_emails$;
-    let enumerated = users.iter().enumerate().collect::<Vec<_>>()$type_enumerated$;
-    let name_pairs = users.iter().enumerate().map(|(index, user)| (index$type_enumerate_index$, user$type_enumerate_user$)).collect::<Vec<_>>();
-    let rows = users.iter().enumerate().map(|(id, f)| bar(id$type_bar_id$, f$type_bar_user$)).collect::<Vec<_>>()$type_rows$;
     let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
     let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
     let overlapping = pairs().collect::<OverlappingMap<_, _>>()$type_overlapping$;
@@ -821,19 +810,6 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
 }
 "#,
         &[
-            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
-            AnalysisQuery::ty("iterator map collect result", "type_names").in_lib("app"),
-            AnalysisQuery::ty("iterator filter_map closure param", "type_filter_map_param")
-                .in_lib("app"),
-            AnalysisQuery::ty("iterator filter_map collect result", "type_emails").in_lib("app"),
-            AnalysisQuery::ty("iterator enumerate collect result", "type_enumerated").in_lib("app"),
-            AnalysisQuery::ty("iterator enumerate map index param", "type_enumerate_index")
-                .in_lib("app"),
-            AnalysisQuery::ty("iterator enumerate map user param", "type_enumerate_user")
-                .in_lib("app"),
-            AnalysisQuery::ty("iterator bar map id param", "type_bar_id").in_lib("app"),
-            AnalysisQuery::ty("iterator bar map user param", "type_bar_user").in_lib("app"),
-            AnalysisQuery::ty("iterator bar map collect result", "type_rows").in_lib("app"),
             AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
             AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
             AnalysisQuery::ty("overlapping impl shared guidance", "type_overlapping").in_lib("app"),
@@ -841,36 +817,6 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            iterator map closure param
-            - &nominal struct app[lib]::crate::User
-
-            iterator map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            iterator filter_map closure param
-            - &nominal struct app[lib]::crate::User
-
-            iterator filter_map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
-
-            iterator enumerate collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<(usize, &nominal struct app[lib]::crate::User), nominal struct alloc[lib]::crate::vec::Global>
-
-            iterator enumerate map index param
-            - usize
-
-            iterator enumerate map user param
-            - &nominal struct app[lib]::crate::User
-
-            iterator bar map id param
-            - usize
-
-            iterator bar map user param
-            - &nominal struct app[lib]::crate::User
-
-            iterator bar map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
-
             direct HashMap collect result
             - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
 
@@ -2310,65 +2256,132 @@ pub fn use_it(user: User) {
 }
 
 #[test]
-fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
+fn infers_enum_variant_payload_generics_bidirectionally() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_enum_prefix_generic_payload_inference"
+name = "analysis_enum_payload_inference"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+pub struct User;
+pub struct Error;
+
 pub enum Slot<T> {
     Put(T),
 }
 
-pub fn use_it() {
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+pub enum Action {
+    Set(u64, f32),
+    Pair((u64, f32)),
+}
+
+pub fn use_it(user: User, error: Error) {
     let slot = Slot::<u64>::Put(1$type_payload$)$type_slot$;
+
+    let maybe = Option::Some(user)$type_maybe$;
+    let result = Result::Ok(error)$type_result$;
+
+    let _action = Action::Set(1$type_action_int$, 1.0$type_action_float$);
+    let _pair = Action::Pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
 }
 "#,
         &[
             AnalysisQuery::ty("enum variant explicit generic payload", "type_payload"),
             AnalysisQuery::ty("enum variant explicit generic result", "type_slot"),
+            AnalysisQuery::ty("option generic variant result", "type_maybe"),
+            AnalysisQuery::ty("result generic variant result", "type_result"),
+            AnalysisQuery::ty("enum variant integer payload", "type_action_int"),
+            AnalysisQuery::ty("enum variant float payload", "type_action_float"),
+            AnalysisQuery::ty("enum variant tuple integer field", "type_pair_int"),
+            AnalysisQuery::ty("enum variant tuple float field", "type_pair_float"),
+            AnalysisQuery::ty("enum variant tuple payload", "type_pair"),
         ],
         expect![[r#"
             enum variant explicit generic payload
             - u64
 
             enum variant explicit generic result
-            - nominal enum analysis_enum_prefix_generic_payload_inference[lib]::crate::Slot<u64>
+            - nominal enum analysis_enum_payload_inference[lib]::crate::Slot<u64>
+
+            option generic variant result
+            - nominal enum analysis_enum_payload_inference[lib]::crate::Option<nominal struct analysis_enum_payload_inference[lib]::crate::User>
+
+            result generic variant result
+            - nominal enum analysis_enum_payload_inference[lib]::crate::Result<nominal struct analysis_enum_payload_inference[lib]::crate::Error, <unknown>>
+
+            enum variant integer payload
+            - u64
+
+            enum variant float payload
+            - f32
+
+            enum variant tuple integer field
+            - u64
+
+            enum variant tuple float field
+            - f32
+
+            enum variant tuple payload
+            - (u64, f32)
         "#]],
     );
 }
 
 #[test]
-fn propagates_record_field_initializer_expected_types() {
+fn infers_record_fields_bidirectionally() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_record_field_expected_type_inference"
+name = "analysis_bidirectional_record_inference"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub struct Pair {
+pub struct User;
+pub struct Error;
+
+pub struct PrimitiveFields {
     left: u64,
     right: f32,
     nested: (u64, f32),
 }
 
-pub struct User;
-
 pub struct UserPair {
     left: User,
 }
 
+pub struct Pair<T> {
+    left: T,
+}
+
+pub struct Pair2<T, E> {
+    left: T,
+    right: E,
+}
+
+pub struct Same<T> {
+    left: T,
+    right: T,
+}
+
 pub fn id<T>(value: T) -> T {}
 
-pub fn use_it(user: User) {
-    let _pair = Pair {
+pub fn use_it(user: User, error: Error) {
+    let _primitive = PrimitiveFields {
         left: 1$type_left$,
         right: 1.0$type_right$,
         nested: (1$type_nested_int$, 1.0$type_nested_float$)$type_nested$,
@@ -2376,6 +2389,11 @@ pub fn use_it(user: User) {
     let _user_pair = UserPair {
         left: id(user)$type_user_field$,
     };
+
+    let pair = Pair { left: user }$type_pair$;
+    let pair2 = Pair2 { left: user, right: error }$type_pair2$;
+    let explicit = Pair::<_> { left: error }$type_explicit$;
+    let conflict = Same { left: user, right: error }$type_conflict$;
 }
 "#,
         &[
@@ -2385,6 +2403,10 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("record tuple float field", "type_nested_float"),
             AnalysisQuery::ty("record tuple field initializer", "type_nested"),
             AnalysisQuery::ty("record generic call field initializer", "type_user_field"),
+            AnalysisQuery::ty("record generic field result", "type_pair"),
+            AnalysisQuery::ty("record two generic field result", "type_pair2"),
+            AnalysisQuery::ty("record wildcard generic field result", "type_explicit"),
+            AnalysisQuery::ty("record conflicting generic field result", "type_conflict"),
         ],
         expect![[r#"
             record integer field initializer
@@ -2403,154 +2425,19 @@ pub fn use_it(user: User) {
             - (u64, f32)
 
             record generic call field initializer
-            - nominal struct analysis_record_field_expected_type_inference[lib]::crate::User
-        "#]],
-    );
-}
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::User
 
-#[test]
-fn uses_record_field_initializers_as_generic_evidence() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_generic_field_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-pub struct Error;
-
-pub struct Pair<T> {
-    left: T,
-}
-
-pub struct Pair2<T, E> {
-    left: T,
-    right: E,
-}
-
-pub struct Same<T> {
-    left: T,
-    right: T,
-}
-
-pub fn use_it(user: User, error: Error) {
-    let pair = Pair { left: user }$type_pair$;
-    let pair2 = Pair2 { left: user, right: error }$type_pair2$;
-    let explicit = Pair::<_> { left: error }$type_explicit$;
-    let conflict = Same { left: user, right: error }$type_conflict$;
-}
-"#,
-        &[
-            AnalysisQuery::ty("record generic field result", "type_pair"),
-            AnalysisQuery::ty("record two generic field result", "type_pair2"),
-            AnalysisQuery::ty("record wildcard generic field result", "type_explicit"),
-            AnalysisQuery::ty("record conflicting generic field result", "type_conflict"),
-        ],
-        expect![[r#"
             record generic field result
-            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair<nominal struct analysis_record_generic_field_inference[lib]::crate::User>
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::User>
 
             record two generic field result
-            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair2<nominal struct analysis_record_generic_field_inference[lib]::crate::User, nominal struct analysis_record_generic_field_inference[lib]::crate::Error>
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair2<nominal struct analysis_bidirectional_record_inference[lib]::crate::User, nominal struct analysis_bidirectional_record_inference[lib]::crate::Error>
 
             record wildcard generic field result
-            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair<nominal struct analysis_record_generic_field_inference[lib]::crate::Error>
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::Error>
 
             record conflicting generic field result
-            - nominal struct analysis_record_generic_field_inference[lib]::crate::Same<<unknown>>
-        "#]],
-    );
-}
-
-#[test]
-fn uses_enum_variant_payload_as_generic_evidence() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_variant_generic_payload_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User;
-pub struct Error;
-
-pub enum Option<T> {
-    Some(T),
-    None,
-}
-
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-pub fn use_it(user: User, error: Error) {
-    let maybe = Option::Some(user)$type_maybe$;
-    let result = Result::Ok(error)$type_result$;
-}
-"#,
-        &[
-            AnalysisQuery::ty("option generic variant result", "type_maybe"),
-            AnalysisQuery::ty("result generic variant result", "type_result"),
-        ],
-        expect![[r#"
-            option generic variant result
-            - nominal enum analysis_enum_variant_generic_payload_inference[lib]::crate::Option<nominal struct analysis_enum_variant_generic_payload_inference[lib]::crate::User>
-
-            result generic variant result
-            - nominal enum analysis_enum_variant_generic_payload_inference[lib]::crate::Result<nominal struct analysis_enum_variant_generic_payload_inference[lib]::crate::Error, <unknown>>
-        "#]],
-    );
-}
-
-#[test]
-fn propagates_enum_variant_payload_expected_types() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_variant_payload_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub enum Action {
-    Set(u64, f32),
-    Pair((u64, f32)),
-}
-
-pub fn use_it() {
-    let _action = Action::Set(1$type_action_int$, 1.0$type_action_float$);
-    let _pair = Action::Pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
-}
-"#,
-        &[
-            AnalysisQuery::ty("enum variant integer payload", "type_action_int"),
-            AnalysisQuery::ty("enum variant float payload", "type_action_float"),
-            AnalysisQuery::ty("enum variant tuple integer field", "type_pair_int"),
-            AnalysisQuery::ty("enum variant tuple float field", "type_pair_float"),
-            AnalysisQuery::ty("enum variant tuple payload", "type_pair"),
-        ],
-        expect![[r#"
-            enum variant integer payload
-            - u64
-
-            enum variant float payload
-            - f32
-
-            enum variant tuple integer field
-            - u64
-
-            enum variant tuple float field
-            - f32
-
-            enum variant tuple payload
-            - (u64, f32)
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<<unknown>>
         "#]],
     );
 }

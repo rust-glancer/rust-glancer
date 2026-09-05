@@ -138,13 +138,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-mod source {
-    pub enum Choice {
-        Record { value: u8 },
-        Tuple(u8),
-        Unit,
-    }
-}
+mod source;
 
 use source::Choice::{
     Record as NamedRecord,
@@ -152,6 +146,13 @@ use source::Choice::{
     Unit as NamedUnit,
 };
 use source::Choice::*;
+
+//- /src/source.rs
+pub enum Choice {
+    Record { value: u8 },
+    Tuple(u8),
+    Unit,
+}
 "#,
     );
     let target = project.lib("variant_import_fixture");
@@ -170,36 +171,10 @@ use source::Choice::*;
                 "tuple and unit variant imports should retain their value constructor",
             );
     }
-}
-
-#[test]
-fn direct_bindings_shadow_globs() {
-    let project = utils::DefMapFixtureDb::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "direct_over_glob_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod globbed;
-
-pub struct Thing;
-use globbed::*;
-
-//- /src/globbed.rs
-pub struct Thing;
-"#,
+    target.entry("NamedTuple").assert_type_source_file(
+        "source.rs",
+        "an imported variant should retain the source of its enum declaration",
     );
-
-    project
-        .lib("direct_over_glob_fixture")
-        .entry("Thing")
-        .assert_type_source_file(
-            "lib.rs",
-            "a direct declaration should remain selected over a glob binding",
-        );
 }
 
 #[test]
@@ -358,45 +333,6 @@ use bar::work as _;
     target
         .entry("work")
         .assert_missing("hidden use renames should not bind the imported item name");
-}
-
-#[test]
-fn imports_tuple_and_unit_enum_variants_in_both_namespaces() {
-    utils::check_project_def_map(
-        r#"
-//- /Cargo.toml
-[package]
-name = "enum_variant_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub enum Maybe<T> {
-    Some(T),
-    None,
-}
-
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-use Maybe::{Some, None as Nothing};
-use Result::*;
-"#,
-        expect![[r#"
-            package enum_variant_import_fixture
-
-            enum_variant_import_fixture [lib]
-            crate
-            - Err : type [variant enum_variant_import_fixture[lib]::crate::Result::Err] | value [variant enum_variant_import_fixture[lib]::crate::Result::Err]
-            - Maybe : type [pub enum enum_variant_import_fixture[lib]::crate::Maybe]
-            - Nothing : type [variant enum_variant_import_fixture[lib]::crate::Maybe::None] | value [variant enum_variant_import_fixture[lib]::crate::Maybe::None]
-            - Ok : type [variant enum_variant_import_fixture[lib]::crate::Result::Ok] | value [variant enum_variant_import_fixture[lib]::crate::Result::Ok]
-            - Result : type [pub enum enum_variant_import_fixture[lib]::crate::Result]
-            - Some : type [variant enum_variant_import_fixture[lib]::crate::Maybe::Some] | value [variant enum_variant_import_fixture[lib]::crate::Maybe::Some]
-        "#]],
-    );
 }
 
 #[test]

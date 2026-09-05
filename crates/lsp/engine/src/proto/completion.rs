@@ -115,33 +115,59 @@ fn completion_text_edit(
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{CompletionTextEdit, Documentation, MarkupKind};
+    use ls_types::{
+        CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat, MarkupContent,
+        MarkupKind,
+    };
     use rg_analysis::{
         CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
         CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
     };
     use rg_parse::{LineIndex, Span, TextSpan};
 
-    use super::{
-        completion_detail, completion_insert_text_format, completion_item, completion_text_edit,
-        markdown_documentation,
-    };
+    use super::completion_item;
 
     #[test]
-    fn renders_metadata_and_replacement_edit() {
-        let line_index = LineIndex::new("user.na");
-        let edit = completion_text_edit(
-            "name",
-            CompletionInsertText::Plain,
-            Some(CompletionEdit {
-                replace: Span {
-                    text: TextSpan { start: 5, end: 7 },
-                },
-            }),
-            &line_index,
+    fn renders_plain_completion_metadata_and_replacement_edit() {
+        let completion = completion_item(
+            CompletionItem {
+                label: "name".to_string(),
+                filter_text: Some("na".to_string()),
+                kind: CompletionKind::InherentMethod,
+                target: CompletionTarget::Keyword(KeywordCompletion::Fn),
+                applicability: CompletionApplicability::Maybe,
+                detail: Some("fn name(&self)".to_string()),
+                documentation: Some("Display name.".to_string()),
+                sort_text: "name|01".to_string(),
+                insert_text: CompletionInsertText::Plain,
+                edit: Some(CompletionEdit {
+                    replace: Span {
+                        text: TextSpan { start: 5, end: 7 },
+                    },
+                }),
+                additional_edits: Vec::new(),
+            },
+            &LineIndex::new("user.na"),
         );
 
-        let Some(CompletionTextEdit::Edit(edit)) = edit else {
+        assert_eq!(completion.kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(
+            completion.detail.as_deref(),
+            Some("fn name(&self) (maybe applicable)")
+        );
+        assert_eq!(
+            completion.documentation,
+            Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: "Display name.".to_string(),
+            }))
+        );
+        assert_eq!(completion.sort_text.as_deref(), Some("name|01"));
+        assert_eq!(completion.filter_text.as_deref(), Some("na"));
+        assert_eq!(completion.insert_text_format, None);
+        assert_eq!(completion.additional_text_edits, None);
+
+        let Some(CompletionTextEdit::Edit(edit)) = completion.text_edit else {
             panic!("completion should use a replacement text edit");
         };
         assert_eq!(edit.new_text, "name");
@@ -149,54 +175,10 @@ mod tests {
         assert_eq!(edit.range.start.character, 5);
         assert_eq!(edit.range.end.line, 0);
         assert_eq!(edit.range.end.character, 7);
-
-        assert_eq!(
-            completion_detail(
-                Some("fn name(&self)".to_string()),
-                CompletionApplicability::Maybe
-            )
-            .as_deref(),
-            Some("fn name(&self) (maybe applicable)")
-        );
-
-        let Some(Documentation::MarkupContent(docs)) =
-            markdown_documentation("Display name.".to_string())
-        else {
-            panic!("completion should render markdown documentation");
-        };
-        assert_eq!(docs.kind, MarkupKind::Markdown);
-        assert_eq!(docs.value, "Display name.");
     }
 
     #[test]
-    fn renders_snippet_completion_text_with_crlf() {
-        let line_index = LineIndex::new("fn\r\n");
-        let insert_text =
-            CompletionInsertText::Snippet("fn ${1:name}(${2:args}) {\n    $0\n}".to_string());
-        let edit = completion_text_edit(
-            "fn",
-            insert_text.clone(),
-            Some(CompletionEdit {
-                replace: Span {
-                    text: TextSpan { start: 0, end: 2 },
-                },
-            }),
-            &line_index,
-        );
-
-        assert_eq!(
-            completion_insert_text_format(&insert_text),
-            Some(ls_types::InsertTextFormat::SNIPPET)
-        );
-        let Some(CompletionTextEdit::Edit(edit)) = edit else {
-            panic!("snippet completion should use a replacement text edit");
-        };
-        assert_eq!(edit.new_text, "fn ${1:name}(${2:args}) {\r\n    $0\r\n}");
-    }
-
-    #[test]
-    fn renders_additional_completion_edits_with_crlf() {
-        let line_index = LineIndex::new("HashM\r\n");
+    fn renders_crlf_snippet_and_additional_edits_through_the_whole_item() {
         let completion = completion_item(
             CompletionItem {
                 label: "HashMap".to_string(),
@@ -207,7 +189,9 @@ mod tests {
                 detail: None,
                 documentation: None,
                 sort_text: String::new(),
-                insert_text: CompletionInsertText::Plain,
+                insert_text: CompletionInsertText::Snippet(
+                    "HashMap::<${1:K}, ${2:V}>$0\n".to_string(),
+                ),
                 edit: Some(CompletionEdit {
                     replace: Span {
                         text: TextSpan { start: 0, end: 5 },
@@ -220,8 +204,17 @@ mod tests {
                     new_text: "use std::collections::HashMap;\n".to_string(),
                 }],
             },
-            &line_index,
+            &LineIndex::new("HashM\r\n"),
         );
+
+        assert_eq!(
+            completion.insert_text_format,
+            Some(InsertTextFormat::SNIPPET)
+        );
+        let Some(CompletionTextEdit::Edit(edit)) = completion.text_edit else {
+            panic!("snippet completion should use a replacement text edit");
+        };
+        assert_eq!(edit.new_text, "HashMap::<${1:K}, ${2:V}>$0\r\n");
 
         let [additional_edit] = completion
             .additional_text_edits

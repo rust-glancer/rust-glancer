@@ -5,7 +5,7 @@ use crate::source::{
 };
 use crate::testonly::ViewFixture;
 
-pub(super) fn check_source_occurrences(ident: &str, fixture: &str, expected: &str) {
+pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
     let fixture = ViewFixture::build(fixture);
     let package = fixture
         .parse_db()
@@ -45,35 +45,49 @@ pub(super) fn check_source_occurrences(ident: &str, fixture: &str, expected: &st
         else {
             continue;
         };
-        if text != ident {
-            continue;
-        }
-
-        occurrences.push(format!(
-            "{} @ {}",
-            render_occurrence(fact, role, surface),
-            render_span(
-                span,
-                parsed_file
-                    .line_index()
-                    .expect("fixture line index should load")
-            )
+        occurrences.push((
+            text,
+            format!(
+                "{} @ {}",
+                render_occurrence(fact, role, surface),
+                render_span(
+                    span,
+                    parsed_file
+                        .line_index()
+                        .expect("fixture line index should load")
+                )
+            ),
         ));
     }
-    occurrences.sort();
 
-    let actual = if occurrences.is_empty() {
-        "<none>".to_string()
-    } else {
-        occurrences.join("\n")
-    };
-    let expected = expected
-        .trim()
-        .lines()
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert_eq!(actual, expected);
+    let mut mismatches = Vec::new();
+    for (ident, expected) in cases {
+        let mut matching = occurrences
+            .iter()
+            .filter(|(text, _)| text == ident)
+            .map(|(_, rendered)| rendered.as_str())
+            .collect::<Vec<_>>();
+        matching.sort();
+
+        let actual = if matching.is_empty() {
+            "<none>".to_string()
+        } else {
+            matching.join("\n")
+        };
+        let expected = expected
+            .trim()
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if actual != expected {
+            mismatches.push(format!(
+                "unexpected occurrences for `{ident}`\nactual:\n{actual}\nexpected:\n{expected}"
+            ));
+        }
+    }
+
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
 }
 
 fn render_span(span: rg_parse::Span, line_index: &rg_parse::LineIndex) -> String {

@@ -244,7 +244,7 @@ pub struct Library;
 }
 
 #[test]
-fn proc_macro_exports_do_not_lower_as_duplicate_functions() {
+fn proc_macro_exports_link_to_semantic_implementation_functions() {
     let fixture = crate::testonly::SemanticIrFixture::build(
         r#"
 //- /Cargo.toml
@@ -296,30 +296,47 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     function_names.sort();
     assert_eq!(function_names, ["emit", "stored", "traced"]);
 
-    for local_def_ref in def_map.local_def_refs() {
-        let local_def = def_map
-            .local_def(local_def_ref.local_def)
-            .expect("local definition should exist");
-        let semantic_item = items.item_for_local_def(local_def_ref.local_def);
-        match local_def.kind {
-            rg_def_map::LocalDefKind::MacroDefinition => assert!(
-                semantic_item.is_none(),
-                "macro export `{}` must not own a semantic function",
-                local_def.name,
-            ),
-            rg_def_map::LocalDefKind::Function => assert!(
-                semantic_item.is_some(),
-                "implementation function `{}` should retain its semantic item",
-                local_def.name,
-            ),
-            rg_def_map::LocalDefKind::Const
-            | rg_def_map::LocalDefKind::Enum
-            | rg_def_map::LocalDefKind::Static
-            | rg_def_map::LocalDefKind::Struct
-            | rg_def_map::LocalDefKind::Trait
-            | rg_def_map::LocalDefKind::TypeAlias
-            | rg_def_map::LocalDefKind::Union => {}
-        }
+    for (export_name, implementation_name) in
+        [("emit", "emit"), ("traced", "traced"), ("Stored", "stored")]
+    {
+        let export = def_map
+            .local_def_refs()
+            .find(|local_def_ref| {
+                def_map
+                    .local_def(local_def_ref.local_def)
+                    .is_some_and(|data| {
+                        data.kind == rg_def_map::LocalDefKind::MacroDefinition
+                            && data.name.as_str() == export_name
+                    })
+            })
+            .expect("proc-macro export should exist");
+        assert!(
+            items.item_for_local_def(export.local_def).is_none(),
+            "macro export `{export_name}` must not own a semantic function",
+        );
+
+        let implementation = def_map
+            .macro_definition(export.local_def)
+            .and_then(|data| data.proc_macro_implementation())
+            .expect("proc-macro export should retain its implementation identity");
+        let implementation_def = def_map
+            .local_def(implementation)
+            .expect("proc-macro implementation definition should exist");
+        assert_eq!(implementation_def.name.as_str(), implementation_name);
+
+        let Some(rg_ir_model::ItemId::Function(function)) =
+            items.item_for_local_def(implementation)
+        else {
+            panic!("proc-macro implementation `{implementation_name}` should lower as a function");
+        };
+        assert_eq!(
+            items
+                .function_data(function)
+                .expect("proc-macro implementation function should exist")
+                .name
+                .as_str(),
+            implementation_name,
+        );
     }
 }
 
@@ -483,7 +500,10 @@ where
 
 pub struct DbError;
 
+pub struct UsesAbsolute(::semantic_fixture::UserId);
+
 pub type UserResult<T> = Result<User<T>, DbError>;
+pub type AbsoluteAlias = ::semantic_fixture::UserId;
 pub const DEFAULT_ID: UserId = UserId(0);
 pub static mut CACHE_READY: bool = false;
 "#,
@@ -510,7 +530,10 @@ pub static mut CACHE_READY: bool = false;
             - pub struct DbRepository<T>
               - field #0: T
             - pub struct DbError
+            - pub struct UsesAbsolute
+              - field #0: ::semantic_fixture::UserId
             - pub type UserResult<T> = Result<User<T>, DbError>
+            - pub type AbsoluteAlias = ::semantic_fixture::UserId
             - pub const DEFAULT_ID: UserId
             - pub static mut CACHE_READY: bool
             - impl<T> Repository<T> for DbRepository<T> where T: Clone
@@ -566,34 +589,6 @@ make_foreign!();
 }
 
 #[test]
-fn preserves_absolute_type_path_prefixes() {
-    check_project_semantic_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "absolute_type_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Root;
-pub struct UsesAbsolute(::absolute_type_fixture::Root);
-pub type AbsoluteAlias = ::absolute_type_fixture::Root;
-"#,
-        expect![[r#"
-            package absolute_type_fixture
-
-            absolute_type_fixture [lib]
-            crate
-            - pub struct Root
-            - pub struct UsesAbsolute
-              - field #0: ::absolute_type_fixture::Root
-            - pub type AbsoluteAlias = ::absolute_type_fixture::Root
-        "#]],
-    );
-}
-
-#[test]
 fn lowers_macro_generated_signatures_and_impls() {
     check_project_semantic_ir(
         r#"
@@ -634,7 +629,7 @@ make_generated!();
 }
 
 #[test]
-fn resolves_cross_crate_impl_queries() {
+fn resolves_cross_crate_impl_queries_from_root_and_module_scopes() {
     check_project_semantic_queries(
         r#"
 //- /Cargo.toml
@@ -677,8 +672,27 @@ impl Local {
 impl ImportedTrait for Local {
     fn required(&self) {}
 }
+
+pub mod api {
+    pub struct ScopedLocal;
+
+    impl ScopedLocal {
+        pub fn local_method(&self) {}
+    }
+
+    impl crate::ImportedTrait for ScopedLocal {
+        fn required(&self) {}
+    }
+}
+
+mod consumer {
+    use crate::api::ScopedLocal as ImportedScoped;
+}
 "#,
-        &[SemanticQuery::lib("app", "Local")],
+        &[
+            SemanticQuery::lib("app", "Local"),
+            SemanticQuery::lib_from("app", "crate::consumer", "ImportedScoped"),
+        ],
         expect![[r#"
             query app [lib] crate resolves Local -> struct app[lib]::crate::Local
             impls
@@ -695,12 +709,29 @@ impl ImportedTrait for Local {
             - fn trait dep[lib]::crate::ExternalTrait::required
             trait impl functions
             - fn impl ImportedTrait for Local::required
+
+
+            query app [lib] crate::consumer resolves ImportedScoped -> struct app[lib]::crate::api::ScopedLocal
+            impls
+            - impl ScopedLocal
+            - impl crate::ImportedTrait for ScopedLocal
+            trait impls
+            - impl crate::ImportedTrait for ScopedLocal => trait dep[lib]::crate::ExternalTrait
+            traits
+            - trait dep[lib]::crate::ExternalTrait
+            inherent functions
+            - fn impl ScopedLocal::local_method
+            trait functions
+            - fn trait dep[lib]::crate::ExternalTrait::defaulted
+            - fn trait dep[lib]::crate::ExternalTrait::required
+            trait impl functions
+            - fn impl crate::ImportedTrait for ScopedLocal::required
         "#]],
     );
 }
 
 #[test]
-fn resolves_core_prelude_trait_impl_headers() {
+fn resolves_core_and_alloc_impl_headers_through_core_prelude() {
     check_project_semantic_queries_with_sysroot(
         r#"
 //- /Cargo.toml
@@ -734,64 +765,6 @@ impl Marker for CoreType {
 }
 
 //- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-pub mod prelude {
-    pub mod rust_2024 {}
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
-"#,
-        &[SemanticQuery::lib("core", "CoreType")],
-        expect![[r#"
-            query core [lib] crate resolves CoreType -> struct core[lib]::crate::CoreType
-            impls
-            - impl Marker for CoreType
-            trait impls
-            - impl Marker for CoreType => trait core[lib]::crate::marker::Marker
-            traits
-            - trait core[lib]::crate::marker::Marker
-            inherent functions
-            - <none>
-            trait functions
-            - fn trait core[lib]::crate::marker::Marker::mark
-            trait impl functions
-            - fn impl Marker for CoreType::mark
-        "#]],
-    );
-}
-
-#[test]
-fn resolves_alloc_impl_headers_through_core_prelude() {
-    check_project_semantic_queries_with_sysroot(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct App;
-
-//- /sysroot/library/core/src/lib.rs
-extern crate self as core;
-
-pub mod marker {
-    pub trait Marker {
-        fn mark(&self);
-    }
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::marker::Marker;
-    }
-}
-
-//- /sysroot/library/alloc/src/lib.rs
 pub struct AllocType;
 
 impl Marker for AllocType {
@@ -806,8 +779,26 @@ pub mod prelude {
 //- /sysroot/library/proc_macro/src/lib.rs
 pub struct TokenStream;
 "#,
-        &[SemanticQuery::lib("alloc", "AllocType")],
+        &[
+            SemanticQuery::lib("core", "CoreType"),
+            SemanticQuery::lib("alloc", "AllocType"),
+        ],
         expect![[r#"
+            query core [lib] crate resolves CoreType -> struct core[lib]::crate::CoreType
+            impls
+            - impl Marker for CoreType
+            trait impls
+            - impl Marker for CoreType => trait core[lib]::crate::marker::Marker
+            traits
+            - trait core[lib]::crate::marker::Marker
+            inherent functions
+            - <none>
+            trait functions
+            - fn trait core[lib]::crate::marker::Marker::mark
+            trait impl functions
+            - fn impl Marker for CoreType::mark
+
+
             query alloc [lib] crate resolves AllocType -> struct alloc[lib]::crate::AllocType
             impls
             - impl Marker for AllocType
@@ -990,78 +981,6 @@ fn main() {}
             - <none>
             trait impl functions
             - <none>
-        "#]],
-    );
-}
-
-#[test]
-fn resolves_module_scoped_semantic_queries() {
-    check_project_semantic_queries(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
-pub trait ExternalTrait {
-    fn required(&self);
-}
-
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
-use dep::ExternalTrait as ImportedTrait;
-
-pub mod api {
-    pub struct Local;
-
-    impl Local {
-        pub fn local_method(&self) {}
-    }
-
-    impl crate::ImportedTrait for Local {
-        fn required(&self) {}
-    }
-}
-
-mod consumer {
-    use crate::api::Local as ImportedLocal;
-}
-"#,
-        &[SemanticQuery::lib_from(
-            "app",
-            "crate::consumer",
-            "ImportedLocal",
-        )],
-        expect![[r#"
-            query app [lib] crate::consumer resolves ImportedLocal -> struct app[lib]::crate::api::Local
-            impls
-            - impl Local
-            - impl crate::ImportedTrait for Local
-            trait impls
-            - impl crate::ImportedTrait for Local => trait dep[lib]::crate::ExternalTrait
-            traits
-            - trait dep[lib]::crate::ExternalTrait
-            inherent functions
-            - fn impl Local::local_method
-            trait functions
-            - fn trait dep[lib]::crate::ExternalTrait::required
-            trait impl functions
-            - fn impl crate::ImportedTrait for Local::required
         "#]],
     );
 }

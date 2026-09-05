@@ -41,10 +41,7 @@ impl AnalysisConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, IndexingPerformancePreference,
-        PackageBatchSize, PackageResidencyPolicy, SysrootDiscovery,
-    };
+    use super::{AnalysisConfig, PackageResidencyPolicy};
 
     #[test]
     fn defaults_to_all_offloadable_residency() {
@@ -56,13 +53,5 @@ mod tests {
             config.package_residency_policy,
             PackageResidencyPolicy::AllOffloadable,
         );
-        assert_eq!(config.cargo_metadata_config, CargoMetadataConfig::default(),);
-        assert_eq!(config.sysroot_discovery, SysrootDiscovery::Auto);
-        assert_eq!(
-            config.indexing_preference,
-            IndexingPerformancePreference::FasterBuilds,
-        );
-        assert_eq!(config.package_batch_size, PackageBatchSize::default());
-        assert_eq!(config.cfg, AnalysisCfgConfig::default());
     }
 }

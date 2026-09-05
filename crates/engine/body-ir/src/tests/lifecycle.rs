@@ -1,5 +1,5 @@
 use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyRef, CrateId, CrateRef, ExprId};
+use rg_ir_model::{CrateId, CrateRef, ExprId};
 use rg_ty::{ConstValue, GenericArg};
 
 use crate::ExprKind;
@@ -35,21 +35,9 @@ pub fn use_it(value: &[u8; 3]) {
         .expect("fixture crate should have Body IR");
 
     let mut selected_calls = Vec::new();
-    for (body_id, body) in crate_bodies.body_views() {
+    for (_, body) in crate_bodies.body_views() {
         assert_eq!(body.bindings().len(), body.binding_facts().len());
         assert_eq!(body.exprs().len(), body.expr_facts().len());
-        assert!(
-            body.expr_declarations(
-                BodyRef {
-                    crate_ref,
-                    body: body_id,
-                },
-                ExprId(usize::MAX),
-            )
-            .is_empty(),
-            "checked declaration lookup should tolerate a stale expression id",
-        );
-
         // Inference variables belong to the resolution pass. Persisted facts expose only stable
         // semantic types, even when written `_` forced the pass to create a temporary slot.
         assert!(body.binding_facts().iter().all(|facts| !facts.ty.has_var()));

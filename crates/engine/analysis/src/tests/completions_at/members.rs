@@ -6,7 +6,7 @@ use super::super::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
 };
 #[test]
-fn completes_inherent_and_trait_methods_at_dot() {
+fn completes_inherent_and_trait_methods_at_partial_and_bare_dot_sites() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -38,52 +38,20 @@ impl Named for User {
 }
 
 pub fn use_it(user: User) {
-    user.$0id();
+    user.$partial$id();
+    user.$bare$;
 }
 "#,
-        &[AnalysisQuery::complete("dot completions", "0")],
+        &[
+            AnalysisQuery::complete("partial dot completions", "partial"),
+            AnalysisQuery::complete("bare dot completions", "bare"),
+        ],
         expect![[r#"
-            dot completions
+            partial dot completions
             - inherent_method id
             - inherent_method touch
             - trait_method trait_name
-        "#]],
-    );
-}
 
-#[test]
-fn completes_methods_at_bare_dot() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bare_dot_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub trait Named {
-    fn trait_name(&self);
-}
-
-pub struct User;
-
-impl User {
-    pub fn id(&self) {}
-
-    pub fn touch(&mut self) {}
-}
-
-impl Named for User {
-    fn trait_name(&self) {}
-}
-
-pub fn use_it(user: User) {
-    user.$0;
-}
-"#,
-        &[AnalysisQuery::complete("bare dot completions", "0")],
-        expect![[r#"
             bare dot completions
             - inherent_method id
             - inherent_method touch
@@ -647,7 +615,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
 }
 
 #[test]
-fn completes_methods_after_field_receiver() {
+fn completes_members_for_nested_field_receivers() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -668,41 +636,19 @@ pub struct User {
 }
 
 pub fn use_it(user: User) {
-    user.profile.$0;
+    user.profile.$profile$;
+    user.$user$;
 }
 "#,
-        &[AnalysisQuery::complete("field receiver completions", "0")],
+        &[
+            AnalysisQuery::complete("field receiver completions", "profile"),
+            AnalysisQuery::complete("outer receiver completions", "user"),
+        ],
         expect![[r#"
             field receiver completions
             - inherent_method display
-        "#]],
-    );
-}
 
-#[test]
-fn completes_fields_at_dot() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_field_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Profile;
-
-pub struct User {
-    pub profile: Profile,
-}
-
-pub fn use_it(user: User) {
-    user.$0;
-}
-"#,
-        &[AnalysisQuery::complete("field completions", "0")],
-        expect![[r#"
-            field completions
+            outer receiver completions
             - field profile
         "#]],
     );
@@ -1183,19 +1129,20 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
 }
 
 #[test]
-fn completes_body_local_impl_methods_at_dot() {
+fn completes_body_local_impl_methods_across_scope_variants() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_body_local_impl_completions"
+name = "analysis_body_local_impl_completion_matrix"
 version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
 pub struct GlobalId;
+pub struct Label;
 
-pub fn use_it() {
+pub fn local_type_receiver() {
     struct User {
         id: GlobalId,
     }
@@ -1211,67 +1158,20 @@ pub fn use_it() {
     }
 
     let user: User;
-    user.$0;
-}
-"#,
-        &[AnalysisQuery::complete("body-local impl completions", "0")],
-        expect![[r#"
-            body-local impl completions
-            - field id
-            - inherent_method id
-        "#]],
-    );
+    user.$local_type$;
 }
 
-#[test]
-fn completes_body_local_impl_methods_for_target_types_at_dot() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_target_impl_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn use_it(id: GlobalId) {
+pub fn target_type_receiver(id: GlobalId) {
     impl GlobalId {
         fn local(&self) -> GlobalId {
             missing()
         }
     }
 
-    id.$0;
-}
-"#,
-        &[AnalysisQuery::complete(
-            "body-local target impl completions",
-            "0",
-        )],
-        expect![[r#"
-            body-local target impl completions
-            - inherent_method local
-        "#]],
-    );
+    id.$target_type$;
 }
 
-#[test]
-fn completes_body_local_trait_impl_methods_for_target_types_at_dot() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_target_trait_impl_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-pub struct Label;
-
-pub fn use_it(id: GlobalId) {
+pub fn trait_target_type_receiver(id: GlobalId) {
     trait Named {
         fn label(&self) -> Label;
         fn make() -> Label;
@@ -1287,34 +1187,10 @@ pub fn use_it(id: GlobalId) {
         }
     }
 
-    id.$0;
-}
-"#,
-        &[AnalysisQuery::complete(
-            "body-local target trait impl completions",
-            "0",
-        )],
-        expect![[r#"
-            body-local target trait impl completions
-            - trait_method label
-        "#]],
-    );
+    id.$trait_target$;
 }
 
-#[test]
-fn completes_body_local_impl_methods_from_nested_blocks() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_local_impl_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn use_it() {
+pub fn nested_impl_block() {
     struct User {
         id: GlobalId,
     }
@@ -1328,35 +1204,10 @@ pub fn use_it() {
     }
 
     let user: User;
-    user.$0;
-}
-"#,
-        &[AnalysisQuery::complete(
-            "nested body-local impl completions",
-            "0",
-        )],
-        expect![[r#"
-            nested body-local impl completions
-            - field id
-            - inherent_method id
-        "#]],
-    );
+    user.$nested_impl$;
 }
 
-#[test]
-fn completes_parent_body_local_impl_methods_from_nested_body() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_parent_impl_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn use_it() {
+pub fn nested_body_owner() {
     struct User;
 
     impl User {
@@ -1370,15 +1221,35 @@ pub fn use_it() {
     }
 
     fn helper(user: User) {
-        user.$0;
+        user.$parent_body$;
     }
 }
 "#,
-        &[AnalysisQuery::complete(
-            "parent body-local impl completions from nested body",
-            "0",
-        )],
+        &[
+            AnalysisQuery::complete("body-local type impl completions", "local_type"),
+            AnalysisQuery::complete("body-local target impl completions", "target_type"),
+            AnalysisQuery::complete("body-local target trait impl completions", "trait_target"),
+            AnalysisQuery::complete("nested body-local impl completions", "nested_impl"),
+            AnalysisQuery::complete(
+                "parent body-local impl completions from nested body",
+                "parent_body",
+            ),
+        ],
         expect![[r#"
+            body-local type impl completions
+            - field id
+            - inherent_method id
+
+            body-local target impl completions
+            - inherent_method local
+
+            body-local target trait impl completions
+            - trait_method label
+
+            nested body-local impl completions
+            - field id
+            - inherent_method id
+
             parent body-local impl completions from nested body
             - inherent_method id
         "#]],
@@ -1453,7 +1324,7 @@ pub fn use_it() {
 }
 
 #[test]
-fn completes_fields_and_methods_after_enum_pattern_payloads() {
+fn completes_members_for_pattern_and_closure_introduced_receivers() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -1483,6 +1354,8 @@ pub enum Option<T> {
 }
 
 pub fn use_it(maybe: Option<User>) {
+    let _closure = |user: User| user.$closure_payload$;
+
     let Some(value) = maybe else { return; };
     value.$let_payload$;
 
@@ -1501,6 +1374,7 @@ pub fn use_it(maybe: Option<User>) {
 }
 "#,
         &[
+            AnalysisQuery::complete("closure parameter completions", "closure_payload"),
             AnalysisQuery::complete("let pattern payload completions", "let_payload"),
             AnalysisQuery::complete("if let-chain rhs completions", "if_rhs"),
             AnalysisQuery::complete("if let pattern payload completions", "if_payload"),
@@ -1509,6 +1383,11 @@ pub fn use_it(maybe: Option<User>) {
             AnalysisQuery::complete("match pattern payload completions", "match_payload"),
         ],
         expect![[r#"
+            closure parameter completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
             let pattern payload completions
             - field id
             - inherent_method is_valid
@@ -1535,48 +1414,6 @@ pub fn use_it(maybe: Option<User>) {
             - inherent_method label
 
             match pattern payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
-        "#]],
-    );
-}
-
-#[test]
-fn completes_fields_and_methods_after_closure_params() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_closure_pattern_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Id;
-
-pub struct User {
-    id: Id,
-}
-
-impl User {
-    fn is_valid(&self) -> bool {
-        true
-    }
-
-    fn label(&self) {}
-}
-
-pub fn use_it() {
-    let _closure = |user: User| user.$closure_payload$;
-}
-"#,
-        &[AnalysisQuery::complete(
-            "closure param payload completions",
-            "closure_payload",
-        )],
-        expect![[r#"
-            closure param payload completions
             - field id
             - inherent_method is_valid
             - inherent_method label

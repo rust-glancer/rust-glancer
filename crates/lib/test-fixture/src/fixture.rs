@@ -440,6 +440,17 @@ mod tests {
 
     use crate::{FixtureSpec, fixture_path_for_snapshot};
 
+    const MINIMAL_CRATE: &str = r#"
+//- /Cargo.toml
+[package]
+name = "fake_sysroot_owner"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+"#;
+
     #[test]
     fn renders_fixture_paths_with_snapshot_separators() {
         let path = PathBuf::from("crates")
@@ -534,5 +545,47 @@ pub struct Api;
                 .expect("written fixture file should be readable"),
             "pub struct Api;\n"
         );
+    }
+
+    #[test]
+    fn materializes_shared_fake_sysroot_files() {
+        let fixture = crate::fixture_crate(MINIMAL_CRATE).with_fake_sysroot();
+
+        for crate_name in ["core", "alloc", "std", "proc_macro"] {
+            assert!(
+                fixture
+                    .path(&format!("sysroot/library/{crate_name}/src/lib.rs"))
+                    .is_file(),
+                "shared fake sysroot should materialize the `{crate_name}` crate root"
+            );
+        }
+
+        assert!(
+            fixture
+                .path("sysroot/library/core/src/macros/mod.rs")
+                .is_file(),
+            "shared fake sysroot should materialize the core macro module"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "fixture already defines fake sysroot file")]
+    fn rejects_shared_fake_sysroot_file_collisions() {
+        crate::fixture_crate(
+            r#"
+//- /Cargo.toml
+[package]
+name = "fake_sysroot_collision"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+
+//- /sysroot/library/core/src/lib.rs
+pub struct CustomCore;
+"#,
+        )
+        .with_fake_sysroot();
     }
 }

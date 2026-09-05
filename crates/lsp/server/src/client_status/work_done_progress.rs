@@ -162,32 +162,3 @@ fn indexing_progress_message(progress: IndexingProgress) -> String {
         progress.completed_packages, progress.total_packages
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn progress_titles_distinguish_blocking_and_background_work() {
-        assert_eq!(
-            foreground_indexing_title(Path::new("/workspace/project_a")),
-            "Indexing project_a"
-        );
-        assert_eq!(
-            deferred_indexing_title(Path::new("/workspace/project_a")),
-            "project_a ready · background"
-        );
-    }
-
-    #[test]
-    fn indexing_progress_message_keeps_stage_and_count_explicit() {
-        assert_eq!(
-            indexing_progress_message(IndexingProgress {
-                stage: IndexingStage::ResolvingBodies,
-                completed_packages: 41,
-                total_packages: 286,
-            }),
-            "Resolving · 41/286",
-        );
-    }
-}

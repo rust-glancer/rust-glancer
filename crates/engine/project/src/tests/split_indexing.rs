@@ -117,6 +117,8 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
 
 #[test]
 fn many_example_targets_stay_deferred_during_background_finishing() {
+    // Use enough sibling targets that accidentally finishing every secondary target would retain a
+    // meaningful fanout, without turning this policy regression into a stress test.
     const EXAMPLE_COUNT: usize = 24;
 
     let mut manifest = r#"

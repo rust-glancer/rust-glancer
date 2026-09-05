@@ -313,74 +313,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_diagnostics_command() {
-        let options = json!({
-            "diagnostics": {
-                "command": "  ",
-            },
-        });
+    fn rejects_malformed_diagnostics_configuration() {
+        let fixtures = [
+            (
+                json!({ "diagnostics": { "command": "  " } }),
+                "must not be empty",
+                "empty diagnostics command should be rejected",
+            ),
+            (
+                json!({ "diagnostics": { "command": "check --workspace" } }),
+                "single Cargo subcommand",
+                "shell-like diagnostics command should be rejected",
+            ),
+            (
+                json!({ "diagnostics": { "cargoArguments": [true] } }),
+                "cargoArguments[0]",
+                "non-string diagnostics argument should be rejected",
+            ),
+            (
+                json!({ "diagnostics": { "cargoArguments": ["--"] } }),
+                "argument separator",
+                "argument separator should be rejected",
+            ),
+            (
+                json!({ "diagnostics": { "extraEnv": { "RUSTFLAGS": true } } }),
+                "diagnostics.extraEnv.RUSTFLAGS",
+                "non-string diagnostics environment value should be rejected",
+            ),
+        ];
 
-        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("empty diagnostics command should be rejected");
+        for (options, message, err_msg) in fixtures {
+            let error =
+                DiagnosticsConfig::from_initialization_options(Some(&options)).expect_err(err_msg);
 
-        assert!(error.to_string().contains("must not be empty"));
-    }
-
-    #[test]
-    fn rejects_suspicious_diagnostics_command() {
-        let options = json!({
-            "diagnostics": {
-                "command": "check --workspace",
-            },
-        });
-
-        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("shell-like diagnostics command should be rejected");
-
-        assert!(error.to_string().contains("single Cargo subcommand"));
-    }
-
-    #[test]
-    fn rejects_non_string_diagnostics_arguments() {
-        let options = json!({
-            "diagnostics": {
-                "cargoArguments": [true],
-            },
-        });
-
-        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("malformed diagnostics argument should be rejected");
-
-        assert!(error.to_string().contains("cargoArguments[0]"));
-    }
-
-    #[test]
-    fn rejects_argument_separator_in_diagnostics_arguments() {
-        let options = json!({
-            "diagnostics": {
-                "cargoArguments": ["--"],
-            },
-        });
-
-        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("argument separator should be rejected");
-
-        assert!(error.to_string().contains("argument separator"));
-    }
-
-    #[test]
-    fn rejects_malformed_diagnostics_extra_env() {
-        let options = json!({
-            "diagnostics": {
-                "extraEnv": {
-                    "RUSTFLAGS": true,
-                },
-            },
-        });
-
-        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("malformed diagnostics extraEnv should be rejected");
-
-        assert!(error.to_string().contains("diagnostics.extraEnv.RUSTFLAGS"));
+            assert!(error.to_string().contains(message), "{error:?}");
+        }
     }
 }

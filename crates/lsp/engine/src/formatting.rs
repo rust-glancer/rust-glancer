@@ -64,11 +64,15 @@ mod tests {
     use super::rustfmt;
 
     #[test]
-    fn formatting_preserves_document_newline_style() {
+    fn formatting_applies_document_newline_behavior() {
         let cases = [
             ("LF", "fn main() {\n}\n", "fn main() {}\n"),
             ("CRLF", "fn main() {\r\n}\r\n", "fn main() {}\r\n"),
-            ("no newline", "fn main() {}", "fn main() {}\n"),
+            (
+                "missing final newline is normalized",
+                "fn main() {}",
+                "fn main() {}\n",
+            ),
         ];
 
         for (case, input, expected) in cases {

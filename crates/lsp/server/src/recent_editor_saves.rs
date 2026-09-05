@@ -124,22 +124,6 @@ mod tests {
     use super::{RECENT_EDITOR_SAVE_TTL, RecentEditorSaves, RecentEditorSavesInner};
 
     #[test]
-    fn matching_saved_metadata_is_save_echo() {
-        let fixture = fixture_crate(
-            r#"
-            //- /src/lib.rs
-            pub fn saved() {}
-            "#,
-        );
-        let path = fixture.path("src/lib.rs");
-        let saves = RecentEditorSaves::default();
-
-        saves.record_editor_save(&path);
-
-        assert!(saves.saves_to_process(vec![normalized(path)]).is_empty());
-    }
-
-    #[test]
     fn changed_file_metadata_is_not_save_echo() {
         let fixture = fixture_crate(
             r#"
@@ -159,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_batches_keep_non_echo_paths() {
+    fn filters_matching_save_echoes_without_dropping_other_paths() {
         let fixture = fixture_crate(
             r#"
             //- /src/lib.rs

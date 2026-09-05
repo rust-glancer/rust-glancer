@@ -330,26 +330,65 @@ mod tests {
     use super::{Path, PathRoot};
 
     #[test]
-    fn classifies_single_segment_paths() {
+    fn recognizes_unqualified_names() {
         let cases = [
             (
                 "plain name",
                 path(PathRoot::Relative, &["User"]),
                 Some("User"),
+                true,
+                false,
             ),
-            ("self root", path(PathRoot::SelfModule, &[]), None),
-            ("super root", path(PathRoot::Super(1), &[]), None),
-            ("crate root", path(PathRoot::Crate, &[]), None),
-            ("absolute name", path(PathRoot::Absolute, &["User"]), None),
+            (
+                "Self type",
+                path(PathRoot::Relative, &["Self"]),
+                Some("Self"),
+                false,
+                true,
+            ),
+            (
+                "self root",
+                path(PathRoot::SelfModule, &[]),
+                None,
+                false,
+                false,
+            ),
+            (
+                "super root",
+                path(PathRoot::Super(1), &[]),
+                None,
+                false,
+                false,
+            ),
+            ("crate root", path(PathRoot::Crate, &[]), None, false, false),
+            (
+                "absolute name",
+                path(PathRoot::Absolute, &["User"]),
+                None,
+                false,
+                false,
+            ),
+            (
+                "absolute Self",
+                path(PathRoot::Absolute, &["Self"]),
+                None,
+                false,
+                false,
+            ),
             (
                 "qualified name",
                 path(PathRoot::Relative, &["api", "User"]),
                 None,
+                false,
+                false,
             ),
         ];
 
-        for (label, path, expected) in cases {
-            assert_eq!(path.single_name(), expected, "{label}");
+        for (label, path, single_name, is_user, is_self) in cases {
+            assert_eq!(path.single_name(), single_name, "{label}");
+            assert_eq!(path.is_plain_ident("User"), is_user, "{label}");
+            assert_eq!(path.is_plain_ident("Self"), is_self, "{label}");
+            assert_eq!(path.is_self_type(), is_self, "{label}");
         }
     }
 
@@ -359,22 +398,22 @@ mod tests {
             (
                 "relative name path",
                 path(PathRoot::Relative, &["api", "User"]),
-                Some(("api", "User")),
+                Some((path(PathRoot::Relative, &["api"]), "User")),
             ),
             (
                 "nested name path",
                 path(PathRoot::Relative, &["api", "User", "Id"]),
-                Some(("api::User", "Id")),
+                Some((path(PathRoot::Relative, &["api", "User"]), "Id")),
             ),
             (
                 "absolute name path",
                 path(PathRoot::Absolute, &["api", "User"]),
-                Some(("::api", "User")),
+                Some((path(PathRoot::Absolute, &["api"]), "User")),
             ),
             (
                 "rooted name path",
                 path(PathRoot::Crate, &["User"]),
-                Some(("crate", "User")),
+                Some((path(PathRoot::Crate, &[]), "User")),
             ),
             (
                 "single relative segment",
@@ -384,69 +423,18 @@ mod tests {
         ];
 
         for (label, path, expected) in cases {
-            let actual = path
-                .split_prefix_name()
-                .map(|(prefix, name)| (prefix.to_string(), name.to_owned()));
-            assert_eq!(
-                actual
-                    .as_ref()
-                    .map(|(prefix, name)| (prefix.as_str(), name.as_str())),
-                expected,
-                "{label}"
-            );
+            assert_eq!(path.split_prefix_name(), expected, "{label}");
         }
     }
 
     #[test]
-    fn rejects_root_keywords_after_the_path_root() {
+    fn classifies_and_validates_syntax_path_roots() {
         assert!(Path::from_syntax_names(false, names(&["foo", "super", "Bar"])).is_none());
         assert!(Path::from_syntax_names(true, names(&["crate", "Bar"])).is_none());
         assert_eq!(
-            Path::from_syntax_names(false, names(&["super", "super", "Bar"]))
-                .expect("valid rooted path")
-                .to_string(),
-            "super::super::Bar"
+            Path::from_syntax_names(false, names(&["super", "super", "Bar"])),
+            Some(path(PathRoot::Super(2), &["Bar"]))
         );
-    }
-
-    #[test]
-    fn classifies_plain_identifier_paths() {
-        let cases = [
-            (
-                "Self type",
-                path(PathRoot::Relative, &["Self"]),
-                false,
-                true,
-                true,
-            ),
-            (
-                "self root",
-                path(PathRoot::SelfModule, &[]),
-                false,
-                false,
-                false,
-            ),
-            (
-                "other plain ident",
-                path(PathRoot::Relative, &["User"]),
-                true,
-                false,
-                false,
-            ),
-            (
-                "absolute Self",
-                path(PathRoot::Absolute, &["Self"]),
-                false,
-                false,
-                false,
-            ),
-        ];
-
-        for (label, path, is_user, is_self_ident, is_self_type) in cases {
-            assert_eq!(path.is_plain_ident("User"), is_user, "{label}");
-            assert_eq!(path.is_plain_ident("Self"), is_self_ident, "{label}");
-            assert_eq!(path.is_self_type(), is_self_type, "{label}");
-        }
     }
 
     fn path(root: PathRoot, segments: &[&str]) -> Path {

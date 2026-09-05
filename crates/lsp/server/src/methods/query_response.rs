@@ -169,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_query_preserves_valid_empty_values() {
+    fn workspace_query_accepts_empty_saved_project_results() {
         let result: Result<QueryValue<Vec<usize>>, QueryError> =
             Ok(QueryValue::new(Vec::new(), QueryScope::SavedProject));
 
@@ -202,10 +202,6 @@ mod tests {
             .expect_err("a later editor change should invalidate the value");
 
         assert_eq!(error, QueryError::EditorChanged);
-        let expected_message = error.to_string();
-        let error = into_lsp_error(error);
-        assert_eq!(error.code, ErrorCode::ContentModified);
-        assert_eq!(error.message.as_ref(), expected_message);
     }
 
     #[test]
@@ -253,29 +249,34 @@ mod tests {
     }
 
     #[test]
-    fn retryable_errors_remain_distinct_from_valid_empty_results() {
-        for query_error in [
-            QueryError::SavedSourceChanged,
-            QueryError::TemporarilyUnavailable,
-        ] {
-            let expected_message = query_error.to_string();
+    fn maps_typed_retryable_query_errors_to_content_modified() {
+        let fixtures = [
+            (
+                QueryError::EditorChanged,
+                "analysis request was superseded by newer editor state",
+            ),
+            (
+                QueryError::SavedSourceChanged,
+                "saved source changed while analysis was running",
+            ),
+            (
+                QueryError::TemporarilyUnavailable,
+                "analysis input is temporarily unavailable",
+            ),
+            (
+                QueryError::SaveRequired {
+                    path: PathBuf::from("/workspace/src/lib.rs"),
+                },
+                "save `/workspace/src/lib.rs` before running this operation",
+            ),
+        ];
+
+        for (query_error, expected_message) in fixtures {
             let error = into_lsp_error(query_error);
+
             assert_eq!(error.code, ErrorCode::ContentModified);
             assert_eq!(error.message.as_ref(), expected_message);
         }
-    }
-
-    #[test]
-    fn save_required_names_the_document_to_publish() {
-        let error = into_lsp_error(QueryError::SaveRequired {
-            path: PathBuf::from("/workspace/src/lib.rs"),
-        });
-
-        assert_eq!(error.code, ErrorCode::ContentModified);
-        assert_eq!(
-            error.message.as_ref(),
-            "save `/workspace/src/lib.rs` before running this operation",
-        );
     }
 
     fn full_change(text: &str) -> TextDocumentContentChangeEvent {

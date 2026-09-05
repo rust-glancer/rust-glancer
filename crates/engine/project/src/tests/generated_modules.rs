@@ -404,7 +404,7 @@ pub struct DefinitionSite;
 
 #[test]
 fn included_files_inherit_each_call_sites_module_context() {
-    let fixture = HostFixture::build_with_sysroot(
+    let fixture = HostFixture::build_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -448,38 +448,6 @@ pub struct RightOrdinary;
 
 //- /src/right/late.rs
 pub struct RightLate;
-
-//- /sysroot/library/core/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/alloc/src/lib.rs
-pub struct Alloc;
-
-//- /sysroot/library/std/src/lib.rs
-#[rustc_builtin_macro]
-#[macro_export]
-macro_rules! include {
-    ($($args:tt)*) => {{ /* compiler built-in */ }};
-}
-
-pub mod prelude {
-    pub mod rust_2024 {
-        pub use crate::include;
-    }
-}
-
-//- /sysroot/library/proc_macro/src/lib.rs
-pub struct TokenStream;
 "#,
     );
 
@@ -515,7 +483,7 @@ pub struct TokenStream;
 }
 
 #[test]
-fn cyclic_associated_include_expansions_remain_fail_soft() {
+fn cyclic_associated_include_does_not_block_project_build() {
     let fixture = HostFixture::build(
         r#"
 //- /Cargo.toml

@@ -32,24 +32,6 @@ pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], e
     expect.assert_eq(&actual);
 }
 
-pub(super) fn check_analysis_queries_with_sysroot(
-    fixture: &str,
-    queries: &[AnalysisQuery],
-    expect: Expect,
-) {
-    let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-        .expect("fixture sysroot should be complete");
-    let workspace =
-        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-            .expect("fixture workspace metadata should build")
-            .with_sysroot_sources(Some(sysroot));
-    let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
-    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
-    let actual = format!("{}\n", renderer.render().trim_end());
-    expect.assert_eq(&actual);
-}
-
 pub(super) fn check_analysis_queries_with_fake_sysroot(
     fixture: &str,
     queries: &[AnalysisQuery],
@@ -63,10 +45,23 @@ pub(super) fn check_analysis_queries_with_fake_sysroot(
 }
 
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
+    check_document_symbol_queries(fixture, &[query], expect);
+}
+
+pub(super) fn check_document_symbol_queries(
+    fixture: &str,
+    queries: &[DocumentSymbolsQuery],
+    expect: Expect,
+) {
     let fixture = fixture_crate(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
-    let actual = format!("{}\n", renderer.render_document_symbols(&query).trim_end());
+    let actual = queries
+        .iter()
+        .map(|query| renderer.render_document_symbols(query))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 

@@ -118,92 +118,12 @@ pub fn inspect(action: Action) {
 }
 
 #[test]
-fn completes_record_literal_fields() {
+fn completes_record_fields_across_literal_and_pattern_contexts() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_record_literal_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User {
-    pub id: u8,
-    pub name: u8,
-    pub active: bool,
-}
-
-pub fn use_it(id: u8) {
-    let _with_prefix = User { id, na$literal_prefix$ };
-    let _empty = User { id, $literal_empty$ };
-    let _defaults = User { ..$literal_defaults$ };
-}
-"#,
-        &[
-            AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
-            AnalysisQuery::complete("record literal empty completions", "literal_empty"),
-            AnalysisQuery::complete("record literal defaults completions", "literal_defaults"),
-        ],
-        expect![[r#"
-            record literal prefix completions
-            - field active
-            - field name
-
-            record literal empty completions
-            - field active
-            - field name
-
-            record literal defaults completions
-            - <none>
-        "#]],
-    );
-}
-
-#[test]
-fn completes_record_pattern_fields() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_pattern_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct User {
-    pub id: u8,
-    pub name: u8,
-    pub active: bool,
-}
-
-pub fn use_it(user: User) {
-    let User { id, na$pattern_prefix$ } = user;
-    let User { ..$pattern_rest$ } = user;
-}
-"#,
-        &[
-            AnalysisQuery::complete("record pattern prefix completions", "pattern_prefix"),
-            AnalysisQuery::complete("record pattern rest completions", "pattern_rest"),
-        ],
-        expect![[r#"
-            record pattern prefix completions
-            - field active
-            - field name
-
-            record pattern rest completions
-            - <none>
-        "#]],
-    );
-}
-
-#[test]
-fn completes_record_pattern_fields_in_control_flow() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_control_flow_record_pattern_completions"
+name = "analysis_record_field_context_completions"
 version = "0.1.0"
 edition = "2024"
 
@@ -216,7 +136,14 @@ pub struct User {
 
 pub struct Users;
 
-pub fn use_it(user: User, users: Users) {
+pub fn use_it(id: u8, user: User, users: Users) {
+    let _with_prefix = User { id, na$literal_prefix$ };
+    let _empty = User { id, $literal_empty$ };
+    let _defaults = User { ..$literal_defaults$ };
+
+    let User { id, na$pattern_prefix$ } = user;
+    let User { ..$pattern_rest$ } = user;
+
     if let User { id, na$if_field$ } = user {}
 
     while let User { ac$while_field$ } = user {}
@@ -225,11 +152,34 @@ pub fn use_it(user: User, users: Users) {
 }
 "#,
         &[
+            AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
+            AnalysisQuery::complete("record literal empty completions", "literal_empty"),
+            AnalysisQuery::complete("record literal defaults completions", "literal_defaults"),
+            AnalysisQuery::complete("record pattern prefix completions", "pattern_prefix"),
+            AnalysisQuery::complete("record pattern rest completions", "pattern_rest"),
             AnalysisQuery::complete("if let record pattern fields", "if_field"),
             AnalysisQuery::complete("while let record pattern fields", "while_field"),
             AnalysisQuery::complete("for record pattern fields", "for_field"),
         ],
         expect![[r#"
+            record literal prefix completions
+            - field active
+            - field name
+
+            record literal empty completions
+            - field active
+            - field name
+
+            record literal defaults completions
+            - <none>
+
+            record pattern prefix completions
+            - field active
+            - field name
+
+            record pattern rest completions
+            - <none>
+
             if let record pattern fields
             - field active
             - field name

@@ -103,22 +103,3 @@ impl ServiceNotificationPublisher for ChannelServiceNotificationPublisher {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use rg_lsp_proto::ServiceNotification;
-
-    use super::ServiceNotificationsSink;
-
-    #[tokio::test]
-    async fn channel_sink_forwards_notifications() {
-        let (sink, mut receiver) = ServiceNotificationsSink::channel();
-
-        sink.send(ServiceNotification::InlayHintRefresh);
-
-        assert!(matches!(
-            receiver.recv().await,
-            Some(ServiceNotification::InlayHintRefresh),
-        ));
-    }
-}

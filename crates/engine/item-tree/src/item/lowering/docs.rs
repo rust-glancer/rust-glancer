@@ -94,11 +94,11 @@ mod tests {
     use crate::item::MaybeFromAst;
 
     #[test]
-    fn extracts_line_doc_comments() {
+    fn extracts_outer_docs_in_source_order() {
         let file = SourceFile::parse(
             r#"
             /// User account.
-            /// Stores the display name.
+            #[doc = "Stores the display name."]
             struct User;
             "#,
             Edition::CURRENT,
@@ -115,29 +115,6 @@ mod tests {
             .expect("docs should be extracted");
 
         assert_eq!(docs.as_str(), "User account.\nStores the display name.");
-    }
-
-    #[test]
-    fn extracts_doc_attributes() {
-        let file = SourceFile::parse(
-            r#"
-            #[doc = "User account."]
-            struct User;
-            "#,
-            Edition::CURRENT,
-        )
-        .ok()
-        .expect("fixture should parse");
-        let item = file
-            .syntax()
-            .descendants()
-            .find_map(ast::Struct::cast)
-            .expect("fixture should contain struct");
-
-        let docs = <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs)
-            .expect("docs should be extracted");
-
-        assert_eq!(docs.as_str(), "User account.");
     }
 
     #[test]

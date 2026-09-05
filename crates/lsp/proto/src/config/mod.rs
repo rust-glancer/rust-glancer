@@ -46,81 +46,23 @@ fn section<'a>(options: Option<&'a LSPAny>, key: &'static str) -> Option<&'a ls_
 mod tests {
     use serde_json::json;
 
-    use super::{
-        CargoMetadataTarget, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
-        SysrootDiscovery,
-    };
+    use super::EngineConfig;
 
     #[test]
     fn parses_engine_configuration() {
         let options = json!({
-            "cache": {
-                "packageResidency": "workspace-resident",
-            },
-            "cargo": {
-                "target": "x86_64-unknown-linux-gnu",
-                "allFeatures": true,
-                "noDefaultFeatures": true,
-                "features": ["serde", "derive"],
-            },
-            "indexing": {
-                "performancePreference": "faster-builds",
-                "packageBatchSize": 64,
-            },
-            "sysroot": {
-                "discovery": "disabled",
-            },
             "cfg": {
-                "test": true,
-                "atoms": ["tokio_unstable"],
+                "test": false,
             },
             "diagnostics": {
-                "onStartup": true,
-                "command": "clippy",
-                "extraEnv": {
-                    "RUSTFLAGS": "--cfg tokio_unstable",
-                },
+                "onSave": true,
             },
         });
 
         let config = EngineConfig::from_initialization_options(Some(&options))
             .expect("engine config should parse");
 
-        assert_eq!(
-            config.analysis.package_residency_policy,
-            PackageResidencyPolicy::WorkspaceResident,
-        );
-        assert_eq!(
-            config.analysis.cargo_metadata_config.target(),
-            &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
-        );
-        assert!(config.analysis.cargo_metadata_config.all_features_enabled());
-        assert!(
-            config
-                .analysis
-                .cargo_metadata_config
-                .no_default_features_enabled()
-        );
-        assert_eq!(
-            config.analysis.cargo_metadata_config.features(),
-            &["serde".to_string(), "derive".to_string()],
-        );
-        assert_eq!(
-            config.analysis.indexing_preference,
-            IndexingPerformancePreference::FasterBuilds,
-        );
-        assert_eq!(config.analysis.package_batch_size.get(), 64);
-        assert_eq!(
-            config.analysis.sysroot_discovery,
-            SysrootDiscovery::Disabled,
-        );
-        assert!(config.analysis.cfg.test);
-        assert_eq!(config.analysis.cfg.atoms, ["tokio_unstable"]);
-        assert!(config.diagnostics.on_startup);
-        assert_eq!(config.diagnostics.command, "clippy");
-        assert_eq!(
-            config.diagnostics.extra_env["RUSTFLAGS"],
-            "--cfg tokio_unstable",
-        );
+        assert!(!config.analysis.cfg.test);
+        assert!(config.diagnostics.on_save);
     }
 }

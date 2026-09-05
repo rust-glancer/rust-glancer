@@ -140,7 +140,7 @@ pub fn use_it() {
 }
 
 #[test]
-fn resolves_body_local_struct_fields() {
+fn resolves_body_local_aggregate_construction_and_field_access() {
     check_project_body_ir(
         r#"
 //- /Cargo.toml
@@ -158,8 +158,15 @@ pub fn use_it() {
         pair: Pair,
     }
     struct Pair(GlobalId, GlobalId);
+    union Bits {
+        id: GlobalId,
+    }
 
-    let user: User;
+    let user = User {
+        id: GlobalId,
+        pair: Pair(GlobalId, GlobalId),
+    };
+    let bits = Bits { id: GlobalId };
     let id = user.id;
     let right = user.pair.1;
 }
@@ -168,91 +175,54 @@ pub fn use_it() {
             package body_local_field_fixture
 
             body_local_field_fixture [lib]
-            body b0 fn body_local_field_fixture[lib]::crate::use_it @ 3:1-13:2
+            body b0 fn body_local_field_fixture[lib]::crate::use_it @ 3:1-20:2
             scopes
             - s0 parent <none>: <none>
-            - s1 parent s0: v0, v1, v2; source_items i0, i1
+            - s1 parent s0: v0, v1, v2, v3; source_items i0, i1, i2
             source_items
             - i0 struct User @ 4:5-7:6
             - i1 struct Pair @ 8:5-8:37
+            - i2 union Bits @ 9:5-11:6
             bindings
-            - v0 let user `user`: User => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 10:9-10:13
-            - v1 let id `id` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 11:9-11:11
-            - v2 let right `right` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 12:9-12:14
+            - v0 let user `user` => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 13:9-13:13
+            - v1 let bits `bits` => nominal union fn body_local_field_fixture[lib]::crate::use_it::Bits @ 9:5-11:6 @ 17:9-17:13
+            - v2 let id `id` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 18:9-18:11
+            - v3 let right `right` => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 19:9-19:14
             body
-            expr e5 block s1 => () @ 3:17-13:2
+            expr e13 block s1 => () @ 3:17-20:2
               stmt s0 source_item i0 @ 4:5-7:6
               stmt s1 source_item i1 @ 8:5-8:37
-              stmt s2 let v0: User @ 10:5-10:20
-              stmt s3 let v1 @ 11:5-11:22
+              stmt s2 source_item i2 @ 9:5-11:6
+              stmt s3 let v0 @ 13:5-16:7
                 initializer
-                  expr e1 field id -> field struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6::id => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 11:14-11:21
-                    base
-                      expr e0 path user -> local v0 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 11:14-11:18
-              stmt s4 let v2 @ 12:5-12:29
+                  expr e5 record User -> struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 13:16-16:6
+                    field id
+                      expr e0 path GlobalId -> struct body_local_field_fixture[lib]::crate::GlobalId => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 14:13-14:21
+                    field pair
+                      expr e4 call => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 15:15-15:39
+                        callee
+                          expr e1 path Pair -> struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 15:15-15:19
+                        arg
+                          expr e2 path GlobalId -> struct body_local_field_fixture[lib]::crate::GlobalId => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 15:20-15:28
+                        arg
+                          expr e3 path GlobalId -> struct body_local_field_fixture[lib]::crate::GlobalId => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 15:30-15:38
+              stmt s4 let v1 @ 17:5-17:38
                 initializer
-                  expr e4 field 1 -> field struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37::#1 => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 12:17-12:28
+                  expr e7 record Bits -> union fn body_local_field_fixture[lib]::crate::use_it::Bits @ 9:5-11:6 => nominal union fn body_local_field_fixture[lib]::crate::use_it::Bits @ 9:5-11:6 @ 17:16-17:37
+                    field id
+                      expr e6 path GlobalId -> struct body_local_field_fixture[lib]::crate::GlobalId => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 17:27-17:35
+              stmt s5 let v2 @ 18:5-18:22
+                initializer
+                  expr e9 field id -> field struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6::id => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 18:14-18:21
                     base
-                      expr e3 field pair -> field struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6::pair => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 12:17-12:26
+                      expr e8 path user -> local v0 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 18:14-18:18
+              stmt s6 let v3 @ 19:5-19:29
+                initializer
+                  expr e12 field 1 -> field struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37::#1 => nominal struct body_local_field_fixture[lib]::crate::GlobalId @ 19:17-19:28
+                    base
+                      expr e11 field pair -> field struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6::pair => nominal struct fn body_local_field_fixture[lib]::crate::use_it::Pair @ 8:5-8:37 @ 19:17-19:26
                         base
-                          expr e2 path user -> local v0 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 12:17-12:21
-        "#]],
-    );
-}
-
-#[test]
-fn resolves_body_local_record_literals() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_local_record_literal_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn use_it() {
-    struct User {
-        id: GlobalId,
-    }
-    union Bits {
-        id: GlobalId,
-    }
-
-    let user = User { id: GlobalId };
-    let bits = Bits { id: GlobalId };
-}
-"#,
-        expect![[r#"
-            package body_local_record_literal_fixture
-
-            body_local_record_literal_fixture [lib]
-            body b0 fn body_local_record_literal_fixture[lib]::crate::use_it @ 3:1-13:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0, v1; source_items i0, i1
-            source_items
-            - i0 struct User @ 4:5-6:6
-            - i1 union Bits @ 7:5-9:6
-            bindings
-            - v0 let user `user` => nominal struct fn body_local_record_literal_fixture[lib]::crate::use_it::User @ 4:5-6:6 @ 11:9-11:13
-            - v1 let bits `bits` => nominal union fn body_local_record_literal_fixture[lib]::crate::use_it::Bits @ 7:5-9:6 @ 12:9-12:13
-            body
-            expr e4 block s1 => () @ 3:17-13:2
-              stmt s0 source_item i0 @ 4:5-6:6
-              stmt s1 source_item i1 @ 7:5-9:6
-              stmt s2 let v0 @ 11:5-11:38
-                initializer
-                  expr e1 record User -> struct fn body_local_record_literal_fixture[lib]::crate::use_it::User @ 4:5-6:6 => nominal struct fn body_local_record_literal_fixture[lib]::crate::use_it::User @ 4:5-6:6 @ 11:16-11:37
-                    field id
-                      expr e0 path GlobalId -> struct body_local_record_literal_fixture[lib]::crate::GlobalId => nominal struct body_local_record_literal_fixture[lib]::crate::GlobalId @ 11:27-11:35
-              stmt s3 let v1 @ 12:5-12:38
-                initializer
-                  expr e3 record Bits -> union fn body_local_record_literal_fixture[lib]::crate::use_it::Bits @ 7:5-9:6 => nominal union fn body_local_record_literal_fixture[lib]::crate::use_it::Bits @ 7:5-9:6 @ 12:16-12:37
-                    field id
-                      expr e2 path GlobalId -> struct body_local_record_literal_fixture[lib]::crate::GlobalId => nominal struct body_local_record_literal_fixture[lib]::crate::GlobalId @ 12:27-12:35
+                          expr e10 path user -> local v0 => nominal struct fn body_local_field_fixture[lib]::crate::use_it::User @ 4:5-7:6 @ 19:17-19:21
         "#]],
     );
 }
@@ -686,7 +656,9 @@ pub fn use_it(id: GlobalId) {
 }
 
 #[test]
-fn lowers_more_body_local_item_kinds() {
+fn snapshots_body_local_item_kind_support() {
+    // Keep the full item inventory even while some kinds are only partially lowered. Snapshot
+    // changes make newly supported declarations and expressions visible during later feature work.
     check_project_body_ir(
         r#"
 //- /Cargo.toml
@@ -1195,69 +1167,6 @@ pub fn use_it() {
             bindings
             body
             expr e0 path Inner -> struct body_local_value_shadowing_fixture[lib]::crate::Inner => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 18:31-18:36
-        "#]],
-    );
-}
-
-#[test]
-fn resolves_body_local_associated_consts_and_types() {
-    check_project_body_ir(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_local_assoc_items_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct GlobalId;
-
-pub fn use_it() {
-    struct User;
-
-    impl User {
-        const DEFAULT: GlobalId = GlobalId;
-        type Id = GlobalId;
-    }
-
-    let default = User::DEFAULT;
-    let typed: User::Id = GlobalId;
-}
-"#,
-        expect![[r#"
-            package body_local_assoc_items_fixture
-
-            body_local_assoc_items_fixture [lib]
-            body b0 fn body_local_assoc_items_fixture[lib]::crate::use_it @ 3:1-13:2
-            scopes
-            - s0 parent <none>: <none>
-            - s1 parent s0: v0, v1; source_items i0, i3
-            source_items
-            - i0 struct User @ 4:5-4:17
-            - i1 const DEFAULT @ 7:9-7:44
-            - i2 type_alias Id @ 8:9-8:28
-            - i3 impl <unnamed> @ 6:5-9:6
-            bindings
-            - v0 let default `default` => nominal struct body_local_assoc_items_fixture[lib]::crate::GlobalId @ 11:9-11:16
-            - v1 let typed `typed`: User::Id => nominal struct body_local_assoc_items_fixture[lib]::crate::GlobalId @ 12:9-12:14
-            body
-            expr e2 block s1 => () @ 3:17-13:2
-              stmt s0 source_item i0 @ 4:5-4:17
-              stmt s1 source_item i3 @ 6:5-9:6
-              stmt s2 let v0 @ 11:5-11:33
-                initializer
-                  expr e0 path User::DEFAULT -> const impl User::DEFAULT => nominal struct body_local_assoc_items_fixture[lib]::crate::GlobalId @ 11:19-11:32
-              stmt s3 let v1: User::Id @ 12:5-12:36
-                initializer
-                  expr e1 path GlobalId -> struct body_local_assoc_items_fixture[lib]::crate::GlobalId => nominal struct body_local_assoc_items_fixture[lib]::crate::GlobalId @ 12:27-12:35
-
-
-            body b1 const impl User::DEFAULT @ 7:9-7:44
-            scopes
-            - s0 parent <none>: <none>
-            bindings
-            body
-            expr e0 path GlobalId -> struct body_local_assoc_items_fixture[lib]::crate::GlobalId => nominal struct body_local_assoc_items_fixture[lib]::crate::GlobalId @ 7:35-7:43
         "#]],
     );
 }

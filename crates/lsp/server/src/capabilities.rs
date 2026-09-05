@@ -64,120 +64,68 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 
 #[cfg(test)]
 mod tests {
+    use tower_lsp_server::ls_types::{
+        CodeActionKind, CodeActionProviderCapability, OneOf, TextDocumentSyncCapability,
+        TextDocumentSyncKind,
+    };
+
     use super::server_capabilities;
-    use tower_lsp_server::ls_types::{OneOf, TextDocumentSyncCapability, TextDocumentSyncKind};
 
     #[test]
-    fn advertises_multi_root_workspace_support() {
+    fn advertises_the_supported_lsp_surface() {
         let capabilities = server_capabilities();
+
         let workspace_folders = capabilities
             .workspace
-            .and_then(|workspace| workspace.workspace_folders)
+            .as_ref()
+            .and_then(|workspace| workspace.workspace_folders.as_ref())
             .expect("workspace folder capability should stay explicit");
-
         assert_eq!(workspace_folders.supported, Some(true));
-    }
 
-    #[test]
-    fn advertises_static_inlay_hint_support() {
-        let capabilities = server_capabilities();
         assert!(capabilities.inlay_hint_provider.is_some());
-    }
-
-    #[test]
-    fn advertises_hover_support() {
-        let capabilities = server_capabilities();
         assert!(capabilities.hover_provider.is_some());
-    }
+        assert!(capabilities.implementation_provider.is_some());
+        assert!(capabilities.references_provider.is_some());
+        assert!(capabilities.document_formatting_provider.is_some());
+        assert!(capabilities.document_highlight_provider.is_some());
+        assert!(capabilities.folding_range_provider.is_some());
 
-    #[test]
-    fn advertises_eager_quick_fixes_and_rewrites() {
-        let capabilities = server_capabilities();
-        let Some(tower_lsp_server::ls_types::CodeActionProviderCapability::Options(options)) =
-            capabilities.code_action_provider
+        let Some(CodeActionProviderCapability::Options(code_actions)) =
+            capabilities.code_action_provider.as_ref()
         else {
             panic!("code action capability should use explicit options");
         };
-
         assert_eq!(
-            options.code_action_kinds,
-            Some(vec![
-                tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
-                tower_lsp_server::ls_types::CodeActionKind::REFACTOR_REWRITE,
-            ])
+            code_actions.code_action_kinds.as_deref(),
+            Some(&[CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR_REWRITE,][..])
         );
-        assert_eq!(options.resolve_provider, Some(false));
-    }
+        assert_eq!(code_actions.resolve_provider, Some(false));
 
-    #[test]
-    fn triggers_completions_for_member_and_path_access() {
-        let capabilities = server_capabilities();
         let completion = capabilities
             .completion_provider
+            .as_ref()
             .expect("completion capability should stay explicit");
-
         assert_eq!(
-            completion.trigger_characters,
-            Some(vec![".".to_string(), ":".to_string()])
+            completion.trigger_characters.as_deref(),
+            Some(&[".".to_string(), ":".to_string()][..])
         );
-    }
 
-    #[test]
-    fn advertises_implementation_support() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.implementation_provider.is_some());
-    }
-
-    #[test]
-    fn advertises_references_support() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.references_provider.is_some());
-    }
-
-    #[test]
-    fn advertises_document_formatting_support() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.document_formatting_provider.is_some());
-    }
-
-    #[test]
-    fn advertises_folding_range_support() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.folding_range_provider.is_some());
-    }
-
-    #[test]
-    fn advertises_prepare_rename_support() {
-        let capabilities = server_capabilities();
-        let Some(OneOf::Right(rename)) = capabilities.rename_provider else {
+        let Some(OneOf::Right(rename)) = capabilities.rename_provider.as_ref() else {
             panic!("rename capability should use explicit options");
         };
-
         assert_eq!(rename.prepare_provider, Some(true));
-    }
 
-    #[test]
-    fn advertises_document_highlight_support() {
-        let capabilities = server_capabilities();
-        assert!(capabilities.document_highlight_provider.is_some());
+        let Some(TextDocumentSyncCapability::Options(sync)) =
+            capabilities.text_document_sync.as_ref()
+        else {
+            panic!("text document sync should use explicit options");
+        };
+        assert_eq!(sync.open_close, Some(true));
+        assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
     }
 
     #[test]
     fn does_not_advertise_internal_reindex_command() {
-        let capabilities = server_capabilities();
-
-        assert!(capabilities.execute_command_provider.is_none());
-    }
-
-    #[test]
-    fn advertises_incremental_text_document_synchronization() {
-        let capabilities = server_capabilities();
-        let Some(TextDocumentSyncCapability::Options(sync)) = capabilities.text_document_sync
-        else {
-            panic!("text document sync should use explicit options");
-        };
-
-        assert_eq!(sync.open_close, Some(true));
-        assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
+        assert!(server_capabilities().execute_command_provider.is_none());
     }
 }

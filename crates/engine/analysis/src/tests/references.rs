@@ -691,7 +691,7 @@ pub fn use_it(value: u8) {
 }
 
 #[test]
-fn scoped_references_keep_external_declaration_without_external_uses() {
+fn reference_scopes_handle_external_declarations() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -727,65 +727,40 @@ pub fn use_it() {
     let _again: helper::Tool = tool;
 }
 "#,
-        &[AnalysisQuery::references(
-            "scoped type references",
-            "scoped_type_ref",
-            ReferenceQuery::current_target(),
-        )
-        .in_lib("app")],
+        &[
+            AnalysisQuery::references(
+                "target-scoped external type references",
+                "scoped_type_ref",
+                ReferenceQuery::current_target(),
+            )
+            .in_lib("app"),
+            AnalysisQuery::references(
+                "file-scoped external type references",
+                "scoped_type_ref",
+                ReferenceQuery::current_file(),
+            )
+            .in_lib("app"),
+        ],
         expect![[r#"
-            scoped type references
+            target-scoped external type references
             - `Tool` @ app/src/lib.rs:2:23-2:27
             - `Tool` @ app/src/lib.rs:3:25-3:29
             - `Tool` @ helper/src/lib.rs:1:12-1:16
+
+            file-scoped external type references
+            - `Tool` @ app/src/lib.rs:2:23-2:27
+            - `Tool` @ app/src/lib.rs:3:25-3:29
         "#]],
     );
 }
 
 #[test]
-fn file_scoped_references_skip_other_files_in_same_target() {
+fn reference_file_selection_honors_current_and_explicit_file_sets() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
 [package]
-name = "analysis_file_scoped_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod other;
-
-pub struct User;
-
-pub fn use_here() {
-    let _: Us$file_scoped_type_ref$er;
-}
-
-//- /src/other.rs
-use crate::User;
-
-pub fn use_there(_: User) {}
-"#,
-        &[AnalysisQuery::references(
-            "file-scoped type references",
-            "file_scoped_type_ref",
-            ReferenceQuery::current_file(),
-        )],
-        expect![[r#"
-            file-scoped type references
-            - `User` @ src/lib.rs:3:12-3:16
-            - `User` @ src/lib.rs:6:12-6:16
-        "#]],
-    );
-}
-
-#[test]
-fn file_list_references_scan_selected_files_only() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_file_list_references"
+name = "analysis_reference_file_selection"
 version = "0.1.0"
 edition = "2024"
 
@@ -796,7 +771,7 @@ mod skipped;
 pub struct User;
 
 pub fn use_here() {
-    let _: Us$file_list_type_ref$er;
+    let _: Us$file_selection_type_ref$er;
 }
 
 //- /src/other.rs
@@ -809,64 +784,28 @@ use crate::User;
 
 pub fn use_elsewhere(_: User) {}
 "#,
-        &[AnalysisQuery::references(
-            "file-list type references",
-            "file_list_type_ref",
-            ReferenceQuery::files(&["src/lib.rs", "src/other.rs"]),
-        )],
+        &[
+            AnalysisQuery::references(
+                "current-file type references",
+                "file_selection_type_ref",
+                ReferenceQuery::current_file(),
+            ),
+            AnalysisQuery::references(
+                "explicit-file-list type references",
+                "file_selection_type_ref",
+                ReferenceQuery::files(&["src/lib.rs", "src/other.rs"]),
+            ),
+        ],
         expect![[r#"
-            file-list type references
+            current-file type references
+            - `User` @ src/lib.rs:4:12-4:16
+            - `User` @ src/lib.rs:7:12-7:16
+
+            explicit-file-list type references
             - `User` @ src/lib.rs:4:12-4:16
             - `User` @ src/lib.rs:7:12-7:16
             - `User` @ src/other.rs:1:12-1:16
             - `User` @ src/other.rs:3:21-3:25
-        "#]],
-    );
-}
-
-#[test]
-fn file_scoped_references_do_not_include_external_declaration() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/helper", "crates/app"]
-resolver = "3"
-
-//- /crates/helper/Cargo.toml
-[package]
-name = "helper"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/helper/src/lib.rs
-pub struct Tool;
-
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-helper = { path = "../helper" }
-
-//- /crates/app/src/lib.rs
-pub fn use_it() {
-    let tool: helper::To$file_scoped_external_decl$ol = todo!();
-    let _again: helper::Tool = tool;
-}
-"#,
-        &[AnalysisQuery::references(
-            "file-scoped external declaration references",
-            "file_scoped_external_decl",
-            ReferenceQuery::current_file(),
-        )
-        .in_lib("app")],
-        expect![[r#"
-            file-scoped external declaration references
-            - `Tool` @ app/src/lib.rs:2:23-2:27
-            - `Tool` @ app/src/lib.rs:3:25-3:29
         "#]],
     );
 }

@@ -112,7 +112,7 @@ macro_rules! exported {
 }
 
 #[test]
-fn cfg_attr_macro_export_makes_macro_rules_visible_from_crate_root() {
+fn cfg_attr_macro_export_respects_active_and_inactive_predicates() {
     let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
@@ -122,48 +122,31 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-crate::exported!();
+crate::active!();
+crate::inactive!();
 
 #[cfg_attr(true, macro_export)]
-macro_rules! exported {
+macro_rules! active {
     () => {
-        pub struct CfgAttrExported;
+        pub struct ActiveExport;
+    };
+}
+
+#[cfg_attr(false, macro_export)]
+macro_rules! inactive {
+    () => {
+        pub struct InactiveExport;
     };
 }
 "#,
     );
     let target = project.lib("cfg_attr_macro_export_fixture");
 
-    target.entry("CfgAttrExported").assert_type_exists(
-        "active cfg_attr macro_export should expose the macro through the crate root",
-    );
-}
-
-#[test]
-fn inactive_cfg_attr_macro_export_does_not_export_macro_rules() {
-    let project = utils::DefMapFixtureDb::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "inactive_cfg_attr_macro_export_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-crate::exported!();
-
-#[cfg_attr(false, macro_export)]
-macro_rules! exported {
-    () => {
-        pub struct HiddenExport;
-    };
-}
-"#,
-    );
-    let target = project.lib("inactive_cfg_attr_macro_export_fixture");
-
     target
-        .entry("HiddenExport")
+        .entry("ActiveExport")
+        .assert_type_exists("active cfg_attr macro_export should expose a root macro binding");
+    target
+        .entry("InactiveExport")
         .assert_missing("inactive cfg_attr macro_export should not expose a root macro binding");
 }
 

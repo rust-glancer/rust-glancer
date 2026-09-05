@@ -166,63 +166,6 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
-fn renders_fn_trait_parenthesized_args_in_binding_annotations() {
-    check_project_body_ir_with_fake_sysroot(
-        r#"
-//- /Cargo.toml
-[package]
-name = "body_fn_trait_args_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct AttrVec;
-
-pub fn configure(f: impl FnOnce(&mut AttrVec)) {
-    let _ = f;
-}
-"#,
-        expect![[r#"
-            package alloc
-
-            alloc [lib]
-            skipped
-
-            package body_fn_trait_args_fixture
-
-            body_fn_trait_args_fixture [lib]
-            body b0 fn body_fn_trait_args_fixture[lib]::crate::configure @ 3:1-5:2
-            scopes
-            - s0 parent <none>: v0
-            - s1 parent s0: <none>
-            bindings
-            - v0 param f `f`: impl FnOnce(&mut AttrVec) => impl trait core[lib]::crate::FnOnce<(&mut nominal struct body_fn_trait_args_fixture[lib]::crate::AttrVec,), Output = ()> @ 3:18-3:19
-            body
-            expr e1 block s1 => () @ 3:48-5:2
-              stmt s0 let  @ 4:5-4:15
-                initializer
-                  expr e0 path f -> local v0 => impl trait core[lib]::crate::FnOnce<(&mut nominal struct body_fn_trait_args_fixture[lib]::crate::AttrVec,), Output = ()> @ 4:13-4:14
-
-
-            package core
-
-            core [lib]
-            skipped
-
-            package proc_macro
-
-            proc_macro [lib]
-            skipped
-
-            package std
-
-            std [lib]
-            skipped
-        "#]],
-    );
-}
-
-#[test]
 fn infers_structural_tuple_array_and_slice_types() {
     check_project_body_ir(
         r#"

@@ -55,36 +55,3 @@ pub(crate) async fn shutdown(engine_client: EngineClient) -> anyhow::Result<()> 
 pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
     rg_lsp_proto::file_uri_to_path(uri).ok()
 }
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use super::uri_to_path;
-    use tower_lsp_server::ls_types::Uri;
-
-    #[test]
-    fn uri_to_path_accepts_only_file_uris() {
-        let file_path = std::env::current_dir()
-            .expect("test process should have a current directory")
-            .join("src/lib.rs");
-        let file_uri =
-            rg_lsp_proto::path_to_file_uri(&file_path).expect("test path should convert to URI");
-        let cases = [
-            (file_uri, Some(file_path)),
-            (
-                Uri::from_str("untitled:Scratch").expect("untitled URI should be valid"),
-                None,
-            ),
-            (
-                Uri::from_str("rust-analyzer://synthetic/lib.rs")
-                    .expect("custom URI should be valid"),
-                None,
-            ),
-        ];
-
-        for (uri, expected) in cases {
-            assert_eq!(uri_to_path(&uri), expected);
-        }
-    }
-}

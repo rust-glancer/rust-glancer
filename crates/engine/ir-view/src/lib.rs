@@ -22,6 +22,3 @@ pub mod ty;
 
 pub use db::IndexedViewDb;
 pub use symbol::SymbolKind;
-
-#[cfg(test)]
-mod tests;
