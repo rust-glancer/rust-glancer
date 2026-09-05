@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/rust-glancer/rust-glancer/compare/v0.2.0...v0.2.1) (2026-09-05)
+
+
+### Features
+
+* Implement folding ([#211](https://github.com/rust-glancer/rust-glancer/issues/211)) ([8aed80e](https://github.com/rust-glancer/rust-glancer/commit/8aed80e34f2d0cf0585436f74e68a77f317b6217))
+
+
+### Bug Fixes
+
+* Fallback on rootUri if no workspace in initial ([#207](https://github.com/rust-glancer/rust-glancer/issues/207)) ([63e67a0](https://github.com/rust-glancer/rust-glancer/commit/63e67a07becf7310ebe8dea7ba9b1d105f9ed4ae))
+
 ## [0.2.0](https://github.com/rust-glancer/rust-glancer/compare/v0.1.1...v0.2.0) (2026-08-31)
 
 
