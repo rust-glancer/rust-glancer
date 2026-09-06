@@ -10,10 +10,11 @@
 //!     ^^^^^  ^^^^^  ^^^^    ^^^^^ one path-prefix occurrence per segment, plus the alias
 //! ```
 
-use rg_def_map::{DefMap, DefMapReadTxn, ModuleOrigin};
+use crate::IndexedViewDb;
+use anyhow::Context as _;
+use rg_def_map::{DefMap, ModuleOrigin};
 use rg_ir_model::Path;
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
-use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 /// One module-scope source node that can become an indexed occurrence.
@@ -47,7 +48,7 @@ pub(crate) enum DefinitionSourceCandidate {
 /// candidate vocabulary for all matching files, which keeps go-to-definition and project-wide
 /// references on one source interpretation.
 pub(crate) struct DefinitionSourceScanner<'txn, 'db> {
-    def_map: &'txn DefMapReadTxn<'db>,
+    db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
     file_id: Option<FileId>,
     offset: Option<u32>,
@@ -55,13 +56,13 @@ pub(crate) struct DefinitionSourceScanner<'txn, 'db> {
 
 impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
     pub(crate) fn at(
-        def_map: &'txn DefMapReadTxn<'db>,
+        db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
-            def_map,
+            db,
             crate_ref,
             file_id: Some(file_id),
             offset: Some(offset),
@@ -69,12 +70,12 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
     }
 
     pub(crate) fn in_crate(
-        def_map: &'txn DefMapReadTxn<'db>,
+        db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Self {
         Self {
-            def_map,
+            db,
             crate_ref,
             file_id,
             offset: None,
@@ -82,15 +83,19 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
     }
 
     /// Collects declarations first, followed by every written import segment and alias.
-    pub(crate) fn scan(&self) -> Result<Vec<DefinitionSourceCandidate>, PackageStoreError> {
+    #[rg_std::cancelable("definition shard", token = self.db)]
+    pub(crate) fn scan(&self) -> anyhow::Result<Vec<DefinitionSourceCandidate>> {
         let mut candidates = Vec::new();
-        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
             return Ok(candidates);
         };
 
-        self.push_module_candidates(def_map, &mut candidates);
-        self.push_local_def_candidates(def_map, &mut candidates);
-        self.push_import_candidates(def_map, &mut candidates);
+        self.push_module_candidates(def_map, &mut candidates)
+            .context("scan declaration candidates")?;
+        self.push_local_def_candidates(def_map, &mut candidates)
+            .context("scan declaration candidates")?;
+        self.push_import_candidates(def_map, &mut candidates)
+            .context("scan declaration candidates")?;
         Ok(candidates)
     }
 
@@ -98,8 +103,9 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
         &self,
         def_map: &DefMap,
         candidates: &mut Vec<DefinitionSourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         for (module_idx, module) in def_map.modules().iter().enumerate() {
+            rg_std::check_cancel!(self.db, "definition scan");
             let module_ref = ModuleRef {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: ModuleId(module_idx),
@@ -128,14 +134,16 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 });
             }
         }
+        Ok(())
     }
 
     fn push_local_def_candidates(
         &self,
         def_map: &DefMap,
         candidates: &mut Vec<DefinitionSourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
+            rg_std::check_cancel!(self.db, "definition scan");
             let local_def_ref = LocalDefRef {
                 origin: DefMapRef::Crate(self.crate_ref),
                 local_def: LocalDefId(local_def_idx),
@@ -153,14 +161,16 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 });
             }
         }
+        Ok(())
     }
 
     fn push_import_candidates(
         &self,
         def_map: &DefMap,
         candidates: &mut Vec<DefinitionSourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         for import in def_map.imports() {
+            rg_std::check_cancel!(self.db, "definition scan");
             if !self.file_matches(import.source.file_id) {
                 continue;
             }
@@ -194,6 +204,7 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 });
             }
         }
+        Ok(())
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

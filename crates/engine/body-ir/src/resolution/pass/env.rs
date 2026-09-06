@@ -25,6 +25,12 @@ pub(super) struct BodyResolutionEnv<'query, D, I> {
     caches: BodyResolutionCaches,
 }
 
+impl<D, I> rg_std::Cancelable for BodyResolutionEnv<'_, D, I> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(self.trait_selection.cancellation(), checkpoint)
+    }
+}
+
 impl<D, I> Clone for BodyResolutionEnv<'_, D, I> {
     fn clone(&self) -> Self {
         Self {
@@ -58,6 +64,11 @@ where
             trait_selection,
             caches: BodyResolutionCaches::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn cancellation(&self) -> &rg_std::CancellationToken {
+        self.trait_selection.cancellation()
     }
 
     pub(super) fn body_ref(&self) -> BodyRef {

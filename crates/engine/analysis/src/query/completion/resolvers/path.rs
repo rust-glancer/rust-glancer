@@ -113,6 +113,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         };
 
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if pattern_policy.is_some()
                 && candidate.kind() == CompletionKind::Macro
                 && !candidate.is_invocation_macro()

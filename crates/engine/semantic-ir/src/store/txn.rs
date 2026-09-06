@@ -86,6 +86,31 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
+    /// Enumerate selected crate identities from manifests without loading declaration shards.
+    pub fn included_crates(
+        &self,
+        cancellation: &rg_std::CancellationToken,
+    ) -> Result<Vec<CrateRef>, rg_std::OperationError<PackageStoreError>> {
+        let mut crates = Vec::new();
+        for (slot, entry) in self.packages.iter().enumerate() {
+            rg_std::check_cancel!(cancellation, "enumerate semantic manifest");
+            let package = PackageSlot(slot);
+            let count = match entry {
+                PackageReadEntry::Resident(data) => data.crates().len(),
+                PackageReadEntry::Lazy(data) => data
+                    .manifest(package)
+                    .map_err(rg_std::OperationError::Source)?
+                    .crate_count(),
+                PackageReadEntry::Excluded => continue,
+            };
+            crates.extend((0..count).map(|id| CrateRef {
+                package,
+                crate_id: rg_ir_model::CrateId(id),
+            }));
+        }
+        Ok(crates)
+    }
+
     /// Returns every declaration store included in this transaction.
     ///
     /// This is an intentionally broad compatibility path. For lazy packages it decodes the item

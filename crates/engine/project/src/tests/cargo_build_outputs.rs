@@ -81,7 +81,7 @@ pub struct GeneratedChild;
     assert_symbol_count(&project, "GeneratedChild", 1);
     let snapshot = project.snapshot();
     let generated_symbol = snapshot
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("generated fixture analysis should load")
         .workspace_symbols("RecoveredGenerated")
         .expect("generated fixture symbol query should resolve")
@@ -355,7 +355,7 @@ fn write_cargo_build_output_fixture(
 fn assert_symbol_count(project: &Project, name: &str, expected: usize) {
     let symbols = project
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("generated fixture analysis should load")
         .workspace_symbols(name)
         .expect("generated fixture symbol query should resolve");

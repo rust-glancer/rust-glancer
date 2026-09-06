@@ -494,9 +494,10 @@ impl ProjectCoordinator {
     pub(super) fn materialize_saved_project(
         &mut self,
         surface: AnalysisSurface<'_>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<()> {
         self.project
-            .materialize_saved_project(surface)
+            .materialize_saved_project(surface, cancellation)
             .context("materialize saved analysis surface")
     }
 

@@ -2,6 +2,7 @@
 
 mod closing_brace;
 
+use anyhow::Context as _;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_ir_view::{
     body::BodyStructureView,
@@ -189,10 +190,14 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         let members = MemberView::new(self.0.view_db());
         let mut hints = UniqueVec::new();
         for call in BodyView::new(self.0.view_db()).resolved_function_calls(crate_ref, file_id)? {
-            let Some(function) = members.function(call.function())? else {
+            let Some(function) = members
+                .function(call.function())
+                .context("read parameter hint function")?
+            else {
                 continue;
             };
             for (arg_idx, arg) in call.args().iter().enumerate() {
+                rg_std::check_cancel!(self.0, "inlay hints");
                 let param_idx = arg_idx + call.param_offset();
                 let Some(param) = function.parameter(param_idx) else {
                     continue;

@@ -24,7 +24,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .search(import_context.module(), site.member_prefix())
             .context("search auto-import candidates")?
         {
-            let Some(mut candidate) = self.module_candidate(importable.name().clone()) else {
+            let Some(mut candidate) = self
+                .module_candidate(importable.name().clone())
+                .context("prepare auto-import candidate")?
+            else {
                 continue;
             };
             candidate.module_origin = None;

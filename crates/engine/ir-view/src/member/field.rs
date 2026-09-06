@@ -128,6 +128,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     }
 
     /// Return borrowed data for one field.
+    #[rg_std::cancelable("field projection", token = self.db)]
     pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .field_data(field)

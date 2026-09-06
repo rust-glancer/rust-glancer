@@ -271,7 +271,10 @@ impl ChalkProgramScope {
                 // this use site. Body-origin traits are intentionally absent from that index, so
                 // keep their lookup inside the owning body store.
                 if trait_ref.origin.as_crate_ref().is_some() {
-                    if let Some(impls) = item_lookup.trait_impls_for_trait(trait_ref) {
+                    let Ok(impls) = item_lookup.trait_impls_for_trait(trait_ref) else {
+                        return Ok(None);
+                    };
+                    if let Some(impls) = impls {
                         for trait_impl in impls {
                             if !scope.discover_impl(
                                 item_paths,

@@ -1,5 +1,7 @@
 //! Shared lowering context for expression bodies.
 
+use anyhow::Context as _;
+
 use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
@@ -30,6 +32,7 @@ pub(super) struct BodyLowering<'a> {
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
+    cancellation: &'a rg_std::CancellationToken,
 }
 
 /// Temporary context for syntax produced by one body macro expansion.
@@ -60,6 +63,7 @@ impl<'a> BodyLowering<'a> {
         line_index: &'a LineIndex,
         interner: &'a mut NameInterner,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
+        cancellation: &'a rg_std::CancellationToken,
     ) -> Self {
         Self {
             owner,
@@ -72,6 +76,7 @@ impl<'a> BodyLowering<'a> {
             builder: BodyBuilder::default(),
             macro_expansion,
             generated_context: None,
+            cancellation,
         }
     }
 
@@ -80,18 +85,21 @@ impl<'a> BodyLowering<'a> {
         item: ast::Item,
         role: CurrentRootItems,
         scope: ScopeId,
-    ) {
+    ) -> anyhow::Result<()> {
         let declaration = CurrentDeclarationBuilder {
             file: self.body_source.file_id,
             line_index: self.line_index,
             cfg: self.cfg,
             interner: self.interner,
             items: &mut self.builder.source_items,
+            cancellation: self.cancellation,
         }
-        .root(item, role);
+        .root(item, role)
+        .context("collect current body declarations")?;
         if let Some(declaration) = declaration {
             self.builder.scopes[scope].source_items.push(declaration);
         }
+        Ok(())
     }
 
     pub(super) fn lower_function(
@@ -99,7 +107,7 @@ impl<'a> BodyLowering<'a> {
         function: ast::Fn,
         body: ast::BlockExpr,
         current_root_items: CurrentRootItems,
-    ) -> LoweredBodyData {
+    ) -> anyhow::Result<LoweredBodyData> {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
@@ -107,7 +115,8 @@ impl<'a> BodyLowering<'a> {
             ast::Item::Fn(function.clone()),
             current_root_items,
             param_scope,
-        );
+        )
+        .context("lower function declarations")?;
         let function_params = self.lower_params(function.param_list(), param_scope);
         let params = function_params
             .iter()
@@ -115,7 +124,7 @@ impl<'a> BodyLowering<'a> {
             .collect();
         let root_expr = self.lower_block_expr(body, param_scope);
 
-        self.builder.finish(
+        Ok(self.builder.finish(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -124,7 +133,7 @@ impl<'a> BodyLowering<'a> {
             root_expr,
             function_params,
             params,
-        )
+        ))
     }
 
     pub(super) fn lower_const(
@@ -132,14 +141,15 @@ impl<'a> BodyLowering<'a> {
         konst: ast::Const,
         expr: ast::Expr,
         current_root_items: CurrentRootItems,
-    ) -> LoweredBodyData {
+    ) -> anyhow::Result<LoweredBodyData> {
         let root_scope = self.builder.alloc_scope(None);
         self.lower_current_declaration(
             ast::Item::Const(konst.clone()),
             current_root_items,
             root_scope,
-        );
-        self.lower_initializer(expr, root_scope)
+        )
+        .context("lower initializer declarations")?;
+        Ok(self.lower_initializer(expr, root_scope))
     }
 
     pub(super) fn lower_static(
@@ -147,14 +157,15 @@ impl<'a> BodyLowering<'a> {
         static_: ast::Static,
         expr: ast::Expr,
         current_root_items: CurrentRootItems,
-    ) -> LoweredBodyData {
+    ) -> anyhow::Result<LoweredBodyData> {
         let root_scope = self.builder.alloc_scope(None);
         self.lower_current_declaration(
             ast::Item::Static(static_.clone()),
             current_root_items,
             root_scope,
-        );
-        self.lower_initializer(expr, root_scope)
+        )
+        .context("lower initializer declarations")?;
+        Ok(self.lower_initializer(expr, root_scope))
     }
 
     fn lower_initializer(mut self, expr: ast::Expr, root_scope: ScopeId) -> LoweredBodyData {

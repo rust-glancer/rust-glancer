@@ -238,6 +238,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
         let mut names = HashSet::new();
         for item_id in &scope_data.source_items {
+            rg_std::check_cancel!(self.db, "local declaration candidates");
             let Some(item) = body.source_item(*item_id) else {
                 continue;
             };
@@ -272,6 +273,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Return names visible from a body scope, ordered by lexical distance.
+    #[rg_std::cancelable("lexical name lookup", token = self.db)]
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
         let Some(body) = self
             .db
@@ -301,6 +303,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
             if matches!(scope.namespace, ValueOrTypeNamespace::Values) {
                 for binding_id in scope_data.bindings.iter().rev().copied() {
+                    rg_std::check_cancel!(self.db, "local declaration candidates");
                     if binding_id.0 >= scope.visible_bindings {
                         continue;
                     }
@@ -324,6 +327,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 }
 
                 for item_id in scope_data.source_items.iter().rev().copied() {
+                    rg_std::check_cancel!(self.db, "local declaration candidates");
                     let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
@@ -385,6 +389,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
             if matches!(scope.namespace, ValueOrTypeNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
+                    rg_std::check_cancel!(self.db, "local declaration candidates");
                     let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
@@ -451,6 +456,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .context("read bodies for inferred bindings")?
         {
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
+                rg_std::check_cancel!(self.db, "local declaration candidates");
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
                 }
@@ -499,6 +505,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .context("read bodies for resolved calls")?
         {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
+                rg_std::check_cancel!(self.db, "local declaration candidates");
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }
@@ -566,6 +573,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     /// Return body-local item declarations that appear in one file.
+    #[rg_std::cancelable("body-local declaration collection", token = self.db)]
     pub fn local_scope_declarations(
         &self,
         body_ref: BodyRef,
@@ -587,7 +595,9 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let mut declarations = Vec::new();
 
         for scope in body.scopes() {
+            rg_std::check_cancel!(self.db, "local declaration candidates");
             for item_id in &scope.source_items {
+                rg_std::check_cancel!(self.db, "local declaration candidates");
                 let Some(view) = body_item_store.and_then(|items| {
                     items.semantic_items().find(|view| {
                         matches!(
@@ -615,6 +625,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
     ) -> anyhow::Result<Option<FunctionRef>> {
         let mut functions = Vec::new();
         for declaration in declarations {
+            rg_std::check_cancel!(self.db, "local declaration candidates");
             match declaration {
                 DeclarationRef::LocalDef(local_def) => {
                     let Some(SemanticItemRef::Function(function)) = ItemStoreQuery::new(self.db)

@@ -78,6 +78,7 @@ pub(crate) struct BodyTaskLowering<'a> {
     crate_bodies: &'a mut LoweredCrateBodies,
     cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
+    cancellation: &'a rg_std::CancellationToken,
 }
 
 impl<'a> BodyTaskLowering<'a> {
@@ -86,12 +87,14 @@ impl<'a> BodyTaskLowering<'a> {
         crate_bodies: &'a mut LoweredCrateBodies,
         cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
+        cancellation: &'a rg_std::CancellationToken,
     ) -> Self {
         Self {
             source,
             crate_bodies,
             cfg,
             interner,
+            cancellation,
         }
     }
 
@@ -114,12 +117,14 @@ impl<'a> BodyTaskLowering<'a> {
         let mut lowered = Vec::new();
         for file_id in file_ids {
             let range = task_range_for_file(&tasks, file_id);
-            self.lower_file_tasks(file_id, &tasks[range], &mut lowered, &mut *macro_expansion)?;
+            self.lower_file_tasks(file_id, &tasks[range], &mut lowered, &mut *macro_expansion)
+                .context("lower file body tasks")?;
         }
 
         Ok(lowered)
     }
 
+    #[rg_std::cancelable("body lowering task", token = self.cancellation)]
     fn lower_file_tasks(
         &mut self,
         file_id: FileId,
@@ -185,16 +190,19 @@ impl<'a> BodyTaskLowering<'a> {
         // the same lowering path. Build small file-local lookup maps once and reuse them below.
         let mut functions_by_span = HashMap::new();
         for function in syntax.syntax().descendants().filter_map(ast::Fn::cast) {
+            rg_std::check_cancel!(self.cancellation, "body lowering task");
             let range = function.syntax().text_range();
             functions_by_span.insert((u32::from(range.start()), u32::from(range.end())), function);
         }
         let mut consts_by_span = HashMap::new();
         for konst in syntax.syntax().descendants().filter_map(ast::Const::cast) {
+            rg_std::check_cancel!(self.cancellation, "body lowering task");
             let range = konst.syntax().text_range();
             consts_by_span.insert((u32::from(range.start()), u32::from(range.end())), konst);
         }
         let mut statics_by_span = HashMap::new();
         for static_item in syntax.syntax().descendants().filter_map(ast::Static::cast) {
+            rg_std::check_cancel!(self.cancellation, "body lowering task");
             let range = static_item.syntax().text_range();
             statics_by_span.insert(
                 (u32::from(range.start()), u32::from(range.end())),
@@ -203,6 +211,7 @@ impl<'a> BodyTaskLowering<'a> {
         }
 
         for task in tasks {
+            rg_std::check_cancel!(self.cancellation, "body lowering task");
             match task.owner {
                 BodyOwner::Function(_) => {
                     let Some(ast_fn) = functions_by_span.get(&Self::span_key(task.span)).cloned()
@@ -223,8 +232,10 @@ impl<'a> BodyTaskLowering<'a> {
                         line_index,
                         self.interner,
                         &mut *macro_expansion,
+                        self.cancellation,
                     )
-                    .lower_function(ast_fn, body_ast, task.current_root_items);
+                    .lower_function(ast_fn, body_ast, task.current_root_items)
+                    .context("lower function body")?;
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,
@@ -249,8 +260,10 @@ impl<'a> BodyTaskLowering<'a> {
                         line_index,
                         self.interner,
                         &mut *macro_expansion,
+                        self.cancellation,
                     )
-                    .lower_const(ast_const, body_ast, task.current_root_items);
+                    .lower_const(ast_const, body_ast, task.current_root_items)
+                    .context("lower const body")?;
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,
@@ -275,12 +288,10 @@ impl<'a> BodyTaskLowering<'a> {
                         line_index,
                         self.interner,
                         &mut *macro_expansion,
+                        self.cancellation,
                     )
-                    .lower_static(
-                        ast_static,
-                        body_ast,
-                        task.current_root_items,
-                    );
+                    .lower_static(ast_static, body_ast, task.current_root_items)
+                    .context("lower static body")?;
                     lowered.push(LoweredBodyTask {
                         body: self.crate_bodies.alloc_body(body),
                         task: *task,

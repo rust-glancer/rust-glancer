@@ -46,9 +46,13 @@ impl<'source> LocalDefMapCollector<'source> {
     }
 
     /// Collects direct local scope facts. Imports are finalized in a separate fixed-point step.
-    pub fn collect(mut self) -> LocalDefMapBuildState {
+    pub fn collect(
+        mut self,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<LocalDefMapBuildState> {
         // First, go through all the scopes and allocate synthetic modules.
         for scope in self.source.scopes {
+            rg_std::check_cancel!(cancellation, "local declaration scopes");
             // Body scopes are synthetic modules. They carry lexical scope data, but they do not
             // correspond to Rust module declarations and lookup must treat them differently.
             let origin = ModuleOrigin::Synthetic {
@@ -83,20 +87,22 @@ impl<'source> LocalDefMapCollector<'source> {
         // Note that we are collecting _items_ from scopes, but here we do not
         // recurse: even if an item has a body, we do not start to analyze it.
         for (scope_id, scope) in self.source.scopes.iter().enumerate() {
+            rg_std::check_cancel!(cancellation, "local declaration scopes");
             let module = *self
                 .modules_by_scope
                 .get(scope_id)
                 .expect("Must be provided");
             for item in &scope.source_items {
+                rg_std::check_cancel!(cancellation, "local declaration scopes");
                 self.collect_item(module, *item);
             }
         }
 
-        LocalDefMapBuildState {
+        Ok(LocalDefMapBuildState {
             body_ref: self.body_ref,
             builder: self.builder,
             base_scopes: self.base_scopes,
-        }
+        })
     }
 
     fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
@@ -372,12 +378,17 @@ pub(crate) struct LocalDefMapBuildState {
 }
 
 impl LocalDefMapBuildState {
-    pub(crate) fn finalize<S>(mut self, def_maps: S) -> Result<DefMap, PackageStoreError>
+    pub(crate) fn finalize<S>(
+        mut self,
+        def_maps: S,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<DefMap>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let final_scopes = self.resolve_import_scopes(def_maps)?;
-        let unresolved_imports = self.collect_unresolved_imports(def_maps, &final_scopes)?;
+        let final_scopes = self.resolve_import_scopes(def_maps, cancellation)?;
+        let unresolved_imports =
+            self.collect_unresolved_imports(def_maps, cancellation, &final_scopes)?;
 
         for (module_idx, scope) in final_scopes.into_iter().enumerate() {
             let module = self
@@ -397,20 +408,22 @@ impl LocalDefMapBuildState {
     fn resolve_import_scopes<S>(
         &self,
         def_maps: S,
-    ) -> Result<Vec<ModuleScopeBuilder>, PackageStoreError>
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<ModuleScopeBuilder>>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
         let mut current_scopes = self.base_scopes.clone();
 
         loop {
+            rg_std::check_cancel!(cancellation, "local import round");
             let mut next_scopes = self.base_scopes.clone();
             let env = LocalDefMapFinalizationEnv {
                 def_maps,
                 state: self,
                 current_scopes: &current_scopes,
             };
-            self.apply_imports(&env, &mut next_scopes)?;
+            self.apply_imports(&env, &mut next_scopes, cancellation)?;
 
             if next_scopes == current_scopes {
                 return Ok(current_scopes);
@@ -429,12 +442,14 @@ impl LocalDefMapBuildState {
         &self,
         env: &LocalDefMapFinalizationEnv<'_, S>,
         next_scopes: &mut [ModuleScopeBuilder],
-    ) -> Result<(), PackageStoreError>
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<()>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
         let resolver = ScopeResolver::new(env);
         for (import_id, import) in self.builder.partial().imports_with_ids() {
+            rg_std::check_cancel!(cancellation, "local import resolution");
             let importing_module = self.importing_module(import.module);
             let import_ref = ImportRef {
                 origin: DefMapRef::Body(self.body_ref),
@@ -456,8 +471,9 @@ impl LocalDefMapBuildState {
     fn collect_unresolved_imports<S>(
         &self,
         def_maps: S,
+        cancellation: &rg_std::CancellationToken,
         final_scopes: &[ModuleScopeBuilder],
-    ) -> Result<Vec<Vec<rg_ir_model::ImportId>>, PackageStoreError>
+    ) -> anyhow::Result<Vec<Vec<rg_ir_model::ImportId>>>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
@@ -470,6 +486,7 @@ impl LocalDefMapBuildState {
         let resolver = ScopeResolver::new(&env);
 
         for (import_id, import) in self.builder.partial().imports_with_ids() {
+            rg_std::check_cancel!(cancellation, "local import resolution");
             let importing_module = self.importing_module(import.module);
             let import_ref = ImportRef {
                 origin: DefMapRef::Body(self.body_ref),

@@ -3,6 +3,7 @@
 //! Goto-implementation is an editor query, but the lookup itself needs direct access to crate item
 //! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
 
+use anyhow::Context as _;
 use rg_body_ir::ExprKind;
 use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
@@ -52,7 +53,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         let implementation_query = self.implementation_query(body_ref.crate_ref)?;
         let mut implementations = UniqueVec::new();
         for declaration in declarations {
-            let Some(function) = self.function_ref_for_declaration(declaration)? else {
+            let Some(function) = self
+                .function_ref_for_declaration(declaration)
+                .context("read implementation function declaration")?
+            else {
                 continue;
             };
             for implementation in
@@ -84,12 +88,14 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                         )?;
                     }
                     for implementation in implementation_query.impls_for_type_def(ty)? {
+                        rg_std::check_cancel!(self.db, "implementation lookup");
                         implementations.push(DeclarationRef::from(implementation));
                     }
                 }
                 SemanticItemRef::Trait(trait_ref) => {
                     self.push_body_local_impls_for_trait(&mut implementations, trait_ref)?;
                     for implementation in implementation_query.impls_for_trait(trait_ref)? {
+                        rg_std::check_cancel!(self.db, "implementation lookup");
                         implementations.push(DeclarationRef::from(implementation));
                     }
                 }
@@ -126,6 +132,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 };
                 self.push_body_local_impls_for_ty(&mut implementations, binding.body, binding_ty)?;
                 for implementation in implementation_query.impls_for_ty(binding_ty)? {
+                    rg_std::check_cancel!(self.db, "implementation lookup");
                     implementations.push(DeclarationRef::from(implementation));
                 }
             }
@@ -146,12 +153,14 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         let mut implementations = UniqueVec::new();
         let implementation_query = self.implementation_query(use_site)?;
         for implementation in implementation_query.impls_for_ty(ty.raw())? {
+            rg_std::check_cancel!(self.db, "implementation lookup");
             implementations.push(DeclarationRef::from(implementation));
         }
         Ok(implementations)
     }
 
     /// Add impls declared in the same body item store as the selected local type.
+    #[rg_std::cancelable("implementation lookup", token = self.db)]
     fn push_body_local_impls_for_type_def(
         &self,
         implementations: &mut UniqueVec<DeclarationRef>,
@@ -163,6 +172,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         };
 
         for (impl_ref, impl_data) in store.impls_with_refs() {
+            rg_std::check_cancel!(self.db, "implementation lookup");
             if impl_data.resolved_self_ty.is(&ty) {
                 implementations.push(DeclarationRef::from(impl_ref));
             }
@@ -178,8 +188,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &Ty,
     ) -> anyhow::Result<()> {
         for candidate in ReferencePeelingCandidates::new(ty) {
+            rg_std::check_cancel!(self.db, "implementation lookup");
             for nominal in candidate.ty().as_adts() {
-                self.push_body_local_impls_for_type_def(implementations, body_ref, nominal.def)?;
+                self.push_body_local_impls_for_type_def(implementations, body_ref, nominal.def)
+                    .context("collect body-local nominal implementations")?;
             }
         }
         Ok(())
@@ -199,6 +211,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         };
 
         for (impl_ref, impl_data) in store.impls_with_refs() {
+            rg_std::check_cancel!(self.db, "implementation lookup");
             if impl_data.resolved_trait_ref.is(&trait_ref) {
                 implementations.push(DeclarationRef::from(impl_ref));
             }
@@ -221,6 +234,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     }
 
     /// Extract a function ref from a declaration when it denotes a function.
+    #[rg_std::cancelable("implementation lookup", token = self.db)]
     fn function_ref_for_declaration(
         &self,
         declaration: DeclarationRef,

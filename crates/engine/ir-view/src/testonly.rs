@@ -50,6 +50,7 @@ impl ViewFixture {
             self.body_ir
                 .body_ir_db()
                 .read_txn(BodyIrLoader::resident_only("resident view fixture")),
+            rg_std::CancellationToken::new(),
         )
     }
 

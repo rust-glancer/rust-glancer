@@ -138,15 +138,19 @@ impl ProjectState {
     }
 
     /// Starts a read transaction over resident and lazy-loadable offloaded packages.
-    pub(crate) fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
-        ProjectReadTxn::new(self)
+    pub(crate) fn read_txn(
+        &self,
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<ProjectReadTxn<'_>> {
+        ProjectReadTxn::new(self, cancellation)
     }
 
     pub(crate) fn read_txn_for_subset(
         &self,
         subset: &PackageSubset,
+        cancellation: rg_std::CancellationToken,
     ) -> anyhow::Result<ProjectReadTxn<'_>> {
-        ProjectReadTxn::for_subset(self, subset)
+        ProjectReadTxn::for_subset(self, subset, cancellation)
     }
 
     /// Create one request-owned loader set for this saved project snapshot.

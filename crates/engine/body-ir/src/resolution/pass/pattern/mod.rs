@@ -37,10 +37,7 @@ where
     }
 
     /// Push every available body expectation through its pattern once.
-    pub(super) fn propagate(
-        &self,
-        inference: &mut BodyInferenceCtx,
-    ) -> Result<(), PackageStoreError> {
+    pub(super) fn propagate(&self, inference: &mut BodyInferenceCtx) -> anyhow::Result<()> {
         let patterns = BodyPatternInference::new(self.context.clone());
 
         // Function parameters retain their root patterns even though body consumers see flattened
@@ -54,6 +51,7 @@ where
             .transpose()?
             .flatten();
         for (param_index, param) in self.context.body().function_params().iter().enumerate() {
+            rg_std::check_cancel!(self.context, "pattern inference transfer");
             let Some(pat) = param.pat else {
                 continue;
             };
@@ -75,6 +73,7 @@ where
         }
 
         for statement_idx in 0..self.context.body().statements().len() {
+            rg_std::check_cancel!(self.context, "pattern inference transfer");
             let StmtKind::Let {
                 scope,
                 pat: Some(pat),
@@ -97,6 +96,7 @@ where
         }
 
         for expr_idx in 0..self.context.body().exprs().len() {
+            rg_std::check_cancel!(self.context, "pattern inference transfer");
             let expr = ExprId(expr_idx);
             match self.context.body().expr_unchecked(expr).kind.clone() {
                 ExprKind::Match { scrutinee, arms } => {
@@ -105,6 +105,7 @@ where
                     };
                     let expected_ty = inference.root_resolved_expr_ty(scrutinee);
                     for arm in arms {
+                        rg_std::check_cancel!(self.context, "pattern inference transfer");
                         if let Some(pat) = arm.pat {
                             patterns.link_pat(inference, pat, &expected_ty)?;
                         }
@@ -177,6 +178,7 @@ where
                         continue;
                     };
                     for (param, signature_ty) in params.iter().zip(&signature.params) {
+                        rg_std::check_cancel!(self.context, "pattern inference transfer");
                         if let Some(annotation) = &param.annotation {
                             let annotation_ty =
                                 self.context.type_refs(scope).resolve(annotation)?;

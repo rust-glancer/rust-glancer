@@ -1,3 +1,4 @@
+pub(crate) mod cancellation;
 mod cargo_build_outputs;
 mod current_source;
 mod generated_modules;
@@ -1135,10 +1136,10 @@ pub fn second() -> usize {
     let evicted_lib_memory = lib_source.memory_size();
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(
-            lib_context.crates[0],
-            lib_context.file,
-        )]))
+        .materialize(
+            AnalysisSurface::Files(&[(lib_context.crates[0], lib_context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("lib file deferred analysis should materialize");
 
     let stats = project.stats().body_ir;
@@ -1170,10 +1171,10 @@ pub fn second() -> usize {
     let evicted_other_memory = other_source.memory_size();
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(
-            other_context.crates[0],
-            other_context.file,
-        )]))
+        .materialize(
+            AnalysisSurface::Files(&[(other_context.crates[0], other_context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("other file deferred analysis should materialize");
 
     let stats = project.stats().body_ir;
@@ -1241,7 +1242,7 @@ pub fn demo(user: User) -> usize {
     let search_files = {
         let snapshot = project.snapshot();
         let analysis = snapshot
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("early-start analysis should materialize");
         let declaration_targets = analysis
             .goto_definition(target, lib_context.file, subject.offset)
@@ -1249,13 +1250,22 @@ pub fn demo(user: User) -> usize {
             .into_iter()
             .map(|target| target.crate_ref)
             .collect::<Vec<_>>();
-        let search_targets =
-            snapshot.reference_search_crates(lib_context.package, &declaration_targets);
+        let search_targets = snapshot
+            .reference_search_crates(
+                lib_context.package,
+                &declaration_targets,
+                &rg_std::CancellationToken::new(),
+            )
+            .expect("plan reference crates");
         let labels = analysis
             .reference_search_labels(target, lib_context.file, subject.offset)
             .expect("reference labels should resolve");
         let files = snapshot
-            .reference_search_files_matching_labels(&search_targets, &labels)
+            .reference_search_files_matching_labels(
+                &search_targets,
+                &labels,
+                &rg_std::CancellationToken::new(),
+            )
             .expect("reference text prefilter should resolve")
             .expect("reference text prefilter should find label-bearing files");
 
@@ -1275,12 +1285,15 @@ pub fn demo(user: User) -> usize {
         .collect::<Vec<_>>();
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&search_body_files))
+        .materialize(
+            AnalysisSurface::Files(&search_body_files),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("reference scan files should materialize on demand");
 
     let snapshot = project.snapshot();
     let analysis = snapshot
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("completed analysis should materialize");
     let query = ReferenceQuery::find_references_in_files(&search_files, true);
     let references = analysis
@@ -1364,12 +1377,15 @@ pub fn dep_value() -> usize {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Crates(&dep_context.crates))
+        .materialize(
+            AnalysisSurface::Crates(&dep_context.crates),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("on-demand dependency deferred indexing should succeed");
     assert!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("analysis should materialize after on-demand dependency finish")
             .type_at(dep_target, dep_context.file, dep_ref.offset)
             .expect("dependency body-local type query should resolve")
@@ -1387,7 +1403,7 @@ pub fn dep_value() -> usize {
     assert!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("analysis should materialize after background merge")
             .type_at(dep_target, dep_context.file, dep_ref.offset)
             .expect("dependency body-local type query should resolve after merge")
@@ -1558,10 +1574,10 @@ pub fn helper() -> usize {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(
-            lib_context.crates[0],
-            lib_context.file,
-        )]))
+        .materialize(
+            AnalysisSurface::Files(&[(lib_context.crates[0], lib_context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("lib file deferred analysis should materialize");
     let stats = project.stats().body_ir;
     assert_eq!(stats.partial_crate_count, 1);
@@ -1569,10 +1585,10 @@ pub fn helper() -> usize {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(
-            helper_context.crates[0],
-            helper_context.file,
-        )]))
+        .materialize(
+            AnalysisSurface::Files(&[(helper_context.crates[0], helper_context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("helper deferred indexing should apply residency");
     let stats = project.stats().body_ir;
     assert_eq!(stats.partial_crate_count, 1);
@@ -1581,7 +1597,7 @@ pub fn helper() -> usize {
     assert!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("analysis should materialize after helper residency")
             .type_at(app_target, lib_context.file, app_ref.offset)
             .expect("app body-local type query should resolve")
@@ -1642,7 +1658,10 @@ pub fn value() -> usize {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(target, context.file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(target, context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("file-local preparation should treat finished offloaded payload as ready");
     assert!(
         project
@@ -1656,7 +1675,7 @@ pub fn value() -> usize {
     assert!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("analysis should lazy-load the finished offloaded package")
             .type_at(target, context.file, reference.offset)
             .expect("body-local type query should resolve from lazy package data")
@@ -2009,7 +2028,12 @@ pub struct Independent;
         .expect("dep lib file should belong to the dep lib target");
 
     let package_names = snapshot
-        .reference_search_crates(app_package, &[dep_target])
+        .reference_search_crates(
+            app_package,
+            &[dep_target],
+            &rg_std::CancellationToken::new(),
+        )
+        .expect("plan reference crates")
         .into_iter()
         .map(|target| {
             snapshot

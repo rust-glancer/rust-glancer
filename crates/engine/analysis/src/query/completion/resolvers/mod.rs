@@ -238,6 +238,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                     .path_root_overlay_completions(&path_root_prefix, path_root_edit)
                     .context("collect path root keyword completions")?
                 {
+                    rg_std::check_cancel!(self.analysis, "completion candidate");
                     if !completions
                         .iter()
                         .any(|existing| existing.label == root.label)

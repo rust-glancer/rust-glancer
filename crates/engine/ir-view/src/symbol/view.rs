@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey,
@@ -117,7 +117,10 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
     /// Return crates included in the indexed view.
     fn included_crates(&self) -> Result<Vec<CrateRef>> {
-        Ok(ItemStoreQuery::new(self.db).included_crate_refs()?)
+        self.db
+            .semantic_ir
+            .included_crates(self.db.cancellation())
+            .context("enumerate workspace symbol crates")
     }
 
     /// Return module declarations for one crate.
@@ -155,6 +158,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         for item in
             ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Crate(crate_ref))?
         {
+            rg_std::check_cancel!(self.db, "symbol item collection");
             if item.module_owner().is_none() {
                 continue;
             }
@@ -179,8 +183,14 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
         for group in body_view.local_groups(crate_ref, file_id)? {
             let mut children = Vec::new();
-            for declaration in body_view.local_scope_declarations(group.body(), file_id)? {
-                if let Some(item) = self.item_for_declaration(declaration)? {
+            for declaration in body_view
+                .local_scope_declarations(group.body(), file_id)
+                .context("collect body-local symbol declarations")?
+            {
+                if let Some(item) = self
+                    .item_for_declaration(declaration)
+                    .context("read body-local symbol item")?
+                {
                     children.push(item);
                 }
             }
@@ -228,6 +238,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     }
 
     /// Convert a declaration ref into an indexed item tree.
+    #[rg_std::cancelable("symbol item collection", token = self.db)]
     fn item_for_declaration(&self, declaration: DeclarationRef) -> Result<Option<IndexedItem>> {
         match declaration {
             DeclarationRef::Item(item) => {
@@ -252,6 +263,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     ) -> Result<Option<IndexedItem>> {
         let mut children = Vec::new();
         for field in ItemStoreQuery::new(self.db).fields_for_type(ty)? {
+            rg_std::check_cancel!(self.db, "symbol collection");
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
                 DeclarationRef::from(field),
             )));
@@ -268,6 +280,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         let mut children = Vec::new();
         let syntax = SyntaxRenderer::new(self.db.origin_edition(ty.origin)?);
         for variant_ref in self.enum_variant_refs(ty)? {
+            rg_std::check_cancel!(self.db, "symbol collection");
             let Some(variant) = ItemStoreQuery::new(self.db).enum_variant_data(variant_ref)? else {
                 continue;
             };
@@ -370,6 +383,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
 
         let mut path = String::new();
         for name in names.iter().rev() {
+            rg_std::check_cancel!(self.db, "symbol collection");
             if !path.is_empty() {
                 path.push_str("::");
             }
@@ -399,7 +413,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         let mut symbols = Vec::new();
 
         for declaration in index.module_declarations(crate_ref)? {
-            if let Some(symbol) = self.declaration_source_outline_node(declaration)?
+            if let Some(symbol) = self
+                .declaration_source_outline_node(declaration)
+                .context("project module outline declaration")?
                 && symbol.declaration().file_id() == file_id
             {
                 symbols.push(symbol);
@@ -407,7 +423,10 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         }
 
         for item in index.module_owned_items(crate_ref, Some(file_id))? {
-            if let Some(symbol) = self.source_outline_item(&item, Some(file_id))? {
+            if let Some(symbol) = self
+                .source_outline_item(&item, Some(file_id))
+                .context("project module outline item")?
+            {
                 symbols.push(symbol);
             }
         }
@@ -415,7 +434,10 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         // Body-local items belong to their owning function in a source outline. The owner may
         // already be nested under a trait or impl, so attachment searches the built tree.
         for group in index.body_local_groups(crate_ref, file_id)? {
-            let Some(owner) = self.declaration(group.owner())? else {
+            let Some(owner) = self
+                .declaration(group.owner())
+                .context("read body-local outline owner")?
+            else {
                 continue;
             };
             let owner_name = DeclarationView::new(self.db)
@@ -427,7 +449,10 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 continue;
             };
             for item in group.children() {
-                if let Some(symbol) = self.source_outline_item(item, Some(file_id))? {
+                if let Some(symbol) = self
+                    .source_outline_item(item, Some(file_id))
+                    .context("project body-local outline item")?
+                {
                     parent.children_mut().push(symbol);
                 }
             }
@@ -444,8 +469,12 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         let mut symbols = Vec::new();
 
         for crate_ref in index.included_crates()? {
+            rg_std::check_cancel!(self.db, "symbol collection");
             for declaration in index.module_declarations(crate_ref)? {
-                let Some(module) = self.declaration(declaration)? else {
+                let Some(module) = self
+                    .declaration(declaration)
+                    .context("read workspace module declaration")?
+                else {
                     continue;
                 };
                 let container_name = match declaration {
@@ -462,7 +491,8 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             }
 
             for item in index.module_owned_items(crate_ref, None)? {
-                self.push_workspace_item(&item, None, &mut symbols)?;
+                self.push_workspace_item(&item, None, &mut symbols)
+                    .context("project workspace symbol item")?;
             }
         }
 
@@ -484,6 +514,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
         let mut children = Vec::new();
         for child in item.children() {
+            rg_std::check_cancel!(self.db, "symbol collection");
             match child {
                 IndexedItemChild::Declaration(child) => {
                     if let Some(symbol) = self.source_outline_item(child, file_id)? {
@@ -525,6 +556,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         }
 
         for child in item.children() {
+            rg_std::check_cancel!(self.db, "symbol collection");
             let IndexedItemChild::Declaration(child) = child else {
                 continue;
             };

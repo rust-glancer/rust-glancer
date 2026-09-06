@@ -15,14 +15,19 @@ pub(crate) struct ProjectReadTxn<'a> {
 }
 
 impl<'a> ProjectReadTxn<'a> {
-    pub(crate) fn new(project: &'a ProjectState) -> anyhow::Result<Self> {
+    pub(crate) fn new(
+        project: &'a ProjectState,
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<Self> {
         let subset = subset::all(&project.workspace);
-        Self::for_subset(project, &subset)
+        Self::for_subset(project, &subset, cancellation)
     }
 
+    #[rg_std::cancelable("open project read view", token = cancellation)]
     pub(crate) fn for_subset(
         project: &'a ProjectState,
         subset: &PackageSubset,
+        cancellation: rg_std::CancellationToken,
     ) -> anyhow::Result<Self> {
         let loaders = project.query_read_loaders();
 
@@ -35,6 +40,7 @@ impl<'a> ProjectReadTxn<'a> {
                     .semantic_ir
                     .read_txn_for_subset(loaders.semantic_ir.clone(), subset),
                 project.body_ir.read_txn_for_subset(loaders.body_ir, subset),
+                cancellation,
             ),
         })
     }

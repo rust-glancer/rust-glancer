@@ -4,12 +4,12 @@
 //! does not decide what those source facts mean; the collector determines whether they become
 //! indexed occurrences or a completion site.
 
+use anyhow::Context as _;
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ItemOwner,
     StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
-use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStore, ItemStoreQuery, TypePathContext};
 
@@ -47,12 +47,13 @@ where
         }
     }
 
-    pub(super) fn scan(mut self) -> Result<C, PackageStoreError> {
-        self.scan_items()?;
+    #[rg_std::cancelable("signature scan", token = self.db)]
+    pub(super) fn scan(mut self) -> anyhow::Result<C> {
+        self.scan_items().context("scan signature items")?;
         Ok(self.collector)
     }
 
-    fn scan_items(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_items(&mut self) -> anyhow::Result<()> {
         self.scan_structs()?;
         self.scan_unions()?;
         self.scan_enums()?;
@@ -65,9 +66,10 @@ where
         Ok(())
     }
 
-    fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_structs(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.structs().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -86,9 +88,10 @@ where
         Ok(())
     }
 
-    fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_unions(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.unions().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -121,9 +124,10 @@ where
         Ok(())
     }
 
-    fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_enums(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.enums().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -165,8 +169,9 @@ where
         Ok(())
     }
 
-    fn scan_traits(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_traits(&mut self) -> anyhow::Result<()> {
         for (trait_ref, data) in self.items.traits_with_refs() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -181,8 +186,9 @@ where
         Ok(())
     }
 
-    fn scan_impls(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_impls(&mut self) -> anyhow::Result<()> {
         for (impl_ref, data) in self.items.impls_with_refs() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -222,8 +228,9 @@ where
         Ok(())
     }
 
-    fn scan_functions(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_functions(&mut self) -> anyhow::Result<()> {
         for (function_ref, data) in self.items.functions_with_refs() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -254,9 +261,10 @@ where
         Ok(())
     }
 
-    fn scan_type_aliases(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_type_aliases(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.type_aliases().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -279,9 +287,10 @@ where
         Ok(())
     }
 
-    fn scan_consts(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_consts(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.consts().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -300,9 +309,10 @@ where
         Ok(())
     }
 
-    fn scan_statics(&mut self) -> Result<(), PackageStoreError> {
+    fn scan_statics(&mut self) -> anyhow::Result<()> {
         let origin = self.origin;
         for (id, data) in self.items.statics().iter_with_ids() {
+            rg_std::check_cancel!(self.db, "signature item scan");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -409,21 +419,17 @@ where
             .push_candidate(SignatureSourceCandidate::EnumVariant { variant, span });
     }
 
-    fn owner_context(
-        &self,
-        owner: ItemOwner,
-    ) -> Result<Option<TypePathContext>, PackageStoreError> {
+    fn owner_context(&self, owner: ItemOwner) -> anyhow::Result<Option<TypePathContext>> {
         ItemStoreQuery::new(self.db)
             .type_path_context_for_owner(self.origin, owner)?
             .map(|context| self.current_context(context))
             .transpose()
     }
 
-    fn current_context(
-        &self,
-        context: TypePathContext,
-    ) -> Result<TypePathContext, PackageStoreError> {
-        self.db.current_signature_context(context)
+    fn current_context(&self, context: TypePathContext) -> anyhow::Result<TypePathContext> {
+        self.db
+            .current_signature_context(context)
+            .context("resolve current signature context")
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

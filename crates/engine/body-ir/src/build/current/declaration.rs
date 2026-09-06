@@ -41,6 +41,7 @@ pub(crate) struct CurrentDeclarationBuilder<'a> {
     pub(crate) cfg: CfgEvaluator<'a>,
     pub(crate) interner: &'a mut NameInterner,
     pub(crate) items: &'a mut BodySourceItems,
+    pub(crate) cancellation: &'a rg_std::CancellationToken,
 }
 
 impl CurrentDeclarationBuilder<'_> {
@@ -54,9 +55,13 @@ impl CurrentDeclarationBuilder<'_> {
     }
 
     /// Lower the declaration tree that the caller attaches to the body's outer scope.
-    pub(crate) fn root(&mut self, item: ast::Item, role: CurrentRootItems) -> Option<ItemTreeId> {
+    pub(crate) fn root(
+        &mut self,
+        item: ast::Item,
+        role: CurrentRootItems,
+    ) -> anyhow::Result<Option<ItemTreeId>> {
         if matches!(role, CurrentRootItems::None) {
-            return None;
+            return Ok(None);
         }
         let owner = Self::associated_owner(item.syntax());
         if let Some(impl_) = owner.clone().and_then(ast::Impl::cast) {
@@ -66,10 +71,14 @@ impl CurrentDeclarationBuilder<'_> {
                 CurrentRootItems::Declaration => true,
                 CurrentRootItems::None => unreachable!("empty root role returned above"),
             };
-            return Some(self.impl_(&impl_, Some((selected, include_selected))));
+            return self
+                .impl_(&impl_, Some((selected, include_selected)))
+                .map(Some);
         }
 
-        let member = self.declaration(&item)?;
+        let Some(member) = self.declaration(&item) else {
+            return Ok(None);
+        };
         if let Some(trait_) = owner.and_then(ast::Trait::cast) {
             let kind = ItemKind::Trait(TraitItem::from_ast(
                 &trait_,
@@ -94,9 +103,9 @@ impl CurrentDeclarationBuilder<'_> {
                 source.span,
                 source.file_id,
             );
-            return Some(self.items.alloc(node, source));
+            return Ok(Some(self.items.alloc(node, source)));
         }
-        Some(member)
+        Ok(Some(member))
     }
 
     /// Copy associated signatures without lowering their expression bodies.
@@ -108,10 +117,11 @@ impl CurrentDeclarationBuilder<'_> {
         &mut self,
         impl_: &ast::Impl,
         selected: Option<(Span, bool)>,
-    ) -> ItemTreeId {
+    ) -> anyhow::Result<ItemTreeId> {
         let mut members = Vec::new();
         if let Some(list) = impl_.assoc_item_list() {
             for item in list.assoc_items() {
+                rg_std::check_cancel!(self.cancellation, "current associated declaration");
                 let is_selected = selected.is_some_and(|(span, _)| {
                     span == Span::from_text_range(item.syntax().text_range())
                 });
@@ -156,7 +166,7 @@ impl CurrentDeclarationBuilder<'_> {
             source.span,
             source.file_id,
         );
-        self.items.alloc(node, source)
+        Ok(self.items.alloc(node, source))
     }
 
     fn declaration(&mut self, item: &ast::Item) -> Option<ItemTreeId> {

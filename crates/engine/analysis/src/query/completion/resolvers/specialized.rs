@@ -150,6 +150,7 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
             .lexical_candidates_for_unqualified(&site)
             .context("collect lexical format capture candidates")?
         {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !matches!(
                 candidate.kind(),
                 CompletionKind::Variable | CompletionKind::Const | CompletionKind::Static
@@ -190,6 +191,7 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
             .generic_scope_candidates_for_unqualified(&site)
             .context("collect generic format capture candidates")?
         {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if candidate.kind() != CompletionKind::Const {
                 continue;
             }
@@ -227,6 +229,7 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
             .module_candidates_for_unqualified(&site)
             .context("collect module format capture candidates")?
         {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !matches!(
                 candidate.kind(),
                 CompletionKind::Const | CompletionKind::Static

@@ -367,10 +367,14 @@ impl TraitSelectionSession {
     ///
     /// Cancellation is fail-soft inside trait selection: the in-progress query receives an
     /// exhausted result, then its ordinary request checkpoint turns that into the cancellation
-    /// outcome owned by the caller. Saved builds keep the uncancelled default token.
+    /// outcome owned by the caller. Builds bind the same signal before accepting any inferred facts.
     pub fn with_cancellation(mut self, cancellation: CancellationToken) -> Self {
         self.cancellation = cancellation;
         self
+    }
+
+    pub fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
     }
 
     pub fn use_site(&self) -> CrateRef {
@@ -765,6 +769,7 @@ impl TraitSelectionSession {
             return Some(
                 item_lookup
                     .trait_impl_candidates_for_self_head(trait_ref, self_head.impl_lookup_head())
+                    .ok()?
                     .unwrap_or_default(),
             );
         }
@@ -782,6 +787,7 @@ impl TraitSelectionSession {
 
         let visible_impls = item_lookup
             .trait_impls_for_trait(trait_ref)
+            .ok()?
             .unwrap_or_default();
         let mut broad_trait_impls = self
             .inference_scope
@@ -827,6 +833,9 @@ impl TraitSelectionSession {
         goal: TraitGoal,
         selection: &ExpectedUnique<TraitSelection>,
     ) {
+        if self.cancellation.is_cancelled() {
+            return;
+        }
         let selection = selection.clone().map(CachedTraitSelection::from_selection);
         self.shared
             .strict_selections
@@ -863,7 +872,7 @@ impl TraitSelectionSession {
         trait_impl: TraitImplRef,
         applicability: TraitApplicability,
     ) {
-        if !goal.is_cache_stable() {
+        if self.cancellation.is_cancelled() || !goal.is_cache_stable() {
             return;
         }
         self.shared

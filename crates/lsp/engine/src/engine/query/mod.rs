@@ -202,6 +202,7 @@ impl<'a> QueryRunner<'a> {
     fn save_required_for_global_operation(
         &self,
         input: &GlobalPositionSnapshot,
+        cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<std::path::PathBuf>> {
         let snapshot = self
             .project
@@ -209,12 +210,14 @@ impl<'a> QueryRunner<'a> {
             .context("borrow saved project for global-operation safety")?;
 
         for document in input.documents() {
+            rg_std::check_cancel!(cancellation, "open document safety");
             let contexts = Self::file_contexts(snapshot, document.source_path())
                 .context("resolve open document for global-operation safety")?;
             if contexts.is_empty() {
                 return Ok(Some(document.path().to_path_buf()));
             }
             for context in contexts {
+                rg_std::check_cancel!(cancellation, "saved source safety");
                 let saved = snapshot
                     .file_source_text(context.package, context.file)
                     .context("load saved source for global-operation safety")?;
@@ -270,7 +273,7 @@ impl<'a> QueryRunner<'a> {
                 .map(|target| (target.crate_ref, target.context.file))
                 .collect::<Vec<_>>();
             let source = snapshot
-                .prepare_document_source(&source_targets, document.text())
+                .prepare_document_source(&source_targets, document.text(), &cancellation.token())
                 .context("prepare document source")?;
             let Some(source_selection) = selection.to_current_source_selection(source.line_index())
             else {
@@ -289,11 +292,12 @@ impl<'a> QueryRunner<'a> {
                     .map(|target| (target.crate_ref, target.context.file))
                     .collect::<UniqueVec<_>>();
                 self.project
-                    .materialize_saved_project(AnalysisSurface::Files(files.as_slice()))
+                    .materialize_saved_project(
+                        AnalysisSurface::Files(files.as_slice()),
+                        &cancellation.token(),
+                    )
                     .context("prepare exact saved document analysis")?;
-                cancellation
-                    .checkpoint("after exact saved document preparation")
-                    .context("check cancellation after exact saved document preparation")?;
+                rg_std::check_cancel!(cancellation, "after exact saved document preparation");
 
                 let snapshot = self
                     .project
@@ -304,7 +308,7 @@ impl<'a> QueryRunner<'a> {
                     .map(|target| target.crate_ref)
                     .collect::<UniqueVec<_>>();
                 let analysis = snapshot
-                    .analysis_for_crates(crates.as_slice())
+                    .analysis_for_crates(crates.as_slice(), cancellation.token())
                     .context("load exact saved document analysis")?;
                 DocumentAnalysis {
                     snapshot,
@@ -328,7 +332,11 @@ impl<'a> QueryRunner<'a> {
                         source_selection,
                         cancellation.token(),
                         |checkpoint| {
-                            cancellation.checkpoint(Self::current_source_checkpoint(checkpoint))
+                            rg_std::check_cancel!(
+                                cancellation,
+                                Self::current_source_checkpoint(checkpoint)
+                            );
+                            Ok(())
                         },
                     )
                     .context("prepare current document analysis")?;
@@ -362,7 +370,12 @@ impl<'a> QueryRunner<'a> {
     ///
     /// A path can appear in several crate roots. Preserve every exact crate/file interpretation so
     /// preparing a shared source does not implicitly materialize sibling Cargo targets.
-    fn ensure_path(&mut self, query: &'static str, path: &Path) -> anyhow::Result<()> {
+    fn ensure_path(
+        &mut self,
+        query: &'static str,
+        path: &Path,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<()> {
         let started = Instant::now();
 
         // Resolve the path before mutating the project. One file can have several crate contexts,
@@ -385,7 +398,7 @@ impl<'a> QueryRunner<'a> {
                 .collect::<Vec<_>>()
         };
         self.project
-            .materialize_saved_project(AnalysisSurface::Files(&files))
+            .materialize_saved_project(AnalysisSurface::Files(&files), &cancellation.token())
             .with_context(|| format!("prepare {query} query path"))?;
         tracing::trace!(
             query,
@@ -426,21 +439,15 @@ impl<'a> QueryRunner<'a> {
         let completion_source = CompletionSource::new(source_text, offset);
         let completion_source_us = completion_source_started.elapsed().as_micros();
 
-        cancellation
-            .checkpoint("after completion syntax preparation")
-            .context("check cancellation after completion syntax preparation")?;
+        rg_std::check_cancel!(cancellation, "after completion syntax preparation");
 
-        cancellation
-            .checkpoint("before semantic completion")
-            .context("check cancellation before semantic completion")?;
+        rg_std::check_cancel!(cancellation, "before semantic completion");
 
         let mut completions = UniqueVec::new();
         let mut analysis_compute_us = 0_u128;
         let mut protocol_conversion_us = 0_u128;
         for target in &current.targets {
-            cancellation
-                .checkpoint("before completion crate interpretation")
-                .context("check cancellation before completion crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before completion crate interpretation");
             let mut query = CompletionQuery::new(target.crate_ref, target.context.file, offset)
                 .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
                     snippet_support: client_capabilities.snippet_support,
@@ -458,11 +465,12 @@ impl<'a> QueryRunner<'a> {
 
             // A crate query is synchronous. If it was overtaken, discard its items before
             // conversion and before starting another crate interpretation.
-            cancellation
-                .checkpoint("after completion crate interpretation")
-                .context("check cancellation after completion crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "after completion crate interpretation");
             let protocol_conversion_started = Instant::now();
-            for item in items {
+            for (index, item) in items.into_iter().enumerate() {
+                if index % 64 == 0 {
+                    rg_std::check_cancel!(cancellation, "completion conversion");
+                }
                 completions.push(completion::completion_item(
                     item,
                     current.source.line_index(),
@@ -556,9 +564,7 @@ impl<'a> QueryRunner<'a> {
         };
         let mut actions = UniqueVec::new();
         for target in &current.targets {
-            cancellation
-                .checkpoint("before code action crate interpretation")
-                .context("check cancellation before code action crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before code action crate interpretation");
             let query = CodeActionQuery::new(
                 target.crate_ref,
                 target.context.file,
@@ -573,15 +579,14 @@ impl<'a> QueryRunner<'a> {
                     .code_actions(query)
                     .context("compute code actions")?,
             );
-            cancellation
-                .checkpoint("after code action crate interpretation")
-                .context("check cancellation after code action crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "after code action crate interpretation");
         }
 
         // 3. Convert UTF-8 edits only after analysis is finished, attaching the URI and captured
         // document version to every action.
         let mut lsp_actions = Vec::new();
         for action in actions {
+            rg_std::check_cancel!(cancellation, "code action conversion");
             lsp_actions.push(
                 code_action::code_action(
                     document.path(),
@@ -778,9 +783,7 @@ impl<'a> QueryRunner<'a> {
         let text_range = current.range();
         let mut hints = UniqueVec::<AnalysisInlayHint>::new();
         for target in &current.targets {
-            cancellation
-                .checkpoint("before inlay hint crate interpretation")
-                .context("check cancellation before inlay hint crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before inlay hint crate interpretation");
             hints.extend(
                 current
                     .analysis
@@ -790,8 +793,18 @@ impl<'a> QueryRunner<'a> {
         }
         let lsp_hints = hints
             .into_iter()
-            .map(|hint| inlay_hint::inlay_hint_with_line_index(current.source.line_index(), hint))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(index, hint)| {
+                if index % 64 == 0 {
+                    rg_std::check_cancel!(cancellation, "inlay hint conversion");
+                }
+                Ok(inlay_hint::inlay_hint_with_line_index(
+                    current.source.line_index(),
+                    hint,
+                ))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("convert inlay hints")?;
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
@@ -807,6 +820,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn workspace_symbol(
         &mut self,
         query: &str,
+        cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<ls_types::WorkspaceSymbol>, QueryRunError> {
         let started = Instant::now();
         let lsp_symbols = self
@@ -814,7 +828,7 @@ impl<'a> QueryRunner<'a> {
             .saved_snapshot()
             .and_then(|snapshot| {
                 let analysis = snapshot
-                    .full_analysis()
+                    .full_analysis(cancellation.token())
                     .context("load workspace-symbol analysis")?;
                 let mut lsp_symbols = UniqueVec::new();
 
@@ -822,6 +836,7 @@ impl<'a> QueryRunner<'a> {
                     .workspace_symbols(query)
                     .context("search workspace symbols")?
                 {
+                    rg_std::check_cancel!(cancellation, "workspace symbol conversion");
                     let Some(symbol) = symbols::workspace_symbol(snapshot, symbol)
                         .context("convert workspace symbol")?
                     else {

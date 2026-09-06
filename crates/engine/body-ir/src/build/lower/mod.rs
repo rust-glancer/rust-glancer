@@ -96,6 +96,7 @@ pub(super) fn build_selected_packages(
     interners: &mut PackageNameInterners,
     worker_limit: Option<NonZeroUsize>,
     report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
@@ -118,6 +119,7 @@ pub(super) fn build_selected_packages(
         &mut packages,
         worker_limit,
         report_progress,
+        cancellation,
     )?;
 
     Ok(packages
@@ -138,6 +140,7 @@ fn build_package_outputs(
     packages: &mut [Option<LoweredPackageBodies>],
     worker_limit: Option<NonZeroUsize>,
     report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected.len() == parse.package_count(),
@@ -174,6 +177,7 @@ fn build_package_outputs(
                         scope,
                         package,
                         interner,
+                        cancellation,
                     )?);
                     if let Some(report_progress) = report_progress {
                         let completed_packages =
@@ -197,6 +201,7 @@ fn build_package_with_interner(
     scope: BodyIrMaterialization<'_>,
     package: PackageSlot,
     interner: &mut NameInterner,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<LoweredPackageBodies> {
     let span = tracing::debug_span!(
         "body_ir_package_lowering",
@@ -204,6 +209,7 @@ fn build_package_with_interner(
         rg.package_slot = package.0,
     );
     let _entered = span.enter();
+    rg_std::check_cancel!(cancellation, "lower body package");
     let started = Instant::now();
     let crate_count = parse_package.targets().len();
     let mut crates = Vec::with_capacity(crate_count);
@@ -213,6 +219,7 @@ fn build_package_with_interner(
     // example should not decode DefMap and Semantic IR for every other example in the package. The
     // unselected empty slots are removed after lowering by `retain_unselected_crates`.
     for crate_idx in 0..crate_count {
+        rg_std::check_cancel!(cancellation, "lower body crate");
         let crate_id = CrateId(crate_idx);
         let crate_ref = CrateRef { package, crate_id };
         if !scope.selects_crate(crate_ref) {
@@ -310,6 +317,7 @@ fn build_package_with_interner(
             crate_bodies: LoweredCrateBodies::with_coverage(coverage),
             cfg,
             interner,
+            cancellation,
         }
         .lower()
         .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?;

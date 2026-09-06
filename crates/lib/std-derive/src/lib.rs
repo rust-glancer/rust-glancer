@@ -8,9 +8,29 @@
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
+mod cancelable;
 mod generics;
 mod memory_size;
 mod shrink;
+
+/// Check cancellation before executing a fallible method or function.
+///
+/// `#[cancelable]` checks `self` through `rg_std::Cancelable`. For an associated or free function,
+/// name its cancellation argument with `#[cancelable(token = cancellation)]`. An optional string
+/// describes the work, as in `#[cancelable("lower body", token = cancellation)]`; the default label
+/// is the module and function name.
+/// `token` can also borrow an enclosing operation, such as `token = self.db` in a short-lived view.
+///
+/// The expansion inserts one `rg_std::check_cancel!` at the start of the body. It leaves loops,
+/// early returns, and result publication alone, so those still need their own checks. For async
+/// functions the entry check runs when the future is polled. The return error must accept
+/// `rg_std::Cancelled`.
+#[proc_macro_attribute]
+pub fn cancelable(args: TokenStream, input: TokenStream) -> TokenStream {
+    cancelable::expand(args.into(), input.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
 
 /// Derives `MemorySize` by generating `record_memory_children`.
 ///

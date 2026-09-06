@@ -89,7 +89,7 @@ fn current_impl_queries_share_context_across_targets_and_residency() {
         for marker in ["header", "signature", "receiver", "members"] {
             let offset = u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
             let source = snapshot
-                .prepare_current_source(&targets, current.text())
+                .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
                 .expect("capture source");
             let (analysis, summary) = snapshot
                 .analysis_for_current_source(
@@ -218,12 +218,12 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
         .collect::<Vec<_>>();
     let current = current();
     let source = snapshot
-        .prepare_current_source(&targets, current.text())
+        .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
         .expect("capture source");
     let txn = fixture
         .project()
         .state
-        .read_txn()
+        .read_txn(rg_std::CancellationToken::new())
         .expect("saved transaction should open");
     let db = txn.view_db();
     let impl_span = Span {

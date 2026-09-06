@@ -4,11 +4,13 @@
 //! expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
+use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
+use rg_std::OperationError;
 use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};
 
 use crate::{
@@ -112,8 +114,9 @@ where
     /// point then lets expressions, patterns, calls, annotations, and trait obligations exchange
     /// evidence. Only after convergence are inference variables erased or defaulted into
     /// persistent `BodyFacts`.
-    pub(crate) fn resolve(mut self) -> Result<BodyFacts, PackageStoreError> {
-        self.resolve_bindings()?;
+    #[rg_std::cancelable("start body inference", token = self.env)]
+    pub(crate) fn resolve(mut self) -> anyhow::Result<BodyFacts> {
+        self.resolve_bindings().context("resolve body bindings")?;
 
         let has_method_calls = self
             .body
@@ -180,19 +183,31 @@ where
         // fixed point produced. This fact cannot make another inference rule applicable, so it
         // deliberately sits outside the convergence loop.
         if has_method_calls {
-            ExprResolutionPass::new(&mut self).resolve_method_declarations()?;
+            ExprResolutionPass::new(&mut self)
+                .resolve_method_declarations()
+                .context("resolve method declarations")?;
         }
 
+        // Solver cancellation can produce a fail-soft answer internally. Never turn that answer
+        // into persisted unknown types or a completed body sidecar.
+        rg_std::check_cancel!(self.env, "finalize body facts");
         Ok(self.inference.finish(self.facts, converged))
     }
 
-    fn transfer_expressions_and_patterns(&mut self) -> Result<bool, PackageStoreError> {
+    #[rg_std::cancelable("body inference round", token = self.env)]
+    fn transfer_expressions_and_patterns(&mut self) -> anyhow::Result<bool> {
         let mut resolution_changed = false;
+        #[cfg(test)]
+        let cancellation = self.env.cancellation().clone();
         let expr_count = self.body.exprs().len();
         {
             let mut expr_pass = ExprResolutionPass::new(self);
             for expr_idx in 0..expr_count {
-                resolution_changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
+                #[cfg(test)]
+                tests::before_expression(&cancellation);
+                resolution_changed |= expr_pass
+                    .resolve_expr(ExprId(expr_idx))
+                    .context("resolve body expression")?;
             }
         }
         let snapshot = self.inference.snapshot();
@@ -202,10 +217,10 @@ where
         Ok(resolution_changed)
     }
 
-    fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
+    fn resolve_bindings(&mut self) -> anyhow::Result<()> {
         for binding_idx in 0..self.body.bindings().len() {
             let binding = BindingId(binding_idx);
-            let ty = self.binding_ty(binding)?;
+            let ty = self.binding_ty(binding).context("resolve body binding")?;
             self.set_binding_ty(binding, ty);
         }
         Ok(())
@@ -237,7 +252,8 @@ where
         self.inference.set_binding_ty(binding, &ty);
     }
 
-    fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
+    #[rg_std::cancelable("binding resolution", token = self.env)]
+    fn binding_ty(&self, binding: BindingId) -> Result<Ty, OperationError<PackageStoreError>> {
         let binding_data = self.body.binding_unchecked(binding);
         if matches!(
             binding_data.kind,
@@ -245,7 +261,11 @@ where
         ) && let Some(function) = self.body.owner().function()
             && let Some(param_index) = self.body.function_param_index_for_binding(binding)
             && self.body.function_params()[param_index].bindings.len() == 1
-            && let Some(signature) = self.context().signatures().function(function)?
+            && let Some(signature) = self
+                .context()
+                .signatures()
+                .function(function)
+                .map_err(OperationError::Source)?
             && let Some(param_ty) = signature.params.get(param_index)
             && !matches!(param_ty, Ty::Unknown)
         {
@@ -256,7 +276,8 @@ where
             return self
                 .context()
                 .type_refs(binding_data.scope)
-                .resolve(annotation);
+                .resolve(annotation)
+                .map_err(OperationError::Source);
         }
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
@@ -266,7 +287,8 @@ where
             let ty = self
                 .context()
                 .functions()
-                .self_adt_ty(function)?
+                .self_adt_ty(function)
+                .map_err(OperationError::Source)?
                 .into_adt_ty();
             return Ok(match kind {
                 SelfParamKind::Value => ty,
@@ -288,5 +310,99 @@ where
 
     pub(super) fn set_expr_resolution(&mut self, expr: ExprId, resolution: BodyResolution) {
         self.facts.set_expr_resolution(expr, resolution);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+
+    use rg_ir_model::{BodyId, BodyRef, CrateId, CrateRef, PackageSlot};
+    use rg_std::CancellationToken;
+
+    thread_local! {
+        static CANCEL_AFTER_EXPRESSIONS: Cell<Option<usize>> = const { Cell::new(None) };
+    }
+
+    pub(super) fn before_expression(cancellation: &CancellationToken) {
+        CANCEL_AFTER_EXPRESSIONS.with(|remaining| {
+            if let Some(count) = remaining.get() {
+                remaining.set(count.checked_sub(1));
+                if count == 0 {
+                    cancellation.cancel();
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn cancelling_expression_transfer_never_finalizes_partial_body_facts() {
+        let fixture = crate::testonly::BodyIrFixture::build(
+            r#"
+//- /Cargo.toml
+[package]
+name = "cancelled_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 }
+"#,
+        );
+        let target = CrateRef {
+            package: PackageSlot(0),
+            crate_id: CrateId(0),
+        };
+        let bodies = fixture
+            .body_ir_db()
+            .resident_package(target.package)
+            .expect("fixture package exists")
+            .crate_bodies(target.crate_id)
+            .expect("fixture crate exists");
+        let body = &bodies.bodies()[0];
+        let def_map = fixture
+            .def_map_db()
+            .read_txn(rg_def_map::DefMapLoader::resident_only("inference fixture"));
+        let semantic_ir =
+            fixture
+                .semantic_ir_db()
+                .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
+                    "inference fixture",
+                ));
+        let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
+            &rg_semantic_ir::CrateItemQuery::new(&def_map, &semantic_ir, target),
+            &CancellationToken::new(),
+        )
+        .expect("fixture lookup builds");
+        for cancel in [true, false] {
+            let cancellation = CancellationToken::new();
+            let session = rg_ty::TraitSelectionSession::new(target).with_cancellation(cancellation);
+            CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
+            let result = super::BodyResolutionPass::new(
+                &def_map,
+                &semantic_ir,
+                &lookup,
+                BodyRef {
+                    crate_ref: target,
+                    body: BodyId(0),
+                },
+                body,
+                &session,
+            )
+            .resolve();
+            if cancel {
+                let error = result.expect_err("unfinished inference must have no facts");
+                let cancelled = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<rg_std::Cancelled>())
+                    .expect("inference preserves the cancellation cause");
+                assert_eq!(cancelled.checkpoint(), "expression resolution");
+            } else {
+                let facts = result.expect("fresh inference can finish");
+                assert_eq!(facts.exprs.len(), body.exprs().len());
+                assert!(facts.exprs.iter().all(|facts| !facts.ty.has_var()));
+            }
+            assert!(CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.get().is_none()));
+        }
     }
 }

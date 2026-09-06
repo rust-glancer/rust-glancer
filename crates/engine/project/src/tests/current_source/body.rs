@@ -115,7 +115,11 @@ pub fn inspect() {
             .analysis_for_current_source(
                 &targets,
                 snapshot
-                    .prepare_current_source(&targets, current.text())
+                    .prepare_current_source(
+                        &targets,
+                        current.text(),
+                        &rg_std::CancellationToken::new(),
+                    )
                     .expect("capture current source"),
                 CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),
@@ -512,7 +516,7 @@ fn current_declaration_headers_use_request_local_semantics() {
         .analysis_for_current_source(
             &targets,
             snapshot
-                .prepare_current_source(&targets, current.text())
+                .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
                 .expect("capture current source"),
             CurrentSourceSelection::AtOffset(offset),
             CancellationToken::new(),
@@ -931,17 +935,18 @@ pub fn inspect() {
 
     for (index, stop_at) in checkpoints.into_iter().enumerate() {
         let mut visited = Vec::new();
+        let cancellation = CancellationToken::new();
         let error = match snapshot.analysis_for_current_source(
             &targets,
             snapshot
-                .prepare_current_source(&targets, current.text())
+                .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
                 .expect("capture current source"),
             CurrentSourceSelection::AtOffset(offset),
-            CancellationToken::new(),
+            cancellation.clone(),
             |checkpoint| {
                 visited.push(checkpoint);
                 if checkpoint == stop_at {
-                    anyhow::bail!("test cancellation")
+                    cancellation.cancel();
                 }
                 Ok(())
             },
@@ -950,7 +955,7 @@ pub fn inspect() {
             Err(error) => error,
         };
 
-        assert!(format!("{error:#}").contains("test cancellation"));
+        assert!(error.chain().any(|cause| cause.is::<rg_std::Cancelled>()));
         assert_eq!(
             visited,
             checkpoints[..=index],
@@ -996,7 +1001,7 @@ pub fn unselected() {
         .try_into()
         .expect("selected body offset should fit into u32");
     let source = snapshot
-        .prepare_current_source(&targets, &current)
+        .prepare_current_source(&targets, &current, &rg_std::CancellationToken::new())
         .expect("exact current source should prepare");
     for &(crate_ref, file) in &targets {
         assert_eq!(
@@ -1091,7 +1096,7 @@ fn unfinished
     let snapshot = fixture.fixture.project().snapshot();
     let targets = fixture.targets();
     let source = snapshot
-        .prepare_current_source(&targets, current.text())
+        .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
         .expect("current range source should prepare");
     let (analysis, summary) = snapshot
         .analysis_for_current_source(
@@ -1153,7 +1158,7 @@ pub fn inspect() {
     let snapshot = fixture.fixture.project().snapshot();
     let targets = fixture.targets();
     let source = snapshot
-        .prepare_current_source(&targets, current)
+        .prepare_current_source(&targets, current, &rg_std::CancellationToken::new())
         .expect("current range source should prepare");
     let (analysis, summary) = snapshot
         .analysis_for_current_source(
@@ -1217,7 +1222,11 @@ impl CurrentBodyFixture {
             .analysis_for_current_source(
                 &targets,
                 snapshot
-                    .prepare_current_source(&targets, current.text())
+                    .prepare_current_source(
+                        &targets,
+                        current.text(),
+                        &rg_std::CancellationToken::new(),
+                    )
                     .expect("capture current source"),
                 CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),
@@ -1256,7 +1265,11 @@ impl CurrentBodyFixture {
             .analysis_for_current_source(
                 &targets,
                 snapshot
-                    .prepare_current_source(&targets, current.text())
+                    .prepare_current_source(
+                        &targets,
+                        current.text(),
+                        &rg_std::CancellationToken::new(),
+                    )
                     .expect("capture current source"),
                 CurrentSourceSelection::AtOffset(offset),
                 CancellationToken::new(),

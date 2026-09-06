@@ -81,14 +81,16 @@ impl<T> Marker for T {}
         .read_txn(crate::SemanticIrLoader::resident_only(
             "resident trait-head fixture",
         ));
-    let lookup = crate::ItemLookupQuery::build_from(&crate::CrateItemQuery::new(
-        &def_maps, &items, crate_ref,
-    ))
+    let lookup = crate::ItemLookupQuery::build_from(
+        &crate::CrateItemQuery::new(&def_maps, &items, crate_ref),
+        &rg_std::CancellationToken::new(),
+    )
     .expect("trait-head lookup query should build");
 
     let self_types = |head| {
         lookup
             .trait_impl_candidates_for_self_head(marker, head)
+            .expect("candidate lookup succeeds")
             .expect("Marker should be visible")
             .iter()
             .map(|candidate| {

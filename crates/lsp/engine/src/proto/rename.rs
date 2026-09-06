@@ -24,10 +24,12 @@ pub(crate) fn prepare_rename(
 pub(crate) fn workspace_edit(
     snapshot: ProjectSnapshot<'_>,
     edits: Vec<RenameEdit>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<WorkspaceEdit> {
     let mut changes = HashMap::<Uri, Vec<TextEdit>>::new();
 
     for edit in edits {
+        rg_std::check_cancel!(cancellation, "rename edit conversion");
         let path = snapshot
             .file_path(edit.crate_ref.package, edit.file_id)
             .with_context(|| {

@@ -163,8 +163,9 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "resident semantic IR fixture",
                 ));
         let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
-        let lookup_query = ItemLookupQuery::build_from(&crate_items)
-            .expect("fixture semantic lookup query should build");
+        let lookup_query =
+            ItemLookupQuery::build_from(&crate_items, &rg_std::CancellationToken::new())
+                .expect("fixture semantic lookup query should build");
         let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
@@ -187,13 +188,18 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         type_defs
             .into_iter()
             .map(|ty| {
-                let trait_impls = lookup_query.trait_impls_for_type(ty);
+                let trait_impls = lookup_query
+                    .trait_impls_for_type(ty)
+                    .expect("candidate lookup succeeds");
                 let mut traits = UniqueVec::new();
                 let mut trait_functions = UniqueVec::new();
                 let mut trait_impl_functions = UniqueVec::new();
                 for trait_impl in &trait_impls {
                     traits.push(trait_impl.trait_ref);
-                    if let Some(functions) = lookup_query.trait_functions(trait_impl.trait_ref) {
+                    if let Some(functions) = lookup_query
+                        .trait_functions(trait_impl.trait_ref)
+                        .expect("candidate lookup succeeds")
+                    {
                         trait_functions.extend(functions.iter().copied());
                     }
                     if let Some(data) = crate_items
@@ -218,7 +224,6 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "impls",
                     lookup_query
                         .impls_for_type(ty)
-                        .into_iter()
                         .map(|impl_ref| self.render_impl_ref(&semantic_ir_txn, impl_ref))
                         .collect(),
                 );

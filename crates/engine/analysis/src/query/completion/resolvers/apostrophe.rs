@@ -77,6 +77,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
             ),
         ];
         for lifetime in context.binder_lifetimes() {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !candidates.iter().any(|candidate| {
                 // This equality is only for request-local duplicate suppression; renderer also
                 // keeps semantic targets distinct where labels differ.
@@ -98,6 +99,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
                 .lifetime_scope_names(owner)
                 .context("collect visible lifetime completions")?
             {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 if candidates
                     .iter()
                     .any(|candidate| candidate.label() == lifetime.label())

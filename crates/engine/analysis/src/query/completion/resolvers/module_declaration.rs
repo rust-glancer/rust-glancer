@@ -77,6 +77,7 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
             )
             .context("list module declaration candidates")?
         {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if site
                 .source()
                 .declared_children()

@@ -368,6 +368,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     }
 
     /// Return borrowed data for one function.
+    #[rg_std::cancelable("member function projection", token = self.db)]
     pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .function_data(function)
@@ -376,6 +377,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     }
 
     /// Return borrowed data for one enum variant.
+    #[rg_std::cancelable("enum variant projection", token = self.db)]
     pub fn enum_variant(
         &self,
         variant: EnumVariantRef,
@@ -407,6 +409,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
         let mut variants = Vec::new();
         for owner in ty.nominal_type_defs() {
+            rg_std::check_cancel!(self.db, "completion candidate");
             let TypeDefId::Enum(enum_id) = owner.id else {
                 continue;
             };

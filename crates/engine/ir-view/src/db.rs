@@ -16,7 +16,7 @@ use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
     TypePathContext, TypePathResolution,
 };
-use rg_std::UniqueVec;
+use rg_std::{CancellationToken, UniqueVec};
 use rg_text::RustEdition;
 use rg_ty::{ItemPathQuery, TraitSelectionSession, TypeLoweringAnchor, TypePathResolver};
 
@@ -33,6 +33,13 @@ pub struct IndexedViewDb<'db> {
     trait_selection: Arc<Mutex<HashMap<CrateRef, TraitSelectionSession>>>,
     body_trait_selection: Arc<Mutex<HashMap<BodyRef, TraitSelectionSession>>>,
     item_lookup_cache: ItemLookupQueryCache,
+    cancellation: CancellationToken,
+}
+
+impl rg_std::Cancelable for IndexedViewDb<'_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
+    }
 }
 
 impl<'db> IndexedViewDb<'db> {
@@ -40,6 +47,7 @@ impl<'db> IndexedViewDb<'db> {
         def_map: DefMapReadTxn<'db>,
         semantic_ir: SemanticIrReadTxn<'db>,
         body_ir: BodyIrReadTxn<'db>,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             def_map,
@@ -48,7 +56,12 @@ impl<'db> IndexedViewDb<'db> {
             trait_selection: Arc::new(Mutex::new(HashMap::new())),
             body_trait_selection: Arc::new(Mutex::new(HashMap::new())),
             item_lookup_cache: ItemLookupQueryCache::new(),
+            cancellation,
         }
+    }
+
+    pub fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
     }
 
     /// Lend the saved readers and lookup cache used by the eventual request queries.
@@ -62,6 +75,7 @@ impl<'db> IndexedViewDb<'db> {
             &self.body_ir,
             source,
             self.item_lookup_cache.clone(),
+            self.cancellation.clone(),
         )
     }
 
@@ -136,6 +150,7 @@ impl<'db> IndexedViewDb<'db> {
         ItemLookupQuery::build_with_cache(
             &CrateItemQuery::new(&self.def_map, &self.semantic_ir, use_site),
             &self.item_lookup_cache,
+            &self.cancellation,
         )
         .context("assemble visible semantic item indexes")
     }
@@ -153,6 +168,7 @@ impl<'db> IndexedViewDb<'db> {
             .entry(use_site)
             .or_insert_with(|| TraitSelectionSession::new(use_site))
             .clone()
+            .with_cancellation(self.cancellation.clone())
     }
 
     /// Return the inference scope owned by one body in this analysis request.
@@ -168,6 +184,7 @@ impl<'db> IndexedViewDb<'db> {
             .entry(body_ref)
             .or_insert_with(|| crate_session.for_body(body_ref))
             .clone()
+            .with_cancellation(self.cancellation.clone())
     }
 
     /// Returns the edition whose syntax rules apply at a crate_ref use site.

@@ -113,6 +113,7 @@ impl ProjectState {
     pub(super) fn materialize_saved_project(
         &mut self,
         surface: AnalysisSurface<'_>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<()> {
         let saved = self
             .saved
@@ -121,7 +122,7 @@ impl ProjectState {
         if saved.split_indexing().needs_materialization(surface) {
             saved
                 .split_indexing()
-                .materialize(surface)
+                .materialize(surface, cancellation)
                 .context("materialize saved project analysis surface")?;
         }
         Ok(())

@@ -192,7 +192,7 @@ fn main() {}
     let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let analysis = project
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("offloaded package read transaction should load");
     let mut symbols = Vec::new();
     for query in ["DepType", "dep_foreign", "DEP_STATIC", "DepOpaque"] {
@@ -337,7 +337,7 @@ pub struct DepNew;
         .expect("fixture project should rebuild from matching artifact");
     let analysis = cached_project
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("cached project analysis should construct");
     let old_symbols = analysis
         .workspace_symbols("DepOld")
@@ -544,7 +544,7 @@ pub struct Kept;
         .copied()
         .expect("app source should belong to one target");
     let analysis = snapshot
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("rebuilt project analysis should materialize");
     let mut definitions = analysis
         .goto_definition(target, context.file, marker.offset)
@@ -654,7 +654,7 @@ pub struct Dep;
     let profile = run.finish();
     let symbols = rebuilt
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("rebuilt project analysis should materialize")
         .workspace_symbols("Dep")
         .expect("dependency symbol query should resolve");
@@ -935,7 +935,7 @@ pub struct DepChildNew;
         .expect("fixture project should reject stale artifact and rebuild from source");
     let analysis = cached_project
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("cached project analysis should construct");
     let old_symbols = analysis
         .workspace_symbols("DepChildOld")

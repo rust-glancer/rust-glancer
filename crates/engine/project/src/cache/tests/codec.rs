@@ -253,7 +253,7 @@ pub fn unrelated() {
         "project.cache.sections",
     );
     let analysis = snapshot
-        .analysis_for_crates(&[target])
+        .analysis_for_crates(&[target], rg_std::CancellationToken::new())
         .expect("fixture analysis should construct");
     assert!(
         analysis

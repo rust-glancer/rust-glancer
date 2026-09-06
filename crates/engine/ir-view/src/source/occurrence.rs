@@ -8,6 +8,7 @@
 //! example, `Action` is a type path while `Start` is a value path. The facade keeps those semantic
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
+use anyhow::Context as _;
 use rg_ir_model::{
     BodyBindingRef, CrateRef, FieldKey, GenericDefRef, ModuleRef, Path,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
@@ -366,7 +367,10 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         for candidate in
             BodyCursorScanner::new(&self.db.body_ir, crate_ref, file_id, offset).scan()?
         {
-            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, Some(file_id))? {
+            if let Some(occurrence) = self
+                .body_occurrence(crate_ref, candidate, Some(file_id))
+                .context("convert body occurrence at cursor")?
+            {
                 occurrences.push(occurrence);
             }
         }
@@ -435,9 +439,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for candidate in
-            DefinitionSourceScanner::at(&self.db.def_map, crate_ref, file_id, offset).scan()?
-        {
+        for candidate in DefinitionSourceScanner::at(self.db, crate_ref, file_id, offset).scan()? {
             if let Some(occurrence) = Self::definition_occurrence(crate_ref, candidate) {
                 occurrences.push(occurrence);
             }
@@ -463,16 +465,17 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in
-            DefinitionSourceScanner::in_crate(&self.db.def_map, crate_ref, file_id).scan()?
-        {
+        for candidate in DefinitionSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
             if let Some(occurrence) = Self::definition_occurrence(crate_ref, candidate) {
                 occurrences.push(occurrence);
             }
         }
         occurrences.extend(self.body_occurrences_in_crate(crate_ref, file_id)?);
         for candidate in SignatureSourceScanner::in_crate(self.db, crate_ref, file_id).scan()? {
-            if let Some(occurrence) = self.signature_occurrence(crate_ref, candidate, file_id)? {
+            if let Some(occurrence) = self
+                .signature_occurrence(crate_ref, candidate, file_id)
+                .context("convert signature occurrence")?
+            {
                 occurrences.push(occurrence);
             }
         }
@@ -490,8 +493,11 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for candidate in BodySourceScanner::new(&self.db.body_ir, crate_ref, file_id).scan()? {
-            if let Some(occurrence) = self.body_occurrence(crate_ref, candidate, file_id)? {
+        for candidate in BodySourceScanner::new(self.db, crate_ref, file_id).scan()? {
+            if let Some(occurrence) = self
+                .body_occurrence(crate_ref, candidate, file_id)
+                .context("convert body occurrence")?
+            {
                 occurrences.push(occurrence);
             }
         }
@@ -542,6 +548,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     }
 
     /// Convert a Semantic IR scanner candidate into a source occurrence.
+    #[rg_std::cancelable("signature occurrence conversion", token = self.db)]
     fn signature_occurrence(
         &self,
         crate_ref: CrateRef,
@@ -586,6 +593,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     }
 
     /// Convert a Body IR scanner candidate into a source occurrence.
+    #[rg_std::cancelable("body occurrence conversion", token = self.db)]
     fn body_occurrence(
         &self,
         crate_ref: CrateRef,

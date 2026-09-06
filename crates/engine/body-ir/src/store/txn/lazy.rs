@@ -76,6 +76,14 @@ impl<'db> LazyPackage<'db> {
             .map(|manifest| manifest.body_count()))
     }
 
+    pub(super) fn body_files(&self, crate_ref: CrateRef) -> Result<Vec<FileId>, PackageStoreError> {
+        Ok(self
+            .loaded(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+            .map(|data| data.shards.iter().map(|(file, _)| *file).collect())
+            .unwrap_or_default())
+    }
+
     /// Load the complete crate representation.
     ///
     /// This is the expensive path used by callers that genuinely need `CrateBodies`. File-local

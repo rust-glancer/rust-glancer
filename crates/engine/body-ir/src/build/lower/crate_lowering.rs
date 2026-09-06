@@ -40,6 +40,7 @@ pub(super) struct CrateLowering<'a> {
     pub(super) crate_bodies: LoweredCrateBodies,
     pub(super) cfg: CfgEvaluator<'a>,
     pub(super) interner: &'a mut NameInterner,
+    pub(super) cancellation: &'a rg_std::CancellationToken,
 }
 
 impl<'a> CrateLowering<'a> {
@@ -52,6 +53,7 @@ impl<'a> CrateLowering<'a> {
             &mut self.crate_bodies,
             self.cfg,
             self.interner,
+            self.cancellation,
         )
         .lower_tasks(&tasks, &mut macro_expansion)?;
         Ok(self.crate_bodies)
@@ -66,6 +68,7 @@ impl<'a> CrateLowering<'a> {
         let item_query = ItemStoreQuery::new(self.semantic_ir);
 
         for &(function_ref, file_id, span) in &self.functions {
+            rg_std::check_cancel!(self.cancellation, "select body task");
             if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
@@ -102,6 +105,7 @@ impl<'a> CrateLowering<'a> {
         }
 
         for &(const_ref, file_id, span) in &self.consts {
+            rg_std::check_cancel!(self.cancellation, "select body task");
             if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }
@@ -119,6 +123,7 @@ impl<'a> CrateLowering<'a> {
         }
 
         for &(static_ref, file_id, span) in &self.statics {
+            rg_std::check_cancel!(self.cancellation, "select body task");
             if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
                 continue;
             }

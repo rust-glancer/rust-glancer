@@ -159,6 +159,30 @@ impl<'db> BodyIrReadTxn<'db> {
         }
     }
 
+    /// List source-file units without decoding their body shards.
+    ///
+    /// Whole-crate query work can visit these files separately, checking cancellation before each
+    /// decode. Current bodies add their files even when saved bodies for that file are masked.
+    pub fn body_files(&self, crate_ref: CrateRef) -> Result<Vec<FileId>, PackageStoreError> {
+        let mut files: rg_std::UniqueVec<FileId> = match self.entry(crate_ref.package)? {
+            PackageReadEntry::Resident(package) => package
+                .crate_bodies(crate_ref.crate_id)
+                .into_iter()
+                .flat_map(|bodies| bodies.bodies().iter().map(|body| body.source().file_id))
+                .collect(),
+            PackageReadEntry::Lazy(package) => package.body_files(crate_ref)?.into_iter().collect(),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        };
+        files.extend(
+            self.current
+                .bodies()
+                .iter()
+                .filter(|body| body.body_ref().crate_ref == crate_ref)
+                .map(|body| body.view().source().file_id),
+        );
+        Ok(files.into_vec())
+    }
+
     /// Enumerate bodies from one file, or every body when `file` is absent.
     ///
     /// Returning stable `BodyRef` values here keeps file-local scanners out of the physical shard

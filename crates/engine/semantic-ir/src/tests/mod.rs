@@ -172,6 +172,7 @@ pub struct Library;
                 crate::ItemLookupQuery::build_with_cache(
                     &crate::CrateItemQuery::new(&def_maps, &items, use_site),
                     &cache,
+                    &rg_std::CancellationToken::new(),
                 )
                 .expect("test target lookup query should build")
             })
@@ -182,6 +183,7 @@ pub struct Library;
                     shared_trait,
                     Some(crate::TraitImplSelfHead::Adt(shared_type)),
                 )
+                .expect("candidate lookup succeeds")
                 .expect("shared dependency trait should be visible from every test target");
             let candidate = candidates
                 .as_one()
@@ -217,7 +219,9 @@ pub struct Library;
         // Each query must still add only its own local overlay after sharing dependency results.
         // Looking up one target's receiver from a sibling query must not reuse that local impl.
         for ((query, use_site), local_type) in queries.iter().zip(&test_crates).zip(&local_types) {
-            let local_impls = query.trait_impls_for_type(*local_type);
+            let local_impls = query
+                .trait_impls_for_type(*local_type)
+                .expect("candidate lookup succeeds");
             let local_impl = local_impls
                 .as_one()
                 .expect("each test target should find exactly its own local trait impl");
@@ -226,7 +230,10 @@ pub struct Library;
         }
         if queries.len() > 1 {
             assert!(
-                queries[1].trait_impls_for_type(local_types[0]).is_empty(),
+                queries[1]
+                    .trait_impls_for_type(local_types[0])
+                    .expect("candidate lookup succeeds")
+                    .is_empty(),
                 "a shared dependency cache must not expose another target's local impl",
             );
         }

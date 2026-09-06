@@ -19,7 +19,6 @@
 //! synchronous reindex.
 
 use std::{
-    fmt,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -28,7 +27,7 @@ use rg_lsp_proto::{
     EditorDocumentSnapshot, EngineError, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue,
 };
 use rg_project::Project;
-use rg_std::CancellationToken;
+use rg_std::{CancellationToken, Cancelled};
 
 use super::QueryRunner;
 use crate::{engine::command::QueryResponder, memory::MemoryReporter};
@@ -59,6 +58,12 @@ impl From<anyhow::Error> for QueryRunError {
     }
 }
 
+impl From<Cancelled> for QueryRunError {
+    fn from(error: Cancelled) -> Self {
+        Self::Analysis(error.into())
+    }
+}
+
 /// Lets expensive query phases check whether anyone still wants the result.
 ///
 /// Dropping the RPC future cancels the request token and closes the engine response channel.
@@ -77,33 +82,21 @@ impl<'a> QueryCancellation<'a> {
         }
     }
 
-    /// Stop at a named query boundary if nobody can receive the result anymore.
-    pub(crate) fn checkpoint(&self, checkpoint: &'static str) -> anyhow::Result<()> {
-        if self.request.is_cancelled() || (self.response_is_closed)() {
-            return Err(QueryCancelled { checkpoint }.into());
-        }
-        Ok(())
-    }
-
     /// Share the request signal with synchronous work that has its own bounded checkpoints.
     pub(crate) fn token(&self) -> CancellationToken {
         self.request.clone()
     }
 }
 
-/// Internal early exit caught by the query lifecycle before it can become a feature error.
-#[derive(Debug)]
-struct QueryCancelled {
-    checkpoint: &'static str,
-}
-
-impl fmt::Display for QueryCancelled {
-    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(fmt, "query cancelled at {}", self.checkpoint)
+impl rg_std::Cancelable for QueryCancellation<'_> {
+    /// Stop at a named query boundary if nobody can receive the result anymore.
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), Cancelled> {
+        if (self.response_is_closed)() {
+            self.request.cancel();
+        }
+        rg_std::Cancelable::check_cancelled(self.request, checkpoint)
     }
 }
-
-impl std::error::Error for QueryCancelled {}
 
 /// Common request data recorded before one command starts analysis.
 ///
@@ -217,17 +210,24 @@ impl QueryRunner<'_> {
         let memory_before = MemoryReporter::snapshot(memory_control.as_ref());
         let result = {
             let response_is_closed = || respond_to.is_closed();
-            query(
-                self,
-                &QueryCancellation::new(&cancellation, &response_is_closed),
-            )
+            let control = QueryCancellation::new(&cancellation, &response_is_closed);
+            query(self, &control).and_then(|value| {
+                // A kernel may finish its last unit as cancellation arrives. Keep real errors
+                // intact for recovery, but never publish a successful value for obsolete work.
+                rg_std::check_cancel!(control, "before query publication");
+                Ok(value)
+            })
         };
         let cancelled_checkpoint = result
             .as_ref()
             .err()
             .and_then(QueryRunError::as_error)
-            .and_then(|error| error.downcast_ref::<QueryCancelled>())
-            .map(|cancelled| cancelled.checkpoint);
+            .and_then(|error| {
+                error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<Cancelled>())
+            })
+            .map(Cancelled::checkpoint);
         let stale_path = if cancelled_checkpoint.is_some() {
             None
         } else {
@@ -345,7 +345,6 @@ mod tests {
         time::Duration,
     };
 
-    use anyhow::Context as _;
     use rg_lsp_proto::{
         DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
         OpenDocumentsRevision, QueryError, QueryScope, QueryValue, ServiceNotification,
@@ -465,9 +464,7 @@ mod tests {
             |_, cancellation| {
                 // Model the RPC task disappearing after the engine has already entered the query.
                 drop(response);
-                cancellation
-                    .checkpoint("test semantic work")
-                    .context("stop test query after response closure")?;
+                rg_std::check_cancel!(cancellation, "test semantic work");
                 work_after_checkpoint_ran.set(true);
                 Ok(vec![1])
             },
@@ -496,9 +493,7 @@ mod tests {
             cancellation,
             |_, cancellation| {
                 request_owner.cancel();
-                cancellation
-                    .checkpoint("test semantic work")
-                    .context("stop test query after request cancellation")?;
+                rg_std::check_cancel!(cancellation, "test semantic work");
                 work_after_checkpoint_ran.set(true);
                 Ok(vec![1])
             },
@@ -514,5 +509,90 @@ mod tests {
         let (sender, _receiver) = mpsc::channel();
         let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
         ProjectCoordinator::new(sender, memory_control, notifications)
+    }
+
+    #[test]
+    fn cancellation_before_publication_cleans_up_and_allows_the_next_query() {
+        #[derive(Debug, Default)]
+        struct Purges(std::sync::atomic::AtomicUsize);
+        impl MemoryControl for Purges {
+            fn try_purge_allocator(&self) -> bool {
+                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                true
+            }
+        }
+
+        let purges = Arc::new(Purges::default());
+        let memory: Arc<dyn MemoryControl> = purges.clone();
+        let mut project = test_project(Arc::clone(&memory));
+        let mut runner = QueryRunner::new(&mut project, memory);
+        let (sender, response) = oneshot::channel();
+        runner.respond_to_query(
+            QueryContext::saved_project("references", Duration::ZERO),
+            sender,
+            CancellationToken::new(),
+            |_, control| {
+                control.token().cancel();
+                Ok(vec![1_usize])
+            },
+        );
+        assert!(
+            futures::executor::block_on(response).is_err(),
+            "obsolete success must not be published"
+        );
+        assert_eq!(purges.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        let (sender, response) = oneshot::channel();
+        runner.respond_to_query(
+            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
+            sender,
+            CancellationToken::new(),
+            |_, _| Ok(vec![2_usize]),
+        );
+        let result = futures::executor::block_on(response)
+            .expect("next query responds")
+            .expect("next query succeeds");
+        assert_eq!(result.value(), &[2]);
+        assert_eq!(purges.0.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
+
+    #[test]
+    fn wrapped_cancellation_is_distinct_from_a_source_failure_racing_with_cancellation() {
+        let memory: Arc<dyn MemoryControl> = Arc::new(());
+        let mut project = test_project(Arc::clone(&memory));
+        let mut runner = QueryRunner::new(&mut project, memory);
+        for source_failed in [false, true] {
+            let (sender, response) = oneshot::channel::<Result<QueryValue<()>, QueryError>>();
+            runner.respond_to_query(
+                QueryContext::saved_project("references", Duration::ZERO),
+                sender,
+                CancellationToken::new(),
+                |_, control| {
+                    let token = control.token();
+                    token.cancel();
+                    let error = if source_failed {
+                        rg_std::OperationError::Source(std::io::Error::other("source read failed"))
+                    } else {
+                        rg_std::OperationError::Cancelled(
+                            rg_std::Cancelable::check_cancelled(&token, "test scan")
+                                .expect_err("request was cancelled"),
+                        )
+                    };
+                    Err(anyhow::Error::new(error).context("scan source").into())
+                },
+            );
+            let result = futures::executor::block_on(response);
+            if source_failed {
+                assert!(
+                    matches!(result, Ok(Err(QueryError::Internal(_)))),
+                    "a source failure keeps its error policy"
+                );
+            } else {
+                assert!(
+                    result.is_err(),
+                    "a wrapped cancellation produces no response"
+                );
+            }
+        }
     }
 }

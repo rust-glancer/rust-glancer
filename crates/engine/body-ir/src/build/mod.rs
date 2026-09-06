@@ -93,7 +93,14 @@ pub struct BodyIrDbBuilder<'db, 'names> {
     semantic_ir_loader: SemanticIrLoader<'db>,
     subset: &'db PackageSubset,
     worker_limit: Option<NonZeroUsize>,
+    cancellation: rg_std::CancellationToken,
     copy_compact_packages: Vec<PackageSlot>,
+}
+
+impl rg_std::Cancelable for BodyIrDbBuilder<'_, '_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
+    }
 }
 
 impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
@@ -123,6 +130,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             semantic_ir_loader,
             subset,
             worker_limit: None,
+            cancellation: rg_std::CancellationToken::new(),
         }
     }
 
@@ -159,6 +167,12 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         self
     }
 
+    /// Bind this build and its package workers to the operation that requested it.
+    pub fn cancellation(mut self, cancellation: rg_std::CancellationToken) -> Self {
+        self.cancellation = cancellation;
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
         self.build_with_optional_package_priority(None, &|_, _| {}, None)
     }
@@ -186,6 +200,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         )
     }
 
+    #[rg_std::cancelable("start body build")]
     fn build_with_optional_package_priority(
         self,
         priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
@@ -234,6 +249,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.interners,
             self.worker_limit,
             report_progress,
+            &self.cancellation,
         )
         .context("while attempting to lower selected body IR packages")?;
         let lowering_ms = lowering_started.elapsed().as_millis();
@@ -259,11 +275,14 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             publish_priority,
             self.worker_limit,
             report_progress,
+            &self.cancellation,
         )
         .context("while attempting to resolve selected body IR packages")?;
         let resolution_ms = resolution_started.elapsed().as_millis();
         let compaction_started = Instant::now();
-        let compacted_packages = compact_rebuilt_packages(rebuilt_packages, &copy_compact_packages);
+        let compacted_packages =
+            compact_rebuilt_packages(rebuilt_packages, &copy_compact_packages, &self.cancellation)
+                .context("compact rebuilt body packages")?;
         let compaction_ms = compaction_started.elapsed().as_millis();
 
         // 4. Replace package slots only after every fallible build phase has succeeded, then close
@@ -272,6 +291,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         {
             let mut mutator = next.mutator();
             for (package, rebuilt) in compacted_packages {
+                rg_std::check_cancel!(self.cancellation, "prepare rebuilt package");
                 let rebuilt =
                     retain_unselected_crates(self.baseline, package, rebuilt, materialization)?;
                 mutator.replace_package(package, rebuilt).with_context(|| {
@@ -299,6 +319,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             total_ms = build_started.elapsed().as_millis(),
             "Body IR package build phases finished"
         );
+        rg_std::check_cancel!(self.cancellation, "finish body build");
         Ok(next)
     }
 }
@@ -362,20 +383,25 @@ fn retain_unselected_crates(
 fn compact_rebuilt_packages(
     mut rebuilt_packages: Vec<(PackageSlot, PackageBodies)>,
     copy_compact_packages: &[PackageSlot],
-) -> Vec<(PackageSlot, PackageBodies)> {
+    cancellation: &rg_std::CancellationToken,
+) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     // Build all compact copies before releasing their source payloads. Their retained allocations
     // are then grouped together instead of being interleaved with frees from each source package.
     let compacted = rebuilt_packages
         .iter()
         .filter(|(package, _)| copy_compact_packages.binary_search(package).is_ok())
-        .map(|(package, rebuilt)| (*package, compact_package_copy(rebuilt)))
-        .collect::<Vec<_>>();
+        .map(|(package, rebuilt)| {
+            rg_std::check_cancel!(cancellation, "compact body package");
+            Ok((*package, compact_package_copy(rebuilt)))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()
+        .context("copy compacted body packages")?;
 
     // Keep ordinary payloads only for packages that were not copied, then return one payload for
     // every rebuilt slot regardless of its residency choice.
     rebuilt_packages.retain(|(package, _)| copy_compact_packages.binary_search(package).is_err());
     rebuilt_packages.extend(compacted);
-    rebuilt_packages
+    Ok(rebuilt_packages)
 }
 
 fn compact_package_copy(package: &PackageBodies) -> PackageBodies {
@@ -428,5 +454,114 @@ mod tests {
             .expect("limited Body IR thread pool should build");
 
         assert_eq!(thread_pool.current_num_threads(), expected_workers);
+    }
+
+    #[test]
+    fn cancelled_parallel_build_joins_workers_and_preserves_the_baseline() {
+        use rg_def_map::PackageSlot;
+        use rg_std::CancellationToken;
+        use std::{
+            fmt::Write as _,
+            sync::{
+                Barrier,
+                atomic::{AtomicUsize, Ordering},
+            },
+        };
+
+        let mut source = String::from(
+            "//- /Cargo.toml\n[workspace]\nmembers = [\"first\", \"second\", \"third\", \"fourth\"]\nresolver = \"3\"\n",
+        );
+        for name in ["first", "second", "third", "fourth"] {
+            writeln!(
+                source,
+                r#"
+//- /{name}/Cargo.toml
+[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2024"
+
+//- /{name}/src/lib.rs
+pub fn compute() -> usize {{ let first = 1; first + 2 }}
+"#
+            )
+            .expect("fixture text can be written");
+        }
+        let fixture = crate::testonly::BodyIrFixture::build(&source);
+        let packages = (0..fixture.parse_db().package_count())
+            .map(PackageSlot)
+            .collect::<Vec<_>>();
+        let subset = rg_package_store::PackageSubset::all(packages.len());
+        let limit = NonZeroUsize::new(2).expect("two workers");
+        let worker_count = local_thread_pool("cancellation-test", Some(limit))
+            .expect("pool builds")
+            .current_num_threads();
+        for priority in [false, true] {
+            let cancellation = CancellationToken::new();
+            let barrier = Barrier::new(worker_count);
+            let reached = AtomicUsize::new(0);
+            let exited = AtomicUsize::new(0);
+            let progress = |progress: super::BodyIrBuildProgress| {
+                if progress.stage() == super::BodyIrBuildStage::Resolving
+                    && progress.completed_packages() > 0
+                {
+                    reached.fetch_add(1, Ordering::SeqCst);
+                    // All available workers are inside this build before any of them cancels it.
+                    barrier.wait();
+                    cancellation.cancel();
+                    exited.fetch_add(1, Ordering::SeqCst);
+                }
+            };
+            let mut names = rg_text::PackageNameInterners::new(packages.len());
+            let builder = fixture
+                .body_ir_db()
+                .builder(
+                    fixture.parse_db(),
+                    fixture.def_map_db(),
+                    fixture.semantic_ir_db(),
+                    &packages,
+                    &packages,
+                    &mut names,
+                    rg_def_map::DefMapLoader::resident_only("parallel fixture"),
+                    rg_semantic_ir::SemanticIrLoader::resident_only("parallel fixture"),
+                    &subset,
+                )
+                .configured_bodies(crate::BodyIrBuildPolicy::default())
+                .worker_limit(Some(limit))
+                .cancellation(cancellation.clone());
+            let priorities = || Vec::new();
+            let result = builder.build_with_optional_package_priority(
+                priority.then_some(&priorities),
+                &|_, _| panic!("no priority publication requested"),
+                Some(&progress),
+            );
+            let error = result.expect_err("cancelled workers supply no replacement database");
+            assert!(error.chain().any(|cause| cause.is::<rg_std::Cancelled>()));
+            assert_eq!(reached.load(Ordering::SeqCst), worker_count);
+            assert_eq!(exited.load(Ordering::SeqCst), worker_count);
+            assert!(
+                packages
+                    .iter()
+                    .all(|&package| fixture.body_ir_db().resident_package(package).is_some())
+            );
+        }
+        let mut names = rg_text::PackageNameInterners::new(packages.len());
+        fixture
+            .body_ir_db()
+            .builder(
+                fixture.parse_db(),
+                fixture.def_map_db(),
+                fixture.semantic_ir_db(),
+                &packages,
+                &packages,
+                &mut names,
+                rg_def_map::DefMapLoader::resident_only("parallel retry"),
+                rg_semantic_ir::SemanticIrLoader::resident_only("parallel retry"),
+                &subset,
+            )
+            .configured_bodies(crate::BodyIrBuildPolicy::default())
+            .worker_limit(Some(limit))
+            .build()
+            .expect("fresh build succeeds after workers joined");
     }
 }

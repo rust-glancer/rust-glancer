@@ -158,8 +158,12 @@ impl<'project> SplitIndexing<'project> {
     }
 
     /// Materialize deferred analysis data for the requested query surface.
-    pub fn materialize(&mut self, surface: AnalysisSurface<'_>) -> anyhow::Result<()> {
-        materialize_surface(&mut self.project.state, surface)
+    pub fn materialize(
+        &mut self,
+        surface: AnalysisSurface<'_>,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<()> {
+        materialize_surface(&mut self.project.state, surface, cancellation)
     }
 
     /// Merge a detached finish result, returning whether it improved the saved project.
@@ -307,16 +311,18 @@ fn finish_with_sampler(
 }
 
 /// Make a query-shaped analysis surface available in the saved project before analysis runs.
+#[rg_std::cancelable("materialize query surface", token = cancellation)]
 fn materialize_surface(
     state: &mut ProjectState,
     surface: AnalysisSurface<'_>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<()> {
     match surface {
-        AnalysisSurface::Files(files) => materialize_files(state, files),
-        AnalysisSurface::Crates(crates) => materialize_crates(state, crates),
+        AnalysisSurface::Files(files) => materialize_files(state, files, cancellation),
+        AnalysisSurface::Crates(crates) => materialize_crates(state, crates, cancellation),
         AnalysisSurface::FilesAndCrates { files, crates } => {
-            materialize_files(state, files)?;
-            materialize_crates(state, crates)
+            materialize_files(state, files, cancellation)?;
+            materialize_crates(state, crates, cancellation)
         }
     }
 }
@@ -360,11 +366,15 @@ pub(crate) fn package_deferred_payload_is_durable(
 /// This is the narrow on-demand path used by file-local LSP queries. The deferred payload is stored
 /// as package-shaped Body IR, so the rebuild keeps already-materialized files for the same exact
 /// crate interpretation as well as the newly requested files.
-fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> anyhow::Result<()> {
+fn materialize_files(
+    state: &mut ProjectState,
+    files: &[(CrateRef, FileId)],
+    cancellation: &rg_std::CancellationToken,
+) -> anyhow::Result<()> {
     // A cached package cannot retain a partial resident target beside lazy sibling shards. Promote
     // only the requested target interpretations to complete coverage, rewrite the artifact, and
     // return the package to lazy residency before handling ordinary resident selected-file work.
-    // This keeps the manifest-only overlay inside one synchronous lifecycle transition.
+    // The private manifest baseline stays unpublished until the complete package transition.
     let cached_crates = files
         .iter()
         .map(|&(crate_ref, _)| crate_ref)
@@ -374,7 +384,7 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
         })
         .collect::<UniqueVec<_>>();
     if !cached_crates.is_empty() {
-        materialize_crates(state, cached_crates.as_slice()).context(
+        materialize_crates(state, cached_crates.as_slice(), cancellation).context(
             "while attempting to complete cached targets requested by file materialization",
         )?;
     }
@@ -392,9 +402,15 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
     // preparing one new file cannot accidentally discard earlier on-demand coverage from the same
     // package.
     let requested_packages = PhasePackageSet::from_body_files(body_files.as_slice());
-    restore_offloaded_packages_for_body_rebuild(state, requested_packages.as_slice())?;
+    // Pin the manifest revisions through build and publication. Untouched sibling shards are
+    // copied from those artifacts when the rebuilt package returns to its residency policy.
+    let loaders = PackageReadLoaders::new(state);
+    let baseline =
+        body_rebuild_baseline(state, requested_packages.as_slice(), &loaders, cancellation)
+            .context("stage selected-file Body IR baseline")?;
+    let mut names = state.names.clone();
     for package in requested_packages.iter() {
-        if let Some(body_ir) = state.body_ir.resident_package(package) {
+        if let Some(body_ir) = baseline.resident_package(package) {
             extend_with_materialized_body_files(package, body_ir, &mut body_files);
         }
     }
@@ -403,24 +419,23 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
     // dependency subset it needs for type/name facts referenced from those bodies.
     let body_packages = PhasePackageSet::from_body_files(body_files.as_slice());
     let rebuild_subset = body_packages.visible_dependency_subset(&state.workspace);
-    let loaders = PackageReadLoaders::new(state);
     // One selected file can leave its package only partially materialized and therefore not yet
     // durable enough to offload. Compact every touched package because that partial payload may
     // remain resident until background finishing reaches it.
-    let body_ir = state
-        .body_ir
+    let body_ir = baseline
         .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
             body_packages.as_slice(),
             body_packages.as_slice(),
-            &mut state.names,
-            loaders.def_map,
-            loaders.semantic_ir,
+            &mut names,
+            loaders.def_map.clone(),
+            loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
         .worker_limit(state.indexing_preference.body_ir_worker_limit())
+        .cancellation(cancellation.clone())
         .selected_files(body_files.into_vec())
         .build();
 
@@ -430,16 +445,14 @@ fn materialize_files(state: &mut ProjectState, files: &[(CrateRef, FileId)]) -> 
     state.parse.evict_saved_source_text();
     let body_ir = body_ir.context("while attempting to materialize deferred analysis for files")?;
 
-    state.body_ir = body_ir;
-    Shrink::shrink_to_fit(&mut state.names);
-
-    // A selected-file request can finish a small package. Once the package is complete, apply the
-    // ordinary package-cache/offload rules so restart and idle-memory behavior stay consistent with
-    // background finishing.
-    let finished_packages = finished_resident_packages(state, body_packages.as_slice());
-    apply_finished_residency(state, &finished_packages).context(
-        "while attempting to apply residency after preparing deferred analysis for files",
-    )?;
+    publish_materialized_packages(
+        state,
+        body_ir,
+        names,
+        body_packages.as_slice(),
+        cancellation,
+    )
+    .context("publish selected-file Body IR")?;
     Ok(())
 }
 
@@ -475,7 +488,11 @@ fn body_file_needs_materialization(
 /// For a package with a library and many test targets, requesting one test replaces only that
 /// test's crate slot. If the package was offloaded, sibling targets remain as cached manifest
 /// placeholders until the package artifact is rewritten with their existing encoded shards.
-fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::Result<()> {
+fn materialize_crates(
+    state: &mut ProjectState,
+    crates: &[CrateRef],
+    cancellation: &rg_std::CancellationToken,
+) -> anyhow::Result<()> {
     let crates = crates
         .iter()
         .copied()
@@ -486,25 +503,29 @@ fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::
     }
 
     let packages = PhasePackageSet::from_crates(crates.as_slice());
-    restore_offloaded_packages_for_body_rebuild(state, packages.as_slice())?;
-    let rebuild_subset = packages.visible_dependency_subset(&state.workspace);
+    // Pin the manifest revisions through build and publication. Untouched sibling shards are
+    // copied from those artifacts when the rebuilt package returns to its residency policy.
     let loaders = PackageReadLoaders::new(state);
+    let baseline = body_rebuild_baseline(state, packages.as_slice(), &loaders, cancellation)
+        .context("stage selected-crate Body IR baseline")?;
+    let mut names = state.names.clone();
+    let rebuild_subset = packages.visible_dependency_subset(&state.workspace);
     // Sibling targets can still be incomplete after exact-crate materialization, so the rebuilt
     // package may remain resident even when its eventual residency policy is offloadable.
-    let body_ir = state
-        .body_ir
+    let body_ir = baseline
         .builder(
             &state.parse,
             &state.def_map,
             &state.semantic_ir,
             packages.as_slice(),
             packages.as_slice(),
-            &mut state.names,
-            loaders.def_map,
-            loaders.semantic_ir,
+            &mut names,
+            loaders.def_map.clone(),
+            loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
         .worker_limit(state.indexing_preference.body_ir_worker_limit())
+        .cancellation(cancellation.clone())
         .selected_crates(crates)
         .build();
 
@@ -514,12 +535,8 @@ fn materialize_crates(state: &mut ProjectState, crates: &[CrateRef]) -> anyhow::
     let body_ir =
         body_ir.context("while attempting to materialize complete deferred analysis for crates")?;
 
-    state.body_ir = body_ir;
-    Shrink::shrink_to_fit(&mut state.names);
-    let finished_packages = finished_resident_packages(state, packages.as_slice());
-    apply_finished_residency(state, &finished_packages).context(
-        "while attempting to apply residency after preparing complete deferred analysis for crates",
-    )?;
+    publish_materialized_packages(state, body_ir, names, packages.as_slice(), cancellation)
+        .context("publish selected-crate Body IR")?;
     Ok(())
 }
 
@@ -821,43 +838,78 @@ fn crate_needs_materialization(state: &ProjectState, crate_ref: CrateRef) -> boo
 /// Declaration phases stay offloaded and are read through their crate-granular transactions. Body
 /// IR restores only crate manifests; the cache writer later copies untouched sibling shards and
 /// the unchanged declaration sections from the old artifact.
-fn restore_offloaded_packages_for_body_rebuild(
-    state: &mut ProjectState,
+fn body_rebuild_baseline(
+    state: &ProjectState,
     packages: &[PackageSlot],
-) -> anyhow::Result<()> {
-    let offloaded = packages
-        .iter()
-        .copied()
-        .filter(|&package| state.body_ir.package_is_offloaded(package))
-        .collect::<Vec<_>>();
-    if offloaded.is_empty() {
-        return Ok(());
-    }
-
-    let loaders = PackageReadLoaders::new(state);
-    // Decode every requested package before mutating project state. A corrupt later artifact must
-    // not leave an earlier package half-restored when the exact materialization request fails.
-    let restored = offloaded
-        .into_iter()
-        .map(|package| {
-            loaders
-                .load_body_ir_package_manifest(package)
-                .map(|bodies| (package, bodies))
-                .with_context(|| {
-                    format!(
-                        "restore offloaded package {} for exact target materialization",
-                        package.0
-                    )
-                })
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    for (package, bodies) in restored {
-        state
-            .body_ir
+    loaders: &PackageReadLoaders,
+    cancellation: &rg_std::CancellationToken,
+) -> anyhow::Result<rg_body_ir::BodyIrDb> {
+    let mut baseline = state.body_ir.clone();
+    for &package in packages {
+        rg_std::check_cancel!(cancellation, "restore body manifest");
+        if !baseline.package_is_offloaded(package) {
+            continue;
+        }
+        let bodies = loaders
+            .load_body_ir_package_manifest(package)
+            .with_context(|| format!("restore body manifest for package {}", package.0))?;
+        baseline
             .replace_package(package, bodies)
             .context("offloaded Body IR package slot should exist")?;
     }
+    #[cfg(test)]
+    crate::tests::cancellation::materialization_checkpoint(
+        crate::tests::cancellation::MaterializationPoint::BaselinePrepared,
+        cancellation,
+    );
+    Ok(baseline)
+}
+
+/// Publish one complete package transition at a time.
+///
+/// A cached sibling may still be only a manifest in `bodies`. Once its package is installed, the
+/// artifact rewrite and offload must finish before cancellation can return control to a query.
+/// Other candidate packages and their name tables remain private until their own turn arrives.
+fn publish_materialized_packages(
+    state: &mut ProjectState,
+    bodies: rg_body_ir::BodyIrDb,
+    mut names: rg_text::PackageNameInterners,
+    packages: &[PackageSlot],
+    cancellation: &rg_std::CancellationToken,
+) -> anyhow::Result<()> {
+    for &package in packages {
+        #[cfg(test)]
+        crate::tests::cancellation::materialization_checkpoint(
+            crate::tests::cancellation::MaterializationPoint::BeforePublication,
+            cancellation,
+        );
+        rg_std::check_cancel!(cancellation, "publish materialized package");
+        let payload = bodies
+            .resident_package(package)
+            .context("materialized package should be resident")?
+            .clone();
+        state
+            .body_ir
+            .replace_package(package, payload)
+            .context("materialized Body IR package slot should exist")?;
+        std::mem::swap(
+            state
+                .names
+                .package_mut(package.0)
+                .expect("saved package should have an interner"),
+            names
+                .package_mut(package.0)
+                .expect("rebuilt package should have an interner"),
+        );
+
+        // Partial selected-file coverage stays resident. Complete configured coverage can use the
+        // normal cache policy, including copying untouched sibling shards from the saved artifact.
+        let finished = finished_resident_packages(state, &[package]);
+        apply_finished_residency(state, &finished)
+            .context("apply materialized package residency")?;
+    }
+    Shrink::shrink_to_fit(&mut state.names);
+    rg_std::check_cancel!(cancellation, "after materialized package publication");
     Ok(())
 }
 

@@ -153,6 +153,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         // outside the requested scan surface.
         if self.query.includes_declarations() {
             for location in subject.declaration_locations() {
+                rg_std::check_cancel!(self.analysis, "reference declarations");
                 if !self
                     .query
                     .accepts_declaration(location.crate_ref, location.file_id)
@@ -237,6 +238,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         match self.query.search_scope() {
             ReferenceSearchScope::Crates(crates) => {
                 for crate_ref in crates {
+                    rg_std::check_cancel!(self.analysis, "reference crate scan");
                     let scan = ReferenceScanTarget {
                         crate_ref: *crate_ref,
                         file_id: None,
@@ -250,6 +252,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             }
             ReferenceSearchScope::Files(files) => {
                 for file in files {
+                    rg_std::check_cancel!(self.analysis, "reference file scan");
                     let scan = ReferenceScanTarget {
                         crate_ref: file.crate_ref,
                         file_id: Some(file.file_id),
@@ -298,6 +301,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         };
 
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "reference candidate matching");
             if !self.accepts_candidate_role(candidate.role()) {
                 continue;
             }

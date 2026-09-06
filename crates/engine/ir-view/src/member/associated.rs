@@ -214,6 +214,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
     }
 
     /// Resolve one associated candidate into label, kind, and documentation facts.
+    #[rg_std::cancelable("associated item projection", token = self.db)]
     pub fn associated_item_definition(
         &self,
         candidate: MemberAssociatedItemCandidate,
@@ -312,6 +313,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         let mut candidates = Vec::new();
         for nominal in ty.as_adts() {
+            rg_std::check_cancel!(self.db, "completion candidate");
             let TypeDefId::Enum(enum_id) = nominal.def.id else {
                 continue;
             };

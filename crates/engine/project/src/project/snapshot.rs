@@ -62,15 +62,24 @@ impl DocumentSourceView {
 
 impl<'a> ProjectSnapshot<'a> {
     /// Returns a full-project analysis view.
-    pub fn full_analysis(&self) -> anyhow::Result<Analysis<'a>> {
-        let txn = self.state.read_txn()?;
+    pub fn full_analysis(
+        &self,
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<Analysis<'a>> {
+        let txn = self.state.read_txn(cancellation)?;
         Ok(self.state.analysis(&txn))
     }
 
     /// Returns an analysis view scoped to the package dependency closure of crate queries.
-    pub fn analysis_for_crates(&self, crates: &[CrateRef]) -> anyhow::Result<Analysis<'a>> {
+    pub fn analysis_for_crates(
+        &self,
+        crates: &[CrateRef],
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<Analysis<'a>> {
         let subset = subset::crates_with_visible_dependencies(self.state.workspace(), crates);
-        let txn = self.state.read_txn_for_subset(&subset)?;
+        let txn = self
+            .state
+            .read_txn_for_subset(&subset, cancellation.clone())?;
         Ok(self.state.analysis(&txn))
     }
 
@@ -84,6 +93,7 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         targets: &[(CrateRef, FileId)],
         source: &str,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<DocumentSourceView> {
         let &(first_crate, first_file) = targets
             .first()
@@ -91,6 +101,7 @@ impl<'a> ProjectSnapshot<'a> {
 
         let source_revision = rg_source::SourceRevision::from_bytes(source.as_bytes());
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let saved_file = self
                 .state
                 .parse_db()
@@ -100,7 +111,7 @@ impl<'a> ProjectSnapshot<'a> {
                 .context("saved-source target has no parsed file")?;
             if saved_file.source_revision() != source_revision {
                 return self
-                    .prepare_current_source(targets, source)
+                    .prepare_current_source(targets, source, cancellation)
                     .map(DocumentSourceView::Current);
             }
         }
@@ -122,6 +133,7 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         targets: &[(CrateRef, FileId)],
         source: &str,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<CurrentSourceView> {
         // `CurrentSource` keys parses by edition, so repeated crate interpretations can be passed
         // through directly without maintaining a second uniqueness policy here.
@@ -140,6 +152,7 @@ impl<'a> ProjectSnapshot<'a> {
         let mut prepared_files = HashSet::<(PackageSlot, FileId)>::new();
 
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let key = (crate_ref.package, file);
             if !prepared_files.insert(key) {
                 continue;
@@ -201,11 +214,14 @@ impl<'a> ProjectSnapshot<'a> {
             .collect::<UniqueVec<_>>();
         let subset =
             subset::crates_with_visible_dependencies(self.state.workspace(), crates.as_slice());
-        let txn = self.state.read_txn_for_subset(&subset)?;
+        let txn = self
+            .state
+            .read_txn_for_subset(&subset, cancellation.clone())?;
         let view_db = txn.view_db();
         let mut builder = view_db.current_source_builder(current_source);
 
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let parse_package = self
                 .state
                 .parse_db()
@@ -258,8 +274,13 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         origin_package: PackageSlot,
         declaration_crates: &[CrateRef],
-    ) -> Vec<CrateRef> {
-        ReferenceSearchPlanner::new(self.state).crates(origin_package, declaration_crates)
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<CrateRef>> {
+        ReferenceSearchPlanner::new(self.state).crates(
+            origin_package,
+            declaration_crates,
+            cancellation,
+        )
     }
 
     /// Returns crate/file pairs whose source text contains one of the safe reference labels.
@@ -270,8 +291,13 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        ReferenceSearchPlanner::new(self.state).files_matching_labels(search_crates, labels)
+        ReferenceSearchPlanner::new(self.state).files_matching_labels(
+            search_crates,
+            labels,
+            cancellation,
+        )
     }
 
     #[cfg(test)]

@@ -101,7 +101,10 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Crates(&[first_test]))
+        .materialize(
+            AnalysisSurface::Crates(&[first_test]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one deferred test target should materialize");
 
     assert_eq!(
@@ -281,7 +284,10 @@ pub fn shared_value() -> usize { 1 }
         .expect("configured eager targets should finish");
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, context.file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one shared-source interpretation should materialize");
 
     let bodies = project
@@ -348,7 +354,10 @@ pub fn shared_value() -> usize { 1 }
         .expect("updated primary shared target should finish");
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, context.file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("updated first shared test should materialize exactly");
     let bodies = project
         .state
@@ -435,7 +444,10 @@ fn offloaded_secondary_target_materialization_rewrites_exact_cached_coverage() {
     );
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, first_test_file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, first_test_file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one cached deferred test file should materialize its exact target");
     let profile = run.finish();
     assert!(

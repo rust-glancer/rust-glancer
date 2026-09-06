@@ -167,6 +167,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     /// Return source facts for one declaration ref.
+    #[rg_std::cancelable("declaration projection", token = self.db)]
     pub fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
         match declaration {
             DeclarationRef::Module(module_ref) => self.module(module_ref),

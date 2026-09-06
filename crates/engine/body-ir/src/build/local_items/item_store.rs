@@ -23,24 +23,27 @@ impl<'source> LocalItemStoreCollector<'source> {
     }
 
     /// Lowers body-local DefMap entries into semantic item-shaped shadow storage.
-    pub fn collect(self) -> ItemStore {
+    pub fn collect(self, cancellation: &rg_std::CancellationToken) -> anyhow::Result<ItemStore> {
         let reader = LocalItemStoreSourceReader {
             items: self.items,
             def_map: self.def_map,
+            cancellation,
         };
         ItemStoreLowerer::new(self.def_map, reader)
             .lower()
-            .expect("body item store should lower from collected body source items")
+            .context("lower collected body source items")
     }
 }
 
 // Adapts body-local source item storage to the generic semantic item-store lowerer.
-struct LocalItemStoreSourceReader<'source> {
+struct LocalItemStoreSourceReader<'source, 'operation> {
+    cancellation: &'operation rg_std::CancellationToken,
     items: &'source BodySourceItems,
     def_map: &'source DefMap,
 }
 
-impl<'source> ItemStoreSourceReader<'source> for LocalItemStoreSourceReader<'source> {
+impl<'source> ItemStoreSourceReader<'source> for LocalItemStoreSourceReader<'source, '_> {
+    #[rg_std::cancelable("local signature item", token = self.cancellation)]
     fn item(&self, source: ItemSource) -> anyhow::Result<&'source ItemNode> {
         let (DefMapRef::Body(body_ref), ItemSourceKind::Body(source)) =
             (self.def_map.own_ref(), source.kind)

@@ -111,11 +111,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     /// prepares those inputs, then runs the shared body worklist. The caller supplies new body ids
     /// when saved identities cannot be reused and receives checkpoints where cancelled work can
     /// stop.
+    #[rg_std::cancelable("select current bodies", token = self.trait_selection.cancellation())]
     pub fn build(
         self,
         mut synthetic_body_ref: impl FnMut() -> anyhow::Result<BodyRef>,
         mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentBodyBuildOutcome> {
+        let cancellation = self.trait_selection.cancellation().clone();
         let started = Instant::now();
 
         // 1. Parse the editor text and choose the syntax bodies requested by the cursor or range.
@@ -135,7 +137,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             self.current_source.text(),
             syntax_errors.as_slice(),
             self.selection,
-        );
+            &cancellation,
+        )
+        .context("select current body roots")?;
         let parse_us = parse_started.elapsed().as_micros();
         if current_owners.is_empty() {
             let unavailable = matches!(self.selection, CurrentSourceSelection::AtOffset(_))
@@ -160,6 +164,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let mut unavailable = Vec::new();
         let mut association_us = 0;
         for selected_owner in current_owners {
+            rg_std::check_cancel!(cancellation, "current body roots");
             let association_started = Instant::now();
             let saved_root = self.find_saved_root(&selected_owner, &saved_owners);
             association_us += association_started.elapsed().as_micros();
@@ -273,7 +278,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
         let crate_items = CrateItemQuery::new(self.def_map, self.semantic_ir, self.crate_ref);
         let item_lookup_query =
-            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache)
+            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache, &cancellation)
                 .context("build the current body's visible item lookup query")?;
 
         let mut interner = NameInterner::new();
@@ -294,9 +299,14 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let mut lowered = LoweredCrateBodies::with_coverage(CrateBodiesCoverage::Partial);
         let mut macro_expansion =
             BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
-        let lowered_roots =
-            BodyTaskLowering::new(task_source, &mut lowered, self.cfg, &mut interner)
-                .lower_tasks(&tasks, &mut macro_expansion)?;
+        let lowered_roots = BodyTaskLowering::new(
+            task_source,
+            &mut lowered,
+            self.cfg,
+            &mut interner,
+            &cancellation,
+        )
+        .lower_tasks(&tasks, &mut macro_expansion)?;
         anyhow::ensure!(
             lowered_roots.len() == roots.len(),
             "an associated current body could not be lowered from its captured syntax",
@@ -325,6 +335,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             lowered,
             root_body_refs,
             &mut interner,
+            cancellation.clone(),
         )?;
         build.materialize_body_local_items(
             self.def_map,
@@ -372,7 +383,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // never infer completeness from the mere presence of an ImplRef.
         let mut complete_impls = Vec::new();
         for body in &bodies {
+            rg_std::check_cancel!(cancellation, "current body roots");
             for (impl_ref, impl_) in body.local_items().item_store().impls_with_refs() {
+                rg_std::check_cancel!(cancellation, "current body roots");
                 let local = body
                     .local_items()
                     .def_map()

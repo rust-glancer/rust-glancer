@@ -76,6 +76,12 @@ impl AssociatedSavedHeader {
     }
 }
 
+impl rg_std::Cancelable for Analysis<'_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(&self.view_db, checkpoint)
+    }
+}
+
 impl<'a> Analysis<'a> {
     /// Builds a query API over one request-scoped indexed view and its matching source snapshot.
     pub fn new(view_db: IndexedViewDb<'a>, saved_source: SavedSourceView<'a>) -> Self {
@@ -94,6 +100,19 @@ impl<'a> Analysis<'a> {
 
     pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
         &self.view_db
+    }
+
+    /// Kernels may finish their last unit as cancellation arrives. Check both sides of the
+    /// operation so a fail-soft solver exit can never escape as an empty or partial query result.
+    fn run_query<T>(
+        &self,
+        name: &'static str,
+        query: impl FnOnce() -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        rg_std::check_cancel!(self, name);
+        let result = query().context("execute semantic query")?;
+        rg_std::check_cancel!(self, name);
+        Ok(result)
     }
 
     pub(crate) fn saved_source_text_for_span(
@@ -229,7 +248,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SymbolAt>> {
-        self.symbol_at_for_query(crate_ref, file_id, offset)
+        self.run_query("symbol_at", || {
+            self.symbol_at_for_query(crate_ref, file_id, offset)
+        })
     }
 
     pub(crate) fn symbol_at_for_query(
@@ -345,7 +366,9 @@ impl<'a> Analysis<'a> {
 
     /// Resolves a previously found symbol to navigation targets.
     pub fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::SymbolResolver::new(self.view_db()).resolve_symbol(symbol)
+        self.run_query("resolve_symbol", || {
+            query::navigation::SymbolResolver::new(self.view_db()).resolve_symbol(symbol)
+        })
     }
 
     /// Returns best-effort definitions for the symbol under a source offset.
@@ -355,7 +378,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::GotoResolver::new(self).goto_definition(crate_ref, file_id, offset)
+        self.run_query("goto_definition", || {
+            query::navigation::GotoResolver::new(self).goto_definition(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns best-effort type definitions for the symbol under a source offset.
@@ -365,8 +390,10 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::TypeDefinitionResolver::new(self)
-            .goto_type_definition(crate_ref, file_id, offset)
+        self.run_query("goto_type_definition", || {
+            query::navigation::TypeDefinitionResolver::new(self)
+                .goto_type_definition(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns best-effort implementations for the symbol under a source offset.
@@ -376,8 +403,10 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::ImplementationResolver::new(self)
-            .goto_implementation(crate_ref, file_id, offset)
+        self.run_query("goto_implementation", || {
+            query::navigation::ImplementationResolver::new(self)
+                .goto_implementation(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns the best-effort type under a source offset.
@@ -387,10 +416,12 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedType>> {
-        let Some(symbol) = self.symbol_at_for_query(crate_ref, file_id, offset)? else {
-            return Ok(None);
-        };
-        SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
+        self.run_query("type_at", || {
+            let Some(symbol) = self.symbol_at_for_query(crate_ref, file_id, offset)? else {
+                return Ok(None);
+            };
+            SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
+        })
     }
 
     /// Returns best-effort inlay hints for one file.
@@ -400,7 +431,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         range: Option<rg_parse::TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)
+        self.run_query("inlay_hints", || {
+            query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)
+        })
     }
 
     /// Returns best-effort hover information for the symbol under a source offset.
@@ -410,7 +443,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
-        query::hover::HoverResolver::new(self).hover(crate_ref, file_id, offset)
+        self.run_query("hover", || {
+            query::hover::HoverResolver::new(self).hover(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns best-effort source references for the symbol under a source offset.
@@ -424,8 +459,10 @@ impl<'a> Analysis<'a> {
         offset: u32,
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        query::references::ReferenceResolver::new(self, query)
-            .references(crate_ref, file_id, offset)
+        self.run_query("references", || {
+            query::references::ReferenceResolver::new(self, query)
+                .references(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns labels that callers may use for request-local reference prefiltering.
@@ -435,9 +472,11 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
-        query::references::ReferenceResolver::reference_search_labels(
-            self, crate_ref, file_id, offset,
-        )
+        self.run_query("reference_search_labels", || {
+            query::references::ReferenceResolver::reference_search_labels(
+                self, crate_ref, file_id, offset,
+            )
+        })
     }
 
     /// Returns the source range and placeholder for a valid rename position.
@@ -447,7 +486,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
-        query::rename::RenameResolver::new(self).prepare_rename(crate_ref, file_id, offset)
+        self.run_query("prepare_rename", || {
+            query::rename::RenameResolver::new(self).prepare_rename(crate_ref, file_id, offset)
+        })
     }
 
     /// Returns semantic source edits for renaming the symbol under a source offset.
@@ -459,7 +500,10 @@ impl<'a> Analysis<'a> {
         new_name: &str,
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Option<RenameResult>> {
-        query::rename::RenameResolver::new(self).rename(crate_ref, file_id, offset, new_name, query)
+        self.run_query("rename", || {
+            query::rename::RenameResolver::new(self)
+                .rename(crate_ref, file_id, offset, new_name, query)
+        })
     }
 
     /// Returns best-effort completion candidates for a source offset.
@@ -476,12 +520,16 @@ impl<'a> Analysis<'a> {
         &self,
         query: CompletionQuery<'_>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        query::completion::CompletionResolver::new(self, query).completions_at()
+        self.run_query("completions_at", || {
+            query::completion::CompletionResolver::new(self, query).completions_at()
+        })
     }
 
     /// Returns source actions applicable to one range in the captured editor document.
     pub fn code_actions(&self, query: CodeActionQuery<'_>) -> anyhow::Result<Vec<CodeAction>> {
-        query::code_action::CodeActionResolver::new(self, query).code_actions()
+        self.run_query("code_actions", || {
+            query::code_action::CodeActionResolver::new(self, query).code_actions()
+        })
     }
 
     /// Returns a hierarchical outline for one file under the selected crate context.
@@ -490,7 +538,9 @@ impl<'a> Analysis<'a> {
         crate_ref: CrateRef,
         file_id: FileId,
     ) -> anyhow::Result<DocumentOutline> {
-        query::symbols::SymbolCollector::new(self).document_symbols(crate_ref, file_id)
+        self.run_query("document_symbols", || {
+            query::symbols::SymbolCollector::new(self).document_symbols(crate_ref, file_id)
+        })
     }
 
     /// Returns an outline directly from syntax, without requiring a saved file identity.
@@ -505,7 +555,9 @@ impl<'a> Analysis<'a> {
 
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
     pub fn workspace_symbols(&self, query: &str) -> anyhow::Result<Vec<WorkspaceSymbol>> {
-        query::symbols::SymbolCollector::new(self).workspace_symbols(query)
+        self.run_query("workspace_symbols", || {
+            query::symbols::SymbolCollector::new(self).workspace_symbols(query)
+        })
     }
 }
 

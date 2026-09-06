@@ -115,12 +115,16 @@ where
         &self,
         receiver_ty: &Ty,
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+        // This layer shares the solver's source-error-only interface. A cancelled discovery
+        // supplies no candidates; the analysis or inference owner checks the same token before
+        // accepting any result. The lookup itself leaves no unfinished cache entry behind.
+        let Ok(traits) = self.context.item_lookup().traits_with_associated_items() else {
+            return Ok(Vec::new());
+        };
         let table = InferenceTable::new();
-        let matches = self.matcher.matches_for_receiver_with_traits(
-            receiver_ty,
-            self.context.item_lookup().traits_with_associated_items(),
-            &table,
-        )?;
+        let matches = self
+            .matcher
+            .matches_for_receiver_with_traits(receiver_ty, traits, &table)?;
         self.candidates_for_matches(receiver_ty, &matches)
     }
 
@@ -136,10 +140,16 @@ where
         let mut candidates = Vec::new();
 
         for nominal_ty in receiver_ty.as_adts() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             self.push_enum_variants(&mut candidates, nominal_ty)?;
         }
 
         for impl_match in matches.inherent() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let Some(data) = self
                 .context
                 .item_paths()
@@ -157,6 +167,9 @@ where
         }
 
         for selection in matches.traits() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             self.push_trait_hierarchy(
                 &mut candidates,
                 selection.trait_impl.trait_ref,
@@ -196,6 +209,9 @@ where
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
         for application in applications {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             self.push_trait_hierarchy(
                 &mut candidates,
                 application.def,
@@ -224,6 +240,9 @@ where
             return Ok(());
         };
         for index in 0..data.variants.len() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(());
+            }
             Self::push_candidate(
                 candidates,
                 AssociatedItemRef::EnumVariant(EnumVariantRef {
@@ -264,6 +283,9 @@ where
             .trait_header_with(self.context.item_paths(), trait_ref)?
         {
             for clause in &header.clauses {
+                if self.context.trait_selection().cancellation().is_cancelled() {
+                    return Ok(());
+                }
                 let Clause::Implemented(application) = clause else {
                     continue;
                 };
@@ -286,6 +308,9 @@ where
         applicability: TraitApplicability,
     ) {
         for item in items {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return;
+            }
             let item = match item {
                 AssocItemId::Function(id) => {
                     AssociatedItemRef::Function(FunctionRef { origin, id: *id })

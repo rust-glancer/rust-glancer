@@ -614,7 +614,7 @@ pub struct Shared;
     assert!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("generated module profile analysis should build")
             .workspace_symbols("missing")
             .expect("missing generated module query should resolve")
@@ -724,7 +724,7 @@ pub struct Deep;
     assert_eq!(
         project
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("nested generated-module analysis should build")
             .workspace_symbols("Deep")
             .expect("nested generated-module query should resolve")
@@ -1011,7 +1011,7 @@ pub struct After;
     let analysis = fixture
         .project()
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("offloaded reverse-dependent analysis should reload");
     assert!(
         analysis
@@ -1088,7 +1088,7 @@ choose_module!();
     assert!(parsed_paths.contains(&second));
 
     let analysis = snapshot
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("request-change fixture analysis should build");
     assert!(
         analysis
@@ -1198,7 +1198,7 @@ make_child!();
     );
     assert!(
         snapshot
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("deleted generated module analysis should build")
             .workspace_symbols("ChildItem")
             .expect("deleted generated symbol query should resolve")
@@ -1280,7 +1280,7 @@ pub struct CachedGenerated;
     );
     let symbols = warm
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("warm generated module analysis should load")
         .workspace_symbols("CachedGenerated")
         .expect("cached generated symbol query should resolve");
@@ -1309,7 +1309,7 @@ pub struct RefreshedGenerated;
     );
     let analysis = rebuilt
         .snapshot()
-        .full_analysis()
+        .full_analysis(rg_std::CancellationToken::new())
         .expect("rebuilt generated module analysis should load");
     assert!(
         analysis
@@ -1334,7 +1334,7 @@ pub struct RefreshedGenerated;
     assert_eq!(
         second_warm
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("second warm generated module analysis should load")
             .workspace_symbols("RefreshedGenerated")
             .expect("second warm generated symbol query should resolve")

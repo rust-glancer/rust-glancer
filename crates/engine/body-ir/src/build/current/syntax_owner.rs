@@ -5,7 +5,7 @@
 //! the selected body still belongs to a saved declaration; the parent builder does that after
 //! syntax selection is complete.
 
-use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
+use rg_parse::{Span, enclosing_inline_module_path};
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
@@ -30,17 +30,31 @@ impl SyntaxBodyOwner {
         source: &str,
         errors: &[rg_syntax::SyntaxError],
         selection: CurrentSourceSelection,
-    ) -> Vec<Self> {
-        match selection {
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<Self>> {
+        let mut owners = Vec::new();
+        for (index, node) in file.syntax().descendants().enumerate() {
+            if index % 64 == 0 {
+                rg_std::check_cancel!(cancellation, "current body syntax selection");
+            }
+            if let Some(owner) = Self::cast_with_body(node) {
+                owners.push(owner);
+            }
+        }
+        Ok(match selection {
             CurrentSourceSelection::AtOffset(offset) => {
-                Self::at_cursor(file, source, offset, errors)
+                Self::at_cursor(&owners, source, offset, errors)
                     .into_iter()
                     .collect()
             }
-            CurrentSourceSelection::IntersectingRange(range) => {
-                Self::intersecting_range(file, range)
-            }
-        }
+            CurrentSourceSelection::IntersectingRange(range) => owners
+                .into_iter()
+                .filter(|owner| {
+                    let body = owner.body_span();
+                    range.start < body.text.end && body.text.start < range.end
+                })
+                .collect(),
+        })
     }
 
     /// Return the outer declaration that can provide all request-local context for this body.
@@ -76,18 +90,16 @@ impl SyntaxBodyOwner {
     /// reports an error there, the nearest declaration is still the only owner the cursor can
     /// belong to.
     fn at_cursor(
-        file: &SourceFile,
+        owners: &[Self],
         source: &str,
         offset: u32,
         errors: &[rg_syntax::SyntaxError],
     ) -> Option<Self> {
-        let candidates = file
-            .syntax()
-            .descendants()
-            .filter_map(Self::cast_with_body)
+        let candidates = owners
+            .iter()
             .filter(|owner| Self::span(owner.syntax()).touches(offset));
-        if let Some(owner) = candidates.min_by_key(Self::syntax_len) {
-            return Some(owner);
+        if let Some(owner) = candidates.min_by_key(|owner| Self::syntax_len(owner)) {
+            return Some(owner.clone());
         }
 
         let offset = usize::try_from(offset).ok()?;
@@ -99,10 +111,8 @@ impl SyntaxBodyOwner {
             return None;
         }
 
-        let mut recovered = file
-            .syntax()
-            .descendants()
-            .filter_map(Self::cast_with_body)
+        let mut recovered = owners
+            .iter()
             .filter(|owner| {
                 let body_end = usize::from(owner.body_end());
                 body_end <= offset
@@ -114,19 +124,7 @@ impl SyntaxBodyOwner {
             })
             .collect::<Vec<_>>();
         recovered.sort_by_key(|owner| std::cmp::Reverse(owner.body_start()));
-        recovered.into_iter().next()
-    }
-
-    /// Return the bodies whose syntax overlaps the requested byte range.
-    fn intersecting_range(file: &SourceFile, range: TextSpan) -> Vec<Self> {
-        file.syntax()
-            .descendants()
-            .filter_map(Self::cast_with_body)
-            .filter(|owner| {
-                let body = owner.body_span();
-                range.start < body.text.end && body.text.start < range.end
-            })
-            .collect()
+        recovered.into_iter().next().cloned()
     }
 
     pub(super) fn cast_with_body(node: SyntaxNode) -> Option<Self> {

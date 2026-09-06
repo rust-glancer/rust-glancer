@@ -69,9 +69,16 @@ pub struct CurrentSourceBuilder<'request, 'db> {
     saved_bodies: &'request BodyIrReadTxn<'db>,
     source: &'request CurrentSource,
     lookup_cache: ItemLookupQueryCache,
+    cancellation: rg_std::CancellationToken,
     next_body_ids: HashMap<CrateRef, usize>,
     current: CurrentSourceStore,
     summary: CurrentSourceBuildSummary,
+}
+
+impl rg_std::Cancelable for CurrentSourceBuilder<'_, '_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
+    }
 }
 
 impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
@@ -81,6 +88,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         saved_bodies: &'request BodyIrReadTxn<'db>,
         source: &'request CurrentSource,
         lookup_cache: ItemLookupQueryCache,
+        cancellation: rg_std::CancellationToken,
     ) -> Self {
         Self {
             def_map,
@@ -88,6 +96,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             saved_bodies,
             source,
             lookup_cache,
+            cancellation,
             next_body_ids: HashMap::new(),
             current: CurrentSourceStore::default(),
             summary: CurrentSourceBuildSummary::default(),
@@ -96,6 +105,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
 
     /// Add one exact crate/file interpretation using the request's captured bytes.
     #[allow(clippy::too_many_arguments)]
+    #[rg_std::cancelable("prepare current target")]
     pub fn prepare_target(
         &mut self,
         package: &rg_parse::Package,
@@ -107,6 +117,12 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         trait_selection: TraitSelectionSession,
         mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
+        let trait_selection = trait_selection.with_cancellation(self.cancellation.clone());
+        let mut checkpoint = |phase| {
+            checkpoint(phase).context("observe current preparation")?;
+            rg_std::check_cancel!(self.cancellation, "current preparation phase");
+            Ok(())
+        };
         // Bodies and declaration-only contexts use the same Cargo target's cfg policy.
         let cargo_target = self
             .def_map
@@ -149,15 +165,19 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                 .source
                 .parse(package.edition())
                 .context("current source was not parsed for the target edition")?;
-            let selected = parse
-                .tree()
-                .syntax()
-                .descendants()
-                .filter_map(ast::Impl::cast)
-                .filter(|impl_| {
+            let mut candidates = Vec::new();
+            for (index, node) in parse.tree().syntax().descendants().enumerate() {
+                if index % 64 == 0 {
+                    rg_std::check_cancel!(self.cancellation, "current declaration selection");
+                }
+                let Some(impl_) = ast::Impl::cast(node) else {
+                    continue;
+                };
+                let contains_cursor = {
                     let span = Span::from_text_range(impl_.syntax().text_range());
                     if span.touches(offset) {
-                        return true;
+                        candidates.push(impl_);
+                        continue;
                     }
                     // At `impl Service for Worker { $0`, the parser can end the impl at `{`.
                     // Whitespace after an unclosed member list still belongs to that impl. Read
@@ -172,7 +192,13 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             .text()
                             .get(span.text.end as usize..)
                             .is_some_and(|tail| tail.chars().all(char::is_whitespace))
-                })
+                };
+                if contains_cursor {
+                    candidates.push(impl_);
+                }
+            }
+            let selected = candidates
+                .into_iter()
                 .min_by_key(|impl_| impl_.syntax().text_range().len());
             if let Some(impl_) = selected {
                 built
@@ -196,6 +222,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         .context("load saved impl definitions")?
                         .context("saved impl has no definition map")?;
                     for (impl_ref, data) in items.impls_with_refs() {
+                        rg_std::check_cancel!(self.cancellation, "saved impl identity");
                         let Some(local) = def_map.local_impl(data.local_impl.local_impl) else {
                             continue;
                         };
@@ -245,8 +272,10 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             cfg,
                             interner: &mut interner,
                             items: &mut items,
+                            cancellation: &self.cancellation,
                         }
-                        .impl_(&impl_, None);
+                        .impl_(&impl_, None)
+                        .context("collect current impl declarations")?;
                         // The impl and its member signatures need one declaration scope. There
                         // is no expression body or binding scope to lower for this context.
                         let scopes = [ScopeData {
@@ -259,7 +288,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             scopes: &scopes,
                             items: &items,
                         }
-                        .collect(body_ref, self.def_map)
+                        .collect(body_ref, self.def_map, &self.cancellation)
                         .context("collect current impl declarations")?;
                         let impl_ref = {
                             let mut impls = items.item_store().impls_with_refs();
@@ -319,6 +348,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
 
     /// No mutable preparation state reaches a query or a saved package artifact.
     pub fn finish(self) -> anyhow::Result<(CurrentSourceStore, CurrentSourceBuildSummary)> {
+        rg_std::check_cancel!(self.cancellation, "finish current preparation");
         self.current
             .validate()
             .context("validate current-source storage")?;

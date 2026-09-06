@@ -72,6 +72,7 @@ impl<'a, 'db, 'source> TraitImplCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
 
         for member in members {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             let (member_kind, kind, target) = match member.member() {
                 MissingTraitMemberRef::Function(function) => (
                     TraitImplMemberKind::Function,

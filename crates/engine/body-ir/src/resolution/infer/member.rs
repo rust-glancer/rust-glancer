@@ -7,6 +7,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FieldKey};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::OperationError;
 use rg_ty::Ty;
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
@@ -29,18 +30,21 @@ where
     }
 
     /// Project a field or index expression from its current base inference fact.
+    #[rg_std::cancelable("inference transfer", token = self.context)]
     pub(crate) fn project_expr(
         &self,
         inference: &mut BodyInferenceCtx,
         expr: ExprId,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), OperationError<PackageStoreError>> {
         let kind = self.context.body().expr_unchecked(expr).kind.clone();
         match kind {
             ExprKind::Field {
                 base: Some(base),
                 field: Some(field),
                 ..
-            } => self.project_field(inference, expr, base, &field),
+            } => self
+                .project_field(inference, expr, base, &field)
+                .map_err(OperationError::Source),
             ExprKind::Index {
                 base: Some(base), ..
             } => {

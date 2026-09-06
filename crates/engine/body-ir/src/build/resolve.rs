@@ -47,6 +47,7 @@ pub(super) fn resolve_selected_packages(
     publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
     worker_limit: Option<NonZeroUsize>,
     report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let declarations = TraitSelectionDeclarationCache::new();
@@ -91,37 +92,45 @@ pub(super) fn resolve_selected_packages(
     let total_packages = jobs.len();
     let completed_packages = AtomicUsize::new(0);
     let Some(priority_packages) = priority_packages else {
-        let resolved = thread_pool
-            .install(|| {
-                jobs.into_par_iter()
-                    .map(|(package_slot, parse_package, package, interner)| {
-                        let _profile_guard = profile_context.enter();
-                        let package = resolve_package(
-                            package_slot,
-                            parse_package,
-                            package,
-                            interner,
-                            def_map,
-                            semantic_ir,
-                            &declarations,
-                            &item_lookup_cache,
-                        )?;
-                        if let Some(report_progress) = report_progress {
-                            let completed_packages =
-                                completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
-                            report_progress(BodyIrBuildProgress::new(
-                                BodyIrBuildStage::Resolving,
-                                completed_packages,
-                                total_packages,
-                            ));
-                        }
-                        Ok((package_slot, package))
+        let resolved = thread_pool.install(|| {
+            jobs.into_par_iter()
+                .map(|(package_slot, parse_package, package, interner)| {
+                    let _profile_guard = profile_context.enter();
+                    let package = resolve_package(
+                        package_slot,
+                        parse_package,
+                        package,
+                        interner,
+                        def_map,
+                        semantic_ir,
+                        &declarations,
+                        &item_lookup_cache,
+                        cancellation,
+                    )?;
+                    if let Some(report_progress) = report_progress {
+                        let completed_packages =
+                            completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
+                        report_progress(BodyIrBuildProgress::new(
+                            BodyIrBuildStage::Resolving,
+                            completed_packages,
+                            total_packages,
+                        ));
+                    }
+                    Ok(ResolvedPackage {
+                        package: package_slot,
+                        bodies: package,
+                        priority_published: false,
                     })
-                    .collect::<anyhow::Result<Vec<_>>>()
-            })
-            .context("while attempting to resolve selected body IR packages")?;
+                })
+                .collect::<Vec<anyhow::Result<_>>>()
+        });
+        let resolved = ResolvedPackage::finish(resolved, cancellation)
+            .context("resolve selected body IR packages")?;
         record_lookup_cache_stats(&item_lookup_cache);
-        return Ok(resolved);
+        return Ok(resolved
+            .into_iter()
+            .map(|resolved| (resolved.package, resolved.bodies))
+            .collect());
     };
 
     // Rayon normally commits the entire indexed iterator to its work-stealing queues up front.
@@ -136,6 +145,9 @@ pub(super) fn resolve_selected_packages(
         for _ in 0..worker_count {
             scope.spawn(|_| {
                 loop {
+                    if cancellation.is_cancelled() {
+                        break;
+                    }
                     let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
                     ResolvedPackage::publish_resolved_priorities(
                         &resolved,
@@ -168,6 +180,7 @@ pub(super) fn resolve_selected_packages(
                             semantic_ir,
                             &declarations,
                             &item_lookup_cache,
+                            cancellation,
                         )?;
                         Ok(ResolvedPackage {
                             package: package_slot,
@@ -197,16 +210,20 @@ pub(super) fn resolve_selected_packages(
 
     // Capture a priority update that raced with the last worker returning. If it arrived any later,
     // the complete result is already about to be published through the ordinary final path.
-    let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
-    ResolvedPackage::publish_resolved_priorities(&resolved, &priorities, publish_priority);
-    let mut resolved = resolved
-        .into_inner()
-        .expect("Body IR package resolution results should not be poisoned")
-        .into_iter()
-        .collect::<anyhow::Result<Vec<_>>>()?
-        .into_iter()
-        .map(|resolved| (resolved.package, resolved.bodies))
-        .collect::<Vec<_>>();
+    if !cancellation.is_cancelled() {
+        let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
+        ResolvedPackage::publish_resolved_priorities(&resolved, &priorities, publish_priority);
+    }
+    let mut resolved = ResolvedPackage::finish(
+        resolved
+            .into_inner()
+            .expect("Body IR package resolution results should not be poisoned"),
+        cancellation,
+    )
+    .context("join body resolution workers")?
+    .into_iter()
+    .map(|resolved| (resolved.package, resolved.bodies))
+    .collect::<Vec<_>>();
     resolved.sort_by_key(|(package, _)| package.0);
 
     record_lookup_cache_stats(&item_lookup_cache);
@@ -230,6 +247,30 @@ struct ResolvedPackage {
 }
 
 impl ResolvedPackage {
+    /// All jobs have joined before this point. Preserve a real source failure even when a sibling
+    /// observed cancellation first; either outcome discards this build's replacement database.
+    fn finish(
+        results: Vec<anyhow::Result<Self>>,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<Self>> {
+        let mut completed = Vec::with_capacity(results.len());
+        let mut cancelled = None;
+        for result in results {
+            match result {
+                Ok(package) => completed.push(package),
+                Err(error) if error.chain().any(|cause| cause.is::<rg_std::Cancelled>()) => {
+                    cancelled.get_or_insert(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(error) = cancelled {
+            return Err(error);
+        }
+        rg_std::check_cancel!(cancellation, "join body resolution workers");
+        Ok(completed)
+    }
+
     /// Publish compact copies for packages that became editor priorities after resolving.
     fn publish_resolved_priorities(
         resolved: &Mutex<Vec<anyhow::Result<Self>>>,
@@ -262,6 +303,7 @@ impl ResolvedPackage {
 }
 
 #[allow(clippy::too_many_arguments)]
+#[rg_std::cancelable("resolve body package", token = cancellation)]
 fn resolve_package(
     package_slot: PackageSlot,
     parse_package: &rg_parse::Package,
@@ -271,6 +313,7 @@ fn resolve_package(
     semantic_ir: &SemanticIrReadTxn<'_>,
     declarations: &TraitSelectionDeclarationCache,
     item_lookup_cache: &ItemLookupQueryCache,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<PackageBodies> {
     let crate_count = package.len();
     let span = tracing::debug_span!(
@@ -285,6 +328,7 @@ fn resolve_package(
         .into_iter()
         .enumerate()
         .map(|(crate_idx, crate_bodies)| {
+            rg_std::check_cancel!(cancellation, "resolve body crate");
             let coverage = crate_bodies.coverage();
             if !coverage.is_materialized() {
                 return Ok(CrateBodies::empty(coverage));
@@ -295,12 +339,14 @@ fn resolve_package(
                 crate_id: CrateId(crate_idx),
             };
 
-            CrateBodyBuildState::new(crate_ref, parse_package, crate_bodies, interner).resolve(
-                def_map_txn,
-                semantic_ir,
-                declarations,
-                item_lookup_cache,
+            CrateBodyBuildState::new(
+                crate_ref,
+                parse_package,
+                crate_bodies,
+                interner,
+                cancellation.clone(),
             )
+            .resolve(def_map_txn, semantic_ir, declarations, item_lookup_cache)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 

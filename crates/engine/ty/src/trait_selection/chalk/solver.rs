@@ -459,11 +459,17 @@ impl ChalkTraitSolver {
         else {
             return Ok(item_lookup
                 .trait_impls_for_trait(application.def)
+                .ok()
+                .flatten()
                 .map_or(0, |impls| impls.len()));
         };
-        let candidates = item_lookup
+        let Ok(candidates) = item_lookup
             .trait_impl_candidates_for_self_head(application.def, self_head.impl_lookup_head())
-            .unwrap_or_default();
+        else {
+            // No admission on cancellation; consume_work also rejects the cancelled session.
+            return Ok(SPECULATIVE_ROOT_IMPL_BUDGET + 1);
+        };
+        let candidates = candidates.unwrap_or_default();
         let candidate_count = candidates.len();
         if candidate_count > SPECULATIVE_ROOT_IMPL_BUDGET {
             return Ok(candidate_count);

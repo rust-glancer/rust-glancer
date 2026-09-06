@@ -118,6 +118,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     }
 
     /// Converts one matched source occurrence into the concrete source edit for its spelling.
+    #[rg_std::cancelable("rename edit collection", token = self.analysis)]
     fn rename_edit_for_symbol(
         &self,
         symbol: SourceSymbol,
@@ -362,6 +363,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             SourceSymbolResolver::new(self.analysis.view_db()).declarations_for_symbol(symbol)?;
         let mut unique = Vec::new();
         for declaration in declarations {
+            rg_std::check_cancel!(self.analysis, "rename edits");
             if !unique.contains(&declaration) {
                 unique.push(declaration);
             }

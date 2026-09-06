@@ -29,7 +29,6 @@ use rg_ir_model::{
     CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, Path,
 };
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 
@@ -170,16 +169,17 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureCompletionSite>> {
         Self::completion_site_at_origin(db, DefMapRef::Crate(crate_ref), file_id, offset)
     }
 
+    #[rg_std::cancelable("signature shard", token = db)]
     pub(crate) fn completion_site_at_origin(
         db: &'view IndexedViewDb<'db>,
         origin: DefMapRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureCompletionSite>> {
         let Some(items) = db.item_store_for_origin(origin)? else {
             return Ok(None);
         };
@@ -203,7 +203,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureCompletionSite>> {
         Self::implicit_associated_type_binding_site_at_origin(
             db,
             DefMapRef::Crate(crate_ref),
@@ -212,12 +212,13 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         )
     }
 
+    #[rg_std::cancelable("signature shard", token = db)]
     pub(crate) fn implicit_associated_type_binding_site_at_origin(
         db: &'view IndexedViewDb<'db>,
         origin: DefMapRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureCompletionSite>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureCompletionSite>> {
         let Some(items) = db.item_store_for_origin(origin)? else {
             return Ok(None);
         };
@@ -241,16 +242,17 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureTypePathScope>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureTypePathScope>> {
         Self::empty_type_scope_at_origin(db, DefMapRef::Crate(crate_ref), file_id, offset)
     }
 
+    #[rg_std::cancelable("signature shard", token = db)]
     pub(crate) fn empty_type_scope_at_origin(
         db: &'view IndexedViewDb<'db>,
         origin: DefMapRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<SignatureTypePathScope>, PackageStoreError> {
+    ) -> anyhow::Result<Option<SignatureTypePathScope>> {
         let Some(items) = db.item_store_for_origin(origin)? else {
             return Ok(None);
         };
@@ -310,7 +312,7 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
     }
 
     /// Collect the source facts owned by each semantic item family in the selected store.
-    pub(crate) fn scan(self) -> Result<Vec<SignatureSourceCandidate>, PackageStoreError> {
+    pub(crate) fn scan(self) -> anyhow::Result<Vec<SignatureSourceCandidate>> {
         let Some(items) = self.db.item_store_for_origin(self.origin)? else {
             return Ok(Vec::new());
         };

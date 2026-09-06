@@ -90,6 +90,7 @@ impl<'a, 'db, 'source> ConstExpressionCompletionResolver<'a, 'db, 'source> {
             let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
                 .context("create const completion renderer")?;
             for candidate in candidates {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 if !candidate.label().starts_with(prefix.text())
                     || !matches!(
                         candidate.kind(),
