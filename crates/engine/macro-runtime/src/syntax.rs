@@ -1,6 +1,6 @@
 //! Shared syntax helpers for declarative macro expansion call sites.
 
-use rg_parse::{FileId, Span};
+use rg_ir_model::{FileId, Span};
 use rg_text::RustEdition;
 use rg_tt::{Edition, Span as TtSpan, syntax_bridge::SpanFactory};
 

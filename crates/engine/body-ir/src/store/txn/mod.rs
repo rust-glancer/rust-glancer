@@ -23,10 +23,8 @@ mod loader;
 use std::sync::Arc;
 
 use rg_def_map::DefMap;
-use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, FileId, PackageSlot, Span};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_semantic_ir::ItemStore;
 
 use self::lazy::{LazyPackage, PackageReadEntry};
@@ -113,7 +111,7 @@ impl<'db> BodyIrReadTxn<'db> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
-        span: rg_parse::Span,
+        span: Span,
     ) -> Option<rg_ir_model::ImplRef> {
         self.current.selected_impl(crate_ref, file, span)
     }

@@ -1,4 +1,4 @@
-use rg_ir_model::{CrateRef, PackageSlot, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, PackageSlot, Span, identity::DeclarationRef};
 
 use crate::source::{
     IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView,
@@ -90,8 +90,8 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
 }
 
-fn render_span(span: rg_parse::Span, line_index: &rg_parse::LineIndex) -> String {
-    let line_column = span.line_column(line_index);
+fn render_span(span: Span, line_index: &rg_parse::LineIndex) -> String {
+    let line_column = line_index.line_column_span(span);
     format!(
         "{}:{}-{}:{}",
         line_column.start.line + 1,

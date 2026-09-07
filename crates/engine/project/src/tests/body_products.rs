@@ -3,8 +3,7 @@
 use std::fs;
 
 use rg_body_ir::{BodyIrLoader, CrateBodiesCoverage};
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 use rg_std::CancellationToken;
 
 use crate::{

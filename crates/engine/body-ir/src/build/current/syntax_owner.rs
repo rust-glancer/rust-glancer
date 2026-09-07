@@ -5,7 +5,8 @@
 //! the selected body still belongs to a saved declaration; the parent builder does that after
 //! syntax selection is complete.
 
-use rg_parse::{Span, enclosing_inline_module_path};
+use rg_ir_model::Span;
+use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 

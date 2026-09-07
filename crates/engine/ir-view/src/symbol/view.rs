@@ -6,10 +6,9 @@ use anyhow::{Context as _, Result};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FieldKey,
-    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TypeAliasRef,
-    TypeDefId, TypeDefRef, identity::DeclarationRef,
+    FileId, FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, Span,
+    TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use crate::{

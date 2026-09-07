@@ -1,6 +1,6 @@
 //! Selection and progress for current-source preparation.
 
-use rg_parse::TextSpan;
+use rg_ir_model::TextSpan;
 
 /// Why selected current source could not be given a semantic context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]

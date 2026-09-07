@@ -15,11 +15,10 @@
 
 use std::fmt;
 
-use rg_parse::Span;
+use rg_ir_model::{CrateRef, Path, PathRoot, Span};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{CrateRef, Path, PathRoot};
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef};
 use rg_std::{MemorySize, Shrink};
 
@@ -426,7 +425,7 @@ impl fmt::Display for BodyPathSegmentArgs {
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::{Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
     use rg_text::Name;
 
     use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};

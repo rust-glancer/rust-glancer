@@ -19,8 +19,7 @@
 
 use anyhow::Context as _;
 use rg_arena::{Arena, ArenaId as _};
-use rg_ir_model::{BodyId, CrateId};
-use rg_parse::FileId;
+use rg_ir_model::{BodyId, CrateId, FileId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

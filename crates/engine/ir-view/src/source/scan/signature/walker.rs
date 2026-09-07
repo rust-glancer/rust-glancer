@@ -6,11 +6,10 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ItemOwner,
-    StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, ItemOwner,
+    Span, StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStore, ItemStoreQuery, TypePathContext};
 
 use super::{SignatureSourceCandidate, SignatureTypePathScope, collector::SignatureScanCollector};

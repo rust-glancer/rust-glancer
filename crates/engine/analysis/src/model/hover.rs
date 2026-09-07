@@ -1,5 +1,5 @@
+use rg_ir_model::Span;
 use rg_ir_view::SymbolKind;
-use rg_parse::Span;
 
 /// Markdown-ready hover payload independent from LSP transport types.
 #[derive(Debug, Clone, PartialEq, Eq)]

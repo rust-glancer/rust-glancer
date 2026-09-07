@@ -7,9 +7,10 @@
 use std::path::{Component, Path};
 
 use rg_cfg_eval::CfgOptions;
+use rg_ir_model::PackageSlot;
 use rg_std::{MemorySize, NativeOsString};
 use rg_text::RustEdition;
-use rg_workspace::{PackageSlot, PackageSource, TargetKind};
+use rg_workspace::{PackageSource, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};

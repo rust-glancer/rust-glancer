@@ -1,10 +1,8 @@
-use rg_ir_model::{FieldKey, Path};
 use rg_ir_model::{
-    ModuleRef,
+    FieldKey, ModuleRef, Path, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_view::source::IndexedTypePath;
-use rg_parse::Span;
 
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]

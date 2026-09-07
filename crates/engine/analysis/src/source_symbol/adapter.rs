@@ -1,8 +1,7 @@
 //! Adapter from indexed source occurrences into analysis cursor symbols.
 
-use rg_ir_model::{CrateRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
 use rg_ir_view::source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface};
-use rg_parse::{FileId, Span};
 
 use crate::model::SymbolAt;
 

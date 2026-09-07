@@ -1,6 +1,5 @@
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::SymbolKind;
-use rg_parse::{FileId, Span};
 
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]

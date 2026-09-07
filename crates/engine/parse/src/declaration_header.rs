@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, SourceFile, SyntaxKind, SyntaxNode, SyntaxToken, TextSize, ast};
 
-use crate::Span;
+use rg_ir_model::Span;
 
 /// One declaration header together with the declaration headers around it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

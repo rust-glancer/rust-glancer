@@ -2,9 +2,8 @@
 
 use rg_ir_model::{
     EnumVariantFieldRef, EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef,
-    PrimitiveTy, SemanticItemKind, TraitApplicability, identity::DeclarationRef,
+    PrimitiveTy, SemanticItemKind, Span, TraitApplicability, identity::DeclarationRef,
 };
-use rg_parse::Span;
 
 /// One completion row produced from a frozen analysis snapshot.
 ///

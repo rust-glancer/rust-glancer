@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
 use rg_parse::ParseDb;
 use rg_std::{MemorySize, UniqueVec};
@@ -101,8 +100,7 @@ impl PhasePackageSet {
 
 #[cfg(test)]
 mod tests {
-    use rg_def_map::PackageSlot;
-    use rg_ir_model::{CrateId, CrateRef};
+    use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 
     use super::PhasePackageSet;
 

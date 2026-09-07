@@ -2,9 +2,7 @@ use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use test_fixture::fixture_path_for_snapshot;
 
 use crate::{

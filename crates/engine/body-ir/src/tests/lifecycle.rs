@@ -1,5 +1,4 @@
-use rg_def_map::PackageSlot;
-use rg_ir_model::{CrateId, CrateRef, ExprId};
+use rg_ir_model::{CrateId, CrateRef, ExprId, PackageSlot};
 use rg_ty::{ConstValue, GenericArg};
 
 use crate::ExprKind;

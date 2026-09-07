@@ -10,12 +10,11 @@
 
 use std::sync::{Arc, OnceLock};
 
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 
 use super::DefMapLoader;
-use crate::{CrateData, PackageDefMaps, PackageDefMapsManifest, PackageSlot};
+use crate::{CrateData, PackageDefMaps, PackageDefMapsManifest};
 
 /// How one package slot participates in a DefMap read transaction.
 #[derive(Debug, Clone)]

@@ -1,10 +1,9 @@
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, Span, TextSpan};
 use rg_ir_view::{
     SymbolKind,
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
     display::syntax::SyntaxRenderer,
 };
-use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
     Analysis,

@@ -1,7 +1,6 @@
 //! Goto-type-definition query flow.
 
-use rg_ir_model::{CrateRef, identity::DeclarationRef};
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
 
 use super::target::NavigationTargetProjection;
 use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolver};

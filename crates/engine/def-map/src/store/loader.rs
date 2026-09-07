@@ -5,10 +5,10 @@
 
 use std::sync::Arc;
 
-use rg_ir_model::CrateId;
+use rg_ir_model::{CrateId, PackageSlot};
 use rg_package_store::PackageStoreError;
 
-use crate::{CrateData, PackageDefMapsManifest, PackageSlot};
+use crate::{CrateData, PackageDefMapsManifest};
 
 /// Loads the independently stored parts of an offloaded DefMap package.
 ///

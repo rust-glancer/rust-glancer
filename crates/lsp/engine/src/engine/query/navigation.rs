@@ -9,10 +9,8 @@ use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
-use rg_parse::FileId;
 use rg_project::{DocumentSourceView, ProjectSnapshot};
 use rg_std::UniqueVec;
 

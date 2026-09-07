@@ -5,12 +5,11 @@
 //! or `type Output`; this module turns those into completion details and insertable Rust source.
 
 use anyhow::Context as _;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
     source::SourceCompletionView,
     trait_impl::{MissingTraitMember, MissingTraitMemberScaffold, TraitImplView},
 };
-use rg_parse::{FileId, Span};
 use rg_syntax::{AstNode as _, ast};
 
 use crate::Analysis;

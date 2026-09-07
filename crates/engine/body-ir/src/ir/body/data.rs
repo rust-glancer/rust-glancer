@@ -314,10 +314,9 @@ fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<Bind
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::{FileId, Span, TextSpan};
-
     use rg_ir_model::{
-        CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ModuleId, ModuleRef, PackageSlot,
+        CrateId, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ModuleId, ModuleRef,
+        PackageSlot, Span, TextSpan,
     };
 
     use crate::{

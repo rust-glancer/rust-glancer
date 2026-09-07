@@ -25,8 +25,8 @@ use rayon::prelude::*;
 
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, StaticRef};
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, PackageSlot, StaticRef};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};

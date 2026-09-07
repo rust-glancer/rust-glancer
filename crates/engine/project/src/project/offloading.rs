@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_std::Shrink;
 
 use crate::{

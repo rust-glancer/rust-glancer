@@ -1,9 +1,8 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::{ScopeId, Span};
 use rg_text::Name;
 
-use rg_ir_model::ScopeId;
 use rg_item_tree::{SelfParamKind, TypeRef};
 use rg_std::{MemorySize, Shrink};
 

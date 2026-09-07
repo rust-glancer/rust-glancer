@@ -1,5 +1,4 @@
-use rg_ir_model::CrateRef;
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, FileId, Span};
 
 /// Source span that can be renamed from a selected cursor position.
 #[derive(Debug, Clone, PartialEq, Eq)]

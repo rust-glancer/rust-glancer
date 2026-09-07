@@ -1,7 +1,7 @@
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::Span;
 use rg_text::Name;
 
 /// A loop label written on loop-like syntax or referenced from a jump expression.

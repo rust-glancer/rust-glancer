@@ -1,7 +1,7 @@
 use crate::ItemStore;
+use rg_def_map::DefMap;
 use rg_def_map::testonly::DefMapFixture;
-use rg_def_map::{DefMap, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 

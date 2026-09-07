@@ -9,10 +9,10 @@ use anyhow::Context as _;
 use rg_body_ir::{BindingKind, ExprKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FunctionRef, GenericDefRef,
-    ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FileId, FunctionRef,
+    GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span, TextSpan,
+    identity::DeclarationRef,
 };
-use rg_parse::{FileId, Span, TextSpan};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 

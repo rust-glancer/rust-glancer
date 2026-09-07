@@ -5,10 +5,10 @@
 //! and uses only the enclosing module path to select the matching saved module.
 
 use rg_def_map::{DefMapReadTxn, ImportPath};
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId};
 use rg_item_tree::{FromAst as _, ImportAlias, UseItem};
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, enclosing_inline_module_path};
+use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode as _, SourceFile, TextSize, ast};
 use rg_text::NameInterner;
 

@@ -17,7 +17,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
-use rg_def_map::PackageSlot;
+use rg_ir_model::{PackageSlot, Span, TextSpan};
 use rg_source::CapturedSource;
 use rg_std::MemorySize as _;
 
@@ -205,8 +205,8 @@ pub struct Published;
         .file_text_for_span(
             PackageSlot(0),
             file_id,
-            rg_parse::Span {
-                text: rg_parse::TextSpan { start: 0, end: 21 },
+            Span {
+                text: TextSpan { start: 0, end: 21 },
             },
         )
         .expect("published source should load after rejected candidate")
@@ -306,8 +306,8 @@ pub struct Published;
         .file_text_for_span(
             PackageSlot(0),
             file_id,
-            rg_parse::Span {
-                text: rg_parse::TextSpan { start: 0, end: 21 },
+            Span {
+                text: TextSpan { start: 0, end: 21 },
             },
         )
         .expect("published source should load after rejected proposal")

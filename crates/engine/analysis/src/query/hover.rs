@@ -1,12 +1,11 @@
 //! Builds hover payloads from resolved analysis declarations.
 
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId};
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
     ty::IndexedType,
 };
-use rg_parse::FileId;
 
 use crate::{
     Analysis, SymbolKind,

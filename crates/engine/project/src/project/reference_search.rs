@@ -11,8 +11,7 @@
 
 use anyhow::Context as _;
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_std::UniqueVec;
 
 use super::{state::ProjectState, subset};

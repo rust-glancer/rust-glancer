@@ -3,14 +3,14 @@
 mod closing_brace;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, PackageSlot};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span, TextSpan};
 use rg_ir_view::{
     body::BodyStructureView,
     display::ty_label::TypeRenderer,
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::{CurrentSource, FileId, Span, TextSpan};
+use rg_parse::CurrentSource;
 use rg_std::UniqueVec;
 
 use crate::{
@@ -252,8 +252,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     fn should_show_method_chain_expr_hint(
         &self,
         file_id: FileId,
-        expr_span: rg_parse::Span,
-        parent_dot_span: rg_parse::Span,
+        expr_span: Span,
+        parent_dot_span: Span,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<bool> {
         let expr_end_offset = expr_span.text.end.saturating_sub(1);

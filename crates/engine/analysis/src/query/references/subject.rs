@@ -10,13 +10,12 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{DefMapRef, identity::DeclarationRef};
+use rg_ir_model::{DefMapRef, FileId, Span, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceSurface, SourceOccurrenceView},
 };
-use rg_parse::{FileId, Span};
 use rg_std::UniqueVec;
 
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};

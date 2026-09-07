@@ -12,6 +12,7 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 rg_cfg_eval.workspace = true
+rg_ir_model.workspace = true
 rg_source.workspace = true
 rg_syntax.workspace = true
 wincode.workspace = true

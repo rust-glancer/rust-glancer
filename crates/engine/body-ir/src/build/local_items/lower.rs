@@ -1,10 +1,11 @@
 //! Signature lowering shared by body-local items and selected current declarations.
 
+use rg_ir_model::Span;
 use rg_item_tree::{
     ConstItem, Documentation, FromAst as _, FunctionItem, ItemKind, ItemNode, MaybeFromAst,
     OuterDocs, StaticItem, TypeAliasItem, VisibilityLevel,
 };
-use rg_parse::{LineIndex, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _, HasVisibility as _},

@@ -2,7 +2,7 @@ use crate::item::{
     ExternCrateItem, ImportAlias, MacroUseAttr, UseImport, UseImportKind, UseItem, UsePath,
     UsePathSegment, UsePathSegmentKind,
 };
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Span, TextSpan};
 use rg_syntax::{
     AstNode as _, SyntaxKind, algo,
     ast::{self, HasName},

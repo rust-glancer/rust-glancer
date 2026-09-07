@@ -5,11 +5,10 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId,
+    BodyRef, CrateRef, DefMapRef, FileId, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId,
     LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
-use rg_parse::FileId;
 
 use crate::{
     ItemSource,

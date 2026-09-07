@@ -16,7 +16,7 @@
 //! require the receiver to infer as `bool`.
 
 use anyhow::Context as _;
-use rg_ir_model::PrimitiveTy;
+use rg_ir_model::{PrimitiveTy, Span, TextSpan};
 
 use crate::{
     Analysis,
@@ -71,14 +71,14 @@ impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
         let Some(receiver) = syntax.source_text(receiver_span) else {
             return Ok(Vec::new());
         };
-        let replace = rg_parse::Span {
-            text: rg_parse::TextSpan {
+        let replace = Span {
+            text: TextSpan {
                 start: receiver_span.text.start,
                 end: site.replace_span().text.end,
             },
         };
-        let between = rg_parse::Span {
-            text: rg_parse::TextSpan {
+        let between = Span {
+            text: TextSpan {
                 start: receiver_span.text.end,
                 end: site.replace_span().text.start,
             },

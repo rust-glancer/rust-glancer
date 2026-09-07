@@ -4,8 +4,7 @@
 //! data. Once that decision reaches this crate, the question is narrower: which crates and files
 //! should this build lower, and what coverage should each resulting crate report?
 
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 use rg_std::UniqueVec;
 
 use crate::{BodyIrBuildPolicy, BodyIrFile, CrateBodiesCoverage};

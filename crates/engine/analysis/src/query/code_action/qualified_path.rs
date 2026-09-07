@@ -18,7 +18,7 @@
 //! targets for this action.
 
 use anyhow::Context as _;
-use rg_ir_model::{GenericDefRef, identity::DeclarationRef};
+use rg_ir_model::{GenericDefRef, Span, TextSpan, identity::DeclarationRef};
 use rg_ir_view::{
     SymbolKind,
     display::syntax::SyntaxRenderer,
@@ -30,7 +30,6 @@ use rg_ir_view::{
     source::{IndexedQualifiedPathScope, IndexedSourceSurface},
     ty::locals::{BodyLexicalName, BodyNameScope, BodyView},
 };
-use rg_parse::{Span, TextSpan};
 use rg_syntax::{AstNode as _, ast};
 
 use crate::{

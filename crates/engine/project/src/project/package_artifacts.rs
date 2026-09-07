@@ -8,7 +8,8 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_body_ir::BodyIrDb;
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::DefMapDb;
+use rg_ir_model::PackageSlot;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 

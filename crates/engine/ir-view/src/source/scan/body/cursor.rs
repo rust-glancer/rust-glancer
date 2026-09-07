@@ -17,11 +17,10 @@
 
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef,
-    TypeDefId,
+    BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
+    SemanticItemRef, Span, TypeDefId,
 };
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span};
 
 use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
 

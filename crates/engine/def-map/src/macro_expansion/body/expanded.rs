@@ -1,5 +1,4 @@
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef};
-use rg_parse::Span;
+use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, Span};
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_tt::syntax_bridge::ExpansionSpanMap;
 

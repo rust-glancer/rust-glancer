@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, fs};
 
 use expect_test::expect;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 
 use super::utils::{
     assert_reader_matches_resident_package, package_cache_header, package_cache_header_for,

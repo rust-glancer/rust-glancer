@@ -10,10 +10,10 @@ use std::{
 
 use rg_analysis::{Analysis, SavedSourceView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
-use rg_ir_model::{CrateId, CrateRef};
+use rg_def_map::{DefMapDb, DefMapReadTxn};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_package_store::{PackageStoreError, PackageSubset};
-use rg_parse::{FileId, ParseDb};
+use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};

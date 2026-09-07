@@ -6,8 +6,8 @@
 //! pre-`=` binding without erasing its primary meaning as a type argument. Keeping these policies
 //! separate leaves the walker independent of a runtime scan mode.
 
+use rg_ir_model::{FileId, Span};
 use rg_item_tree::TypePath;
-use rg_parse::{FileId, Span};
 
 use super::{SignatureCompletionSite, SignatureSourceCandidate, SignatureTypePathScope};
 use crate::source::scan::{

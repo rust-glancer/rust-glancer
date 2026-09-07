@@ -11,9 +11,8 @@ description.workspace = true
 
 [dependencies]
 derive_more = { workspace = true, features = ["display", "from"] }
+text-size.workspace = true
 wincode.workspace = true
 rg_arena.workspace = true
 rg_std.workspace = true
-rg_parse.workspace = true
-rg_workspace.workspace = true
 rg_text.workspace = true

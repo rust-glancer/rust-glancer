@@ -1,5 +1,6 @@
 use rg_arena::Arena;
-use rg_parse::{CargoTargetId, FileId};
+use rg_ir_model::FileId;
+use rg_parse::CargoTargetId;
 use rg_std::{MemorySize, Shrink};
 
 use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};

@@ -13,8 +13,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use rg_body_ir::{CrateBodies, PackageBodiesCoverage};
-use rg_def_map::PackageSlot;
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 use rg_std::Shrink;
 use std::sync::Arc;

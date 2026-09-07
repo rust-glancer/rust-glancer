@@ -70,7 +70,8 @@ pub(crate) fn code_action(
 mod tests {
     use ls_types::{DocumentChanges, OneOf};
     use rg_analysis::{CodeAction, CodeActionEdit, CodeActionKind};
-    use rg_parse::{LineIndex, Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
+    use rg_parse::LineIndex;
     use test_fixture::synthetic_test_path;
 
     use super::code_action;

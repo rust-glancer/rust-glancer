@@ -5,9 +5,8 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{CrateRef, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
 use rg_ir_view::IndexedViewDb;
-use rg_parse::FileId;
 use rg_std::UniqueVec;
 
 use crate::{

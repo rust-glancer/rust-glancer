@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::file::FileId;
 use rg_arena::ArenaId;
+use rg_ir_model::FileId;
 use rg_std::{MemorySize, Shrink};
 use rg_workspace::TargetKind;
 use wincode::{SchemaRead, SchemaWrite};

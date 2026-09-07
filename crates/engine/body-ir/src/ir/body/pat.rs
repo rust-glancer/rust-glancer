@@ -1,8 +1,7 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, Span};
 
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId};
 use rg_std::{MemorySize, Shrink};
 
 use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};

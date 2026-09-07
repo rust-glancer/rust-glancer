@@ -11,9 +11,8 @@
 //! user.name($0) not a dot-completion site: the cursor is inside the arguments
 //! ```
 
-use rg_ir_model::{CrateRef, ExprId};
+use rg_ir_model::{CrateRef, ExprId, FileId, Span, TextSpan};
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span, TextSpan};
 
 use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
 

@@ -1,6 +1,5 @@
-use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId};
+use rg_ir_model::{FileId, ImportId, LocalDefId, LocalImplId, ModuleId, Span};
 use rg_item_tree::{Documentation, UserFacingAttrs};
-use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};

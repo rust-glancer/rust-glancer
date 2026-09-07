@@ -5,7 +5,8 @@ mod lower;
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapLoader, GeneratedItemStores, PackageSlot};
+use rg_def_map::{DefMapLoader, GeneratedItemStores};
+use rg_ir_model::PackageSlot;
 use rg_package_store::PackageSubset;
 
 use crate::{SemanticIrDb, SemanticIrLoader};

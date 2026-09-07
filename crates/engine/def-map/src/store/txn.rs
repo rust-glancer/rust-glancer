@@ -8,13 +8,11 @@
 use std::sync::Arc;
 
 use crate::{CrateData, CrateDefMapManifest, DefMap, DefMapSource, ModuleOrigin, PackageDefMaps};
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, FileId, ModuleRef, PackageSlot};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::{DefMapLoader, lazy::PackageReadEntry};
-use crate::PackageSlot;
 
 /// Read-only DefMap access for one query transaction.
 ///

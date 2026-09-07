@@ -1,7 +1,6 @@
 //! Body IR package store and transaction entry points.
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::MemorySize;
 
@@ -199,8 +198,7 @@ impl BodyIrDb {
 #[cfg(test)]
 mod tests {
     use rg_arena::Arena;
-    use rg_def_map::PackageSlot;
-    use rg_ir_model::{CrateId, CrateRef};
+    use rg_ir_model::{CrateId, CrateRef, PackageSlot};
     use rg_package_store::{PackageEntry, PackageStore};
 
     use crate::{BodyIrDb, CrateBodies, CrateBodiesCoverage, PackageBodies};

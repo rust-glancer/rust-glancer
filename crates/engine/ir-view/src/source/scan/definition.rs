@@ -13,9 +13,9 @@
 use crate::IndexedViewDb;
 use anyhow::Context as _;
 use rg_def_map::{DefMap, ModuleOrigin};
-use rg_ir_model::Path;
-use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{
+    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Path, Span,
+};
 
 /// One module-scope source node that can become an indexed occurrence.
 ///

@@ -5,9 +5,8 @@
 //! active request by looking at the written expressions that enclose the cursor.
 
 use rg_body_ir::{BodyIrReadTxn, ExprKind};
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_std::UniqueVec;
 
 /// Finds the jump targets visible from one `break` or `continue` position.

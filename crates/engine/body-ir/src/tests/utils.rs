@@ -12,7 +12,8 @@ use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
     FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
-    PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
+    PackageSlot, PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef,
+    identity::DeclarationRef,
 };
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -81,7 +82,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                         CrateBodyIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
-                                package: rg_def_map::PackageSlot(package_slot),
+                                package: PackageSlot(package_slot),
                                 crate_id: rg_ir_model::CrateId(target.id.0),
                             },
                             target_name: &target.name,
@@ -108,7 +109,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
                         CrateBodyIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
-                                package: rg_def_map::PackageSlot(package_slot),
+                                package: PackageSlot(package_slot),
                                 crate_id: rg_ir_model::CrateId(target.id.0),
                             },
                             target_name: &target.name,
@@ -1620,16 +1621,16 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source(&self, source: BodySource) -> String {
-        let line_column = source.span.line_column(
-            self.project
-                .parse_db()
-                .package(self.crate_ref.package.0)
-                .expect("source package should exist while rendering body IR source")
-                .parsed_file(source.file_id)
-                .expect("source file should exist while rendering body IR source")
-                .line_index()
-                .expect("source file line index should load while rendering body IR source"),
-        );
+        let line_column = self
+            .project
+            .parse_db()
+            .package(self.crate_ref.package.0)
+            .expect("source package should exist while rendering body IR source")
+            .parsed_file(source.file_id)
+            .expect("source file should exist while rendering body IR source")
+            .line_index()
+            .expect("source file line index should load while rendering body IR source")
+            .line_column_span(source.span);
         format!(
             "{}:{}-{}:{}",
             line_column.start.line + 1,

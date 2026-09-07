@@ -1,7 +1,6 @@
 //! Records which crates and source files already have body analysis.
 
-use rg_ir_model::CrateId;
-use rg_parse::FileId;
+use rg_ir_model::{CrateId, FileId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 

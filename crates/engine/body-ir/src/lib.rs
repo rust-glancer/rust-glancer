@@ -7,8 +7,7 @@ mod store;
 #[doc(hidden)]
 pub mod testonly;
 
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 
 pub use self::profile::profile_descriptors;
 pub(crate) use self::store::CurrentBody;

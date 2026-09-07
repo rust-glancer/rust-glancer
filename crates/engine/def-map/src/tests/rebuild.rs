@@ -7,11 +7,11 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 
 use crate::{
     CrateData, DefMapBuildProgress, DefMapDb, DefMapLoader, LoadDefMap, PackageDefMaps,
-    PackageDefMapsManifest, PackageSlot,
+    PackageDefMapsManifest,
 };
 
 #[test]

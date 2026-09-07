@@ -2,8 +2,8 @@ use rg_body_ir::{BodyIrLoader, BodyOwner, BodyView, ExprData, testonly::BodyIrFi
 use rg_def_map::DefMap;
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
-    BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FunctionRef, GenericParamRef, ItemOwner,
-    ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
+    BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId, FunctionRef, GenericParamRef,
+    ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
 };
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
@@ -116,7 +116,7 @@ impl ViewFixture {
             .collect()
     }
 
-    pub fn crate_owns_file(&self, crate_ref: CrateRef, file_id: rg_parse::FileId) -> bool {
+    pub fn crate_owns_file(&self, crate_ref: CrateRef, file_id: FileId) -> bool {
         self.resident_def_map(crate_ref).is_some_and(|def_map| {
             def_map
                 .modules()

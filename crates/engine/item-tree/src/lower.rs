@@ -16,7 +16,8 @@ use rg_syntax::{
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 
-use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage, Span as ParseSpan};
+use rg_ir_model::{FileId, Span};
+use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage};
 use rg_text::{Name, NameInterner};
 use rg_tt::{
     Span as TtSpan,
@@ -1005,12 +1006,12 @@ impl<'a> FileTreeBuilder<'a> {
         result
     }
 
-    fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> ParseSpan {
+    fn source_span_for_range(&self, range: rg_syntax::TextRange) -> Span {
         self.span_map
             .as_ref()
             .and_then(|span_map| span_map.span_for_range(range))
-            .map(|span| ParseSpan::from_text_range(span.range))
-            .unwrap_or_else(|| ParseSpan::from_text_range(range))
+            .map(|span| Span::from_text_range(span.range))
+            .unwrap_or_else(|| Span::from_text_range(range))
     }
 
     fn tt_span_for_range(&self, range: rg_syntax::TextRange, edition: rg_tt::Edition) -> TtSpan {
@@ -1076,10 +1077,10 @@ impl<'a> FileTreeBuilder<'a> {
         self.items.alloc(ItemNode::new(
             kind,
             name,
-            name_range.map(|range| self.parse_span_for_range(range)),
+            name_range.map(|range| self.source_span_for_range(range)),
             visibility,
             docs,
-            self.parse_span_for_range(text_range),
+            self.source_span_for_range(text_range),
             self.current_file_id,
         ))
     }

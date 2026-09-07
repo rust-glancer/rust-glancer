@@ -5,9 +5,8 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
-use rg_ir_model::{PrimitiveTy, UnsignedIntTy};
+use rg_ir_model::{FileId, PrimitiveTy, Span, UnsignedIntTy};
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
-use rg_parse::{FileId, Span};
 use rg_text::Name;
 
 use crate::ir::{

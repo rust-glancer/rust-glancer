@@ -1,4 +1,4 @@
-//! Shared identities and small language primitives for the indexed IR layers.
+//! Shared identities, byte spans, and small language primitives for the indexed IR layers.
 //!
 //! This crate deliberately owns no item or body HIR. It only contains stable routing references
 //! and context-free Rust primitives needed below more than one owning domain. Item syntax belongs
@@ -13,6 +13,7 @@ mod mutability;
 mod operator;
 pub mod path;
 mod primitive;
+mod span;
 
 pub use self::ids::{
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
@@ -21,6 +22,7 @@ pub use self::ids::{
         LocalEnumVariantId, LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
     },
     identity,
+    package::{FileId, PackageSlot},
     semantic::{
         AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantFieldRef, EnumVariantRef,
         FieldRef, FunctionId, FunctionRef, GenericDefRef, GenericParamRef, ImplId, ImplRef, ItemId,
@@ -39,9 +41,8 @@ pub use self::{
     literal::LiteralKind,
     operator::{ExprBinaryOp, ExprUnaryOp},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
+    span::{Span, TextSpan},
 };
-pub use rg_parse::{FileId, Span, TextSpan};
-pub use rg_workspace::PackageSlot;
 
 // We have a lot of arenas, and each has to have a unique ID.
 // This macro takes care of boilerplate.

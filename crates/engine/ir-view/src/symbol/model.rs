@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use rg_parse::{FileId, Span};
+use rg_ir_model::{FileId, Span};
 
 use crate::item::declaration::Declaration;
 

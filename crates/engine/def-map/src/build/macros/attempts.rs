@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 
 use crate::{CrateResolutionEnv, MacroDefinitionEnv};
-use rg_ir_model::{CrateRef, Path};
+use rg_ir_model::{CrateRef, FileId, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_item_tree::{
     BuiltinMacroItem, CfgSelectArmPayload, IncludePathExpression, ItemTreeDb, ItemTreeId,
@@ -18,7 +18,6 @@ use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
     MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
 };
-use rg_parse::FileId;
 use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 

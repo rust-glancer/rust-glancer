@@ -4,8 +4,7 @@ mod syntax;
 mod workspace;
 
 use anyhow::Result;
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 
 use crate::{
     Analysis,

@@ -14,9 +14,9 @@ use crate::IndexedViewDb;
 use anyhow::Context as _;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TypeDefId,
+    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FileId, SemanticItemRef,
+    TypeDefId,
 };
-use rg_parse::FileId;
 
 use rg_body_ir::{BodyLocalItems, BodyView, ExprKind, PatKind};
 

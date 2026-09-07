@@ -17,8 +17,8 @@ use std::{num::NonZeroUsize, sync::Mutex};
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapDb, DefMapLoader, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_def_map::{DefMapDb, DefMapLoader};
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
@@ -357,7 +357,8 @@ mod tests {
         },
     };
 
-    use rg_def_map::{DefMapLoader, PackageSlot};
+    use rg_def_map::DefMapLoader;
+    use rg_ir_model::PackageSlot;
     use rg_package_store::PackageSubset;
     use rg_semantic_ir::SemanticIrLoader;
     use rg_std::CancellationToken;

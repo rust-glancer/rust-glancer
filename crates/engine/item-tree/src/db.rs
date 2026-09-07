@@ -2,6 +2,7 @@
 
 use anyhow::Context as _;
 use rayon::prelude::*;
+use rg_ir_model::FileId;
 
 use rg_parse::ParseDb;
 use rg_std::{MemorySize, Shrink};
@@ -71,7 +72,7 @@ impl ItemTreeDb {
         &mut self,
         parse: &mut ParseDb,
         package_slot: usize,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
         module_file_context: rg_parse::ModuleFileContext,
         interners: &mut PackageNameInterners,
     ) -> anyhow::Result<IncrementalItemTreeLowering> {

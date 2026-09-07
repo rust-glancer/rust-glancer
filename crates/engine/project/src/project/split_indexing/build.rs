@@ -8,8 +8,8 @@ use crate::project::{
 };
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuilder, BodyIrFile, CrateBodies, CrateBodiesCoverage};
-use rg_def_map::{DefMapDb, DefMapLoader, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_def_map::{DefMapDb, DefMapLoader};
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
 use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};

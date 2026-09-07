@@ -1,6 +1,6 @@
 use rg_analysis::{CodeActionQuery, CompletionQuery, CompletionSource};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceSelection};
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Span, TextSpan};
 use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 

@@ -8,7 +8,7 @@ use std::time::Instant;
 #[cfg(test)]
 use rg_def_map::PackageDefMaps;
 use rg_def_map::{CrateData, PackageDefMapsManifest};
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 
 use super::{PackageArtifactReader, PackageCacheReadError};
 use crate::{
@@ -37,7 +37,7 @@ impl PackageArtifactReader {
             ))
         })?;
         let bytes = self.read_nested_range("def_map.crate", self.inner.layout.def_map, range)?;
-        let package = rg_def_map::PackageSlot(
+        let package = PackageSlot(
             usize::try_from(self.inner.probe.header.package.package.0).map_err(|error| {
                 self.decode_error(anyhow::anyhow!(
                     "cached package slot does not fit usize: {error}"

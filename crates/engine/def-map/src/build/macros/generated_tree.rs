@@ -9,6 +9,7 @@ use anyhow::{Context as _, Result};
 
 use crate::source::GeneratedSourceData;
 use rg_arena::Arena;
+use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst,
     FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem,
@@ -18,7 +19,7 @@ use rg_item_tree::{
     UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::{ExpansionSyntax, macro_edition};
-use rg_parse::{FileId, LineIndex, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
@@ -552,7 +553,7 @@ impl<'a> GeneratedSourceLowering<'a> {
     ) -> ItemTreeId {
         let span = self.origin.span;
         let name_span = name_range
-            .and_then(|range| self.parse_span_for_range(range))
+            .and_then(|range| self.source_span_for_range(range))
             .filter(|name_span| span.contains_span(*name_span));
 
         // Generated item syntax is shaped by both invocation tokens and transcriber tokens. Use the
@@ -572,7 +573,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         })
     }
 
-    fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
+    fn source_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
         self.span_map
             .span_for_range_in_file(range, self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))

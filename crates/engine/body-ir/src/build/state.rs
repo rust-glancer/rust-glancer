@@ -10,7 +10,8 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMap, DefMapReadTxn};
 use rg_ir_model::{
-    BodyId, BodyRef, BodySource, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
+    BodyId, BodyRef, BodySource, ConstRef, CrateRef, DefMapRef, FileId, ItemOwner, ModuleRef, Span,
+    StaticRef,
 };
 use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, SemanticIrReadTxn,
@@ -582,8 +583,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     /// selected method and must not extend this request's body worklist.
     fn source_is_nested_in_body(
         body_source: BodySource,
-        item_file: rg_parse::FileId,
-        item_span: rg_parse::Span,
+        item_file: FileId,
+        item_span: Span,
     ) -> bool {
         body_source.file_id == item_file
             && body_source.span.contains_span(item_span)

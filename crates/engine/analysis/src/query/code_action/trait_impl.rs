@@ -11,8 +11,8 @@
 //! be visible from the impl module.
 
 use anyhow::Context as _;
+use rg_ir_model::{Span, TextSpan};
 use rg_ir_view::trait_impl::{MissingTraitMember, MissingTraitMemberRef};
-use rg_parse::{Span, TextSpan};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _},

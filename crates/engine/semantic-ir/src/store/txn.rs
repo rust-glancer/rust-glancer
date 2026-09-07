@@ -7,8 +7,7 @@
 use std::sync::Arc;
 
 use crate::{CrateIr, ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource};
-use rg_def_map::PackageSlot;
-use rg_ir_model::{CrateRef, DefMapRef};
+use rg_ir_model::{CrateRef, DefMapRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use super::{SemanticIrLoader, lazy::PackageReadEntry};

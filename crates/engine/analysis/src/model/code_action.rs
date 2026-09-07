@@ -4,7 +4,7 @@
 //! coordinates. The LSP boundary later attaches the document URI and captured version, then
 //! converts those coordinates to the client's UTF-16 ranges.
 
-use rg_parse::Span;
+use rg_ir_model::Span;
 
 /// One complete editor action discovered from current syntax and saved semantics.
 #[derive(Debug, Clone, PartialEq, Eq)]

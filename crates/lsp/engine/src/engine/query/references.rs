@@ -15,7 +15,7 @@ use anyhow::Context as _;
 use rg_analysis::{
     Analysis as QueryAnalysis, ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget,
 };
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
 use rg_project::{AnalysisSurface, FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
@@ -57,7 +57,7 @@ impl QueryRunner<'_> {
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<()> {
         let started = Instant::now();
-        let mut files = UniqueVec::<(CrateRef, rg_parse::FileId)>::new();
+        let mut files = UniqueVec::<(CrateRef, FileId)>::new();
         let mut targets = UniqueVec::<CrateRef>::new();
 
         // `None` means the scan needs whole crates. A present file list means text prefiltering has
@@ -460,7 +460,7 @@ impl QueryRunner<'_> {
     /// Check that the selected declaration still contains the placeholder seen by analysis.
     fn rename_target_matches_source(
         snapshot: ProjectSnapshot<'_>,
-        package: rg_def_map::PackageSlot,
+        package: PackageSlot,
         target: &RenameTarget,
     ) -> anyhow::Result<bool> {
         Ok(snapshot

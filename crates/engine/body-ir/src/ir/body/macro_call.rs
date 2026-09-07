@@ -1,8 +1,7 @@
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::LocalDefRef;
-use rg_parse::Span;
+use rg_ir_model::{LocalDefRef, Span};
 
 use super::BodySource;
 

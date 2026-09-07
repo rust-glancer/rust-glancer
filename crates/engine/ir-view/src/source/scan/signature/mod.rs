@@ -26,10 +26,9 @@ mod collector;
 mod walker;
 
 use rg_ir_model::{
-    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, Path,
+    CrateRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, Path, Span,
 };
 use rg_item_tree::TypeRef;
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 
 use self::{

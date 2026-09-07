@@ -13,7 +13,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_lsp_proto::DeferredIndexingOutcome;
 use rg_project::{
     BodyPublicationOutcome, SavedBodyBuildInputs, SavedBodyProducts, SplitIndexingProgress,

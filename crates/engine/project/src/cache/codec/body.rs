@@ -25,8 +25,7 @@
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyFileShard, CrateBodiesManifest, PackageBodiesManifest};
-use rg_ir_model::CrateId;
-use rg_parse::FileId;
+use rg_ir_model::{CrateId, FileId};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::cache::payload::{BodyIrWriteInput, CrateBodyWriteInput};

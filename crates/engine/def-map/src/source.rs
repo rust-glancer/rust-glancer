@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
+use rg_ir_model::{BodyRef, FileId, Span};
 use rg_item_tree::{ItemNode, ItemTreeId, ItemTreeRef};
-use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
-
-use rg_ir_model::BodyRef;
 
 /// Stable identifier of one macro expansion payload produced during crate construction.
 ///

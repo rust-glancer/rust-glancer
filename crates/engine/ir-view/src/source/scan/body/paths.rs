@@ -11,9 +11,8 @@
 //!               ^^^^ -> `crate::model::User`
 //! ```
 
-use rg_ir_model::{BodyRef, ExprId, FieldKey, Path, ScopeId};
+use rg_ir_model::{BodyRef, ExprId, FieldKey, FileId, Path, ScopeId, Span};
 use rg_item_tree::TypePath;
-use rg_parse::{FileId, Span};
 
 use rg_body_ir::{
     BodyAssociatedPathPrefix, BodyPath, BodyView, ExprKind, PatData, RecordExprField,

@@ -1,8 +1,27 @@
 use std::{mem, sync::Arc};
 
-use crate::span::Position;
-use rg_std::MemorySize;
+use rg_ir_model::Span;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+/// A half-open range of zero-based line/byte-column positions within a source file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub struct LineColumnSpan {
+    pub start: Position,
+    pub end: Position,
+}
+
+/// A zero-based line/column coordinate.
+///
+/// [`LineIndex::position`] counts UTF-8 bytes in the column; [`LineIndex::utf16_position`] counts
+/// UTF-16 code units.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub struct Position {
+    pub line: u32,
+    pub column: u32,
+}
 
 /// Newline sequence used by source text when it contains at least one line break.
 ///
@@ -117,6 +136,14 @@ impl LineIndex {
         Position {
             line: u32::try_from(line_index).expect("line index should fit into u32"),
             column: u32::try_from(column).expect("column should fit into u32"),
+        }
+    }
+
+    /// Converts a byte span into zero-based line/byte-column coordinates.
+    pub fn line_column_span(&self, span: Span) -> LineColumnSpan {
+        LineColumnSpan {
+            start: self.position(span.text.start),
+            end: self.position(span.text.end),
         }
     }
 

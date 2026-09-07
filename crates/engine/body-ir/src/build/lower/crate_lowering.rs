@@ -9,9 +9,9 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    ConstRef, CrateRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitDefRef,
+    ConstRef, CrateRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef,
+    TraitDefRef,
 };
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;

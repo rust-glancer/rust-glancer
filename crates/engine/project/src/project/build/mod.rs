@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
@@ -330,7 +330,7 @@ pub(crate) fn build_resident_state(
 
 #[cfg(test)]
 mod tests {
-    use rg_def_map::PackageSlot;
+    use rg_ir_model::PackageSlot;
 
     use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 

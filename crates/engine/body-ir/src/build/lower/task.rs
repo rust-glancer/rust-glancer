@@ -11,8 +11,8 @@ use anyhow::Context as _;
 use rg_syntax::{AstNode as _, ast};
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodyId, ModuleRef};
-use rg_parse::{CurrentSource, FileId, Span};
+use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
+use rg_parse::CurrentSource;
 use rg_text::NameInterner;
 
 use crate::build::current::declaration::CurrentRootItems;

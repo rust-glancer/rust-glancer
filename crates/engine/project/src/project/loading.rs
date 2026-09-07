@@ -11,10 +11,9 @@ use std::{
 };
 
 use rg_body_ir::{BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodiesManifest};
-use rg_def_map::{CrateData, DefMapLoader, LoadDefMap, PackageDefMapsManifest, PackageSlot};
-use rg_ir_model::CrateId;
+use rg_def_map::{CrateData, DefMapLoader, LoadDefMap, PackageDefMapsManifest};
+use rg_ir_model::{CrateId, FileId, PackageSlot};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_semantic_ir::{
     ItemLookupIndex, ItemStore, LoadSemanticIr, PackageIrManifest, SemanticIrLoader,
 };

@@ -9,7 +9,7 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyIrReadTxn, CurrentSourceBuilder, CurrentSourceStore};
 use rg_def_map::DefMapReadTxn;
 use rg_def_map::{DefMap, DefMapSource};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, Span};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{
@@ -89,7 +89,7 @@ impl<'db> IndexedViewDb<'db> {
     pub(crate) fn current_signature_origins(
         &self,
         crate_ref: CrateRef,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
     ) -> impl Iterator<Item = DefMapRef> + '_ {
         self.body_ir.current_signature_origins(crate_ref, file_id)
     }
@@ -106,8 +106,8 @@ impl<'db> IndexedViewDb<'db> {
     pub fn selected_current_impl(
         &self,
         crate_ref: CrateRef,
-        file: rg_parse::FileId,
-        span: rg_parse::Span,
+        file: FileId,
+        span: Span,
     ) -> Option<rg_ir_model::ImplRef> {
         self.body_ir.selected_current_impl(crate_ref, file, span)
     }

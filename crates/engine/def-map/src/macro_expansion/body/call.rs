@@ -1,11 +1,10 @@
 use crate::MacroDefinitionView;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{BodySource, CrateRef, LocalDefRef, ModuleRef};
+use rg_ir_model::{BodySource, CrateRef, FileId, LocalDefRef, ModuleRef, Span};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{
     DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest, macro_edition,
 };
-use rg_parse::{FileId, Span};
 use rg_syntax::{ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;

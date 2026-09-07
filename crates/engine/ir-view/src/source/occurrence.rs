@@ -10,11 +10,10 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, FieldKey, GenericDefRef, ModuleRef, Path,
+    BodyBindingRef, CrateRef, FieldKey, FileId, GenericDefRef, ModuleRef, Path, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
 
 use super::scan::{

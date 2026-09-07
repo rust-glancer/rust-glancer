@@ -7,6 +7,7 @@
 
 use std::{fmt, path::PathBuf};
 
+use rg_ir_model::PackageSlot;
 use rg_package_store::{MalformedCacheError, PackageStoreError};
 
 /// Failure from opening, reading, or decoding one package artifact revision.
@@ -27,10 +28,7 @@ impl PackageCacheReadError {
     /// The cache reader knows paths and artifact identities; query code knows package slots. This
     /// conversion preserves both layers in the final error without making `rg_package_store`
     /// depend on the project cache format.
-    pub(crate) fn into_package_store_error(
-        self,
-        slot: rg_workspace::PackageSlot,
-    ) -> PackageStoreError {
+    pub(crate) fn into_package_store_error(self, slot: PackageSlot) -> PackageStoreError {
         match self {
             Self::Io { path, source } => PackageStoreError::io(slot, path, source),
             Self::Malformed { source } => PackageStoreError::malformed_cache(slot, source),

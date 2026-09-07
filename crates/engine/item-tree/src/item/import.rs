@@ -2,7 +2,7 @@ use rg_std::{MemorySize, Shrink};
 use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Span, TextSpan};
 use rg_text::Name;
 
 use super::MacroUseAttr;

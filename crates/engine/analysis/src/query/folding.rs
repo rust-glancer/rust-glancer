@@ -6,7 +6,7 @@
 
 use std::collections::HashSet;
 
-use rg_parse::Span;
+use rg_ir_model::Span;
 use rg_syntax::{
     AstNode as _, AstToken as _, Direction, NodeOrToken, SourceFile,
     SyntaxKind::{

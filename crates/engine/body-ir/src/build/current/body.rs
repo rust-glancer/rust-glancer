@@ -20,10 +20,10 @@ use crate::store::current::SelectedImpl;
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
-    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplRef, ItemOwner,
-    ModuleRef, StaticId, StaticRef, TraitDefRef,
+    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ImplRef,
+    ItemOwner, ModuleRef, Span, StaticId, StaticRef, TraitDefRef,
 };
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, Span};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;

@@ -27,10 +27,11 @@
 
 use std::{collections::HashMap, sync::Arc};
 
+use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::IncludePathExpression;
-use rg_parse::{FileId, ModuleFileContext};
+use rg_parse::ModuleFileContext;
 
-use crate::{DefMapBuildOutput, PackageSlot};
+use crate::DefMapBuildOutput;
 
 /// One coalesced project-layer lookup requested while DefMap is collecting expanded syntax.
 ///

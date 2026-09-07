@@ -6,6 +6,6 @@ mod target;
 pub use self::{
     dependency::PackageDependency,
     metadata::WorkspaceMetadata,
-    package::{Package, PackageId, PackageOrigin, PackageSlot, PackageSource},
+    package::{Package, PackageId, PackageOrigin, PackageSource},
     target::{CargoTarget, TargetKind},
 };

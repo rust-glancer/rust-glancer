@@ -8,8 +8,7 @@ mod body;
 
 use std::collections::HashSet;
 
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ImplRef, ModuleRef};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ModuleRef, Span};
 
 use crate::{BodyLocalItems, BodySource};
 

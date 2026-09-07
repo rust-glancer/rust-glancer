@@ -10,8 +10,7 @@
 use std::time::Instant;
 
 use rg_body_ir::{BodyFileShard, CrateBodies, PackageBodiesManifest};
-use rg_ir_model::CrateId;
-use rg_parse::FileId;
+use rg_ir_model::{CrateId, FileId};
 
 use super::{PackageArtifactReader, PackageCacheReadError};
 use crate::{

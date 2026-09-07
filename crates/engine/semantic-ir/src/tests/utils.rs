@@ -5,17 +5,15 @@ use expect_test::Expect;
 use crate::ItemResolutionQuery;
 use crate::{CrateItemQuery, ItemLookupQuery, ItemStore, ItemStoreQuery};
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
-use rg_ir_model::Path;
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
+use rg_ir_model::{
+    AssocItemId, ConstId, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId, ImplRef,
+    ItemId, ModuleId, ModuleRef, PackageSlot, Path, TraitDefRef, TypeAliasId, TypeDefId,
+    TypeDefRef,
+};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
-
-use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitDefRef, TypeDefId,
-    TypeDefRef,
-};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);
@@ -110,7 +108,7 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
                         CrateSemanticIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
-                                package: rg_def_map::PackageSlot(package_slot),
+                                package: PackageSlot(package_slot),
                                 crate_id: CrateId(target.id.0),
                             },
                             target_name: &target.name,
@@ -326,7 +324,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 
         (
             CrateRef {
-                package: rg_def_map::PackageSlot(package_slot),
+                package: PackageSlot(package_slot),
                 crate_id: CrateId(target.id.0),
             },
             target,

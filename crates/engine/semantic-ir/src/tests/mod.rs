@@ -4,6 +4,7 @@ mod utils;
 use std::fmt::Write as _;
 
 use expect_test::expect;
+use rg_ir_model::PackageSlot;
 use rg_std::UniqueVec;
 
 use self::utils::{
@@ -120,7 +121,7 @@ pub struct Library;
             .iter()
             .filter(|target| target.kind == rg_workspace::TargetKind::Test)
             .map(|target| rg_ir_model::CrateRef {
-                package: rg_def_map::PackageSlot(app_package_idx),
+                package: PackageSlot(app_package_idx),
                 crate_id: rg_ir_model::CrateId(target.id.0),
             })
             .collect::<Vec<_>>();

@@ -32,7 +32,7 @@ use std::{
 use crate::PackageResidencyPolicy;
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 
 use super::super::{
     CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec, PackageCacheHeader,

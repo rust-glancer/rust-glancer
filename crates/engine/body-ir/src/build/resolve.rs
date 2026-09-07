@@ -11,8 +11,8 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_text::{NameInterner, PackageNameInterners};
 use rg_ty::TraitSelectionDeclarationCache;

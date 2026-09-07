@@ -67,7 +67,8 @@ pub(crate) fn folding_range(
 mod tests {
     use ls_types::FoldingRangeKind;
     use rg_analysis::{Fold, FoldKind};
-    use rg_parse::{LineIndex, Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
+    use rg_parse::LineIndex;
 
     use super::folding_range;
 

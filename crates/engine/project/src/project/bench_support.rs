@@ -6,7 +6,8 @@
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, PackageBodiesCoverage};
-use rg_def_map::{DefMapBuildOutput, DefMapDb, DefMapLoader, GeneratedItemStores, PackageSlot};
+use rg_def_map::{DefMapBuildOutput, DefMapDb, DefMapLoader, GeneratedItemStores};
+use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;

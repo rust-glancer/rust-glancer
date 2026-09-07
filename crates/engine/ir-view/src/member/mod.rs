@@ -11,10 +11,10 @@ mod field;
 mod method;
 
 use anyhow::Context as _;
-use rg_ir_model::Path;
 use rg_ir_model::{
     BodyRef, ConstRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef, FunctionRef,
-    ItemOwner, ScopeId, TraitApplicability, TypeAliasRef, TypeDefId, identity::DeclarationRef,
+    ItemOwner, Path, ScopeId, TraitApplicability, TypeAliasRef, TypeDefId,
+    identity::DeclarationRef,
 };
 use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
 use rg_semantic_ir::{

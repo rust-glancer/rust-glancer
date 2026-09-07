@@ -2,8 +2,8 @@ use crate::item::{
     ConstExpr, GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor,
     TypePathSegment, TypeRef,
 };
-use rg_ir_model::Mutability;
-use rg_parse::{LineIndex, Span};
+use rg_ir_model::{Mutability, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericArgs},

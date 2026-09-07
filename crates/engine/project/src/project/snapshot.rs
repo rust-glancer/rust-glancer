@@ -13,11 +13,11 @@ use rg_analysis::{
     SavedSourceRelationship, SavedSourceView,
 };
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection};
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 #[cfg(test)]
 use rg_parse::ParseDb;
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, LineIndex, Span};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex};
 use rg_std::{MemorySize, UniqueVec};
 use rg_text::RustEdition;
 

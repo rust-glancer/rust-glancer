@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use rg_body_ir::{ExprKind, ExprWrapperKind};
-use rg_ir_model::{CrateRef, ExprId};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, ExprId, FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 

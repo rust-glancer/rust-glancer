@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
-use rg_def_map::{DefMap, DefMapDb, DefMapLoader, DefMapSource, PackageSlot};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef};
+use rg_def_map::{DefMap, DefMapDb, DefMapLoader, DefMapSource};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef, PackageSlot};
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
@@ -211,10 +211,7 @@ impl<'a> ItemStoreSource<'a> for &'a BodyIrFixture {
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
         Ok((0..self.semantic_ir_db().package_count())
-            .filter_map(|index| {
-                self.semantic_ir_db()
-                    .resident_package(rg_def_map::PackageSlot(index))
-            })
+            .filter_map(|index| self.semantic_ir_db().resident_package(PackageSlot(index)))
             .flat_map(|package| package.crates().iter().map(rg_semantic_ir::CrateIr::items))
             .collect())
     }

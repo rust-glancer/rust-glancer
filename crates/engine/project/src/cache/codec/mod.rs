@@ -25,8 +25,7 @@
 use anyhow::Context as _;
 use rg_body_ir::PackageBodies;
 use rg_def_map::PackageDefMaps as DefMapPackage;
-use rg_ir_model::CrateId;
-use rg_parse::FileId;
+use rg_ir_model::{CrateId, FileId};
 use rg_semantic_ir::PackageIr;
 use wincode::{SchemaRead, SchemaWrite};
 

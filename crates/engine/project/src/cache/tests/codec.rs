@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use rg_body_ir::PackageBodies;
-use rg_def_map::{PackageDefMaps, PackageSlot};
-use rg_ir_model::CrateId;
+use rg_def_map::PackageDefMaps;
+use rg_ir_model::{CrateId, PackageSlot};
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 

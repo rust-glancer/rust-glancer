@@ -1,8 +1,7 @@
-use rg_workspace::PackageSlot;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{BodyRef, declare_id};
-use rg_std::{MemorySize, Shrink};
+use crate::{BodyRef, PackageSlot, declare_id};
 
 declare_id! {
     /// Package-local identifier of one semantic crate.

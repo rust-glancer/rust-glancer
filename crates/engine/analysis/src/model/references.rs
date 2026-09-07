@@ -1,5 +1,4 @@
-use rg_ir_model::CrateRef;
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, FileId, Span};
 
 /// One source occurrence of the declaration-like subject selected by a references query.
 #[derive(Debug, Clone, PartialEq, Eq)]

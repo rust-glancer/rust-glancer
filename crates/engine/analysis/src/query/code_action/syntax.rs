@@ -1,6 +1,6 @@
 //! Ordinary request-source syntax shared by code-action providers.
 
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Span, TextSpan};
 use rg_syntax::{AstNode, SourceFile, TextSize, algo::find_node_at_offset, ast};
 
 /// The exact editor text, its ordinary Rust parse, and the requested part of the file.

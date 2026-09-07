@@ -4,11 +4,12 @@
 //! includes every supported current member. Both use the same lowering and cfg policy here.
 
 use rg_cfg_eval::CfgEvaluator;
+use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
     Documentation, FromAst as _, ImplItem, ImplItemContext, ItemKind, ItemNode, ItemTreeId,
     MaybeFromAst, OuterDocs, TraitItem, TraitItemContext, VisibilityLevel,
 };
-use rg_parse::{FileId, LineIndex, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _, HasVisibility as _},

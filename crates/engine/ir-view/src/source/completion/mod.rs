@@ -27,12 +27,12 @@ mod signature;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, GenericDefRef, ImplRef, ModuleRef, Path,
-    TraitDefRef, TypeDefRef,
+    BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, FileId, GenericDefRef, ImplRef, ModuleRef,
+    Path, Span, TraitDefRef, TypeDefRef,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::{FromAst as _, TypePath, TypeRef};
-use rg_parse::{FileId, LineIndex, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 

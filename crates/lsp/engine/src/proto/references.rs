@@ -1,9 +1,8 @@
 use anyhow::Context as _;
 use ls_types::{DocumentHighlight, DocumentHighlightKind, Location};
 use rg_analysis::ReferenceLocation;
-use rg_def_map::PackageSlot;
+use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
-use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
 use crate::proto::position;

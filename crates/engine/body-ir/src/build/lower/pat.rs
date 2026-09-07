@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId};
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span};
 use rg_item_tree::TypeRef;
 use rg_text::Name;
 
@@ -46,7 +46,7 @@ impl PatLoweringOptions {
 
 struct PatBindingRequest<'a> {
     syntax: &'a rg_syntax::SyntaxNode,
-    name_span: rg_parse::Span,
+    name_span: Span,
     scope: ScopeId,
     kind: BindingKind,
     name: Name,

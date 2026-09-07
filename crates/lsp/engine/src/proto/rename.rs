@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use ls_types::{PrepareRenameResponse, TextEdit, Uri, WorkspaceEdit};
 use rg_analysis::{RenameEdit, RenameTarget};
-use rg_def_map::PackageSlot;
+use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
-use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
 use crate::proto::{position, text_edit};

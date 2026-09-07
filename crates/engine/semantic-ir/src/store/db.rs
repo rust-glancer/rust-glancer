@@ -2,8 +2,7 @@
 
 use std::collections::HashMap;
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::{ImplRef, TraitDefRef, TypeDefRef};
+use rg_ir_model::{ImplRef, PackageSlot, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 

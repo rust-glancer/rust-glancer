@@ -7,10 +7,9 @@ use rg_body_ir::{
     BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodies, PackageBodiesManifest,
     testonly::BodyIrFixture,
 };
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_ir_view::IndexedViewDb;
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_std::CancellationToken;
 
 use rg_analysis::{Analysis, ReferenceQuery, SavedSourceView};

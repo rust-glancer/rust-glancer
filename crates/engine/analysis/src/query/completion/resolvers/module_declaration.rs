@@ -11,6 +11,7 @@
 //! is intentionally excluded because its filename no longer follows those conventions.
 
 use anyhow::Context as _;
+use rg_ir_model::FileId;
 use rg_ir_view::display::syntax::SyntaxRenderer;
 
 use crate::{
@@ -28,14 +29,14 @@ use super::super::render::{CompletionSortPolicy, definition_detail};
 pub(super) struct ModuleDeclarationCompletionResolver<'a, 'db> {
     analysis: &'a Analysis<'db>,
     crate_ref: rg_ir_model::CrateRef,
-    file_id: rg_parse::FileId,
+    file_id: FileId,
 }
 
 impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
     pub(super) fn new(
         analysis: &'a Analysis<'db>,
         crate_ref: rg_ir_model::CrateRef,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
     ) -> Self {
         Self {
             analysis,

@@ -22,11 +22,10 @@ pub use query::{
 pub use rg_ir_view::SymbolKind;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, PackageSlot};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span, TextSpan};
 use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
 use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, FileId, ModuleFileContext,
-    ParseDb, Span,
+    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
 };
 use rg_syntax::SourceFile;
 
@@ -429,7 +428,7 @@ impl<'a> Analysis<'a> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<rg_parse::TextSpan>,
+        range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         self.run_query("inlay_hints", || {
             query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)

@@ -5,9 +5,8 @@
 //! shape to completion.
 
 use rg_def_map::DefMapSource as _;
-use rg_ir_model::{CrateRef, ImplRef, TraitDefRef};
+use rg_ir_model::{CrateRef, FileId, ImplRef, TraitDefRef};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 
 use crate::IndexedViewDb;
 

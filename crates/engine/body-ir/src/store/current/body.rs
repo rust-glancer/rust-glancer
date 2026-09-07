@@ -3,8 +3,7 @@
 //! These values sit on top of a saved Body IR read transaction for one request. They let local
 //! analysis see newly typed expressions and bindings without creating another project generation.
 
-use rg_ir_model::BodyRef;
-use rg_parse::Span;
+use rg_ir_model::{BodyRef, Span};
 
 use crate::{BodyData, BodyFacts, BodyView};
 

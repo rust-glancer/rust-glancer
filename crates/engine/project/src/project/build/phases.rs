@@ -11,7 +11,8 @@ use anyhow::Context as _;
 use rg_body_ir::{
     BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, CrateBodiesCoverage, PackageBodiesCoverage,
 };
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::DefMapDb;
+use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;

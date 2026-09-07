@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use rg_workspace::PackageSlot;
+use rg_ir_model::PackageSlot;
 
 /// Failure to read one logical package from package storage.
 #[derive(Debug, thiserror::Error)]

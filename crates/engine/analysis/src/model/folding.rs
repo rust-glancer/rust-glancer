@@ -1,4 +1,4 @@
-use rg_parse::Span;
+use rg_ir_model::Span;
 
 /// One source range that an editor may collapse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

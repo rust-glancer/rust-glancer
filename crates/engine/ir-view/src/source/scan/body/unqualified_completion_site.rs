@@ -15,10 +15,9 @@
 //! ```
 
 use rg_def_map::ItemSourceKind;
-use rg_ir_model::{BindingId, BodyRef, CrateRef, GenericDefRef, ScopeId};
+use rg_ir_model::{BindingId, BodyRef, CrateRef, FileId, GenericDefRef, ScopeId, Span};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::ItemStore;
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatKind, StmtKind};

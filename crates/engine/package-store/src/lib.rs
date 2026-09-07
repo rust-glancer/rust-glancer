@@ -13,8 +13,8 @@ mod error;
 
 use std::sync::Arc;
 
+use rg_ir_model::PackageSlot;
 use rg_std::{MemoryRecorder, MemorySize, Shrink};
-use rg_workspace::PackageSlot;
 
 pub use self::error::{MalformedCacheError, PackageLoadError, PackageStoreError};
 
@@ -311,8 +311,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use rg_ir_model::PackageSlot;
     use rg_std::Shrink;
-    use rg_workspace::PackageSlot;
 
     use crate::{PackageEntry, PackageStore};
 

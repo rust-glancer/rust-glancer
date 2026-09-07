@@ -11,8 +11,7 @@
 //! not pretend to have an indexed source site.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, Path};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, FileId, Path, Span};
 
 use rg_ir_view::source::{
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,

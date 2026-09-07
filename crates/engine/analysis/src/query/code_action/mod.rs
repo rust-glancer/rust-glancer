@@ -12,8 +12,7 @@ mod syntax;
 mod trait_impl;
 
 use anyhow::Context as _;
-use rg_ir_model::CrateRef;
-use rg_parse::{FileId, TextSpan};
+use rg_ir_model::{CrateRef, FileId, TextSpan};
 
 use crate::{Analysis, CodeAction, CodeActionKind};
 
@@ -269,7 +268,7 @@ impl<'analysis, 'db, 'source> CodeActionResolver<'analysis, 'db, 'source> {
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::{Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
 
     use crate::{CodeAction, CodeActionEdit, CodeActionKind};
 

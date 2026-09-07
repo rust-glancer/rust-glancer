@@ -123,7 +123,8 @@ mod tests {
         CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
         CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
     };
-    use rg_parse::{LineIndex, Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
+    use rg_parse::LineIndex;
 
     use super::completion_item;
 

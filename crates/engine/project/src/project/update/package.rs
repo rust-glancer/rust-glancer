@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 
 use rg_body_ir::BodyIrBuilder;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_std::Shrink;
 

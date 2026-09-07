@@ -10,10 +10,10 @@
 //! planner. Passive lightbulb probes do not perform the graph walk.
 
 use anyhow::Context as _;
+use rg_ir_model::Span;
 use rg_ir_view::{
     SymbolKind, display::syntax::SyntaxRenderer, lookup::importable::ImportableNameSearch,
 };
-use rg_parse::Span;
 use rg_syntax::{AstNode as _, ast};
 
 use crate::{

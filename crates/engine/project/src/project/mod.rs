@@ -24,9 +24,7 @@ use std::collections::btree_map::Entry;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_source::CapturedSource;
 use rg_workspace::WorkspaceMetadata;
 

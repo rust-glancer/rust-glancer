@@ -5,14 +5,13 @@ use rg_syntax::{
     ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
-use rg_ir_model::{ExprId, Mutability, ScopeId, StmtId};
+use rg_ir_model::{ExprId, Mutability, ScopeId, Span, StmtId};
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _, FunctionItem,
     ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroCallItem,
     MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem,
     StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
-use rg_parse::Span;
 use rg_text::Name;
 
 use crate::ir::{

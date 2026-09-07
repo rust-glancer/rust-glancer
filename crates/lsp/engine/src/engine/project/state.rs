@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_project::{AnalysisSurface, Project, ProjectSnapshot, SavedBodyBuildInputs};
 
 /// Owns the one saved project used by all analysis queries in this engine.

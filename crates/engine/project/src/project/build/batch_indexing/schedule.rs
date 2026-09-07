@@ -1,6 +1,6 @@
 //! Chooses dependency-safe package batches.
 
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_workspace::{SysrootCrate, WorkspaceMetadata};
 
 use crate::{PackageBatchSize, project::package_set::PhasePackageSet};
@@ -133,7 +133,7 @@ impl PackageBatchSchedule {
 
 #[cfg(test)]
 mod tests {
-    use rg_def_map::PackageSlot;
+    use rg_ir_model::PackageSlot;
     use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
     use test_fixture::fixture_crate;
 

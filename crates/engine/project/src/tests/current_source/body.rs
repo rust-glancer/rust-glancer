@@ -1,5 +1,6 @@
 use rg_analysis::{CompletionItem, CompletionQuery, CompletionSource, SavedSourceRelationship};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable};
+use rg_ir_model::{FileId, TextSpan};
 use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
@@ -1083,7 +1084,7 @@ pub trait CurrentOnly {
 fn unfinished
 "#,
     );
-    let range = rg_parse::TextSpan {
+    let range = TextSpan {
         start: current
             .offset("range_start")
             .try_into()
@@ -1148,7 +1149,7 @@ pub fn inspect() {
     let second = true;
 }
 "#;
-    let range = rg_parse::TextSpan {
+    let range = TextSpan {
         start: 0,
         end: current
             .len()
@@ -1285,7 +1286,7 @@ impl CurrentBodyFixture {
         summary
     }
 
-    fn targets(&self) -> Vec<(rg_ir_model::CrateRef, rg_parse::FileId)> {
+    fn targets(&self) -> Vec<(rg_ir_model::CrateRef, FileId)> {
         let snapshot = self.fixture.project().snapshot();
         snapshot
             .file_contexts_for_path(self.fixture.path("src/lib.rs"))

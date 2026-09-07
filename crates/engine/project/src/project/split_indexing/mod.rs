@@ -15,9 +15,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildProgress, BodyIrBuildStage, CrateBodiesCoverage, PackageBodies};
-use rg_def_map::PackageSlot;
-use rg_ir_model::{CrateId, CrateRef};
-use rg_parse::FileId;
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 
 pub use self::build::{SavedBodyBuildInputs, SavedBodyProducts};
 pub use self::publication::{BodyPublication, BodyPublicationOutcome};

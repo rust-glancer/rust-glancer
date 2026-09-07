@@ -15,10 +15,8 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
-use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, FileId, Span, enclosing_inline_module_path,
-};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, FileId, Span};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_module_path};
 use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};

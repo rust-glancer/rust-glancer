@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_ir_model::{CrateId, CrateRef, ModuleId, ModuleRef};
-use rg_parse::{CargoTargetId, FileId};
+use rg_ir_model::{CrateId, CrateRef, FileId, ModuleId, ModuleRef};
+use rg_parse::CargoTargetId;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
