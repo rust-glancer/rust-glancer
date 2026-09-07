@@ -12,10 +12,7 @@ use rg_def_map::{DefMapDb, PackageSlot};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 
-use crate::cache::{
-    Fingerprint, PackageCacheBodyUpdateInput, PackageCacheStore, PackageCacheUpdate,
-    PackageCacheWriteInput, WorkspaceCachePlan,
-};
+use crate::cache::{Fingerprint, PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan};
 
 use super::state::ProjectState;
 
@@ -79,7 +76,6 @@ impl<'a> PackageArtifactPhases<'a> {
 /// from one generation and written through a caller-owned cache transaction.
 pub(crate) struct PackageArtifactWriter<'a> {
     cache_plan: &'a WorkspaceCachePlan,
-    cache_store: &'a PackageCacheStore,
     package_source_fingerprints: &'a [Option<Fingerprint>],
     parse: &'a ParseDb,
     def_map: &'a DefMapDb,
@@ -91,7 +87,6 @@ impl<'a> PackageArtifactWriter<'a> {
     pub(crate) fn for_project(project: &'a ProjectState) -> Self {
         Self::new(
             &project.cache_plan,
-            &project.cache_store,
             &project.package_source_fingerprints,
             &project.parse,
             &project.def_map,
@@ -100,10 +95,8 @@ impl<'a> PackageArtifactWriter<'a> {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         cache_plan: &'a WorkspaceCachePlan,
-        cache_store: &'a PackageCacheStore,
         package_source_fingerprints: &'a [Option<Fingerprint>],
         parse: &'a ParseDb,
         def_map: &'a DefMapDb,
@@ -112,7 +105,6 @@ impl<'a> PackageArtifactWriter<'a> {
     ) -> Self {
         Self {
             cache_plan,
-            cache_store,
             package_source_fingerprints,
             parse,
             def_map,
@@ -145,9 +137,8 @@ impl<'a> PackageArtifactWriter<'a> {
 
     /// Writes one coherent package artifact from the phase data available at this boundary.
     ///
-    /// Jointly resident declaration phases are encoded normally and may reuse untouched Body shards.
-    /// If both declaration phases are offloaded, an exact Body rebuild instead copies their encoded
-    /// sections from the pinned prior revision. A mixed declaration residency state is rejected.
+    /// Fresh construction and saved-source updates supply all three resident phases from the
+    /// same private candidate. Body-only publication prepares its artifact separately.
     fn write_package(
         &self,
         update: &PackageCacheUpdate<'_>,
@@ -182,76 +173,16 @@ impl<'a> PackageArtifactWriter<'a> {
             )
         })?;
 
-        let def_map = self.def_map.resident_package(package);
-        let semantic_ir = self.semantic_ir.resident_package(package);
-        let write = match (def_map, semantic_ir) {
-            (Some(def_map), Some(semantic_ir)) => {
-                let input =
-                    PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
-                if body_ir.has_cached_payloads() {
-                    let reader = self
-                        .cache_store
-                        .open_artifact(&header)
-                        .with_context(|| {
-                            format!(
-                                "while attempting to open prior cache artifact for package {}",
-                                package.0,
-                            )
-                        })?
-                        .with_context(|| {
-                            format!(
-                                "prior cache artifact is missing for package {} with cached Body IR payloads",
-                                package.0,
-                            )
-                        })?;
-                    update.write_input_reusing_cached_body_ir(input, &reader)
-                } else {
-                    update.write_input(input)
-                }
-            }
-            (None, None) => {
-                // Exact target materialization starts from a fully offloaded artifact. It restores
-                // a manifest-backed Body IR package and rebuilds only the requested target;
-                // declaration reads belong to short-lived transactions, so DefMap and Semantic IR
-                // remain offloaded. Cached Body placeholders distinguish that rewrite overlay from
-                // an arbitrary mixed-residency state.
-                anyhow::ensure!(
-                    self.def_map.package_is_offloaded(package)
-                        && self.semantic_ir.package_is_offloaded(package),
-                    "package {} declaration phases are neither jointly resident nor offloaded",
-                    package.0,
-                );
-                anyhow::ensure!(
-                    body_ir.has_cached_payloads(),
-                    "package {} needs cached declaration sections without cached Body IR siblings",
-                    package.0,
-                );
-
-                // Pin the old revision before the atomic replacement. The changed Body IR is
-                // encoded normally; sibling Body shards and both declaration sections are copied.
-                let input = PackageCacheBodyUpdateInput::new(&header, &parse, body_ir);
-                let reader = self
-                    .cache_store
-                    .open_artifact(&header)
-                    .with_context(|| {
-                        format!(
-                            "while attempting to open prior cache artifact for package {}",
-                            package.0,
-                        )
-                    })?
-                    .with_context(|| {
-                        format!(
-                            "prior cache artifact is missing for package {} with cached declarations",
-                            package.0,
-                        )
-                    })?;
-                update.write_body_update_reusing_cached_sections(input, &reader)
-            }
-            _ => anyhow::bail!(
-                "package {} has inconsistent DefMap and Semantic IR residency",
-                package.0,
-            ),
-        };
+        let def_map = self
+            .def_map
+            .resident_package(package)
+            .context("artifact needs resident declarations")?;
+        let semantic_ir = self
+            .semantic_ir
+            .resident_package(package)
+            .context("artifact needs resident semantic IR")?;
+        let input = PackageCacheWriteInput::new(&header, &parse, def_map, semantic_ir, body_ir);
+        let write = update.write_input(input);
 
         write.with_context(|| {
             format!(

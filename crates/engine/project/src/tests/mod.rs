@@ -1,3 +1,4 @@
+mod body_products;
 pub(crate) mod cancellation;
 mod cargo_build_outputs;
 mod current_source;
@@ -16,6 +17,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
+use rg_def_map::PackageSlot;
 use rg_source::CapturedSource;
 use rg_std::MemorySize as _;
 
@@ -201,7 +203,7 @@ pub struct Published;
     let text = project
         .snapshot()
         .file_text_for_span(
-            rg_def_map::PackageSlot(0),
+            PackageSlot(0),
             file_id,
             rg_parse::Span {
                 text: rg_parse::TextSpan { start: 0, end: 21 },
@@ -238,7 +240,7 @@ pub struct Before;
         .expect("matching captured source should publish");
 
     assert_ne!(project.generation_id(), previous_generation);
-    assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
+    assert_eq!(summary.affected_packages, [PackageSlot(0)]);
     let canonical = path
         .canonicalize()
         .expect("published fixture source should canonicalize");
@@ -302,7 +304,7 @@ pub struct Published;
     let text = project
         .snapshot()
         .file_text_for_span(
-            rg_def_map::PackageSlot(0),
+            PackageSlot(0),
             file_id,
             rg_parse::Span {
                 text: rg_parse::TextSpan { start: 0, end: 21 },
@@ -440,7 +442,7 @@ pub struct Before;
         ])
         .expect("module rename should publish a new source generation");
 
-    assert_eq!(summary.affected_packages, [rg_def_map::PackageSlot(0)]);
+    assert_eq!(summary.affected_packages, [PackageSlot(0)]);
     assert!(
         project
             .state
@@ -487,7 +489,7 @@ pub struct Before;
 
     let error = project
         .snapshot()
-        .file_line_index(rg_def_map::PackageSlot(0), file_id)
+        .file_line_index(PackageSlot(0), file_id)
         .expect_err("line index reload should reject a newer source revision");
     assert!(
         error.chain().any(|cause| matches!(
@@ -1359,8 +1361,8 @@ pub fn dep_value() -> usize {
         .build()
         .expect("early-start project build should succeed");
     let finished = project
-        .detach_split_indexing()
-        .finish()
+        .deferred_body_build()
+        .build(&rg_std::CancellationToken::new())
         .expect("background deferred indexing should succeed");
     let dep_ref = fixture.markers().position("dep_ref");
     let dep_context = project
@@ -1396,8 +1398,9 @@ pub fn dep_value() -> usize {
     assert!(
         project
             .split_indexing()
-            .merge_finished(finished)
-            .expect("background deferred indexing should merge"),
+            .publish(finished, &rg_std::CancellationToken::new())
+            .expect("background deferred indexing should publish")
+            .improved(),
         "workspace package finish should still merge",
     );
     assert!(
@@ -1408,12 +1411,12 @@ pub fn dep_value() -> usize {
             .type_at(dep_target, dep_context.file, dep_ref.offset)
             .expect("dependency body-local type query should resolve after merge")
             .is_some(),
-        "background finish must not reinstall the clone's skipped dependency bodies",
+        "background publication must preserve on-demand dependency bodies",
     );
 }
 
 #[test]
-fn final_detached_merge_keeps_priority_package_offloaded() {
+fn streamed_products_publish_once_and_duplicate_keeps_package_offloaded() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -1437,11 +1440,15 @@ pub fn value() -> usize {
     let priority_publication = Arc::clone(&priority_finished);
     let progress = Arc::new(Mutex::new(Vec::new()));
     let progress_publication = Arc::clone(&progress);
-    let final_finished = project
-        .detach_split_indexing()
-        .finish_with_package_priority(
-            || vec![rg_def_map::PackageSlot(0)],
-            move |finished| {
+    let duplicate = project
+        .deferred_body_build()
+        .build(&rg_std::CancellationToken::new())
+        .expect("duplicate body work should build");
+    project
+        .deferred_body_build()
+        .build_with_package_priority(
+            &|| vec![PackageSlot(0)],
+            &move |finished| {
                 let previous = priority_publication
                     .lock()
                     .expect("priority publication should not be poisoned")
@@ -1451,7 +1458,7 @@ pub fn value() -> usize {
                     "one-package build should publish priority data once",
                 );
             },
-            move |snapshot| {
+            &move |snapshot| {
                 progress_publication
                     .lock()
                     .expect("split indexing progress should not be poisoned")
@@ -1461,6 +1468,7 @@ pub fn value() -> usize {
                         snapshot.total_packages(),
                     ));
             },
+            &rg_std::CancellationToken::new(),
         )
         .expect("background deferred indexing should succeed");
     assert_eq!(
@@ -1483,8 +1491,9 @@ pub fn value() -> usize {
     assert!(
         project
             .split_indexing()
-            .merge_finished(priority_finished)
-            .expect("priority package should merge"),
+            .publish(priority_finished, &rg_std::CancellationToken::new())
+            .expect("streamed package should publish")
+            .improved(),
         "priority publication should finish the saved package",
     );
     assert_eq!(
@@ -1496,14 +1505,15 @@ pub fn value() -> usize {
     assert!(
         !project
             .split_indexing()
-            .merge_finished(final_finished)
-            .expect("final background result should reconcile"),
-        "the final result should not reinstall an already-offloaded priority package",
+            .publish(duplicate, &rg_std::CancellationToken::new())
+            .expect("duplicate products should reconcile")
+            .improved(),
+        "duplicate work should not reinstall an already-offloaded package",
     );
     assert_eq!(
         project.stats().body_ir.crate_count,
         0,
-        "final reconciliation should preserve offloaded residency",
+        "duplicate publication should preserve offloaded residency",
     );
 }
 
@@ -1790,24 +1800,25 @@ pub fn answer() -> i32 {
     assert_eq!(
         finish_labels,
         [
-            "after deferred indexing",
-            "before package cache write",
-            "after package cache write",
-            "after package payload offload",
-            "after package offload cleanup",
-            "after deferred indexing cleanup",
+            "after deferred body construction",
+            "after deferred body publication",
             "after deferred indexing compaction",
         ],
-        "deferred indexing should profile both lowering and the follow-up residency pass",
+        "deferred profiling separates private products from their published residency",
     );
 
     let deferred_finish = checkpoints
         .iter()
-        .find(|checkpoint| checkpoint.label == "after deferred indexing")
+        .find(|checkpoint| checkpoint.label == "after deferred body construction")
         .expect("profile should contain the deferred indexing checkpoint");
     assert!(
         checkpoint_optional_bytes(deferred_finish, "retained_bytes").is_some_and(|bytes| bytes > 0),
         "profiled deferred indexing should record retained project memory",
+    );
+    assert!(
+        checkpoint_optional_bytes(deferred_finish, "active_retained_bytes")
+            > checkpoint_optional_bytes(deferred_finish, "retained_bytes"),
+        "private body products must appear in the active working set before publication"
     );
 }
 

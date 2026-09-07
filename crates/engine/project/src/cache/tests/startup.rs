@@ -862,7 +862,7 @@ pub fn dep_value() -> usize { 2 }
     )
     .expect("string writes should not fail");
     writeln!(&mut dump, "body IR crate statuses").expect("string writes should not fail");
-    for (crate_idx, &coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
+    for (crate_idx, coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
         writeln!(
             &mut dump,
             "- crate {crate_idx} {} {}",

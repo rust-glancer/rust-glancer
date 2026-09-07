@@ -9,13 +9,14 @@
 //! `.rgpkg` file with this coarse layout:
 //!
 //! ```text
-//! fixed directory | probe | DefMap | Semantic IR | Body IR
+//! prefix | probe | DefMap | Semantic IR | Body IR
 //! ```
 //!
-//! The probe contains the package header, frozen parse snapshot, and Body IR coverage. Startup
-//! reads it plus the compact DefMap routing directory to validate source identity and retain crate
-//! routing. A query that touches an offloaded package opens one immutable artifact revision and
-//! decodes only the required DefMap crate, Semantic IR half, or Body IR source-file shard.
+//! The prefix records the byte length of each section. The probe contains the package header,
+//! frozen parse snapshot, and Body IR coverage. Startup reads it plus the
+//! [`PackageDefMapsManifest`](rg_def_map::PackageDefMapsManifest) to validate source identity and
+//! retain the mapping of files to crates. A query that touches an offloaded package opens its cache
+//! file and decodes only the required DefMap crate, Semantic IR half, or Body IR source-file shard.
 //!
 //! Individual package files are replaced atomically. A package-set update also leaves an
 //! `update-in-progress` marker until every artifact is committed. If the process stops halfway,
@@ -53,7 +54,8 @@ pub use self::{
 pub(crate) use self::{
     instance::PackageCacheInstance,
     payload::{
-        PackageCacheBodyUpdateInput, PackageCacheProbe, PackageCacheStartup, PackageCacheWriteInput,
+        BodyIrWriteInput, PackageCacheBodyUpdateInput, PackageCacheProbe, PackageCacheStartup,
+        PackageCacheWriteInput,
     },
     store::{PackageArtifactReader, PackageCacheUpdate},
 };

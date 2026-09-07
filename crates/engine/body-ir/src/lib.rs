@@ -15,7 +15,7 @@ pub(crate) use self::store::CurrentBody;
 pub use rg_ir_model::FieldKey;
 
 pub use self::build::{
-    BodyIrBuildProgress, BodyIrBuildStage, BodyIrDbBuilder, CurrentSourceBuildCheckpoint,
+    BodyIrBuildProgress, BodyIrBuildStage, BodyIrBuilder, CurrentSourceBuildCheckpoint,
     CurrentSourceBuildSummary, CurrentSourceBuilder, CurrentSourceSelection,
     CurrentSourceUnavailable,
 };

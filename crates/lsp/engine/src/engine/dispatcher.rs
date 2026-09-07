@@ -393,16 +393,12 @@ impl EngineDispatcher {
                         .set_deferred_indexing_priority(path, prioritized);
                     let _ = respond_to.send(Ok(()));
                 }
-                EngineCommand::DeferredIndexingPriorityPackageFinished {
-                    generation,
-                    finished,
-                } => {
-                    tracing::trace!(
-                        generation,
-                        "engine command started: deferred_indexing_priority_package_finished"
+                EngineCommand::DeferredIndexingProducts { products } => {
+                    tracing::debug!(
+                        generation = products.generation_id().get(),
+                        "engine command started: deferred_indexing_products"
                     );
-                    self.project
-                        .deferred_indexing_priority_package_finished(generation, *finished);
+                    self.project.deferred_indexing_products(*products);
                 }
                 EngineCommand::DeferredIndexingProgress {
                     generation,

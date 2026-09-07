@@ -153,7 +153,7 @@ pub(super) fn assert_reader_matches_resident_package(
             reader
                 .read_body_crate(CrateId(target))
                 .expect("fixture cached Body IR target should read"),
-            *expected,
+            **expected,
         );
     }
 }

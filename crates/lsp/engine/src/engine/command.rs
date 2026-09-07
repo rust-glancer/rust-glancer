@@ -12,7 +12,7 @@ use rg_lsp_proto::{
     DocumentRangeSnapshot, EditorDocumentSnapshot, FoldingClientCapabilities,
     GlobalPositionSnapshot, QueryError, QueryValue,
 };
-use rg_project::SavedFileChange;
+use rg_project::{SavedBodyProducts, SavedFileChange, SplitIndexingProgress};
 use tokio::sync::oneshot;
 
 use super::ProjectConfiguration;
@@ -21,8 +21,8 @@ use super::ProjectConfiguration;
 pub(crate) type EngineResponder<T> = oneshot::Sender<anyhow::Result<T>>;
 /// Response endpoint for a semantic request that may finish without a publishable feature value.
 pub(crate) type QueryResponder<T> = oneshot::Sender<Result<QueryValue<T>, QueryError>>;
-/// Result returned by the detached deferred-indexing thread to the project coordinator.
-pub(crate) type DeferredIndexingResult = anyhow::Result<Box<rg_project::FinishedSplitIndexing>>;
+/// Completion status after the body worker's jobs have drained. Products arrive in separate commands.
+pub(crate) type DeferredIndexingResult = anyhow::Result<()>;
 
 /// Work accepted by the one analysis thread.
 ///
@@ -118,17 +118,16 @@ pub(crate) enum EngineCommand {
         prioritized: bool,
         respond_to: EngineResponder<()>,
     },
-    /// Publish a priority package while the same detached build continues in the background.
-    DeferredIndexingPriorityPackageFinished {
-        generation: u64,
-        finished: Box<rg_project::FinishedSplitIndexing>,
+    /// Transfer completed body products while construction continues in the background.
+    DeferredIndexingProducts {
+        products: Box<SavedBodyProducts>,
     },
-    /// Publish one coalesced progress snapshot from the detached build.
+    /// Publish one coalesced progress snapshot from the body worker.
     DeferredIndexingProgress {
         generation: u64,
-        progress: rg_project::SplitIndexingProgress,
+        progress: SplitIndexingProgress,
     },
-    /// Re-enters a background result onto the lane that owns the saved project.
+    /// End the worker lifecycle after every completed product batch has been enqueued.
     DeferredIndexingFinished {
         generation: u64,
         result: DeferredIndexingResult,

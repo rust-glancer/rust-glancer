@@ -1,13 +1,9 @@
-//! Deferred-indexing reconciliation for the saved project generation.
+//! Runs background body analysis while the engine command loop owns the saved project.
 //!
-//! Early-start indexing leaves expensive Body IR for one detached project clone to finish. The
-//! saved project remains queryable in parallel and may materialize the same package on demand.
-//! Open-document packages are scheduled first inside the detached build and copied back as soon as
-//! their resolution finishes; the same build continues through every ordinary package.
-//!
-//! All publication still re-enters the serialized engine queue. A source generation change makes
-//! later copies stale, and the old clone must return before a replacement is detached. There is
-//! therefore never more than one full background clone or a concurrent saved-project writer.
+//! A worker receives [`SavedBodyBuildInputs`] and sends [`SavedBodyProducts`](rg_project::SavedBodyProducts)
+//! through the engine queue. A save cancels obsolete work; a replacement worker waits until all
+//! started jobs stop. [`SplitIndexing::publish`](rg_project::SplitIndexing::publish) decides which
+//! results can still be installed. This module tracks worker scheduling and client progress.
 
 use std::{
     collections::BTreeSet,
@@ -17,10 +13,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Context as _;
 use rg_def_map::PackageSlot;
 use rg_lsp_proto::DeferredIndexingOutcome;
-use rg_project::{DetachedSplitIndexing, SplitIndexingProgress};
+use rg_project::{
+    BodyPublicationOutcome, SavedBodyBuildInputs, SavedBodyProducts, SplitIndexingProgress,
+};
 
 use crate::engine::{
     QueuedEngineCommand,
@@ -32,16 +29,18 @@ use crate::engine::{
 // an engine command and an RPC notification.
 const PROGRESS_PUBLICATION_INTERVAL: Duration = Duration::from_millis(200);
 
-/// Tracks the one detached indexing finish allowed to run beside the engine lane.
+/// Tracks the one body-analysis worker running alongside the engine command loop.
 ///
-/// The background worker cannot mutate saved state. Its only external capabilities are receiving
-/// best-effort path priorities and enqueueing package copies for generation-checked publication.
-/// A newer saved generation can be announced while an older worker drains, so the client-visible
-/// lifecycle generation is tracked separately from the generation that owns the worker.
+/// The worker receives file priorities and sends completed body results through the engine queue;
+/// only the command loop can install them in the project. Progress for a newer saved version can
+/// be announced while an older worker is stopping, so the generation shown to the client is tracked
+/// separately from the generation being built.
 #[derive(Debug)]
 pub(super) struct DeferredIndexingFinish {
     sender: Sender<QueuedEngineCommand>,
     in_flight_generation: Option<u64>,
+    worker_cancellation: Option<rg_std::CancellationToken>,
+    publication_error: Option<String>,
     worker_priority: Option<Arc<Mutex<Vec<PackageSlot>>>>,
     restart_after_in_flight: bool,
     /// Latest generation whose deferred lifecycle was announced but has not been terminated.
@@ -64,6 +63,8 @@ impl DeferredIndexingFinish {
             sender,
             in_flight_generation: None,
             worker_priority: None,
+            worker_cancellation: None,
+            publication_error: None,
             restart_after_in_flight: false,
             active_lifecycle_generation: None,
             priority_paths: BTreeSet::new(),
@@ -72,10 +73,15 @@ impl DeferredIndexingFinish {
 
     /// Ensure the current saved project will eventually finish deferred indexing.
     ///
-    /// Starting another clone immediately would double peak memory. Record one restart and let the
-    /// old build return first; its generation-tagged publications are harmless in the meantime.
+    /// Cancel obsolete work and record one restart. The final completion is the join boundary,
+    /// so no replacement worker overlaps the jobs still draining from the old generation.
     pub(super) fn saved_project_changed(&mut self, project: &ProjectState) -> bool {
         let should_announce_start = if self.in_flight_generation.is_some() {
+            if self.in_flight_generation != Some(project.generation())
+                && let Some(cancellation) = &self.worker_cancellation
+            {
+                cancellation.cancel();
+            }
             self.restart_after_in_flight = project.has_unfinished_split_indexing();
             self.restart_after_in_flight
         } else {
@@ -125,30 +131,40 @@ impl DeferredIndexingFinish {
         }
     }
 
-    /// Merge one priority package without ending the deferred-indexing lifecycle.
-    pub(super) fn priority_package_returned(
+    /// Publish completed products without ending the worker's lifecycle. A publication failure
+    /// must reach the terminal event too: final completion carries only construction status.
+    pub(super) fn products_returned(
         &mut self,
         project: &mut ProjectState,
-        generation: u64,
-        finished: rg_project::FinishedSplitIndexing,
+        products: SavedBodyProducts,
     ) {
+        let generation = products.generation_id().get();
         if self.in_flight_generation != Some(generation) {
-            tracing::info!(
-                generation,
-                current_in_flight_generation = ?self.in_flight_generation,
-                "discarding unknown deferred indexing priority package"
-            );
             return;
         }
-
-        if let Err(error) =
-            Self::apply_finished_if_current(project, generation, finished, "priority package")
-        {
-            tracing::warn!(
-                generation,
-                error = %format!("{error:#}"),
-                "deferred indexing priority package could not merge into saved project"
-            );
+        let result = project.mutate_saved_preserving_generation(|saved| {
+            saved
+                .split_indexing()
+                .publish(products, &rg_std::CancellationToken::new())
+        });
+        match result {
+            Ok(publication) => {
+                if publication
+                    .outcomes()
+                    .iter()
+                    .any(|(_, outcome)| *outcome == BodyPublicationOutcome::ReplanRequired)
+                {
+                    self.restart_after_in_flight = true;
+                }
+            }
+            Err(error) => {
+                tracing::warn!(generation, error = %format!("{error:#}"), "deferred body publication failed");
+                self.publication_error
+                    .get_or_insert_with(|| format!("{error:#}"));
+                if let Some(cancellation) = &self.worker_cancellation {
+                    cancellation.cancel();
+                }
+            }
         }
     }
 
@@ -174,6 +190,11 @@ impl DeferredIndexingFinish {
         }
         self.in_flight_generation = None;
         self.worker_priority = None;
+        self.worker_cancellation = None;
+        let result = match self.publication_error.take() {
+            Some(message) => Err(anyhow::anyhow!(message)),
+            None => result,
+        };
 
         let worker_outcome = Self::apply_finish_if_current(project, generation, result);
         let should_restart = self.restart_after_in_flight || worker_outcome.is_none();
@@ -214,8 +235,7 @@ impl DeferredIndexingFinish {
     }
 
     fn start_current(&mut self, project: &ProjectState) -> bool {
-        // Check the saved project before detaching it. Lower-memory package batches finish Body IR
-        // before publication, and an empty worker would otherwise pay for a complete project clone.
+        // Lower-memory package batches already finish bodies before publication.
         if !project.has_unfinished_split_indexing() {
             tracing::debug!(
                 generation = project.generation(),
@@ -224,25 +244,28 @@ impl DeferredIndexingFinish {
             return false;
         }
 
-        let (generation, detached) = match project.detach_saved_split_indexing() {
-            Ok(detached) => detached,
+        let inputs = match project.saved_body_build_inputs() {
+            Ok(inputs) => inputs,
             Err(error) => {
                 tracing::warn!(
                     error = %format!("{error:#}"),
-                    "failed to detach saved project for deferred indexing finish"
+                    "failed to capture saved inputs for deferred indexing"
                 );
                 return false;
             }
         };
 
-        self.spawn_finish(generation, detached)
+        self.spawn_finish(inputs)
     }
 
-    /// Finish deferred indexing on one detached project clone.
-    fn spawn_finish(&mut self, generation: u64, detached: DetachedSplitIndexing) -> bool {
+    /// Start the sole background worker with its generation-owned cancellation token.
+    fn spawn_finish(&mut self, inputs: SavedBodyBuildInputs) -> bool {
+        let generation = inputs.generation_id().get();
+        let cancellation = rg_std::CancellationToken::new();
+        let background_cancellation = cancellation.clone();
         let sender = self.sender.clone();
         let priority_packages = Self::package_priorities_for_paths(&self.priority_paths, |path| {
-            detached.package_slots_for_path(path)
+            inputs.package_slots_for_path(path)
         });
         let worker_priority = Arc::new(Mutex::new(priority_packages));
         let background_priority = Arc::clone(&worker_priority);
@@ -256,9 +279,10 @@ impl DeferredIndexingFinish {
                 let result = Self::finish_with_priorities(
                     &sender,
                     generation,
-                    detached,
+                    inputs,
                     background_priority,
                     started,
+                    &background_cancellation,
                 );
                 let elapsed_ms = started.elapsed().as_millis();
                 match &result {
@@ -268,6 +292,9 @@ impl DeferredIndexingFinish {
                             elapsed_ms,
                             "deferred indexing background finish completed"
                         );
+                    }
+                    Err(error) if error.chain().any(|cause| cause.is::<rg_std::Cancelled>()) => {
+                        tracing::debug!(generation, elapsed_ms, "obsolete body worker drained");
                     }
                     Err(error) => {
                         tracing::warn!(
@@ -288,6 +315,8 @@ impl DeferredIndexingFinish {
             Ok(_) => {
                 self.in_flight_generation = Some(generation);
                 self.worker_priority = Some(worker_priority);
+                self.worker_cancellation = Some(cancellation);
+                self.publication_error = None;
                 true
             }
             Err(error) => {
@@ -305,47 +334,46 @@ impl DeferredIndexingFinish {
     fn finish_with_priorities(
         sender: &Sender<QueuedEngineCommand>,
         generation: u64,
-        detached: DetachedSplitIndexing,
+        inputs: SavedBodyBuildInputs,
         priority_packages: Arc<Mutex<Vec<PackageSlot>>>,
         started: Instant,
+        cancellation: &rg_std::CancellationToken,
     ) -> DeferredIndexingResult {
-        let unfinished = detached.unfinished_packages();
+        let pending_package_count = inputs.packages().len();
         let priority_package_count = priority_packages
             .lock()
             .expect("deferred indexing package priorities should not be poisoned")
             .len();
         tracing::debug!(
             generation,
-            pending_package_count = unfinished.len(),
+            pending_package_count,
             priority_package_count,
             "deferred indexing package schedule prepared"
         );
 
         let progress = DeferredIndexingProgressReporter::new(sender.clone(), generation);
-        detached
-            .finish_with_package_priority(
-                || {
-                    priority_packages
-                        .lock()
-                        .expect("deferred indexing package priorities should not be poisoned")
-                        .clone()
-                },
-                |finished| {
-                    tracing::debug!(
-                        generation,
-                        elapsed_ms = started.elapsed().as_millis(),
-                        "deferred indexing priority package resolved"
-                    );
-                    let _ = sender.send(QueuedEngineCommand::new(
-                        EngineCommand::DeferredIndexingPriorityPackageFinished {
-                            generation,
-                            finished: Box::new(finished),
-                        },
-                    ));
-                },
-                |snapshot| progress.report(snapshot),
-            )
-            .map(Box::new)
+        inputs.build_with_package_priority(
+            &|| {
+                priority_packages
+                    .lock()
+                    .expect("deferred indexing package priorities should not be poisoned")
+                    .clone()
+            },
+            &|products| {
+                tracing::debug!(
+                    generation,
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "deferred body products resolved"
+                );
+                let _ = sender.send(QueuedEngineCommand::new(
+                    EngineCommand::DeferredIndexingProducts {
+                        products: Box::new(products),
+                    },
+                ));
+            },
+            &|snapshot| progress.report(snapshot),
+            cancellation,
+        )
     }
 
     fn package_priorities_for_paths(
@@ -368,7 +396,8 @@ impl DeferredIndexingFinish {
         packages.into_iter().collect()
     }
 
-    /// Merge the final result if it still matches the saved-project generation.
+    /// Turn completion into a lifecycle outcome for the same saved generation. Products have
+    /// already arrived separately, so success also requires that live coverage is complete.
     fn apply_finish_if_current(
         project: &mut ProjectState,
         generation: u64,
@@ -384,23 +413,12 @@ impl DeferredIndexingFinish {
         }
 
         let outcome = match result {
-            Ok(finished) => {
-                match Self::apply_finished_if_current(project, generation, *finished, "finish") {
-                    Ok(true) => DeferredIndexingOutcome::Succeeded,
-                    // The generation was checked immediately above on the serialized engine lane, but
-                    // retain the stale result in the type in case this helper's use changes later.
-                    Ok(false) => return None,
-                    Err(error) => {
-                        let message = format!("{error:#}");
-                        tracing::warn!(
-                            generation,
-                            error = %message,
-                            "deferred indexing finish could not merge into saved project"
-                        );
-                        DeferredIndexingOutcome::Failed { message }
-                    }
-                }
+            Ok(()) if !project.has_unfinished_split_indexing() => {
+                DeferredIndexingOutcome::Succeeded
             }
+            Ok(()) => DeferredIndexingOutcome::Failed {
+                message: "deferred body work completed with unpublished coverage".to_string(),
+            },
             Err(error) => {
                 let message = format!("{error:#}");
                 tracing::warn!(
@@ -412,37 +430,6 @@ impl DeferredIndexingFinish {
             }
         };
         Some(outcome)
-    }
-
-    fn apply_finished_if_current(
-        project: &mut ProjectState,
-        generation: u64,
-        finished: rg_project::FinishedSplitIndexing,
-        label: &'static str,
-    ) -> anyhow::Result<bool> {
-        if project.generation() != generation {
-            tracing::info!(
-                generation,
-                current_generation = project.generation(),
-                label,
-                "discarding stale deferred indexing publication"
-            );
-            return Ok(false);
-        }
-
-        let updated = project
-            .mutate_saved_preserving_generation(|saved| {
-                saved.split_indexing().merge_finished(finished)
-            })
-            .with_context(|| format!("merge deferred indexing {label}"))?;
-        if !updated {
-            tracing::trace!(
-                generation,
-                label,
-                "deferred indexing publication completed without saved project changes"
-            );
-        }
-        Ok(true)
     }
 }
 

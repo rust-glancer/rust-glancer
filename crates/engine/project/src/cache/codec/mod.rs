@@ -8,10 +8,10 @@
 //! data:   probe       | DefMap    | Semantic IR                    | Body IR
 //! ```
 //!
-//! This directory is deliberately fixed-size. Startup can validate it with one small read and then
+//! This prefix is deliberately fixed-size. Startup can validate it with one small read and then
 //! fetch only the probe. A request that needs a later phase seeks directly to its byte range; it
-//! does not deserialize earlier phases as framing. Each retained phase then has a nested directory:
-//! DefMap and Semantic IR use crate shards, while Body IR uses source-file shards.
+//! does not deserialize earlier phases as framing. Each retained phase has its own table of byte
+//! ranges: DefMap and Semantic IR use crate shards, while Body IR uses source-file shards.
 //!
 //! Wincode is the representation inside each section, not a long-lived compatibility promise.
 //! Schema compatibility comes from the version in the probe header. Every decoder also validates
@@ -47,8 +47,8 @@ pub(crate) use self::{
 };
 
 use super::{
-    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheBodyUpdateInput, PackageCacheHeader,
-    PackageCacheProbe, PackageCacheWriteInput,
+    BodyIrWriteInput, CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheBodyUpdateInput,
+    PackageCacheHeader, PackageCacheProbe, PackageCacheWriteInput,
 };
 const PACKAGE_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGPKG\0\0\x01";
 /// Bytes needed to discover every outer section without decoding wincode data.
@@ -65,14 +65,14 @@ type PackageCacheWincodeConfig =
 /// Absolute byte range in the outer file, or relative range in a nested payload.
 ///
 /// Code that stores a range is responsible for making its coordinate system clear. The outer
-/// layout uses file offsets; nested phase directories use offsets from their payload starts.
+/// layout uses file offsets; tables within each phase use offsets from their payload starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct PackageCacheSectionRange {
     pub(crate) offset: u64,
     pub(crate) len: u64,
 }
 
-/// Validated byte directory for the four outer package sections.
+/// Validated byte ranges for the probe, DefMap, Semantic IR and Body IR in a package cache file.
 ///
 /// Ranges are contiguous, start immediately after the prefix, and cover the file exactly. Once
 /// this value exists, readers can seek to a section without repeating the arithmetic.
@@ -112,11 +112,10 @@ impl EncodedPackageCacheArtifact {
     }
 }
 
-/// A declaration phase ready to occupy its unchanged place in the outer artifact.
+/// Encoded DefMap or Semantic IR data ready to write as a section of the package cache file.
 ///
-/// Full writes provide newly encoded crate shards. A Body-only rewrite provides exact bytes copied
-/// from the pinned prior artifact revision; both forms expose the same length/write interface to the
-/// outer container encoder.
+/// Full writes provide newly encoded crate shards. When only bodies change, the declaration bytes
+/// are copied from the existing file. The outer encoder can write either form in the same way.
 #[derive(Debug)]
 enum EncodedDeclarationSection {
     CrateShards(EncodedCrateShards),
@@ -146,7 +145,7 @@ impl PackageCacheLayout {
     /// end exactly at `file_len`. A truncated file and a file with unexplained trailing bytes are
     /// both rejected before any wincode decoder sees their contents.
     pub(crate) fn decode_prefix(prefix: &[u8], file_len: u64) -> anyhow::Result<Self> {
-        // 1. The caller should have read exactly the fixed directory. Validate that assumption and
+        // 1. The caller should have read exactly the fixed prefix. Validate that assumption and
         // reject unrelated files before interpreting their next bytes as lengths.
         anyhow::ensure!(
             prefix.len() == PACKAGE_CACHE_CONTAINER_PREFIX_BYTES,
@@ -172,8 +171,8 @@ impl PackageCacheLayout {
             cursor = end;
         }
 
-        // 3. Only the probe is decoded as one outer section. Every retained IR section has a nested
-        // directory over independently bounded payloads, so its aggregate length is not an
+        // 3. Only the probe is decoded as one outer section. Every retained IR section has a table
+        // of independently bounded payloads, so its aggregate length is not an
         // allocation bound.
         anyhow::ensure!(
             lengths[0] <= PACKAGE_CACHE_DECODE_LIMIT_BYTES as u64,
@@ -249,35 +248,19 @@ impl PackageCacheCodec {
     /// Encode independently writable fragments from borrowed resident phase data.
     pub(crate) fn encode_write_input(
         input: PackageCacheWriteInput<'_>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<EncodedPackageCacheArtifact> {
         let probe = PackageCacheProbe::from_write_input(input);
         Self::validate_write_input(input, &probe).context("validate package cache write input")?;
         let def_map = Self::encode_def_map(input.def_map).context("encode DefMap cache section")?;
         let semantic_ir = Self::encode_semantic_ir(input.semantic_ir)
             .context("encode Semantic IR cache section")?;
-        let body_ir =
-            Self::encode_body_ir(input.body_ir).context("encode Body IR cache section")?;
-        Self::encode_sections(
-            probe,
-            EncodedDeclarationSection::CrateShards(def_map),
-            EncodedDeclarationSection::CrateShards(semantic_ir),
-            body_ir,
+        let body_ir = Self::encode_body_ir(
+            &BodyIrWriteInput::resident(input.body_ir),
+            None,
+            cancellation,
         )
-    }
-
-    /// Encode a package overlay while copying cached sibling Body IR shards verbatim.
-    pub(crate) fn encode_write_input_reusing_cached_body_ir(
-        input: PackageCacheWriteInput<'_>,
-        mut read_cached_shard: impl FnMut(CrateId, FileId) -> anyhow::Result<Vec<u8>>,
-    ) -> anyhow::Result<EncodedPackageCacheArtifact> {
-        let probe = PackageCacheProbe::from_write_input(input);
-        Self::validate_write_input(input, &probe).context("validate package cache write input")?;
-        let def_map = Self::encode_def_map(input.def_map).context("encode DefMap cache section")?;
-        let semantic_ir = Self::encode_semantic_ir(input.semantic_ir)
-            .context("encode Semantic IR cache section")?;
-        let body_ir =
-            Self::encode_body_ir_reusing_cached_shards(input.body_ir, &mut read_cached_shard)
-                .context("encode Body IR cache section with cached shards")?;
+        .context("encode Body IR cache section")?;
         Self::encode_sections(
             probe,
             EncodedDeclarationSection::CrateShards(def_map),
@@ -288,20 +271,24 @@ impl PackageCacheCodec {
 
     /// Rewrites Body IR while preserving the prior artifact's exact declaration bytes.
     ///
-    /// DefMap and Semantic IR have already been offloaded when this path is used, so decoding and
-    /// re-encoding them would defeat the storage boundary. The pinned reader supplies their complete
-    /// section bytes, while only Body IR coverage and shards are rebuilt.
+    /// DefMap and Semantic IR are already stored on disk. Copying their bytes avoids loading all
+    /// declarations into memory just to serialize them again. These sections and `read_cached_shard`
+    /// must use the same open file that supplied the manifests in `input`.
     pub(crate) fn encode_body_update_reusing_cached_sections(
         input: PackageCacheBodyUpdateInput<'_>,
         def_map: Vec<u8>,
         semantic_ir: Vec<u8>,
         mut read_cached_shard: impl FnMut(CrateId, FileId) -> anyhow::Result<Vec<u8>>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<EncodedPackageCacheArtifact> {
         let probe = PackageCacheProbe::from_body_update(input);
         Self::validate_probe(&probe).context("validate package cache probe")?;
-        Self::validate_body_ir(input.body_ir, &probe).context("validate Body IR cache update")?;
+        anyhow::ensure!(
+            input.body_ir.crates.len() == probe.header.package.targets.len(),
+            "body update must preserve crate count"
+        );
         let body_ir =
-            Self::encode_body_ir_reusing_cached_shards(input.body_ir, &mut read_cached_shard)
+            Self::encode_body_ir(input.body_ir, Some(&mut read_cached_shard), cancellation)
                 .context("encode Body IR cache update with cached shards")?;
         Self::encode_sections(
             probe,
@@ -311,14 +298,14 @@ impl PackageCacheCodec {
         )
     }
 
-    /// Assembles fresh or copied phase sections under one newly encoded outer directory.
+    /// Combine new or copied sections with a prefix recording their lengths.
     fn encode_sections(
         probe: PackageCacheProbe,
         def_map: EncodedDeclarationSection,
         semantic_ir: EncodedDeclarationSection,
         body_ir: EncodedBodyIr,
     ) -> anyhow::Result<EncodedPackageCacheArtifact> {
-        // The resulting lengths become the fixed outer directory, so readers can later decode one
+        // The resulting lengths go in the fixed prefix, so readers can later decode one
         // phase without walking through the preceding phases.
         let probe = wincode::config::serialize(&probe, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
@@ -450,7 +437,7 @@ impl PackageCacheCodec {
         let coverage = body_ir
             .crates()
             .iter()
-            .map(|crate_bodies| crate_bodies.coverage())
+            .map(|crate_bodies| crate_bodies.coverage().clone())
             .collect::<Vec<_>>();
         anyhow::ensure!(
             coverage == probe.body_ir_coverage,
@@ -478,7 +465,7 @@ mod tests {
 
     #[test]
     fn package_layout_allows_body_ir_larger_than_one_decode_unit() {
-        // No allocation follows this declared length: opening Body IR reads its small directory,
+        // No allocation follows this declared length: opening Body IR reads its small manifest,
         // then one independently bounded payload. Exercise both prefix writing and validation.
         let body_ir_len = PACKAGE_CACHE_DECODE_LIMIT_BYTES + 1;
         let prefix = PackageCacheLayout::encode_prefix([0, 0, 0, body_ir_len])

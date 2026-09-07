@@ -1,10 +1,9 @@
 //! Lazy phase loading from sectioned package cache artifacts.
 //!
-//! One request shares an artifact revision across phase-specific package stores. DefMap and
-//! Semantic IR load crate shards, while Body IR loads source-file shards.
+//! DefMap and Semantic IR load crate shards, while Body IR loads source-file shards.
 //!
-//! All phase loaders in one request read the same immutable artifact revision, so callers do not
-//! have to coordinate revisions themselves.
+//! One query or build shares an open reader for each package cache file across all three phases.
+//! They keep reading the same file contents even if another operation replaces the file's path.
 
 use std::{
     fmt,
@@ -24,17 +23,16 @@ use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, Worksp
 
 use super::state::ProjectState;
 
-/// Phase-specific loaders backed by one request-local set of artifact revisions.
+/// Gives a query or build loaders that share one open reader per package cache file.
 ///
-/// DefMap, Semantic IR, and Body IR expose different storage units, but all three adapters resolve a
-/// package slot through the same [`PackageArtifactReader`]. Decoded values belong to their phase read
-/// transactions; only the open reader is shared for the duration of this loader set.
+/// DefMap, Semantic IR, and Body IR all read through the same [`PackageArtifactReader`], so replacing
+/// the cache file cannot mix old declarations with new bodies. Decoded analysis belongs to each
+/// phase's read transaction; only the reader is shared for the duration of this loader set.
 #[derive(Clone)]
 pub(crate) struct PackageReadLoaders {
     pub(crate) def_map: DefMapLoader<'static>,
     pub(crate) semantic_ir: SemanticIrLoader<'static>,
     pub(crate) body_ir: BodyIrLoader<'static>,
-    artifacts: Arc<PackageArtifactReaders>,
 }
 
 impl fmt::Debug for PackageReadLoaders {
@@ -115,25 +113,7 @@ impl PackageReadLoaders {
             body_ir: BodyIrLoader::new(BodyIrPackageLoader {
                 artifacts: Arc::clone(&artifacts),
             }),
-            artifacts,
         }
-    }
-
-    /// Restores a manifest-only Body IR package shape for an exact target rebuild.
-    ///
-    /// The builder needs aligned crate slots so it can replace the selected target. Sibling slots
-    /// retain only their file routing and coverage; their body shards remain in the artifact.
-    pub(crate) fn load_body_ir_package_manifest(
-        &self,
-        package: PackageSlot,
-    ) -> Result<rg_body_ir::PackageBodies, PackageStoreError> {
-        let reader = self.artifacts.reader(package)?;
-        let body_manifest = reader
-            .read_body_ir_manifest()
-            .map_err(|error| error.into_package_store_error(package))?;
-        Ok(rg_body_ir::PackageBodies::from_cached_manifest(
-            &body_manifest,
-        ))
     }
 }
 
@@ -165,7 +145,7 @@ impl PackageArtifactReaders {
         }
     }
 
-    /// Opens a package artifact once and shares that pinned revision across all phase adapters.
+    /// Open a package cache file once and share the reader across DefMap, Semantic IR and Body IR.
     ///
     /// Failed opens are not cached, so a storage error is returned with its package context rather
     /// than leaving a permanently initialized error sentinel in the request.

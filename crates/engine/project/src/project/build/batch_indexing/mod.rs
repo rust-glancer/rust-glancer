@@ -14,7 +14,7 @@ mod schedule;
 use std::time::Instant;
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
+use rg_body_ir::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb};
 use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
@@ -298,22 +298,24 @@ pub(super) fn build(
         // released. Batch indexing therefore includes configured Body IR before finishing the
         // batch, even when the project would otherwise start early. Lower peak memory delays the
         // queryable project boundary rather than retaining a second global Body IR pass.
-        body_ir = body_ir
-            .builder(
-                &parse,
-                &def_map,
-                &semantic_ir,
-                batch.as_slice(),
-                &resident_packages,
-                &mut names,
-                loaders.def_map,
-                loaders.semantic_ir,
-                &rebuild_subset,
-            )
-            .worker_limit(indexing_preference.body_ir_worker_limit())
-            .configured_bodies(body_ir_policy)
-            .build()
-            .context("while attempting to build package batch body IR")?;
+        let products = BodyIrBuilder::new(
+            &parse,
+            &def_map,
+            &semantic_ir,
+            batch.as_slice(),
+            &resident_packages,
+            &mut names,
+            loaders.def_map,
+            loaders.semantic_ir,
+            &rebuild_subset,
+        )
+        .worker_limit(indexing_preference.body_ir_worker_limit())
+        .configured_bodies(body_ir_policy)
+        .build()
+        .context("build package batch body products")?;
+        body_ir
+            .replace_built_packages(products)
+            .context("assemble batch body packages")?;
         parse.evict_syntax_trees();
         checkpoint_memory!(
             names,
@@ -335,7 +337,6 @@ pub(super) fn build(
                 .context("batch indexing cache update should exist for offloadable packages")?;
             PackageArtifactWriter::new(
                 cache_plan,
-                cache_store,
                 &source_fingerprints,
                 &parse,
                 &def_map,

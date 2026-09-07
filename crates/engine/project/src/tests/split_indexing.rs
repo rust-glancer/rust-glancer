@@ -85,6 +85,7 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
             .crate_bodies(crate_ref.crate_id)
             .expect("semantic target should have a Body IR slot")
             .coverage()
+            .clone()
     };
     assert_eq!(
         coverage(&project, library),
@@ -192,7 +193,8 @@ pub fn library_value() -> usize {{ 1 }}
         let coverage = bodies
             .crate_bodies(rg_ir_model::CrateId(target.id.0))
             .expect("every example fixture target should have a Body IR slot")
-            .coverage();
+            .coverage()
+            .clone();
         match &target.kind {
             rg_workspace::TargetKind::Lib => {
                 assert_eq!(coverage, rg_body_ir::CrateBodiesCoverage::Complete);
@@ -299,14 +301,16 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
         "the same FileId must not imply readiness for an unrequested target interpretation",
     );
@@ -330,21 +334,24 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(library.crate_id)
             .expect("updated shared library should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Missing,
     );
     assert_eq!(
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("updated first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("updated second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
 
@@ -368,21 +375,24 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(library.crate_id)
             .expect("finished shared library should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("rematerialized first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("unrequested second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
 }

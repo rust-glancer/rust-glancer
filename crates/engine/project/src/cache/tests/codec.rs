@@ -47,13 +47,10 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
 
     // Exercise the production borrowed input and fragment writer before decoding every container
     // section independently, just like the filesystem store does.
-    let encoded = PackageCacheCodec::encode_write_input(PackageCacheWriteInput::new(
-        &header,
-        &parse,
-        &def_map,
-        &semantic_ir,
-        &body_ir,
-    ))
+    let encoded = PackageCacheCodec::encode_write_input(
+        PackageCacheWriteInput::new(&header, &parse, &def_map, &semantic_ir, &body_ir),
+        &rg_std::CancellationToken::new(),
+    )
     .expect("minimal package cache input should encode");
     let mut bytes = Vec::new();
     encoded

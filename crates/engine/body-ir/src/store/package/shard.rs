@@ -1,6 +1,6 @@
 //! Cache-facing manifest and source-file shards.
 //!
-//! Stable body ids are dense within a crate, but bodies from the same file are not necessarily
+//! Body ids are dense within one crate revision, but bodies from the same file are not necessarily
 //! adjacent. The manifest keeps the body-to-file routing table, while each shard repeats the body
 //! id beside its data. Reconstruction validates both sides before rebuilding the dense arenas, so
 //! malformed cache bytes cannot silently attach a body to the wrong id.
@@ -29,24 +29,36 @@ use crate::BodyData;
 use crate::{BodyFacts, BodyView};
 
 impl PackageBodies {
-    /// Build the small package directory read before any crate payload.
+    /// Record each crate's file list and body-to-file mapping for cache reads.
     pub fn manifest(&self) -> PackageBodiesManifest {
         PackageBodiesManifest {
-            crates: Arena::from_vec(self.crates().iter().map(CrateBodies::manifest).collect()),
+            crates: Arena::from_vec(
+                self.crates()
+                    .iter()
+                    .map(|bodies| bodies.manifest())
+                    .collect(),
+            ),
         }
     }
 }
 
-/// Package-level Body IR directory used before any body payload is decoded.
+/// Per-crate metadata used to locate bodies in a package cache file.
 ///
-/// This deliberately contains only crate manifests. Source-file shards are separate payloads in
-/// the cache container.
+/// Each [`CrateId`] selects a [`CrateBodiesManifest`], which maps body ids to source files.
+/// The bodies themselves are stored separately as [`BodyFileShard`]s, so reading this metadata
+/// is enough to choose which parts of the cache file a query needs to load.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageBodiesManifest {
     crates: Arena<CrateId, CrateBodiesManifest>,
 }
 
 impl PackageBodiesManifest {
+    pub fn new(crates: Vec<CrateBodiesManifest>) -> Self {
+        Self {
+            crates: Arena::from_vec(crates),
+        }
+    }
+
     pub fn crates(&self) -> &[CrateBodiesManifest] {
         self.crates.as_slice()
     }
@@ -56,10 +68,10 @@ impl PackageBodiesManifest {
     }
 }
 
-/// Routing information needed to load one crate in source-file-sized pieces.
+/// Metadata used to locate a crate's bodies in a package cache file.
 ///
-/// `body_files` supports direct `BodyId -> FileId` lookup. `files` stores the sorted unique file
-/// list so a crate-wide query can enumerate every shard without scanning the body mapping first.
+/// `body_files` maps each [`BodyId`] to its [`FileId`]. `files` lists the files that have
+/// [`BodyFileShard`]s, so a query can load one source file without decoding the whole crate.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateBodiesManifest {
     coverage: CrateBodiesCoverage,
@@ -68,8 +80,8 @@ pub struct CrateBodiesManifest {
 }
 
 impl CrateBodiesManifest {
-    pub fn coverage(&self) -> CrateBodiesCoverage {
-        self.coverage
+    pub fn coverage(&self) -> &CrateBodiesCoverage {
+        &self.coverage
     }
 
     pub fn body_count(&self) -> usize {
@@ -85,11 +97,11 @@ impl CrateBodiesManifest {
     }
 }
 
-/// Bodies and body-local item stores originating in one package-local source file.
+/// Analyzed bodies from one source file in a crate, stored together for cache reads.
 ///
-/// A shard is the smallest independently decoded Body IR payload. The entries keep their stable
-/// `BodyId`s because their positions inside this vector do not match positions in the resident
-/// crate arena.
+/// A query can load this instead of the full [`CrateBodies`] when it needs only one file.
+/// Entries keep the [`BodyId`]s from that crate's build: bodies from one file are not necessarily
+/// consecutive, so their positions in the shard cannot be used as body ids.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyFileShard {
     file: FileId,
@@ -120,11 +132,11 @@ impl BodyFileShard {
     }
 }
 
-/// One stable body id and the payloads that must move with it.
+/// A body's id and analysis data, kept together for cache storage.
 ///
-/// `BodyData`, `BodyFacts`, and `BodyLocalItems` use the same `BodyId` in the resident
-/// representation. Keeping them in one shard entry prevents independently decoded arrays from
-/// drifting apart.
+/// [`BodyData`], [`BodyFacts`], and [`BodyLocalItems`] use the same [`BodyId`] in [`CrateBodies`].
+/// Keeping them in one shard entry prevents decoded expressions, inferred facts and declarations
+/// from being attached to different bodies.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyFileEntry {
     body: BodyId,
@@ -148,15 +160,11 @@ impl BodyFileEntry {
 }
 
 impl CrateBodies {
-    /// Build the directory that routes dense body ids to file shards.
+    /// Record which source file owns each body so cached queries can choose the right shard.
     ///
     /// The `body_files` arena preserves one entry per body id. The separate file list is sorted and
     /// deduplicated to make serialized output deterministic and shard iteration straightforward.
     pub fn manifest(&self) -> CrateBodiesManifest {
-        if let Some(manifest) = self.cached_manifest() {
-            return manifest.clone();
-        }
-
         debug_assert!(
             self.bodies().iter().enumerate().all(|(body_idx, _)| {
                 let body = BodyId(body_idx);
@@ -174,7 +182,7 @@ impl CrateBodies {
         files.dedup();
 
         CrateBodiesManifest {
-            coverage: self.coverage(),
+            coverage: self.coverage().clone(),
             body_files: Arena::from_vec(body_files),
             files,
         }
@@ -182,16 +190,9 @@ impl CrateBodies {
 
     /// Copy one source file's bodies into an independently serializable shard.
     ///
-    /// Continuing the module example, asking for `lib.rs` returns entries for body 0 and body 2,
-    /// each paired with its body-local items. The stable ids are not renumbered.
-    ///
-    /// This requires decoded resident arenas. A cached rewrite placeholder has only the routing
-    /// manifest; its caller must copy the validated encoded shard from the previous artifact.
-    pub fn file_shard(&self, file: FileId) -> anyhow::Result<BodyFileShard> {
-        anyhow::ensure!(
-            !self.has_cached_payload(),
-            "cached Body IR payload has no decoded file shards",
-        );
+    /// If bodies 0 and 2 belong to `lib.rs`, its shard contains those ids and omits body 1.
+    /// Each body keeps its expressions, inferred facts and local declarations; ids are not renumbered.
+    pub fn file_shard(&self, file: FileId) -> BodyFileShard {
         let entries = self
             .bodies()
             .iter()
@@ -213,7 +214,7 @@ impl CrateBodies {
                 }
             })
             .collect();
-        Ok(BodyFileShard { file, entries })
+        BodyFileShard { file, entries }
     }
 
     /// Reassemble the ordinary dense crate representation after loading all of its shards.
@@ -296,7 +297,7 @@ impl CrateBodies {
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(Self::from_resident_parts(
-            manifest.coverage,
+            manifest.coverage.clone(),
             Arena::from_vec(bodies),
             Arena::from_vec(facts),
             Arena::from_vec(body_local_items),

@@ -62,8 +62,7 @@ impl LoadBodyIr for ScanLoader {
             .bodies
             .crate_bodies(crate_id)
             .expect("fixture crate exists")
-            .file_shard(file)
-            .expect("resident fixture can supply a shard");
+            .file_shard(file);
         let loaded = self.loaded.fetch_add(1, Ordering::Relaxed) + 1;
         if self.cancel_after == Some(loaded) {
             self.cancellation.cancel();
@@ -82,7 +81,7 @@ impl LoadBodyIr for ScanLoader {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MaterializationPoint {
-    BaselinePrepared,
+    InputsPrepared,
     BeforePublication,
 }
 
@@ -148,7 +147,7 @@ fn untouched() {{ let value = {name}::value(); }}
         PackageResidencyPolicy::AllOffloadable,
     ] {
         for (point, completed) in [
-            (MaterializationPoint::BaselinePrepared, 0),
+            (MaterializationPoint::InputsPrepared, 0),
             (MaterializationPoint::BeforePublication, 0),
             (MaterializationPoint::BeforePublication, 1),
         ] {
@@ -240,11 +239,11 @@ fn untouched() {{ let value = {name}::value(); }}
                     requested
                         .iter()
                         .all(|target| project.state.body_ir.package_is_offloaded(target.package)),
-                    "no manifest overlay may escape publication"
+                    "cached publication preserves offloaded residency"
                 );
             }
             // Cached siblings must remain decodable, including their bodies, after an abandoned
-            // manifest baseline or a completed artifact rewrite for a different target.
+            // product preparation or a completed artifact rewrite for a different target.
             let txn = project
                 .state
                 .body_ir

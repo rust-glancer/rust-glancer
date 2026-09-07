@@ -1,4 +1,8 @@
-//! Builds and rebuilds Body IR snapshots.
+//! Builds analysis data for the code inside Rust bodies.
+//!
+//! [`BodyIrBuilder`] analyzes saved source using declarations already collected by DefMap and
+//! Semantic IR. [`CurrentSourceBuilder`] handles editor text for one request, preparing the
+//! declarations and bodies needed by that request against the saved project.
 
 mod current;
 mod local_items;
@@ -9,18 +13,19 @@ mod query_source;
 mod resolve;
 mod state;
 
-use std::{num::NonZeroUsize, time::Instant};
+use std::{num::NonZeroUsize, sync::Mutex};
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapLoader, PackageSlot};
-use rg_ir_model::{CrateId, CrateRef};
+use rg_def_map::{DefMapDb, DefMapLoader, PackageSlot};
+use rg_ir_model::CrateRef;
 use rg_package_store::PackageSubset;
-use rg_semantic_ir::SemanticIrLoader;
+use rg_parse::ParseDb;
+use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile, PackageBodies};
+use crate::{BodyIrBuildPolicy, BodyIrFile, CrateBodies, PackageBodies};
 
 use self::materialization::BodyIrMaterializationPlan;
 
@@ -70,22 +75,17 @@ impl BodyIrBuildProgress {
     }
 }
 
-/// Builds selected Body IR packages on top of one baseline snapshot.
+/// Builds [`CrateBodies`] from saved source and the declarations in
+/// [`DefMapDb`](rg_def_map::DefMapDb) and [`SemanticIrDb`](rg_semantic_ir::SemanticIrDb).
 ///
-/// Fresh construction and saved updates differ only in the baseline and selected package set.
-/// Keeping both on this builder makes materialization, lazy reads, worker limits, and compaction
-/// follow one path. Callers must choose one materialization mode before building.
-///
-/// Resolution leaves extra capacity in the mutable arenas it produced. The builder can create a
-/// compact copy before publishing a package, but that briefly keeps both payloads alive. Project
-/// construction therefore supplies a copy-compaction package set separately from the build set.
-/// Packages headed to a cache artifact can be serialized and released in their ordinary build
-/// representation, while packages that remain resident receive the denser copy.
-pub struct BodyIrDbBuilder<'db, 'names> {
-    baseline: &'db BodyIrDb,
-    parse: &'db rg_parse::ParseDb,
-    def_map: &'db rg_def_map::DefMapDb,
-    semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
+/// Select bodies by build policy or by explicit files and crates, then collect the results with
+/// [`Self::build`] or receive them package by package with [`Self::build_with_package_priority`].
+/// Installing these results in a [`BodyIrDb`](crate::BodyIrDb) is the caller's responsibility,
+/// so body analysis can run independently of changes to the project's existing bodies.
+pub struct BodyIrBuilder<'db, 'names> {
+    parse: &'db ParseDb,
+    def_map: &'db DefMapDb,
+    semantic_ir: &'db SemanticIrDb,
     materialization: Option<BodyIrMaterializationPlan>,
     packages: &'db [PackageSlot],
     interners: &'names mut PackageNameInterners,
@@ -97,19 +97,18 @@ pub struct BodyIrDbBuilder<'db, 'names> {
     copy_compact_packages: Vec<PackageSlot>,
 }
 
-impl rg_std::Cancelable for BodyIrDbBuilder<'_, '_> {
+impl rg_std::Cancelable for BodyIrBuilder<'_, '_> {
     fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
         rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
     }
 }
 
-impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
+impl<'db, 'names> BodyIrBuilder<'db, 'names> {
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        baseline: &'db BodyIrDb,
-        parse: &'db rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
+    pub fn new(
+        parse: &'db ParseDb,
+        def_map: &'db DefMapDb,
+        semantic_ir: &'db SemanticIrDb,
         packages: &'db [PackageSlot],
         copy_compact_packages: &[PackageSlot],
         interners: &'names mut PackageNameInterners,
@@ -118,7 +117,6 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         subset: &'db PackageSubset,
     ) -> Self {
         Self {
-            baseline,
             parse,
             def_map,
             semantic_ir,
@@ -134,34 +132,73 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         }
     }
 
-    /// Lowers body contents selected by the package-and-target policy.
+    /// Select the bodies that [`BodyIrBuildPolicy`] allows for each package and Cargo target.
     pub fn configured_bodies(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.materialization = Some(BodyIrMaterializationPlan::ConfiguredBodies(policy));
         self
     }
 
-    /// Builds coverage records without lowering body contents selected by the policy.
-    pub fn coverage_only(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.materialization = Some(BodyIrMaterializationPlan::CoverageOnly(policy));
-        self
-    }
-
-    /// Rebuilds bodies belonging to exact semantic interpretations of selected files.
-    pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
-        self.materialization = Some(BodyIrMaterializationPlan::SelectedFiles(files));
-        self
-    }
-
-    /// Rebuild complete Body IR for exact semantic crates without selecting sibling targets.
-    pub fn selected_crates(mut self, crates: UniqueVec<CrateRef>) -> Self {
-        self.materialization = Some(BodyIrMaterializationPlan::SelectedCrates(crates));
-        self
-    }
-
-    /// Bounds package-level lowering and resolution pools for this build.
+    /// Record which crates need body analysis, without analyzing their bodies yet.
     ///
-    /// `None` keeps Rayon's machine-default pool width. A limit is useful for indexing modes that
-    /// prefer lower per-worker allocation overlap over maximum package throughput.
+    /// This lets the project answer queries about declarations before analyzing function bodies.
+    /// Returns one [`PackageBodies`](crate::PackageBodies) per selected package, with an empty
+    /// [`CrateBodies`] entry for each Cargo target. Its
+    /// [`CrateBodiesCoverage`](crate::CrateBodiesCoverage) is `Missing` when body work remains,
+    /// `SkippedByPolicy` for excluded targets, or `Complete` for included targets with no bodies.
+    #[rg_std::cancelable("prepare body coverage")]
+    pub fn prepare_coverage(
+        self,
+        policy: BodyIrBuildPolicy,
+    ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
+        let semantic_ir = self
+            .semantic_ir
+            .read_txn_for_subset(self.semantic_ir_loader, self.subset);
+        let def_map = self
+            .def_map
+            .read_txn_for_subset(self.def_map_loader, self.subset);
+        let packages = normalized_package_slots(self.packages);
+        let lowered = lower::build_selected_packages(
+            self.parse,
+            &def_map,
+            &semantic_ir,
+            materialization::BodyIrMaterialization::CoverageOnly(policy),
+            &packages,
+            self.interners,
+            self.worker_limit,
+            None,
+            &self.cancellation,
+        )
+        .context("prepare initial body coverage")?;
+        Ok(lowered
+            .into_iter()
+            .map(|(package, crates)| {
+                (
+                    package,
+                    PackageBodies::new(
+                        crates
+                            .into_iter()
+                            .map(|(_, bodies)| CrateBodies::empty(bodies.coverage()))
+                            .collect(),
+                    ),
+                )
+            })
+            .collect())
+    }
+
+    /// Select files and entire crates for the next build, including targets omitted by build policy.
+    ///
+    /// A crate in `crates` is built in full even if some of its files also appear in `files`.
+    /// A file selection rebuilds only those files; to keep an earlier file's bodies, include it
+    /// again. Other targets in the same package are left out of the results.
+    pub fn selected_bodies(mut self, files: Vec<BodyIrFile>, crates: UniqueVec<CrateRef>) -> Self {
+        self.materialization = Some(BodyIrMaterializationPlan::Selected { files, crates });
+        self
+    }
+
+    /// Limit how many packages can be analyzed in parallel.
+    ///
+    /// `None` uses Rayon's default thread count. A smaller limit reduces the number of packages'
+    /// temporary analysis data held in memory at the same time.
     pub fn worker_limit(mut self, worker_limit: Option<NonZeroUsize>) -> Self {
         self.worker_limit = worker_limit;
         self
@@ -173,241 +210,114 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         self
     }
 
-    pub fn build(self) -> anyhow::Result<BodyIrDb> {
-        self.build_with_optional_package_priority(None, &|_, _| {}, None)
+    /// Analyze the selected bodies and return their [`CrateBodies`] values with [`CrateRef`]s.
+    ///
+    /// Choose work with [`Self::configured_bodies`] or [`Self::selected_bodies`] first. Results
+    /// are returned together after success; the caller then installs them in its body database.
+    pub fn build(self) -> anyhow::Result<Vec<(CrateRef, CrateBodies)>> {
+        let products = Mutex::new(Vec::new());
+        self.build_with_package_priority(
+            &|| Vec::new(),
+            &|batch| {
+                products
+                    .lock()
+                    .expect("body products should not be poisoned")
+                    .extend(batch);
+            },
+            &|_| {},
+        )
+        .context("build body products")?;
+        let mut products = products
+            .into_inner()
+            .expect("body products should not be poisoned");
+        products.sort_by_key(|(crate_ref, _)| (crate_ref.package.0, crate_ref.crate_id.0));
+        Ok(products)
     }
 
-    /// Build every selected package once, with observations for the detached-indexing caller.
+    /// Send each package's finished body results to `publish` as soon as they are ready.
+    /// This lets callers use one package while other packages are still being analyzed.
     ///
-    /// `publish_priority` receives a compact copy when a package requested by
-    /// `priority_packages` resolves. The ordinary build still retains all resolved packages until
-    /// final package replacement, so publication does not change the final database or split one
-    /// build into cache-cold sub-builds.
-    ///
-    /// `report_progress` describes package completion separately for lowering and resolution. It
-    /// is an observation of this build, not a scheduling hook: callers should return promptly and
-    /// move any editor or RPC work onto their own queue.
+    /// `publish` owns each batch and may be called concurrently by package workers.
+    /// `priority_packages` supplies preferred packages between jobs; it cannot reorder work
+    /// already running. The return value reports completion only. On error, all started workers
+    /// have stopped, and batches already delivered remain with the caller.
+    #[rg_std::cancelable("start body build")]
     pub fn build_with_package_priority(
         self,
         priority_packages: &(dyn Fn() -> Vec<PackageSlot> + Sync),
-        publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
+        publish: &(dyn Fn(Vec<(CrateRef, CrateBodies)>) + Sync),
         report_progress: &(dyn Fn(BodyIrBuildProgress) + Sync),
-    ) -> anyhow::Result<BodyIrDb> {
-        self.build_with_optional_package_priority(
-            Some(priority_packages),
-            publish_priority,
-            Some(report_progress),
-        )
-    }
-
-    #[rg_std::cancelable("start body build")]
-    fn build_with_optional_package_priority(
-        self,
-        priority_packages: Option<&(dyn Fn() -> Vec<PackageSlot> + Sync)>,
-        publish_priority: &(dyn Fn(PackageSlot, PackageBodies) + Sync),
-        report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
-    ) -> anyhow::Result<BodyIrDb> {
-        // 1. Start with the baseline snapshot so untouched resident payloads remain shared and
-        // offloaded slots keep their coverage summaries. The read transactions may load
-        // dependencies from the bounded subset while selected packages are rebuilt in memory.
-        let build_started = Instant::now();
-        let clone_started = Instant::now();
-        let mut next = self.baseline.clone();
-        let clone_ms = clone_started.elapsed().as_millis();
-        let setup_started = Instant::now();
+    ) -> anyhow::Result<()> {
         let packages = normalized_package_slots(self.packages);
-        let copy_compact_packages = self.copy_compact_packages;
         let materialization = self
             .materialization
             .as_ref()
-            .context("Body IR package build requires a materialization selection")?
+            .context("body build requires a materialization selection")?
             .lowering();
-        let semantic_ir_txn = self
+        // Dependency payloads and solver caches are scoped to this build, even when the saved
+        // declarations are offloaded. No decoded dependency escapes with a body product.
+        let semantic_ir = self
             .semantic_ir
             .read_txn_for_subset(self.semantic_ir_loader, self.subset);
-        let def_map_txn = self
+        let def_map = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
-        let setup_ms = setup_started.elapsed().as_millis();
-
-        // 2. Lower only the requested bodies. Crates whose resulting coverage is unmaterialized
-        // remain in the package shape, but skip lookup-query construction and body resolution.
-        let lowering_started = Instant::now();
-        if let Some(report_progress) = report_progress.filter(|_| !packages.is_empty()) {
-            report_progress(BodyIrBuildProgress::new(
-                BodyIrBuildStage::Lowering,
-                0,
-                packages.len(),
-            ));
-        }
-        let rebuilt_packages = lower::build_selected_packages(
+        report_progress(BodyIrBuildProgress::new(
+            BodyIrBuildStage::Lowering,
+            0,
+            packages.len(),
+        ));
+        let lowered = lower::build_selected_packages(
             self.parse,
-            &def_map_txn,
-            &semantic_ir_txn,
+            &def_map,
+            &semantic_ir,
             materialization,
             &packages,
             self.interners,
             self.worker_limit,
-            report_progress,
+            Some(report_progress),
             &self.cancellation,
         )
-        .context("while attempting to lower selected body IR packages")?;
-        let lowering_ms = lowering_started.elapsed().as_millis();
-
-        // 3. Resolve the lowered bodies, then compact packages that will remain resident. Packages
-        // headed directly to the cache keep some spare capacity for a short time instead of
-        // creating a second complete payload at this build's memory peak.
-        let resolution_started = Instant::now();
-        if let Some(report_progress) = report_progress.filter(|_| !packages.is_empty()) {
-            report_progress(BodyIrBuildProgress::new(
-                BodyIrBuildStage::Resolving,
-                0,
-                packages.len(),
-            ));
-        }
-        let rebuilt_packages = resolve::resolve_selected_packages(
-            rebuilt_packages,
+        .context("lower body products")?;
+        report_progress(BodyIrBuildProgress::new(
+            BodyIrBuildStage::Resolving,
+            0,
+            packages.len(),
+        ));
+        resolve::resolve_selected_packages(
+            lowered,
             self.parse,
             self.interners,
-            &def_map_txn,
-            &semantic_ir_txn,
+            &def_map,
+            &semantic_ir,
             priority_packages,
-            publish_priority,
+            &|mut batch| {
+                // Copy-compaction is worthwhile for retained payloads; those headed to an artifact
+                // can be encoded and dropped without a second allocation at the build's peak.
+                if batch.first().is_some_and(|(crate_ref, _)| {
+                    self.copy_compact_packages
+                        .binary_search(&crate_ref.package)
+                        .is_ok()
+                }) {
+                    batch = batch
+                        .into_iter()
+                        .map(|(crate_ref, bodies)| {
+                            let mut compact = bodies.clone();
+                            Shrink::shrink_to_fit(&mut compact);
+                            (crate_ref, compact)
+                        })
+                        .collect();
+                }
+                publish(batch);
+            },
             self.worker_limit,
-            report_progress,
+            Some(report_progress),
             &self.cancellation,
         )
-        .context("while attempting to resolve selected body IR packages")?;
-        let resolution_ms = resolution_started.elapsed().as_millis();
-        let compaction_started = Instant::now();
-        let compacted_packages =
-            compact_rebuilt_packages(rebuilt_packages, &copy_compact_packages, &self.cancellation)
-                .context("compact rebuilt body packages")?;
-        let compaction_ms = compaction_started.elapsed().as_millis();
-
-        // 4. Replace package slots only after every fallible build phase has succeeded, then close
-        // the read views before returning.
-        let replacement_started = Instant::now();
-        {
-            let mut mutator = next.mutator();
-            for (package, rebuilt) in compacted_packages {
-                rg_std::check_cancel!(self.cancellation, "prepare rebuilt package");
-                let rebuilt =
-                    retain_unselected_crates(self.baseline, package, rebuilt, materialization)?;
-                mutator.replace_package(package, rebuilt).with_context(|| {
-                    format!("while attempting to replace body IR package {}", package.0)
-                })?;
-            }
-        }
-        let replacement_ms = replacement_started.elapsed().as_millis();
-        let read_txn_drop_started = Instant::now();
-        drop(semantic_ir_txn);
-        drop(def_map_txn);
-        let read_txn_drop_ms = read_txn_drop_started.elapsed().as_millis();
-
-        tracing::trace!(
-            ?materialization,
-            package_count = packages.len(),
-            worker_limit = self.worker_limit.map(NonZeroUsize::get),
-            clone_ms,
-            setup_ms,
-            lowering_ms,
-            resolution_ms,
-            compaction_ms,
-            replacement_ms,
-            read_txn_drop_ms,
-            total_ms = build_started.elapsed().as_millis(),
-            "Body IR package build phases finished"
-        );
+        .context("resolve body products")?;
         rg_std::check_cancel!(self.cancellation, "finish body build");
-        Ok(next)
+        Ok(())
     }
-}
-
-/// Preserve sibling target payloads during an exact file- or crate-selected rebuild.
-///
-/// Body IR storage stays package-shaped, but selection is semantic-crate-shaped. Replacing only
-/// the selected crate slots prevents one integration test or example from resetting every other
-/// target in the same Cargo package.
-fn retain_unselected_crates(
-    baseline: &BodyIrDb,
-    package: PackageSlot,
-    rebuilt: PackageBodies,
-    materialization: materialization::BodyIrMaterialization<'_>,
-) -> anyhow::Result<PackageBodies> {
-    if matches!(
-        materialization,
-        materialization::BodyIrMaterialization::ConfiguredBodies(_)
-            | materialization::BodyIrMaterialization::CoverageOnly(_)
-    ) {
-        return Ok(rebuilt);
-    }
-
-    let previous = baseline.resident_package(package).with_context(|| {
-        format!(
-            "exact Body IR rebuild requires resident package {}",
-            package.0
-        )
-    })?;
-    anyhow::ensure!(
-        previous.crates().len() == rebuilt.crates().len(),
-        "exact Body IR rebuild changed package {} crate count from {} to {}",
-        package.0,
-        previous.crates().len(),
-        rebuilt.crates().len(),
-    );
-
-    let crates = rebuilt
-        .crates()
-        .iter()
-        .enumerate()
-        .map(|(crate_idx, crate_bodies)| {
-            let crate_ref = CrateRef {
-                package,
-                crate_id: CrateId(crate_idx),
-            };
-            if materialization.selects_crate(crate_ref) {
-                crate_bodies.clone()
-            } else {
-                previous.crates()[crate_idx].clone()
-            }
-        })
-        .collect();
-    Ok(PackageBodies::new(crates))
-}
-
-/// Replace selected build payloads with compact copies while preserving every rebuilt package.
-///
-/// The selected slots are sorted by the builder, so membership checks remain allocation-free here.
-/// Unselected payloads stay in their build representation for an imminent cache write and offload.
-fn compact_rebuilt_packages(
-    mut rebuilt_packages: Vec<(PackageSlot, PackageBodies)>,
-    copy_compact_packages: &[PackageSlot],
-    cancellation: &rg_std::CancellationToken,
-) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
-    // Build all compact copies before releasing their source payloads. Their retained allocations
-    // are then grouped together instead of being interleaved with frees from each source package.
-    let compacted = rebuilt_packages
-        .iter()
-        .filter(|(package, _)| copy_compact_packages.binary_search(package).is_ok())
-        .map(|(package, rebuilt)| {
-            rg_std::check_cancel!(cancellation, "compact body package");
-            Ok((*package, compact_package_copy(rebuilt)))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()
-        .context("copy compacted body packages")?;
-
-    // Keep ordinary payloads only for packages that were not copied, then return one payload for
-    // every rebuilt slot regardless of its residency choice.
-    rebuilt_packages.retain(|(package, _)| copy_compact_packages.binary_search(package).is_err());
-    rebuilt_packages.extend(compacted);
-    Ok(rebuilt_packages)
-}
-
-fn compact_package_copy(package: &PackageBodies) -> PackageBodies {
-    let mut compacted = package.clone();
-    Shrink::shrink_to_fit(&mut compacted);
-    compacted
 }
 
 fn local_thread_pool(
@@ -438,9 +348,23 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroUsize;
+    use std::{
+        fmt::Write as _,
+        num::NonZeroUsize,
+        sync::{
+            Barrier,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
 
-    use super::local_thread_pool;
+    use rg_def_map::{DefMapLoader, PackageSlot};
+    use rg_package_store::PackageSubset;
+    use rg_semantic_ir::SemanticIrLoader;
+    use rg_std::CancellationToken;
+    use rg_text::PackageNameInterners;
+
+    use super::{BodyIrBuildProgress, BodyIrBuildStage, BodyIrBuilder, local_thread_pool};
+    use crate::{BodyIrBuildPolicy, testonly::BodyIrFixture};
 
     #[test]
     fn body_ir_thread_pool_honors_worker_limit() {
@@ -457,17 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_parallel_build_joins_workers_and_preserves_the_baseline() {
-        use rg_def_map::PackageSlot;
-        use rg_std::CancellationToken;
-        use std::{
-            fmt::Write as _,
-            sync::{
-                Barrier,
-                atomic::{AtomicUsize, Ordering},
-            },
-        };
-
+    fn cancelled_parallel_build_drains_started_workers_before_returning() {
         let mut source = String::from(
             "//- /Cargo.toml\n[workspace]\nmembers = [\"first\", \"second\", \"third\", \"fourth\"]\nresolver = \"3\"\n",
         );
@@ -487,11 +401,11 @@ pub fn compute() -> usize {{ let first = 1; first + 2 }}
             )
             .expect("fixture text can be written");
         }
-        let fixture = crate::testonly::BodyIrFixture::build(&source);
+        let fixture = BodyIrFixture::build(&source);
         let packages = (0..fixture.parse_db().package_count())
             .map(PackageSlot)
             .collect::<Vec<_>>();
-        let subset = rg_package_store::PackageSubset::all(packages.len());
+        let subset = PackageSubset::all(packages.len());
         let limit = NonZeroUsize::new(2).expect("two workers");
         let worker_count = local_thread_pool("cancellation-test", Some(limit))
             .expect("pool builds")
@@ -501,8 +415,8 @@ pub fn compute() -> usize {{ let first = 1; first + 2 }}
             let barrier = Barrier::new(worker_count);
             let reached = AtomicUsize::new(0);
             let exited = AtomicUsize::new(0);
-            let progress = |progress: super::BodyIrBuildProgress| {
-                if progress.stage() == super::BodyIrBuildStage::Resolving
+            let progress = |progress: BodyIrBuildProgress| {
+                if progress.stage() == BodyIrBuildStage::Resolving
                     && progress.completed_packages() > 0
                 {
                     reached.fetch_add(1, Ordering::SeqCst);
@@ -512,56 +426,62 @@ pub fn compute() -> usize {{ let first = 1; first + 2 }}
                     exited.fetch_add(1, Ordering::SeqCst);
                 }
             };
-            let mut names = rg_text::PackageNameInterners::new(packages.len());
-            let builder = fixture
-                .body_ir_db()
-                .builder(
-                    fixture.parse_db(),
-                    fixture.def_map_db(),
-                    fixture.semantic_ir_db(),
-                    &packages,
-                    &packages,
-                    &mut names,
-                    rg_def_map::DefMapLoader::resident_only("parallel fixture"),
-                    rg_semantic_ir::SemanticIrLoader::resident_only("parallel fixture"),
-                    &subset,
-                )
-                .configured_bodies(crate::BodyIrBuildPolicy::default())
-                .worker_limit(Some(limit))
-                .cancellation(cancellation.clone());
-            let priorities = || Vec::new();
-            let result = builder.build_with_optional_package_priority(
-                priority.then_some(&priorities),
-                &|_, _| panic!("no priority publication requested"),
-                Some(&progress),
-            );
-            let error = result.expect_err("cancelled workers supply no replacement database");
-            assert!(error.chain().any(|cause| cause.is::<rg_std::Cancelled>()));
-            assert_eq!(reached.load(Ordering::SeqCst), worker_count);
-            assert_eq!(exited.load(Ordering::SeqCst), worker_count);
-            assert!(
-                packages
-                    .iter()
-                    .all(|&package| fixture.body_ir_db().resident_package(package).is_some())
-            );
-        }
-        let mut names = rg_text::PackageNameInterners::new(packages.len());
-        fixture
-            .body_ir_db()
-            .builder(
+            let mut names = PackageNameInterners::new(packages.len());
+            let builder = BodyIrBuilder::new(
                 fixture.parse_db(),
                 fixture.def_map_db(),
                 fixture.semantic_ir_db(),
                 &packages,
                 &packages,
                 &mut names,
-                rg_def_map::DefMapLoader::resident_only("parallel retry"),
-                rg_semantic_ir::SemanticIrLoader::resident_only("parallel retry"),
+                DefMapLoader::resident_only("parallel fixture"),
+                SemanticIrLoader::resident_only("parallel fixture"),
                 &subset,
             )
-            .configured_bodies(crate::BodyIrBuildPolicy::default())
+            .configured_bodies(BodyIrBuildPolicy::default())
             .worker_limit(Some(limit))
-            .build()
-            .expect("fresh build succeeds after workers joined");
+            .cancellation(cancellation.clone());
+            let priorities = || {
+                if priority {
+                    vec![PackageSlot(0)]
+                } else {
+                    Vec::new()
+                }
+            };
+            let delivered = AtomicUsize::new(0);
+            let result = builder.build_with_package_priority(
+                &priorities,
+                &|products| {
+                    delivered.fetch_add(products.len(), Ordering::SeqCst);
+                },
+                &progress,
+            );
+            let error =
+                result.expect_err("cancelled worker set reports cancellation after draining");
+            assert!(error.chain().any(|cause| cause.is::<rg_std::Cancelled>()));
+            assert_eq!(reached.load(Ordering::SeqCst), worker_count);
+            assert_eq!(exited.load(Ordering::SeqCst), worker_count);
+            assert_eq!(
+                delivered.load(Ordering::SeqCst),
+                worker_count,
+                "only completed jobs deliver their products before the cancellation barrier"
+            );
+        }
+        let mut names = PackageNameInterners::new(packages.len());
+        BodyIrBuilder::new(
+            fixture.parse_db(),
+            fixture.def_map_db(),
+            fixture.semantic_ir_db(),
+            &packages,
+            &packages,
+            &mut names,
+            DefMapLoader::resident_only("parallel retry"),
+            SemanticIrLoader::resident_only("parallel retry"),
+            &subset,
+        )
+        .configured_bodies(BodyIrBuildPolicy::default())
+        .worker_limit(Some(limit))
+        .build()
+        .expect("fresh build succeeds after workers joined");
     }
 }

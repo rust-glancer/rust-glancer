@@ -5,12 +5,12 @@
 //! selected-package construction paths used by fresh and incremental project construction.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb, PackageBodiesCoverage};
-use rg_def_map::{DefMapBuildOutput, DefMapDb, GeneratedItemStores, PackageSlot};
+use rg_body_ir::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, PackageBodiesCoverage};
+use rg_def_map::{DefMapBuildOutput, DefMapDb, DefMapLoader, GeneratedItemStores, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
-use rg_semantic_ir::SemanticIrDb;
+use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
@@ -40,7 +40,7 @@ pub fn build_def_map(
     let baseline = DefMapDb::all_offloaded(parse.package_count());
     let visible_packages = source_packages.visible_dependency_subset(workspace);
     let baseline_read = baseline.read_txn_for_subset(
-        rg_def_map::DefMapLoader::resident_only("all-source DefMap benchmark"),
+        DefMapLoader::resident_only("all-source DefMap benchmark"),
         &visible_packages,
     );
 
@@ -78,8 +78,8 @@ pub fn build_semantic_ir(
             def_map,
             generated_items,
             &packages,
-            rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),
-            rg_semantic_ir::SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
+            DefMapLoader::resident_only("all-source benchmark DefMap"),
+            SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
             &subset,
         )
         .context("while attempting to build benchmark Semantic IR packages")
@@ -96,27 +96,30 @@ pub fn build_body_ir(
     let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
     let subset = PackageSubset::all(package_count);
     // Every package is selected, so this provisional coverage is replaced before it can be read.
-    let baseline = BodyIrDb::from_package_store(PackageStore::from_entries(
+    let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(
         (0..package_count)
             .map(|_| PackageEntry::offloaded_with(PackageBodiesCoverage::from_crates(Vec::new())))
             .collect(),
     ));
     let indexing_preference = IndexingPerformancePreference::default();
 
-    baseline
-        .builder(
-            parse,
-            def_map,
-            semantic_ir,
-            &packages,
-            &packages,
-            names,
-            rg_def_map::DefMapLoader::resident_only("all-source benchmark DefMap"),
-            rg_semantic_ir::SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
-            &subset,
-        )
-        .configured_bodies(BodyIrBuildPolicy::default())
-        .worker_limit(indexing_preference.body_ir_worker_limit())
-        .build()
-        .context("while attempting to build benchmark Body IR packages")
+    let products = BodyIrBuilder::new(
+        parse,
+        def_map,
+        semantic_ir,
+        &packages,
+        &packages,
+        names,
+        DefMapLoader::resident_only("all-source benchmark DefMap"),
+        SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),
+        &subset,
+    )
+    .configured_bodies(BodyIrBuildPolicy::default())
+    .worker_limit(indexing_preference.body_ir_worker_limit())
+    .build()
+    .context("build benchmark body products")?;
+    body_ir
+        .replace_built_packages(products)
+        .context("assemble benchmark body packages")?;
+    Ok(body_ir)
 }

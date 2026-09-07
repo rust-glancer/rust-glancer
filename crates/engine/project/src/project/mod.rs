@@ -30,7 +30,7 @@ use rg_parse::FileId;
 use rg_source::CapturedSource;
 use rg_workspace::WorkspaceMetadata;
 
-use self::state::ProjectState;
+use self::{package_set::PhasePackageSet, state::ProjectState};
 use crate::{
     indexing::{IndexingPerformancePreference, PackageBatchSize},
     residency::{PackageResidency, PackageResidencyPlan},
@@ -42,8 +42,8 @@ pub use self::{
     build::{ProjectBuilder, SplitIndexingMode, StartupCacheLoad},
     snapshot::{DocumentSourceView, ProjectSnapshot},
     split_indexing::{
-        AnalysisSurface, DetachedSplitIndexing, FinishedSplitIndexing, SplitIndexing,
-        SplitIndexingProgress, SplitIndexingStage,
+        AnalysisSurface, BodyPublication, BodyPublicationOutcome, SavedBodyBuildInputs,
+        SavedBodyProducts, SplitIndexing, SplitIndexingProgress, SplitIndexingStage,
     },
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
 };
@@ -80,7 +80,7 @@ impl Project {
 
     /// Return package slots whose parsed source inventory contains this path.
     pub fn package_slots_for_path(&self, path: &Path) -> anyhow::Result<Vec<PackageSlot>> {
-        split_indexing::package_slots_for_path(&self.state, path)
+        PhasePackageSet::from_path(&self.state.parse, path).map(PhasePackageSet::into_vec)
     }
 
     /// Returns package residency decisions for this project.
@@ -191,32 +191,30 @@ impl Project {
         self.try_publish_generation(update::reindex_workspace)
     }
 
-    /// Returns the split-indexing control surface for deferred analysis work.
+    /// Get a [`SplitIndexing`] handle to build missing body analysis and install its results.
     pub fn split_indexing(&mut self) -> SplitIndexing<'_> {
         SplitIndexing::new(self)
     }
 
-    /// Returns whether the configured split-indexing policy still has Body IR work to finish.
+    /// Whether any crate still has missing or partial body analysis to finish.
     ///
-    /// Callers can use this check before cloning the project for detached work. A full build and
-    /// lower-memory package batches have already completed that work, so cloning them would only
-    /// duplicate retained project state before an empty finish.
+    /// This determines whether [`Self::deferred_body_build`] has background work to do. Targets
+    /// left untouched by the build policy do not count. Once a query has partially analyzed a
+    /// skipped target, its remaining files count as unfinished too.
     pub fn has_unfinished_split_indexing(&self) -> bool {
-        split_indexing::has_unfinished_split_indexing(&self.state)
+        split_indexing::unfinished_crates(&self.state)
+            .next()
+            .is_some()
     }
 
-    /// Clone this project into an owned background-finish handle.
+    /// Capture inputs for the missing or partial body analysis reported by
+    /// [`Self::has_unfinished_split_indexing`].
     ///
-    /// Early-start indexing lets the saved project become queryable while deferred payloads are
-    /// still missing. Background completion must run on a clone so it cannot block the command
-    /// loop, but callers should not receive that clone as a general-purpose `Project`. Returning a
-    /// narrow handle keeps the only supported detached operation explicit: finish deferred indexing,
-    /// publish priority packages early, and return the final result to saved state.
-    //
-    // TODO: Make project snapshots cheap to detach, especially parse state, so background
-    // completion does not have to clone large parse arenas on the caller thread.
-    pub fn detach_split_indexing(&self) -> DetachedSplitIndexing {
-        DetachedSplitIndexing::new(self.clone())
+    /// Move the returned [`SavedBodyBuildInputs`] to a worker and build them there. Submit its
+    /// results through [`SplitIndexing::publish`], which checks that this saved project version
+    /// is still current before installing them.
+    pub fn deferred_body_build(&self) -> SavedBodyBuildInputs {
+        SavedBodyBuildInputs::deferred(&self.state)
     }
 
     /// Applies one saved file replacement and refreshes derived analysis state.
@@ -318,7 +316,7 @@ impl Project {
             .collect::<Vec<_>>();
 
         self.state
-            .parse
+            .parse_db_mut()
             .offload_line_indexes_for_packages(&offloadable_packages);
         self.state.parse.evict_saved_source_text();
     }

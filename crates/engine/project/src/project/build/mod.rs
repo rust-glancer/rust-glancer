@@ -40,17 +40,18 @@ impl StartupCacheLoad {
     }
 }
 
-/// Controls where each saved project generation crosses its queryable boundary.
+/// Choose whether project construction waits for body analysis before returning.
 ///
-/// The mode is retained by the project after its first build. Source and workspace updates use the
-/// same boundary, so an early-start LSP project does not unexpectedly move Body IR back onto the
-/// foreground path after the first edit.
+/// The project keeps this choice for source and workspace updates too. With [`Self::EarlyStart`],
+/// callers can answer queries about declarations first and build bodies later as needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SplitIndexingMode {
-    /// Build every configured analysis payload before the project becomes usable.
+    /// Finish all analysis selected by the build policy before returning the project.
     #[default]
     Full,
-    /// Build structural data now and leave deferred payloads for on-demand/background work.
+    /// Allow returning after collecting declarations, leaving body analysis for later.
+    /// Use [`Project::deferred_body_build`] for background work or [`crate::SplitIndexing`] for queries.
+    /// Package-batched builds still finish bodies so each batch can be written to disk and released.
     EarlyStart,
 }
 
@@ -319,7 +320,7 @@ pub(crate) fn build_resident_state(
         package_residency,
         memory_hooks,
         names: phases.names,
-        parse: phases.parse,
+        parse: Arc::new(phases.parse),
         macro_expansion_limit_summary: phases.macro_expansion_limit_summary,
         def_map: phases.def_map,
         semantic_ir: phases.semantic_ir,

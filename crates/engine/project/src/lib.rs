@@ -38,11 +38,11 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, AnalysisSurface, ChangedFile, DetachedSplitIndexing,
-        DocumentSourceView, FileContext, FinishedSplitIndexing, MacroExpansionLimitBuildSummary,
-        Project, ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats,
-        SavedFileChange, SplitIndexing, SplitIndexingMode, SplitIndexingProgress,
-        SplitIndexingStage, StartupCacheLoad,
+        AnalysisChangeSummary, AnalysisSurface, BodyPublication, BodyPublicationOutcome,
+        ChangedFile, DocumentSourceView, FileContext, MacroExpansionLimitBuildSummary, Project,
+        ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedBodyBuildInputs,
+        SavedBodyProducts, SavedFileChange, SplitIndexing, SplitIndexingMode,
+        SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

@@ -296,7 +296,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // lowerer: it records expressions, patterns, and lexical scopes but does not resolve their
         // meaning yet.
         let lowering_started = Instant::now();
-        let mut lowered = LoweredCrateBodies::with_coverage(CrateBodiesCoverage::Partial);
+        let mut lowered =
+            LoweredCrateBodies::with_coverage(CrateBodiesCoverage::files(vec![self.file]));
         let mut macro_expansion =
             BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
         let lowered_roots = BodyTaskLowering::new(
