@@ -195,6 +195,10 @@ jobs:
           --target "${{ steps.host.outputs.target }}"
           --version 0.0.0
 
+  # Not a part of blocking `pr-check`. We don't want PR to be randomly blocked on an advisory.
+  # It's very rare that cargo deny fails because of a change in the PR, usually is's something
+  # new that got published.
+  # Red CI is annoying enough to care even if it doesn't block merging.
   cargo-deny:
     name: cargo-deny
     runs-on: ubuntu-latest
