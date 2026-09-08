@@ -20,8 +20,7 @@ mod syntax;
 
 use std::fmt;
 
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 
 pub(crate) use resolvers::CompletionResolver;
 pub(crate) use site::{CompletionSiteDetector, PathCompletionSite};

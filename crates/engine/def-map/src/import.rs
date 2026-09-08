@@ -9,9 +9,8 @@ use std::fmt;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{CrateRef, ModuleId, Path, PathRoot};
+use rg_ir_model::{CrateRef, ModuleId, Path, PathRoot, Span};
 use rg_item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegmentKind, UserFacingAttrs};
-use rg_parse::Span;
 use rg_text::Name;
 
 use crate::{ItemSource, scope::Visibility};
@@ -251,8 +250,8 @@ impl fmt::Display for ImportPath {
 
 #[cfg(test)]
 mod tests {
+    use rg_ir_model::{Span, TextSpan};
     use rg_item_tree::{UsePath, UsePathSegment, UsePathSegmentKind};
-    use rg_parse::{Span, TextSpan};
     use rg_text::Name;
 
     use super::ImportPath;

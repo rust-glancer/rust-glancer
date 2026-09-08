@@ -1,8 +1,8 @@
 use std::{fs, path::Path};
 
 use rg_body_ir::PackageBodies;
-use rg_def_map::{PackageDefMaps, PackageSlot};
-use rg_ir_model::CrateId;
+use rg_def_map::PackageDefMaps;
+use rg_ir_model::{CrateId, PackageSlot};
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 
@@ -47,13 +47,10 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
 
     // Exercise the production borrowed input and fragment writer before decoding every container
     // section independently, just like the filesystem store does.
-    let encoded = PackageCacheCodec::encode_write_input(PackageCacheWriteInput::new(
-        &header,
-        &parse,
-        &def_map,
-        &semantic_ir,
-        &body_ir,
-    ))
+    let encoded = PackageCacheCodec::encode_write_input(
+        PackageCacheWriteInput::new(&header, &parse, &def_map, &semantic_ir, &body_ir),
+        &rg_std::CancellationToken::new(),
+    )
     .expect("minimal package cache input should encode");
     let mut bytes = Vec::new();
     encoded
@@ -253,7 +250,7 @@ pub fn unrelated() {
         "project.cache.sections",
     );
     let analysis = snapshot
-        .analysis_for_crates(&[target])
+        .analysis_for_crates(&[target], rg_std::CancellationToken::new())
         .expect("fixture analysis should construct");
     assert!(
         analysis

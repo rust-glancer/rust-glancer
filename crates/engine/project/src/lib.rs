@@ -28,7 +28,9 @@ mod residency;
 
 use std::sync::OnceLock;
 
-pub use rg_body_ir::{CurrentBodyBuildCheckpoint, CurrentBodySelection};
+pub use rg_body_ir::{
+    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection,
+};
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
 pub use self::{
@@ -36,10 +38,10 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, AnalysisSurface, ChangedFile, CurrentBodyBuildSummary,
-        DetachedSplitIndexing, DocumentSourceView, FileContext, FinishedSplitIndexing,
-        MacroExpansionLimitBuildSummary, Project, ProjectBuilder, ProjectGenerationId,
-        ProjectSnapshot, ProjectStats, SavedFileChange, SplitIndexing, SplitIndexingMode,
+        AnalysisChangeSummary, AnalysisSurface, BodyPublication, BodyPublicationOutcome,
+        ChangedFile, DocumentSourceView, FileContext, MacroExpansionLimitBuildSummary, Project,
+        ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedBodyBuildInputs,
+        SavedBodyProducts, SavedFileChange, SplitIndexing, SplitIndexingMode,
         SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},

@@ -6,8 +6,7 @@
 
 use std::sync::Arc;
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateId;
+use rg_ir_model::{CrateId, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use crate::{ItemLookupIndex, ItemStore, PackageIrManifest};

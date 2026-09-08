@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::{FileId, LineIndex, Package, PackageParseSnapshot};
+use crate::{LineIndex, Package, PackageParseSnapshot};
+use rg_ir_model::FileId;
 use rg_source::{CapturedSource, SourceEntry, SourceError, SourceInventory};
 use rg_std::MemorySize;
 

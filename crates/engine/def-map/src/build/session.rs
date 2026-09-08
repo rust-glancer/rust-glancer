@@ -14,9 +14,10 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
+use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionPerformancePreference;
-use rg_parse::{FileId, ModuleFileContext};
+use rg_parse::ModuleFileContext;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
@@ -30,7 +31,7 @@ use super::{
 };
 use crate::{
     DefMapBuildOutput, DefMapBuildProgress, DefMapDb, DefMapReadTxn, GeneratedItemStores,
-    MacroSourceFileRequest, PackageSlot,
+    MacroSourceFileRequest,
 };
 
 /// Selected-package construction retained across project-owned source capture waves.

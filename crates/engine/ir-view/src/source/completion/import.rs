@@ -1,8 +1,7 @@
 //! Qualified, unqualified, and explicitly empty import completion sites.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, Path};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, FileId, Path, Span};
 
 use super::{
     IndexedQualifiedPathScope, IndexedQualifiedPathSite, IndexedUnqualifiedNameScope,

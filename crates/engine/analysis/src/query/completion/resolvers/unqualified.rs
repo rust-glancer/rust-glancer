@@ -154,6 +154,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             .generic_scope_candidates_for_unqualified(&site)
             .context("collect generic scope completions")?
         {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if hidden.contains(&(candidate.label().to_string(), candidate.namespace())) {
                 continue;
             }
@@ -179,6 +180,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         } else {
             let mut occupied = hidden.clone();
             for candidate in &module_candidates {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 if filter.accepts_scope_candidate(candidate.namespace(), candidate.kind()) {
                     occupied.insert((candidate.label().to_string(), candidate.namespace()));
                 }
@@ -300,6 +302,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
             let mut lexical_name = None;
             for candidate in lexical {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 if candidate.kind() == CompletionKind::Enum
                     && source
                         .type_def_for_target(candidate.target())
@@ -315,6 +318,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             } else {
                 let mut qualifier = None;
                 for candidate in module {
+                    rg_std::check_cancel!(self.analysis, "completion candidate");
                     if candidate.kind() != CompletionKind::Enum
                         || hidden.contains(&(candidate.label().to_string(), candidate.namespace()))
                     {
@@ -538,6 +542,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create module completion renderer")?;
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if pattern_policy.is_some()
                 && candidate.kind() == CompletionKind::Macro
                 && !candidate.is_invocation_macro()
@@ -608,6 +613,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create auto-import completion renderer")?;
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !filter.accepts_scope_candidate(candidate.namespace(), candidate.kind())
                 || occupied.contains(&(candidate.label().to_string(), candidate.namespace()))
             {
@@ -655,6 +661,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         Ok(())
     }
 
+    #[rg_std::cancelable("completion candidate", token = self.analysis)]
     fn candidate_role(
         &self,
         source: &CompletionCandidateSource<'_, '_>,

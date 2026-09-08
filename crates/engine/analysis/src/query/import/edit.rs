@@ -20,8 +20,7 @@
 //! left untouched. In those cases a separate private `use` is safer than rewriting syntax whose
 //! formatting or visibility may carry intent.
 
-use rg_ir_model::Path;
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Path, Span, TextSpan};
 use rg_syntax::{
     AstNode as _, SourceFile, TextRange, TextSize, ast, ast::HasModuleItem as _, ast::HasName as _,
 };
@@ -465,8 +464,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::Path;
-    use rg_parse::{Span, TextSpan};
+    use rg_ir_model::{Path, Span, TextSpan};
 
     use super::{CompletionSyntaxContext, ImportEditPlan, ImportEditPlanner};
     use crate::model::CompletionEdit;

@@ -1,6 +1,6 @@
 //! String-owned and macro-token completion classifiers.
 
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Span, TextSpan};
 use rg_syntax::{
     AstNode as _, AstToken as _, SyntaxKind,
     ast::{self, IsString as _},

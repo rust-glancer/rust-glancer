@@ -15,16 +15,15 @@
 
 use std::time::Instant;
 
-mod saved_identity;
-mod syntax_owner;
+use crate::store::current::SelectedImpl;
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
-    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplRef, ItemOwner,
-    ModuleRef, StaticId, StaticRef, TraitDefRef,
+    BodyRef, ConstId, ConstRef, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ImplRef,
+    ItemOwner, ModuleRef, Span, StaticId, StaticRef, TraitDefRef,
 };
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, Span, TextSpan};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
@@ -35,55 +34,20 @@ use crate::{
     build::state::{BodySemanticStage, CrateBodyBuildState},
 };
 
-use self::{
+use super::{
+    CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
     saved_identity::{SavedNestedBodyIndex, SavedRootOwnerIndex},
     syntax_owner::SyntaxBodyOwner,
 };
-use super::{
+use crate::build::lower::{
     BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, CurrentRootItems,
     LoweredCrateBodies,
 };
 
-/// Why a body from the editor could not be attached to a saved or request-local declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
-pub enum CurrentBodyUnavailable {
-    /// The cursor is outside every function, const, and static declaration that owns a body.
-    #[display("the cursor is not inside a function, const, or static declaration with a body")]
-    NoBodyAtPosition,
-    /// The body has neither a saved owner nor a request-local declaration root.
-    #[display("the current body has no usable semantic root")]
-    NoSemanticRoot,
-    /// More than one saved declaration has the same header and containing declarations.
-    #[display("more than one saved semantic owner matches the current body")]
-    AmbiguousSavedOwner,
-}
-
-/// Bodies rebuilt from one document, plus the bodies that could not be analyzed.
-#[derive(Debug)]
-pub struct CurrentBodyBuildOutcome {
-    /// Bodies attached to a declaration and processed by the lowering and resolution pipeline.
-    pub bodies: Vec<CurrentBody>,
-    /// Reasons why the requested body selection could not be fully rebuilt.
-    pub unavailable: Vec<CurrentBodyUnavailable>,
-}
-
-/// Points where current-body construction can stop after an expensive step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
-pub enum CurrentBodyBuildCheckpoint {
-    #[display("after current source parsing")]
-    SourceParsed,
-    #[display("after current body owner association")]
-    OwnerAssociated,
-    #[display("after current body lowering")]
-    BodyLowered,
-    #[display("after current body-local item collection")]
-    BodyLocalItemsCollected,
-    #[display("after current body-local impl header resolution")]
-    ImplHeadersResolved,
-    #[display("after current pattern binding resolution")]
-    PatternBindingsMaterialized,
-    #[display("after current body resolution")]
-    BodyResolved,
+pub(super) struct CurrentBodyBuildOutcome {
+    pub(super) bodies: Vec<CurrentBody>,
+    pub(super) complete_impls: Vec<SelectedImpl>,
+    pub(super) unavailable: Vec<CurrentSourceUnavailable>,
 }
 
 /// Coordinates a small Body IR rebuild for selected bodies in editor text.
@@ -92,8 +56,9 @@ pub enum CurrentBodyBuildCheckpoint {
 /// which saved declaration each root still belongs to, and creates a request-local declaration
 /// when no saved declaration matches. It then hands the roots to the same lowering and resolution
 /// stages used by saved builds. The resulting bodies exist only for this analysis request.
-pub struct CurrentBodyBuilder<'source, 'db> {
+pub(super) struct CurrentBodyBuilder<'source, 'db> {
     parse_package: &'source rg_parse::Package,
+    cfg: CfgEvaluator<'source>,
     def_map: &'source rg_def_map::DefMapReadTxn<'db>,
     semantic_ir: &'source rg_semantic_ir::SemanticIrReadTxn<'db>,
     saved_body_ir: &'source crate::BodyIrReadTxn<'db>,
@@ -102,21 +67,8 @@ pub struct CurrentBodyBuilder<'source, 'db> {
     current_source: &'source CurrentSource,
     associations: &'source DeclarationAssociationIndex,
     item_lookup_cache: ItemLookupQueryCache,
-    selection: CurrentBodySelection,
+    selection: CurrentSourceSelection,
     trait_selection: TraitSelectionSession,
-}
-
-/// How current syntax chooses the roots that enter one Body IR worklist.
-///
-/// A cursor selects the innermost body that touches it and includes parser recovery for unfinished
-/// code. A range uses half-open overlap and may select several bodies. Keeping these policies
-/// explicit avoids pretending that a cursor is just a very short range.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CurrentBodySelection {
-    /// Select the innermost body-owning declaration that contains or can recover the cursor.
-    AtOffset(u32),
-    /// Select every body whose source has a strict half-open overlap with the range.
-    IntersectingRange(TextSpan),
 }
 
 impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
@@ -124,6 +76,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         parse_package: &'source rg_parse::Package,
+        cfg: CfgEvaluator<'source>,
         def_map: &'source rg_def_map::DefMapReadTxn<'db>,
         semantic_ir: &'source rg_semantic_ir::SemanticIrReadTxn<'db>,
         saved_body_ir: &'source crate::BodyIrReadTxn<'db>,
@@ -132,10 +85,12 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         current_source: &'source CurrentSource,
         associations: &'source DeclarationAssociationIndex,
         item_lookup_cache: ItemLookupQueryCache,
-        selection: CurrentBodySelection,
+        selection: CurrentSourceSelection,
+        trait_selection: TraitSelectionSession,
     ) -> Self {
         Self {
             parse_package,
+            cfg,
             def_map,
             semantic_ir,
             saved_body_ir,
@@ -145,14 +100,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             associations,
             item_lookup_cache,
             selection,
-            trait_selection: TraitSelectionSession::new(crate_ref),
+            trait_selection,
         }
-    }
-
-    /// Use the same crate-level trait solver cache as the rest of this analysis request.
-    pub fn with_trait_selection(mut self, trait_selection: TraitSelectionSession) -> Self {
-        self.trait_selection = trait_selection;
-        self
     }
 
     /// Build request-local Body IR for the selected part of the editor text.
@@ -162,11 +111,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     /// prepares those inputs, then runs the shared body worklist. The caller supplies new body ids
     /// when saved identities cannot be reused and receives checkpoints where cancelled work can
     /// stop.
+    #[rg_std::cancelable("select current bodies", token = self.trait_selection.cancellation())]
     pub fn build(
         self,
         mut synthetic_body_ref: impl FnMut() -> anyhow::Result<BodyRef>,
-        mut checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
+        mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentBodyBuildOutcome> {
+        let cancellation = self.trait_selection.cancellation().clone();
         let started = Instant::now();
 
         // 1. Parse the editor text and choose the syntax bodies requested by the cursor or range.
@@ -179,22 +130,25 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             .context("current source was not parsed for this package edition")?;
         let syntax_errors = current_parse.errors();
         let syntax = current_parse.tree();
-        checkpoint(CurrentBodyBuildCheckpoint::SourceParsed)
+        checkpoint(CurrentSourceBuildCheckpoint::SourceParsed)
             .context("check current-body work after source parsing")?;
         let current_owners = SyntaxBodyOwner::select(
             &syntax,
             self.current_source.text(),
             syntax_errors.as_slice(),
             self.selection,
-        );
+            &cancellation,
+        )
+        .context("select current body roots")?;
         let parse_us = parse_started.elapsed().as_micros();
         if current_owners.is_empty() {
-            let unavailable = matches!(self.selection, CurrentBodySelection::AtOffset(_))
-                .then_some(CurrentBodyUnavailable::NoBodyAtPosition)
+            let unavailable = matches!(self.selection, CurrentSourceSelection::AtOffset(_))
+                .then_some(CurrentSourceUnavailable::NoBodyAtPosition)
                 .into_iter()
                 .collect();
             return Ok(CurrentBodyBuildOutcome {
                 bodies: Vec::new(),
+                complete_impls: Vec::new(),
                 unavailable,
             });
         }
@@ -210,10 +164,11 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let mut unavailable = Vec::new();
         let mut association_us = 0;
         for selected_owner in current_owners {
+            rg_std::check_cancel!(cancellation, "current body roots");
             let association_started = Instant::now();
             let saved_root = self.find_saved_root(&selected_owner, &saved_owners);
             association_us += association_started.elapsed().as_micros();
-            checkpoint(CurrentBodyBuildCheckpoint::OwnerAssociated)
+            checkpoint(CurrentSourceBuildCheckpoint::OwnerAssociated)
                 .context("check current-body work after owner association")?;
             let root = match saved_root {
                 ExpectedUnique::One((current_owner, saved_owner)) => {
@@ -251,7 +206,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                         )
                         .context("match current body module to saved semantics")?
                     else {
-                        unavailable.push(CurrentBodyUnavailable::NoSemanticRoot);
+                        unavailable.push(CurrentSourceUnavailable::NoSemanticRoot);
                         continue;
                     };
                     let body_ref =
@@ -285,7 +240,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                     }
                 }
                 ExpectedUnique::Ambiguous => {
-                    unavailable.push(CurrentBodyUnavailable::AmbiguousSavedOwner);
+                    unavailable.push(CurrentSourceUnavailable::AmbiguousSavedOwner);
                     continue;
                 }
             };
@@ -304,6 +259,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         if roots.is_empty() {
             return Ok(CurrentBodyBuildOutcome {
                 bodies: Vec::new(),
+                complete_impls: Vec::new(),
                 unavailable,
             });
         }
@@ -322,10 +278,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
         let crate_items = CrateItemQuery::new(self.def_map, self.semantic_ir, self.crate_ref);
         let item_lookup_query =
-            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache)
+            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache, &cancellation)
                 .context("build the current body's visible item lookup query")?;
 
-        let cfg = self.cfg()?;
         let mut interner = NameInterner::new();
         let task_source = BodyTaskSource::Current {
             package: self.parse_package,
@@ -341,10 +296,18 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // lowerer: it records expressions, patterns, and lexical scopes but does not resolve their
         // meaning yet.
         let lowering_started = Instant::now();
-        let mut lowered = LoweredCrateBodies::with_coverage(CrateBodiesCoverage::Partial);
-        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, self.def_map, cfg);
-        let lowered_roots = BodyTaskLowering::new(task_source, &mut lowered, cfg, &mut interner)
-            .lower_tasks(&tasks, &mut macro_expansion)?;
+        let mut lowered =
+            LoweredCrateBodies::with_coverage(CrateBodiesCoverage::files(vec![self.file]));
+        let mut macro_expansion =
+            BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
+        let lowered_roots = BodyTaskLowering::new(
+            task_source,
+            &mut lowered,
+            self.cfg,
+            &mut interner,
+            &cancellation,
+        )
+        .lower_tasks(&tasks, &mut macro_expansion)?;
         anyhow::ensure!(
             lowered_roots.len() == roots.len(),
             "an associated current body could not be lowered from its captured syntax",
@@ -360,7 +323,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let lowering_us = lowering_started.elapsed().as_micros();
-        checkpoint(CurrentBodyBuildCheckpoint::BodyLowered)
+        checkpoint(CurrentSourceBuildCheckpoint::BodyLowered)
             .context("check current-body work after root lowering")?;
 
         // 5. Collect declarations inside the lowered roots. This extends the same worklist with
@@ -373,6 +336,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             lowered,
             root_body_refs,
             &mut interner,
+            cancellation.clone(),
         )?;
         build.materialize_body_local_items(
             self.def_map,
@@ -390,7 +354,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             },
         )?;
         let local_items_us = local_items_started.elapsed().as_micros();
-        checkpoint(CurrentBodyBuildCheckpoint::BodyLocalItemsCollected)
+        checkpoint(CurrentSourceBuildCheckpoint::BodyLocalItemsCollected)
             .context("check current-body work after collecting body-local items")?;
 
         // 6. Run the normal semantic stages over the completed request-local worklist. Only after
@@ -404,16 +368,48 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             |stage| {
                 checkpoint(match stage {
                     BodySemanticStage::ImplHeaders => {
-                        CurrentBodyBuildCheckpoint::ImplHeadersResolved
+                        CurrentSourceBuildCheckpoint::ImplHeadersResolved
                     }
                     BodySemanticStage::PatternBindings => {
-                        CurrentBodyBuildCheckpoint::PatternBindingsMaterialized
+                        CurrentSourceBuildCheckpoint::PatternBindingsMaterialized
                     }
-                    BodySemanticStage::Bodies => CurrentBodyBuildCheckpoint::BodyResolved,
+                    BodySemanticStage::Bodies => CurrentSourceBuildCheckpoint::BodyResolved,
                 })
             },
         )?;
         let bodies = build.finish_current()?;
+
+        // A body-local impl is complete unless it is the copied enclosing context that omits
+        // this root's saved member. Keep that distinction with construction, so later queries
+        // never infer completeness from the mere presence of an ImplRef.
+        let mut complete_impls = Vec::new();
+        for body in &bodies {
+            rg_std::check_cancel!(cancellation, "current body roots");
+            for (impl_ref, impl_) in body.local_items().item_store().impls_with_refs() {
+                rg_std::check_cancel!(cancellation, "current body roots");
+                let local = body
+                    .local_items()
+                    .def_map()
+                    .local_impl(impl_.local_impl.local_impl)
+                    .context("collected impl has no local definition")?;
+                let is_context = roots.iter().any(|root| {
+                    root.body_ref == body.body_ref()
+                        && matches!(
+                            root.current_root_items,
+                            CurrentRootItems::EnclosingImpl {
+                                include_selected: false
+                            }
+                        )
+                        && local.span.contains_span(root.current_span)
+                });
+                if !is_context {
+                    complete_impls.push(SelectedImpl {
+                        source: crate::BodySource::written(local.file_id, local.span),
+                        impl_ref,
+                    });
+                }
+            }
+        }
 
         tracing::trace!(
             package = self.crate_ref.package.0,
@@ -435,6 +431,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
 
         Ok(CurrentBodyBuildOutcome {
             bodies,
+            complete_impls,
             unavailable,
         })
     }
@@ -469,23 +466,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         }
 
         result
-    }
-
-    fn cfg(&self) -> anyhow::Result<CfgEvaluator<'source>> {
-        let cargo_target = self
-            .def_map
-            .package(self.crate_ref.package)?
-            .crate_data(self.crate_ref.crate_id)
-            .context("saved semantic crate has no definition data")?
-            .cargo_target();
-        let target = self
-            .parse_package
-            .target(cargo_target)
-            .context("saved parse package has no matching Cargo target")?;
-        Ok(CfgEvaluator::new(
-            self.parse_package.cfg_options(),
-            target.enables_test_cfg(),
-        ))
     }
 
     /// Choose how much declaration syntax the selected body's local store needs.

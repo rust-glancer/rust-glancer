@@ -6,9 +6,11 @@ use crate::{
     ScopeResolutionRef, Visibility,
 };
 use crate::{DefMapDb, testonly::DefMapFixture};
-use rg_ir_model::{CrateId, CrateRef, DefId, DefMapRef, ModuleId, ModuleRef, Path};
+use rg_ir_model::{
+    CrateId, CrateRef, DefId, DefMapRef, FileId, ModuleId, ModuleRef, PackageSlot, Path,
+};
 use rg_item_tree::VisibilityLevel;
-use rg_parse::{CargoTarget, FileId, Package, ParseDb};
+use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -191,7 +193,7 @@ impl DefMapFixtureDb {
             package,
             target,
             crate_ref: CrateRef {
-                package: crate::PackageSlot(package_slot),
+                package: PackageSlot(package_slot),
                 crate_id: CrateId(target.id.0),
             },
         }
@@ -561,7 +563,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
 
         (
             CrateRef {
-                package: crate::PackageSlot(package_slot),
+                package: PackageSlot(package_slot),
                 crate_id: CrateId(target.id.0),
             },
             target,
@@ -652,7 +654,7 @@ impl<'a> PackageDefMapSnapshot<'a> {
             .into_iter()
             .map(|target| {
                 let crate_ref = CrateRef {
-                    package: crate::PackageSlot(self.package_slot),
+                    package: PackageSlot(self.package_slot),
                     crate_id: CrateId(target.id.0),
                 };
                 CrateDefMapSnapshot {

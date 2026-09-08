@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, OperationError};
 use rg_ty::{
     AdtTy, AutoderefMode, ExpectedTyExt, GenericArgs, PrimitiveTy, Substitution, Ty, ty_for_literal,
 };
@@ -39,30 +39,30 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     /// Populate editor-facing declarations for method-call expressions after inference settles.
-    pub(super) fn resolve_method_declarations(&mut self) -> Result<(), PackageStoreError> {
+    pub(super) fn resolve_method_declarations(
+        &mut self,
+    ) -> Result<(), OperationError<PackageStoreError>> {
         let expr_count = self.pass.body.exprs().len();
         for expr_idx in 0..expr_count {
-            let expr = ExprId(expr_idx);
-            let ExprKind::MethodCall { receiver, .. } = &self.pass.body.expr_unchecked(expr).kind
-            else {
-                continue;
-            };
-            let receiver = *receiver;
-
-            let resolution = self.resolve_method_call_expr(expr, receiver)?;
-            self.pass.set_expr_resolution(expr, resolution);
+            self.resolve_method_declaration(ExprId(expr_idx))?;
         }
         Ok(())
     }
 
-    pub(super) fn resolve_expr(&mut self, expr: ExprId) -> Result<bool, PackageStoreError> {
+    #[rg_std::cancelable("expression resolution", token = self.pass.env)]
+    pub(super) fn resolve_expr(
+        &mut self,
+        expr: ExprId,
+    ) -> Result<bool, OperationError<PackageStoreError>> {
         let old_resolution = self.pass.expr_resolution(expr).clone();
         let expr_data = self.pass.body.expr_unchecked(expr);
         let kind = expr_data.kind.clone();
 
         match kind {
             ExprKind::Path { path } => {
-                let (resolution, ty) = self.resolve_body_path_expr(expr, &path)?;
+                let (resolution, ty) = self
+                    .resolve_body_path_expr(expr, &path)
+                    .map_err(OperationError::Source)?;
                 if let BodyResolution::Binding(binding) = resolution {
                     self.pass
                         .set_expr_resolution(expr, BodyResolution::Binding(binding));
@@ -83,7 +83,9 @@ where
                 }
             }
             ExprKind::BuiltinMacro { kind } => {
-                let ty = BuiltinMacroExprTypeMapper::new(self.pass.context()).ty_for(expr, kind)?;
+                let ty = BuiltinMacroExprTypeMapper::new(self.pass.context())
+                    .ty_for(expr, kind)
+                    .map_err(OperationError::Source)?;
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
@@ -115,7 +117,8 @@ where
                     .pass
                     .context()
                     .type_refs(self.pass.body.expr_unchecked(expr).scope)
-                    .resolve(&ty)?;
+                    .resolve(&ty)
+                    .map_err(OperationError::Source)?;
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Match { arms, .. } => {
@@ -144,15 +147,16 @@ where
                 }
             }
             ExprKind::Field { base, field, .. } => {
-                let resolution = self.resolve_field_expr(base, field.as_ref())?;
+                let resolution = self
+                    .resolve_field_expr(base, field.as_ref())
+                    .map_err(OperationError::Source)?;
                 self.pass.set_expr_resolution(expr, resolution);
             }
             ExprKind::Record { path, .. } => {
                 let (resolution, ty) = match path.as_ref() {
-                    Some(path) => self.resolve_record_expr_path(
-                        self.pass.body.expr_unchecked(expr).scope,
-                        path,
-                    )?,
+                    Some(path) => self
+                        .resolve_record_expr_path(self.pass.body.expr_unchecked(expr).scope, path)
+                        .map_err(OperationError::Source)?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
                 self.pass.set_expr_facts(expr, resolution, ty);
@@ -170,7 +174,9 @@ where
                 op: Some(ExprUnaryOp::Deref),
                 expr: Some(inner),
             } => {
-                let ty = self.explicit_deref_ty(inner)?;
+                let ty = self
+                    .explicit_deref_ty(inner)
+                    .map_err(OperationError::Source)?;
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Unary {
@@ -431,36 +437,39 @@ where
         Ok(targets.resolution())
     }
 
-    fn resolve_method_call_expr(
-        &self,
+    #[rg_std::cancelable("method declaration resolution", token = self.pass.env)]
+    fn resolve_method_declaration(
+        &mut self,
         call: ExprId,
-        receiver: Option<ExprId>,
-    ) -> Result<BodyResolution, PackageStoreError> {
+    ) -> Result<(), OperationError<PackageStoreError>> {
+        let ExprKind::MethodCall { receiver, .. } = self.pass.body.expr_unchecked(call).kind else {
+            return Ok(());
+        };
+
         // Call inference retains a target only after lookup found one unique, proven function.
         // Later fixed-point rounds keep refining that target's substitution; repeating method and
         // trait lookup cannot select a different function without disagreeing with the inference
         // state that already owns the call. Reuse the selected declaration directly.
-        if let Some(function) = self.pass.inference.selected_call_function(call) {
-            return Ok(BodyResolution::Declarations(
-                [DeclarationRef::from(function)].into_iter().collect(),
-            ));
-        }
-
-        let Some(receiver) = receiver else {
-            return Ok(BodyResolution::Unknown);
+        let resolution = if let Some(function) = self.pass.inference.selected_call_function(call) {
+            BodyResolution::Declarations([DeclarationRef::from(function)].into_iter().collect())
+        } else if let Some(receiver) = receiver {
+            let receiver_ty = self.pass.inference.root_resolved_expr_ty(receiver);
+            let targets = self
+                .pass
+                .context()
+                .calls()
+                .method_targets_with_receiver_ty(call, &receiver_ty, self.pass.inference.table())
+                .map_err(OperationError::Source)?;
+            if targets.is_empty() {
+                BodyResolution::Unknown
+            } else {
+                targets.resolution()
+            }
+        } else {
+            BodyResolution::Unknown
         };
-
-        let receiver_ty = self.pass.inference.root_resolved_expr_ty(receiver);
-        let targets = self
-            .pass
-            .context()
-            .calls()
-            .method_targets_with_receiver_ty(call, &receiver_ty, self.pass.inference.table())?;
-        if targets.is_empty() {
-            return Ok(BodyResolution::Unknown);
-        }
-
-        Ok(targets.resolution())
+        self.pass.set_expr_resolution(call, resolution);
+        Ok(())
     }
 
     fn resolve_wrapper_expr(

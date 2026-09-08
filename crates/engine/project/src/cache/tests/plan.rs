@@ -1,7 +1,8 @@
 use std::fmt::Write as _;
 
 use expect_test::expect;
-use rg_workspace::{PackageSlot, WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_ir_model::PackageSlot;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use crate::cache::{

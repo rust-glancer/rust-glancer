@@ -18,7 +18,7 @@ pub mod shrink;
 pub mod unique;
 
 pub use self::{
-    cancellation::CancellationToken,
+    cancellation::{Cancelable, CancellationToken, Cancelled, OperationError, cancelable},
     expected_unique::ExpectedUnique,
     memsize::{MemoryRecord, MemoryRecordKind, MemoryRecorder, MemoryRecorderMode, MemorySize},
     native_os_string::NativeOsString,

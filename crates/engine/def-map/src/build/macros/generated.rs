@@ -20,14 +20,16 @@ use crate::{
     MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
     ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_ir_model::{
+    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span,
+};
 use rg_item_tree::{
     Documentation, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
     ModuleSource, UseImport, UseItem,
 };
 use rg_macro_runtime::ExpansionSyntax;
-use rg_parse::{FileId, ModuleFileContext, Span};
+use rg_parse::ModuleFileContext;
 use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::build::{

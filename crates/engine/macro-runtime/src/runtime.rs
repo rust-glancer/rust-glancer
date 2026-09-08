@@ -8,8 +8,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 
-use rg_ir_model::LocalDefRef;
-use rg_parse::{FileId, Span};
+use rg_ir_model::{FileId, LocalDefRef, Span};
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
 

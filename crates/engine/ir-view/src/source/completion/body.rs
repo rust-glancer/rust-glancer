@@ -2,10 +2,9 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, Path,
+    BodyBindingRef, CrateRef, FileId, Path, Span, TextSpan,
     identity::{ExprRef, LexicalScopeRef},
 };
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathResolution;
 
 use super::{
@@ -166,7 +165,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         context: IndexedUnqualifiedNameContext,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         let empty_span = Span {
-            text: rg_parse::TextSpan {
+            text: TextSpan {
                 start: offset,
                 end: offset,
             },

@@ -87,6 +87,10 @@ e.g. `def_map::Package` instead of `Package`.
 This software is heavily WIP, we don't care about backward compatibility.
 It is not yet in production, so we must optimize for the code quality right now rather than legacy compatibility.
 
+Treat the workspace as a self-contained product. Do not introduce Cargo features or CI configurations
+for hypothetical standalone crate consumers. Change crate/dependency boundaries to clarify logical
+ownership or improve actual workspace build times; support build-speed claims with measurements.
+
 ## Comments
 
 Add simple-to-read comments in logically complex blocks to help the reader see what's going on.

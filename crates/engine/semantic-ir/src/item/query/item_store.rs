@@ -79,13 +79,19 @@ where
     pub(super) fn indexes_for_crates(
         &self,
         crates: &[CrateRef],
-    ) -> Result<Vec<(CrateRef, &'a ItemLookupIndex)>, S::Error>
+        cancellation: &rg_std::CancellationToken,
+    ) -> Result<Vec<(CrateRef, &'a ItemLookupIndex)>, rg_std::OperationError<S::Error>>
     where
         S: ItemLookupIndexSource<'a>,
     {
         let mut indexes = Vec::new();
         for crate_ref in crates {
-            let Some(index) = self.source.item_lookup_index(*crate_ref)? else {
+            rg_std::check_cancel!(cancellation, "load visible lookup index");
+            let Some(index) = self
+                .source
+                .item_lookup_index(*crate_ref)
+                .map_err(rg_std::OperationError::Source)?
+            else {
                 continue;
             };
             indexes.push((*crate_ref, index));

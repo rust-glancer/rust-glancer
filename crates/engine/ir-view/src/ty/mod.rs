@@ -196,6 +196,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     /// Resolve a signature type path into an indexed type.
+    #[rg_std::cancelable("type path resolution", token = self.db)]
     pub fn ty_for_type_path(
         &self,
         context: TypePathContext,
@@ -271,6 +272,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     /// Resolve a body type path into an indexed type.
+    #[rg_std::cancelable("type path resolution", token = self.db)]
     pub fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,

@@ -14,6 +14,7 @@
 //! this resolver asks either scope.
 
 use anyhow::Context as _;
+use rg_ir_model::Span;
 use rg_ir_view::{
     lookup::name::NameLookupView,
     source::{IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, SourceCompletionView},
@@ -77,6 +78,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
             ),
         ];
         for lifetime in context.binder_lifetimes() {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !candidates.iter().any(|candidate| {
                 // This equality is only for request-local duplicate suppression; renderer also
                 // keeps semantic targets distinct where labels differ.
@@ -98,6 +100,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
                 .lifetime_scope_names(owner)
                 .context("collect visible lifetime completions")?
             {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 if candidates
                     .iter()
                     .any(|candidate| candidate.label() == lifetime.label())
@@ -147,7 +150,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
 
     fn generic_owner_at(
         &self,
-        prefix_span: rg_parse::Span,
+        prefix_span: Span,
         prefix: &str,
     ) -> anyhow::Result<Option<rg_ir_model::GenericDefRef>> {
         let source = SourceCompletionView::new(self.analysis.view_db());

@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use ls_types::{PrepareRenameResponse, TextEdit, Uri, WorkspaceEdit};
 use rg_analysis::{RenameEdit, RenameTarget};
-use rg_def_map::PackageSlot;
+use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
-use rg_parse::{FileId, Span};
 use rg_project::ProjectSnapshot;
 
 use crate::proto::{position, text_edit};
@@ -24,10 +23,12 @@ pub(crate) fn prepare_rename(
 pub(crate) fn workspace_edit(
     snapshot: ProjectSnapshot<'_>,
     edits: Vec<RenameEdit>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<WorkspaceEdit> {
     let mut changes = HashMap::<Uri, Vec<TextEdit>>::new();
 
     for edit in edits {
+        rg_std::check_cancel!(cancellation, "rename edit conversion");
         let path = snapshot
             .file_path(edit.crate_ref.package, edit.file_id)
             .with_context(|| {

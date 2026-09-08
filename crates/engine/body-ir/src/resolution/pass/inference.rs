@@ -4,12 +4,14 @@
 //! same `BodyInferenceCtx`. The parent pass owns the only fixed point and asks this module for one
 //! transfer step at a time before finalizing persisted facts.
 
+use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     EnumVariantRef, ExprId, FieldKey, GenericDefRef, PatId, StmtId, identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::OperationError;
 use rg_ty::{AdtTy, Substitution, Ty};
 
 use crate::{
@@ -49,7 +51,7 @@ where
     ///
     /// Closure types and written `_` positions are body-owned unknowns. Re-lowering either inside
     /// the fixed point would manufacture fresh variables and make unchanged state look new.
-    pub(super) fn initialize(mut self) -> Result<(), PackageStoreError> {
+    pub(super) fn initialize(mut self) -> anyhow::Result<()> {
         // Give body-owned anonymous types stable identities before calls can use them as generic
         // evidence. Record results also need live slots before annotations reach their fields.
         self.instantiate_closure_type_facts();
@@ -57,21 +59,25 @@ where
 
         // Written `_` positions must be lowered once so every later transfer sees the same slot.
         for statement_idx in 0..self.pass.body.statements().len() {
-            self.initialize_statement_expected_type(StmtId(statement_idx))?;
+            self.initialize_statement_expected_type(StmtId(statement_idx))
+                .context("initialize statement expectation")?;
         }
         self.constrain_function_return_expected_types()?;
         Ok(())
     }
 
     /// Apply each inference-only relationship once against the current live facts.
-    pub(super) fn apply_once(mut self) -> Result<(), PackageStoreError> {
+    pub(super) fn apply_once(mut self) -> anyhow::Result<()> {
         self.instantiate_record_result_facts();
-        self.project_member_facts()?;
+        self.project_member_facts()
+            .context("project member facts")?;
         for expr_idx in 0..self.pass.body.exprs().len() {
-            self.constrain_expr_expected_types(ExprId(expr_idx))?;
+            self.constrain_expr_expected_types(ExprId(expr_idx))
+                .context("constrain expression expectations")?;
         }
         for statement_idx in 0..self.pass.body.statements().len() {
-            self.constrain_statement_expected_types(StmtId(statement_idx))?;
+            self.constrain_statement_expected_types(StmtId(statement_idx))
+                .context("constrain statement expectations")?;
         }
         self.constrain_function_return_expected_types()?;
 
@@ -127,7 +133,7 @@ where
     }
 
     /// Project field and index expressions from inference-aware bases.
-    fn project_member_facts(&mut self) -> Result<(), PackageStoreError> {
+    fn project_member_facts(&mut self) -> Result<(), OperationError<PackageStoreError>> {
         self.pass
             .with_context_and_inference(&self.snapshot, |context, inference| {
                 let expr_count = context.body().exprs().len();
@@ -173,10 +179,11 @@ where
     }
 
     /// Lower each written annotation once, retaining stable variables for `_` positions.
+    #[rg_std::cancelable("inference transfer", token = self.pass.env)]
     fn initialize_statement_expected_type(
         &mut self,
         statement: StmtId,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), OperationError<PackageStoreError>> {
         let kind = self.pass.body.statement_unchecked(statement).kind.clone();
         match kind {
             StmtKind::Let {
@@ -186,18 +193,19 @@ where
                 initializer: Some(initializer),
                 ..
             } => {
-                let expected_ty = self.pass.with_context_and_inference(
-                    &self.snapshot,
-                    |context, inference| {
+                let expected_ty = self
+                    .pass
+                    .with_context_and_inference(&self.snapshot, |context, inference| {
                         context
                             .type_refs(scope)
                             .resolve_with_inference(&annotation, inference.table_mut())
-                    },
-                )?;
+                    })
+                    .map_err(OperationError::Source)?;
                 self.pass
                     .inference
                     .set_statement_expected_ty(statement, expected_ty.clone());
                 self.constrain_let_annotation_initializer(pat, initializer, &expected_ty)
+                    .map_err(OperationError::Source)
             }
             StmtKind::Let { .. }
             | StmtKind::Expr { .. }
@@ -207,10 +215,11 @@ where
     }
 
     /// Reapply the equality between a stable annotation type, its pattern, and initializer.
+    #[rg_std::cancelable("inference transfer", token = self.pass.env)]
     fn constrain_statement_expected_types(
         &mut self,
         statement: StmtId,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), OperationError<PackageStoreError>> {
         let StmtKind::Let {
             pat: Some(pat),
             annotation: Some(_),
@@ -225,6 +234,7 @@ where
         };
 
         self.constrain_let_annotation_initializer(pat, initializer, &expected_ty)
+            .map_err(OperationError::Source)
     }
 
     /// Constrain an initializer from its explicit statement annotation.
@@ -244,23 +254,29 @@ where
     }
 
     /// Route expression-level evidence from calls, method calls, record fields, and assignments.
-    fn constrain_expr_expected_types(&mut self, expr: ExprId) -> Result<(), PackageStoreError> {
+    #[rg_std::cancelable("inference transfer", token = self.pass.env)]
+    fn constrain_expr_expected_types(
+        &mut self,
+        expr: ExprId,
+    ) -> Result<(), OperationError<PackageStoreError>> {
         let kind = self.pass.body.expr_unchecked(expr).kind.clone();
         match kind {
             ExprKind::Call { callee, args } => {
-                self.transfer_call(expr, &args, None)?;
+                self.transfer_call(expr, &args, None)
+                    .map_err(OperationError::Source)?;
                 if let Some(callee) = callee {
                     self.instantiate_enum_variant_call_result_fact(expr, callee);
-                    self.constrain_enum_variant_payload_expected_types(expr, callee, args)?;
+                    self.constrain_enum_variant_payload_expected_types(expr, callee, args)
+                        .map_err(OperationError::Source)?;
                 }
                 Ok(())
             }
-            ExprKind::MethodCall { receiver, args, .. } => {
-                self.transfer_call(expr, &args, receiver)
-            }
-            ExprKind::Record { fields, .. } => {
-                self.constrain_record_field_initializer_expected_types(expr, fields)
-            }
+            ExprKind::MethodCall { receiver, args, .. } => self
+                .transfer_call(expr, &args, receiver)
+                .map_err(OperationError::Source),
+            ExprKind::Record { fields, .. } => self
+                .constrain_record_field_initializer_expected_types(expr, fields)
+                .map_err(OperationError::Source),
             ExprKind::Assign {
                 target: Some(target),
                 op: Some(ExprAssignOp::Assign),

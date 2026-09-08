@@ -1,6 +1,5 @@
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::SymbolKind;
-use rg_parse::{FileId, Span};
 
 /// Hierarchical source outline for one file under one crate context.
 #[derive(Debug, Clone, PartialEq, Eq)]

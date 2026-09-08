@@ -37,6 +37,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .field_candidates_for_ty(receiver.body_ir().crate_ref, &receiver_ty)
             .context("collect dot field candidates")?
         {
+            rg_std::check_cancel!(self.db, "completion candidate");
             fields.push(field.field_ref());
         }
 
@@ -69,6 +70,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     .field_candidates_for_type_def(owner)
                     .context("collect type record field candidates")?
                 {
+                    rg_std::check_cancel!(self.db, "completion candidate");
                     let Some(key) = field.key() else {
                         continue;
                     };
@@ -83,6 +85,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     .field_candidates_for_enum_variant(owner)
                     .context("collect enum variant record field candidates")?
                 {
+                    rg_std::check_cancel!(self.db, "completion candidate");
                     let Some(key) = field.key() else {
                         continue;
                     };
@@ -122,6 +125,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .method_candidates_for_ty(site.source().scope(), &receiver_ty)
             .context("collect dot method candidates")?
         {
+            rg_std::check_cancel!(self.db, "completion candidate");
             methods.push(Self::dot_method_candidate(method));
         }
 

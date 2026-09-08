@@ -16,12 +16,11 @@
 //! fn local<T>(value: T) -> Option<T> { ... }
 //! ```
 
-use rg_ir_model::{BodySource, ExprId, PatId, ScopeId};
+use rg_ir_model::{BodySource, ExprId, FileId, PatId, ScopeId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeId,
     ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
-use rg_parse::FileId;
 
 use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 

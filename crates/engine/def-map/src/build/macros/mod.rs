@@ -18,9 +18,9 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use rg_ir_model::{CrateRef, LocalDefId, ModuleId, ModuleRef};
+use rg_ir_model::{CrateRef, FileId, LocalDefId, ModuleId, ModuleRef, Span};
 use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
-use rg_parse::{FileId, ModuleFileContext, Span};
+use rg_parse::ModuleFileContext;
 use rg_text::Name;
 use rg_tt::TopSubtree;
 

@@ -6,7 +6,7 @@ mod workspace;
 mod workspace_graph;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 
 use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
 use workspace_graph::WorkspaceGraphChanges;

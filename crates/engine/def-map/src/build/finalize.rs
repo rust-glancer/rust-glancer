@@ -22,7 +22,8 @@ use crate::{
     ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
 };
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, Path,
+    CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, PackageSlot,
+    Path,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
@@ -32,7 +33,7 @@ use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 
 use crate::{
-    DefMapReadTxn, MacroSourceFileRequest, PackageSlot,
+    DefMapReadTxn, MacroSourceFileRequest,
     profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
 };
 

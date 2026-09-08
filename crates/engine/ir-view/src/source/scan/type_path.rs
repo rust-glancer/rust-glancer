@@ -17,9 +17,8 @@
 //!                         ^^^ binding span; resolve the surrounding `Iterator`
 //! ```
 
-use rg_ir_model::Path;
+use rg_ir_model::{Path, Span, TextSpan};
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypeRef};
-use rg_parse::{Span, TextSpan};
 
 use super::{AssociatedPathQualifier, TypeNamePosition};
 

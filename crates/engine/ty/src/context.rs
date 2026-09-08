@@ -24,6 +24,12 @@ pub struct TyContext<'query, D, I> {
     trait_selection: TraitSelectionSession,
 }
 
+impl<D, I> rg_std::Cancelable for TyContext<'_, D, I> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(self.trait_selection.cancellation(), checkpoint)
+    }
+}
+
 impl<'query, D, I> TyContext<'query, D, I>
 where
     D: DefMapSource + Clone,

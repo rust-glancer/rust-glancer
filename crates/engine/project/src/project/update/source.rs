@@ -8,8 +8,7 @@ use std::{collections::HashSet, path::PathBuf};
 
 use anyhow::Context as _;
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_parse::SavedFileRefresh;
 use rg_std::UniqueVec;
 

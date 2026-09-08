@@ -85,6 +85,7 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
             .crate_bodies(crate_ref.crate_id)
             .expect("semantic target should have a Body IR slot")
             .coverage()
+            .clone()
     };
     assert_eq!(
         coverage(&project, library),
@@ -101,7 +102,10 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
 
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Crates(&[first_test]))
+        .materialize(
+            AnalysisSurface::Crates(&[first_test]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one deferred test target should materialize");
 
     assert_eq!(
@@ -189,7 +193,8 @@ pub fn library_value() -> usize {{ 1 }}
         let coverage = bodies
             .crate_bodies(rg_ir_model::CrateId(target.id.0))
             .expect("every example fixture target should have a Body IR slot")
-            .coverage();
+            .coverage()
+            .clone();
         match &target.kind {
             rg_workspace::TargetKind::Lib => {
                 assert_eq!(coverage, rg_body_ir::CrateBodiesCoverage::Complete);
@@ -281,7 +286,10 @@ pub fn shared_value() -> usize { 1 }
         .expect("configured eager targets should finish");
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, context.file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one shared-source interpretation should materialize");
 
     let bodies = project
@@ -293,14 +301,16 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
         "the same FileId must not imply readiness for an unrequested target interpretation",
     );
@@ -324,21 +334,24 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(library.crate_id)
             .expect("updated shared library should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Missing,
     );
     assert_eq!(
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("updated first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("updated second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
 
@@ -348,7 +361,10 @@ pub fn shared_value() -> usize { 1 }
         .expect("updated primary shared target should finish");
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, context.file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, context.file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("updated first shared test should materialize exactly");
     let bodies = project
         .state
@@ -359,21 +375,24 @@ pub fn shared_value() -> usize { 1 }
         bodies
             .crate_bodies(library.crate_id)
             .expect("finished shared library should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(first_test.crate_id)
             .expect("rematerialized first shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::Complete,
     );
     assert_eq!(
         bodies
             .crate_bodies(second_test.crate_id)
             .expect("unrequested second shared test should have a body slot")
-            .coverage(),
+            .coverage()
+            .clone(),
         rg_body_ir::CrateBodiesCoverage::SkippedByPolicy,
     );
 }
@@ -435,7 +454,10 @@ fn offloaded_secondary_target_materialization_rewrites_exact_cached_coverage() {
     );
     project
         .split_indexing()
-        .materialize(AnalysisSurface::Files(&[(first_test, first_test_file)]))
+        .materialize(
+            AnalysisSurface::Files(&[(first_test, first_test_file)]),
+            &rg_std::CancellationToken::new(),
+        )
         .expect("one cached deferred test file should materialize its exact target");
     let profile = run.finish();
     assert!(

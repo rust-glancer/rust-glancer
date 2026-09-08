@@ -1,6 +1,7 @@
 use super::super::utils;
 use crate::{profile::metric, profile_descriptors};
 use expect_test::expect;
+use rg_ir_model::PackageSlot;
 
 #[test]
 fn expands_local_macro_rules_items() {
@@ -30,7 +31,7 @@ make_user!();
     assert!(
         project
             .def_map_db()
-            .resident_package(crate::PackageSlot(0))
+            .resident_package(PackageSlot(0))
             .expect("macro fixture package should remain resident")
             .macro_expansion_limits()
             .is_empty(),

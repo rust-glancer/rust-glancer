@@ -70,6 +70,7 @@ impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
                 );
             }
             for label in ["crate", "self", "super"] {
+                rg_std::check_cancel!(self.analysis, "completion candidate");
                 keywords.push(
                     SyntheticCompletionCandidate::new(
                         label,
@@ -142,6 +143,7 @@ impl<'a, 'db, 'source> VisibilityCompletionResolver<'a, 'db, 'source> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create visibility completion renderer")?;
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !candidate.label().starts_with(prefix) {
                 continue;
             }

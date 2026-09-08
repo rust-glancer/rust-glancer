@@ -1,5 +1,6 @@
 use ls_types::{Position, Range};
-use rg_parse::{LineIndex, Position as ParsePosition, Span};
+use rg_ir_model::Span;
+use rg_parse::{LineIndex, Position as ParsePosition};
 
 pub(crate) fn parse_position(position: Position) -> ParsePosition {
     ParsePosition {

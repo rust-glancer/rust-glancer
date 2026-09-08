@@ -12,8 +12,6 @@ use std::{
 mod body;
 mod builder;
 mod crate_lowering;
-mod current_body;
-mod current_root;
 mod expr;
 mod macro_expansion;
 mod pat;
@@ -27,8 +25,8 @@ use rayon::prelude::*;
 
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, StaticRef};
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, PackageSlot, StaticRef};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
@@ -37,14 +35,9 @@ use crate::CrateBodiesCoverage;
 
 pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
-pub use self::current_body::{
-    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodyBuilder, CurrentBodySelection,
-    CurrentBodyUnavailable,
-};
 pub(super) use self::macro_expansion::BodyMacroExpansion;
-pub(super) use self::task::{
-    BodyLoweringTask, BodyTaskLowering, BodyTaskSource, CurrentRootItems, LoweredBodyTask,
-};
+pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
+pub(super) use super::current::declaration::CurrentRootItems;
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,
@@ -55,8 +48,9 @@ use super::{
 const SLOW_CRATE_LOWERING: Duration = Duration::from_secs(1);
 const SLOW_PACKAGE_LOWERING: Duration = Duration::from_secs(2);
 
-/// Package-local structural lowering output. Semantic facts are intentionally absent here.
-pub(super) type LoweredPackageBodies = Vec<LoweredCrateBodies>;
+/// Package-local structural lowering output, before semantic facts are resolved.
+/// Exact selections omit sibling targets, so each entry keeps its original crate id.
+pub(super) type LoweredPackageBodies = Vec<(CrateId, LoweredCrateBodies)>;
 
 /// Crate-local bodies that still retain source-ambiguous pattern binding candidates.
 pub(super) struct LoweredCrateBodies {
@@ -73,7 +67,7 @@ impl LoweredCrateBodies {
     }
 
     pub(super) fn coverage(&self) -> CrateBodiesCoverage {
-        self.coverage
+        self.coverage.clone()
     }
 
     pub(super) fn bodies(&self) -> &Arena<BodyId, LoweredBodyData> {
@@ -103,6 +97,7 @@ pub(super) fn build_selected_packages(
     interners: &mut PackageNameInterners,
     worker_limit: Option<NonZeroUsize>,
     report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
@@ -125,6 +120,7 @@ pub(super) fn build_selected_packages(
         &mut packages,
         worker_limit,
         report_progress,
+        cancellation,
     )?;
 
     Ok(packages
@@ -145,6 +141,7 @@ fn build_package_outputs(
     packages: &mut [Option<LoweredPackageBodies>],
     worker_limit: Option<NonZeroUsize>,
     report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(
         selected.len() == parse.package_count(),
@@ -181,6 +178,7 @@ fn build_package_outputs(
                         scope,
                         package,
                         interner,
+                        cancellation,
                     )?);
                     if let Some(report_progress) = report_progress {
                         let completed_packages =
@@ -204,6 +202,7 @@ fn build_package_with_interner(
     scope: BodyIrMaterialization<'_>,
     package: PackageSlot,
     interner: &mut NameInterner,
+    cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<LoweredPackageBodies> {
     let span = tracing::debug_span!(
         "body_ir_package_lowering",
@@ -211,21 +210,18 @@ fn build_package_with_interner(
         rg.package_slot = package.0,
     );
     let _entered = span.enter();
+    rg_std::check_cancel!(cancellation, "lower body package");
     let started = Instant::now();
     let crate_count = parse_package.targets().len();
     let mut crates = Vec::with_capacity(crate_count);
 
-    // When a query materializes one target, cached Body IR still supplies a package container with
-    // one empty slot per sibling target. Test selection before reading declarations: hovering one
-    // example should not decode DefMap and Semantic IR for every other example in the package. The
-    // unselected empty slots are removed after lowering by `retain_unselected_crates`.
+    // An exact build emits only selected crates. Package directories and sibling preservation
+    // belong to the publisher, which may have newer results than this build's saved inputs.
     for crate_idx in 0..crate_count {
+        rg_std::check_cancel!(cancellation, "lower body crate");
         let crate_id = CrateId(crate_idx);
         let crate_ref = CrateRef { package, crate_id };
         if !scope.selects_crate(crate_ref) {
-            crates.push(LoweredCrateBodies::with_coverage(
-                CrateBodiesCoverage::Missing,
-            ));
             continue;
         }
 
@@ -296,7 +292,7 @@ fn build_package_with_interner(
             .collect::<Vec<_>>();
         let coverage = scope.crate_coverage(crate_ref, parse_package, parse_target, &body_files);
         if !coverage.is_materialized() {
-            crates.push(LoweredCrateBodies::with_coverage(coverage));
+            crates.push((crate_id, LoweredCrateBodies::with_coverage(coverage)));
             continue;
         }
 
@@ -317,6 +313,7 @@ fn build_package_with_interner(
             crate_bodies: LoweredCrateBodies::with_coverage(coverage),
             cfg,
             interner,
+            cancellation,
         }
         .lower()
         .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?;
@@ -328,7 +325,7 @@ fn build_package_with_interner(
                 "slow Body IR crate lowering"
             );
         }
-        crates.push(crate_bodies);
+        crates.push((crate_id, crate_bodies));
     }
 
     let elapsed = started.elapsed();
@@ -338,7 +335,7 @@ fn build_package_with_interner(
             crate_count,
             body_count = crates
                 .iter()
-                .map(|crate_bodies| crate_bodies.bodies().len())
+                .map(|(_, crate_bodies)| crate_bodies.bodies().len())
                 .sum::<usize>(),
             "slow Body IR package lowering"
         );
@@ -391,7 +388,7 @@ fn validate_selected_files(
     scope: &BodyIrMaterialization<'_>,
 ) -> anyhow::Result<()> {
     match scope {
-        BodyIrMaterialization::SelectedFiles(files) => {
+        BodyIrMaterialization::Selected { files, crates } => {
             if let Some(file) = files
                 .iter()
                 .copied()
@@ -402,8 +399,6 @@ fn validate_selected_files(
                     file.crate_ref.package.0,
                 );
             }
-        }
-        BodyIrMaterialization::SelectedCrates(crates) => {
             if let Some(crate_ref) = crates
                 .iter()
                 .copied()

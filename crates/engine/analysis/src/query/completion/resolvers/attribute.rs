@@ -103,6 +103,7 @@ impl<'a, 'db, 'source> AttributeCompletionResolver<'a, 'db, 'source> {
         let renderer = DefinitionCompletionRenderer::new(self.analysis, self.query)
             .context("create attribute completion renderer")?;
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             if !candidate.label().starts_with(prefix.text())
                 || matches!(context.kind(), AttributeCompletionKind::Derive { existing, .. }
                     if Self::contains_entry(existing, candidate.label()))

@@ -23,15 +23,13 @@ mod loader;
 use std::sync::Arc;
 
 use rg_def_map::DefMap;
-use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, FileId, PackageSlot, Span};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 use rg_semantic_ir::ItemStore;
 
 use self::lazy::{LazyPackage, PackageReadEntry};
 pub use self::loader::{BodyIrLoader, LoadBodyIr};
-use crate::{BodyLocalItems, BodyView, CrateBodies, CurrentBodySet, PackageBodies};
+use crate::{BodyLocalItems, BodyView, CrateBodies, CurrentSourceStore, PackageBodies};
 
 /// Read-only Body IR access with one stable view of package residency and loaded cache units.
 ///
@@ -40,7 +38,7 @@ use crate::{BodyLocalItems, BodyView, CrateBodies, CurrentBodySet, PackageBodies
 #[derive(Debug, Clone)]
 pub struct BodyIrReadTxn<'db> {
     packages: Vec<PackageReadEntry<'db>>,
-    current: Arc<CurrentBodySet>,
+    current: Arc<CurrentSourceStore>,
 }
 
 impl<'db> BodyIrReadTxn<'db> {
@@ -65,12 +63,12 @@ impl<'db> BodyIrReadTxn<'db> {
                     }
                 })
                 .collect(),
-            current: Arc::new(CurrentBodySet::default()),
+            current: Arc::new(CurrentSourceStore::default()),
         }
     }
 
-    /// Make this read transaction use request-local bodies for the selected files.
-    pub fn with_current_body_set(mut self, current: CurrentBodySet) -> Self {
+    /// Attach the frozen bodies and declaration contexts prepared for this request.
+    pub fn with_current_source(mut self, current: CurrentSourceStore) -> Self {
         self.current = Arc::new(current);
         self
     }
@@ -80,19 +78,42 @@ impl<'db> BodyIrReadTxn<'db> {
         self.current.contains_body(body_ref)
     }
 
-    /// Return only body identities rebuilt from the request source for one file.
-    ///
-    /// This avoids loading the saved file shard when a caller needs request-local declaration
-    /// stores rather than the complete body inventory.
-    pub fn current_body_refs(&self, crate_ref: CrateRef, file: FileId) -> Vec<BodyRef> {
-        self.current
-            .bodies()
-            .iter()
-            .filter(|body| {
-                body.body_ref().crate_ref == crate_ref && body.view().source().file_id == file
-            })
-            .map(|body| body.body_ref())
-            .collect()
+    pub fn is_current_origin(&self, origin: rg_ir_model::DefMapRef) -> bool {
+        self.current.contains_origin(origin)
+    }
+
+    pub fn current_signature_origins(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+    ) -> impl Iterator<Item = rg_ir_model::DefMapRef> + '_ {
+        self.current.signature_origins(crate_ref, file)
+    }
+
+    /// Header-only modules borrow saved names; body-owned modules retain lexical parent lookup.
+    pub fn signature_lookup_module(
+        &self,
+        module: rg_ir_model::ModuleRef,
+    ) -> Result<rg_ir_model::ModuleRef, PackageStoreError> {
+        if let Some(fallback) = self.current.declaration_fallback(module) {
+            return Ok(fallback);
+        }
+        if let rg_ir_model::DefMapRef::Body(body_ref) = module.origin
+            && let Some(body) = self.body(body_ref)?
+            && module == body.owner_module()
+        {
+            return Ok(body.fallback_module());
+        }
+        Ok(module)
+    }
+
+    pub fn selected_current_impl(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        span: Span,
+    ) -> Option<rg_ir_model::ImplRef> {
+        self.current.selected_impl(crate_ref, file, span)
     }
 
     /// Allocate the first body id that cannot collide with a saved body in this crate.
@@ -117,27 +138,6 @@ impl<'db> BodyIrReadTxn<'db> {
         })
     }
 
-    /// Allocate a request-only body identity after saved and already rebuilt bodies.
-    ///
-    /// Query-local semantic contexts use the same `DefMapRef::Body` namespace as current Body IR.
-    /// Starting after both collections keeps those short-lived item stores from shadowing a body
-    /// that the request has already rebuilt.
-    pub fn next_synthetic_body_ref(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<BodyRef, PackageStoreError> {
-        let mut next = self.first_synthetic_body_ref(crate_ref)?;
-        for body in self
-            .current
-            .bodies()
-            .iter()
-            .filter(|body| body.body_ref().crate_ref == crate_ref)
-        {
-            next.body.0 = next.body.0.max(body.body_ref().body.0.saturating_add(1));
-        }
-        Ok(next)
-    }
-
     /// Return the complete crate, loading every required Body IR storage unit when offloaded.
     ///
     /// Prefer the narrower query methods when the caller needs one body or one file.
@@ -155,6 +155,30 @@ impl<'db> BodyIrReadTxn<'db> {
             PackageReadEntry::Lazy(package) => package.crate_bodies(crate_ref),
             PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
         }
+    }
+
+    /// List source-file units without decoding their body shards.
+    ///
+    /// Whole-crate query work can visit these files separately, checking cancellation before each
+    /// decode. Current bodies add their files even when saved bodies for that file are masked.
+    pub fn body_files(&self, crate_ref: CrateRef) -> Result<Vec<FileId>, PackageStoreError> {
+        let mut files: rg_std::UniqueVec<FileId> = match self.entry(crate_ref.package)? {
+            PackageReadEntry::Resident(package) => package
+                .crate_bodies(crate_ref.crate_id)
+                .into_iter()
+                .flat_map(|bodies| bodies.bodies().iter().map(|body| body.source().file_id))
+                .collect(),
+            PackageReadEntry::Lazy(package) => package.body_files(crate_ref)?.into_iter().collect(),
+            PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
+        };
+        files.extend(
+            self.current
+                .bodies()
+                .iter()
+                .filter(|body| body.body_ref().crate_ref == crate_ref)
+                .map(|body| body.view().source().file_id),
+        );
+        Ok(files.into_vec())
     }
 
     /// Enumerate bodies from one file, or every body when `file` is absent.
@@ -212,6 +236,14 @@ impl<'db> BodyIrReadTxn<'db> {
             return Ok(Some(body.view()));
         }
 
+        // Declaration-only origins intentionally have no expression body or saved file shard.
+        if self
+            .current
+            .contains_origin(rg_ir_model::DefMapRef::Body(body_ref))
+        {
+            return Ok(None);
+        }
+
         let saved = match self.entry(body_ref.crate_ref.package)? {
             PackageReadEntry::Resident(package) => Ok(package
                 .crate_bodies(body_ref.crate_ref.crate_id)
@@ -226,21 +258,16 @@ impl<'db> BodyIrReadTxn<'db> {
         }))
     }
 
-    /// Return the DefMap and item store created inside one body.
+    /// Return local declarations by origin, including declaration-only current contexts.
     ///
-    /// These values are paired with the body in the same file shard, so the lookup has the same
-    /// narrow loading behavior as `body`.
+    /// Saved declarations share their body's file shard. Current declarations are read directly
+    /// from the request store; a declaration-only origin does not require a body lookup.
     pub fn body_local_items(
         &self,
         body_ref: BodyRef,
     ) -> Result<Option<&BodyLocalItems>, PackageStoreError> {
-        if let Some(body) = self
-            .current
-            .bodies()
-            .iter()
-            .find(|body| body.body_ref() == body_ref)
-        {
-            return Ok(Some(body.local_items()));
+        if let Some(items) = self.current.items(rg_ir_model::DefMapRef::Body(body_ref)) {
+            return Ok(Some(items));
         }
 
         if self.body(body_ref)?.is_none() {

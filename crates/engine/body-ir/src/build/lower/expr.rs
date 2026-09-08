@@ -9,9 +9,8 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId};
+use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span, TextSpan};
 use rg_item_tree::{FromAst as _, GenericArg};
-use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
     BindingData, BindingKind, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,

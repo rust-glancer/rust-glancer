@@ -15,6 +15,7 @@ depinfo.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
 rg_cfg_eval.workspace = true
+rg_ir_model.workspace = true
 rg_std.workspace = true
 rg_text.workspace = true
 serde = { workspace = true, features = ["derive"] }

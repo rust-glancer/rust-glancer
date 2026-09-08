@@ -7,13 +7,12 @@ use rg_std::{MemorySize, Shrink};
 use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::{FieldKey, Mutability, Span};
 use rg_text::Name;
 
 use super::{
     ConstExpr, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,
 };
-use rg_ir_model::{FieldKey, Mutability};
 
 /// Generic parameters as they were written on one item declaration.
 ///

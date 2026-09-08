@@ -10,14 +10,15 @@
 //!     ^     ^ retain both references, as well as the `value` declaration
 //! ```
 
+use crate::IndexedViewDb;
+use anyhow::Context as _;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TypeDefId,
+    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FileId, SemanticItemRef,
+    TypeDefId,
 };
-use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 
-use rg_body_ir::{BodyIrReadTxn, BodyLocalItems, BodyView, ExprKind, PatKind};
+use rg_body_ir::{BodyLocalItems, BodyView, ExprKind, PatKind};
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -31,39 +32,62 @@ use super::{
 /// Generated expansion internals are deliberately skipped. Their written macro invocation is
 /// emitted instead, so project-wide references point at source the user can edit.
 pub(crate) struct BodySourceScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
     file_id: Option<FileId>,
 }
 
 impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
     ) -> Self {
         Self {
-            body_ir,
+            db,
             crate_ref,
             file_id,
         }
     }
 
     /// Returns all body-local candidates in this crate, optionally limited to one file.
-    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
+    pub(crate) fn scan(&self) -> anyhow::Result<Vec<BodySourceCandidate>> {
         let mut candidates = Vec::new();
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, self.file_id)? {
-            let body_local_items = self.body_ir.body_local_items(body_ref)?;
+        rg_std::check_cancel!(self.db, "body scan inventory");
+        let files = match self.file_id {
+            Some(file) => vec![file],
+            None => self
+                .db
+                .body_ir
+                .body_files(self.crate_ref)
+                .context("list body scan files")?,
+        };
+        for file in files {
+            rg_std::check_cancel!(self.db, "body scan file");
+            for (body_ref, body) in self
+                .db
+                .body_ir
+                .bodies(self.crate_ref, Some(file))
+                .context("load body scan file")?
+            {
+                rg_std::check_cancel!(self.db, "body scan");
+                let body_local_items = self.db.body_ir.body_local_items(body_ref)?;
 
-            self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
-            self.push_macro_call_candidates(body, &mut candidates);
-            self.push_expression_reference_candidates(body_ref, body, &mut candidates);
-            self.push_record_field_key_candidates(body_ref, body, &mut candidates);
+                self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates)
+                    .context("collect body occurrences")?;
+                self.push_macro_call_candidates(body, &mut candidates)
+                    .context("collect body occurrences")?;
+                self.push_expression_reference_candidates(body_ref, body, &mut candidates)
+                    .context("collect body occurrences")?;
+                self.push_record_field_key_candidates(body_ref, body, &mut candidates)
+                    .context("collect body occurrences")?;
 
-            TypePathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates).scan();
-            BodyPathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates).scan();
+                TypePathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates)
+                    .scan();
+                BodyPathSourceScanner::in_crate(body_ref, body, self.file_id, &mut candidates)
+                    .scan();
+            }
         }
-
         Ok(candidates)
     }
 
@@ -72,8 +96,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         for call in body.macro_calls() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if !call.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
@@ -84,6 +109,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span: call.name_span,
             });
         }
+        Ok(())
     }
 
     /// Adds declarations using the spans users expect to navigate from: names and field names.
@@ -93,10 +119,11 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: BodyView<'_>,
         body_local_items: Option<&BodyLocalItems>,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         let record_shorthand_bindings =
             RecordPatShorthandBinding::collect(body, self.file_id, None);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if !binding.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
@@ -124,9 +151,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
 
         let Some(item_store) = body_local_items.map(BodyLocalItems::item_store) else {
-            return;
+            return Ok(());
         };
         for item in item_store.semantic_items() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if let ItemSourceKind::Body(source) = item.source().kind
                 && source.body == body_ref
                 && !body.source_item_is_written(source.item)
@@ -154,8 +182,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                         item: item.item(),
                         span: declaration_span,
                     });
-                    self.push_field_candidates(item_store, ty, candidates);
-                    self.push_variant_candidates(item_store, ty, candidates);
+                    self.push_field_candidates(item_store, ty, candidates)
+                        .context("collect body occurrences")?;
+                    self.push_variant_candidates(item_store, ty, candidates)
+                        .context("collect body occurrences")?;
                 }
                 SemanticItemRef::Trait(_) | SemanticItemRef::TypeAlias(_) => {
                     candidates.push(BodySourceCandidate::LocalItem {
@@ -178,6 +208,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 SemanticItemRef::Impl(_) => {}
             }
         }
+        Ok(())
     }
 
     fn push_field_candidates(
@@ -185,16 +216,17 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         match ty.id {
             TypeDefId::Struct(id) => {
                 let Some(data) = item_store.struct_data(id) else {
-                    return;
+                    return Ok(());
                 };
                 if !self.file_matches(data.source.file_id) {
-                    return;
+                    return Ok(());
                 }
                 for (index, field) in data.fields.fields().iter().enumerate() {
+                    rg_std::check_cancel!(self.db, "body occurrence candidates");
                     candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
                         span: field.span,
@@ -203,12 +235,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             }
             TypeDefId::Union(id) => {
                 let Some(data) = item_store.union_data(id) else {
-                    return;
+                    return Ok(());
                 };
                 if !self.file_matches(data.source.file_id) {
-                    return;
+                    return Ok(());
                 }
                 for (index, field) in data.fields.iter().enumerate() {
+                    rg_std::check_cancel!(self.db, "body occurrence candidates");
                     candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
                         span: field.span,
@@ -217,6 +250,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             }
             TypeDefId::Enum(_) => {}
         }
+        Ok(())
     }
 
     fn push_variant_candidates(
@@ -224,14 +258,15 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         item_store: &rg_semantic_ir::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         let TypeDefId::Enum(enum_id) = ty.id else {
-            return;
+            return Ok(());
         };
         let Some(data) = item_store.enum_data(enum_id) else {
-            return;
+            return Ok(());
         };
         for (index, variant) in data.variants.iter().enumerate() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -244,6 +279,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span: variant.name_span,
             });
         }
+        Ok(())
     }
 
     /// Adds the editable name span for expressions that resolve as one semantic reference.
@@ -255,9 +291,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body_ref: BodyRef,
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         let record_shorthand_values = BodyScanSites::new(body).record_expr_shorthand_value_ids();
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
@@ -292,6 +329,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span,
             });
         }
+        Ok(())
     }
 
     /// Adds record field keys that resolve through their record owner type.
@@ -300,8 +338,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body_ref: BodyRef,
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
-    ) {
+    ) -> anyhow::Result<()> {
         for expr in body.exprs().iter() {
+            rg_std::check_cancel!(self.db, "body occurrence candidates");
             if !expr.source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
@@ -318,6 +357,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
+                rg_std::check_cancel!(self.db, "body occurrence candidates");
                 candidates.push(BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: expr.scope,
@@ -372,6 +412,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 });
             }
         });
+        Ok(())
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

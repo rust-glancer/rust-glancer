@@ -5,8 +5,8 @@ use crate::item::{
     ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
     TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
 };
-use rg_ir_model::Mutability;
-use rg_parse::{LineIndex, Span};
+use rg_ir_model::{Mutability, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasAttrs, HasGenericParams, HasName, HasTypeBounds, HasVisibility},

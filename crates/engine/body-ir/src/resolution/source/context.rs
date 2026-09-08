@@ -72,6 +72,12 @@ pub struct BodyResolutionContext<'a, D, I> {
     caches: BodyResolutionCaches,
 }
 
+impl<D, I> rg_std::Cancelable for BodyResolutionContext<'_, D, I> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
+        rg_std::Cancelable::check_cancelled(&self.ty, checkpoint)
+    }
+}
+
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Clone,

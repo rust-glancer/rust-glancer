@@ -1,17 +1,14 @@
 //! Body IR package store and transaction entry points.
 
-use rg_def_map::{DefMapLoader, PackageSlot};
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::{PackageStore, PackageSubset};
-use rg_semantic_ir::SemanticIrLoader;
 use rg_std::MemorySize;
-use rg_text::PackageNameInterners;
 
 use super::{
     BodyIrLoader, BodyIrReadTxn, CrateBodiesCoverage, CrateBodiesStatus, PackageBodies,
     PackageBodiesCoverage,
 };
-use crate::build::BodyIrDbBuilder;
+use crate::CrateBodies;
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
@@ -30,62 +27,55 @@ pub struct BodyIrStats {
     pub expression_count: usize,
 }
 
-/// Body-level IR for all analyzed packages and semantic crates.
+/// Stores body analysis for all packages in a saved project.
 ///
-/// Resident entries own their body arenas and coverage together. Offloaded entries replace that
-/// payload with only [`PackageBodiesCoverage`], which is enough to decide whether a query needs
-/// on-demand materialization before its read transaction opens the package artifact.
+/// Each package either keeps its [`PackageBodies`] in memory or keeps only
+/// [`PackageBodiesCoverage`] while the bodies are stored in the package cache. The coverage lets
+/// queries decide whether to build more bodies before a read transaction opens that cache file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrDb {
     packages: PackageStore<PackageBodies, PackageBodiesCoverage>,
 }
 
 impl BodyIrDb {
-    /// Starts replacing selected packages on top of this snapshot.
+    /// Install full-package results from [`BodyIrBuilder::build`](crate::BodyIrBuilder::build).
     ///
-    /// `packages` selects what to rebuild. `copy_compact_packages` selects which rebuilt payloads
-    /// should be cloned and shrunk for long-term residency; passing `packages` for both arguments
-    /// requests compact retained output for every rebuilt package. The returned builder still
-    /// requires one explicit materialization selection before it can build.
-    #[allow(clippy::too_many_arguments)]
-    pub fn builder<'db, 'names>(
-        &'db self,
-        parse: &'db rg_parse::ParseDb,
-        def_map: &'db rg_def_map::DefMapDb,
-        semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
-        packages: &'db [PackageSlot],
-        copy_compact_packages: &[PackageSlot],
-        interners: &'names mut PackageNameInterners,
-        def_map_loader: DefMapLoader<'db>,
-        semantic_ir_loader: SemanticIrLoader<'db>,
-        subset: &'db PackageSubset,
-    ) -> BodyIrDbBuilder<'db, 'names> {
-        BodyIrDbBuilder::new(
-            self,
-            parse,
-            def_map,
-            semantic_ir,
-            packages,
-            copy_compact_packages,
-            interners,
-            def_map_loader,
-            semantic_ir_loader,
-            subset,
-        )
+    /// Each included package must supply an entry for every target, including policy-skipped
+    /// ones, so crate ids still select the matching [`PackageBodies`] entry. Other packages are
+    /// left untouched. This is used to assemble body storage for a new or rebuilt project.
+    pub fn replace_built_packages(
+        &mut self,
+        mut products: Vec<(CrateRef, CrateBodies)>,
+    ) -> anyhow::Result<()> {
+        products.sort_by_key(|(crate_ref, _)| (crate_ref.package.0, crate_ref.crate_id.0));
+        let mut products = products.into_iter().peekable();
+        while let Some((first, _)) = products.peek() {
+            let package = first.package;
+            let mut crates = Vec::new();
+            while products
+                .peek()
+                .is_some_and(|(crate_ref, _)| crate_ref.package == package)
+            {
+                let (crate_ref, bodies) = products.next().expect("peeked product should exist");
+                anyhow::ensure!(
+                    crate_ref.crate_id.0 == crates.len(),
+                    "package build must supply every target in order"
+                );
+                crates.push(bodies);
+            }
+            anyhow::ensure!(
+                self.replace_package(package, PackageBodies::new(crates))
+                    .is_some(),
+                "body package slot must exist"
+            );
+        }
+        Ok(())
     }
 
-    /// Builds a Body IR database from an already shaped package store.
-    ///
-    /// Startup cache loading supplies validated coverage inside each offloaded entry, while source
-    /// builds replace their provisional entries with ordinary resident payloads.
     pub fn from_package_store(
         packages: PackageStore<PackageBodies, PackageBodiesCoverage>,
     ) -> Self {
         Self { packages }
-    }
-
-    pub(crate) fn mutator(&mut self) -> BodyIrDbMutator<'_> {
-        BodyIrDbMutator { db: self }
     }
 
     pub fn stats(&self) -> BodyIrStats {
@@ -103,7 +93,7 @@ impl BodyIrDb {
                 }
                 match crate_bodies.coverage() {
                     CrateBodiesCoverage::Complete => stats.complete_crate_count += 1,
-                    CrateBodiesCoverage::Partial => stats.partial_crate_count += 1,
+                    CrateBodiesCoverage::Files(_) => stats.partial_crate_count += 1,
                     CrateBodiesCoverage::Missing => stats.missing_crate_count += 1,
                     CrateBodiesCoverage::SkippedByPolicy => {
                         stats.skipped_by_policy_crate_count += 1;
@@ -129,8 +119,8 @@ impl BodyIrDb {
             .and_then(|entry| entry.as_resident())
     }
 
-    /// Returns retained coverage for one semantic crate without loading its package payload.
-    pub fn crate_coverage(&self, crate_ref: CrateRef) -> Option<CrateBodiesCoverage> {
+    /// Return which files have body analysis in this crate, without loading its bodies from disk.
+    pub fn crate_coverage(&self, crate_ref: CrateRef) -> Option<&CrateBodiesCoverage> {
         let entry = self.packages.raw_entry(crate_ref.package)?;
         if let Some(package) = entry.as_resident() {
             return package
@@ -150,7 +140,7 @@ impl BodyIrDb {
             .is_some_and(|entry| entry.is_offloaded())
     }
 
-    /// Replace the whole slot so an offloaded summary cannot outlive the payload it described.
+    /// Store new [`PackageBodies`] in memory at an existing package slot, replacing its old entry.
     pub fn replace_package(&mut self, package: PackageSlot, bodies: PackageBodies) -> Option<()> {
         self.packages.replace(package, bodies)
     }
@@ -182,10 +172,21 @@ impl BodyIrDb {
         )
     }
 
-    /// Drop one resident payload while keeping its exact crate coverage in the same package slot.
+    /// Update the in-memory [`PackageBodiesCoverage`] after replacing a package's cache file.
+    /// The caller must finish writing that file first; this method keeps only the coverage and
+    /// leaves the bodies on disk.
+    pub fn replace_offloaded_package(
+        &mut self,
+        package: PackageSlot,
+        coverage: PackageBodiesCoverage,
+    ) -> Option<()> {
+        self.packages.offload_with(package, coverage)
+    }
+
+    /// Release a package's in-memory bodies after their cache file has been written.
     ///
-    /// Residency application can include a package that is already offloaded. Treat that as a
-    /// no-op so its existing coverage is preserved rather than replaced with a reconstructed value.
+    /// Keep [`PackageBodiesCoverage`] so queries still know which files have already been analyzed.
+    /// A package that is already stored on disk is left as it is.
     pub fn offload_package(&mut self, package: PackageSlot) -> Option<()> {
         if self.package_is_offloaded(package) {
             return Some(());
@@ -194,26 +195,10 @@ impl BodyIrDb {
         self.packages.offload_with(package, coverage)
     }
 }
-
-pub(crate) struct BodyIrDbMutator<'db> {
-    db: &'db mut BodyIrDb,
-}
-
-impl BodyIrDbMutator<'_> {
-    pub(crate) fn replace_package(
-        &mut self,
-        package: PackageSlot,
-        bodies: PackageBodies,
-    ) -> Option<()> {
-        self.db.replace_package(package, bodies)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use rg_arena::Arena;
-    use rg_def_map::PackageSlot;
-    use rg_ir_model::{CrateId, CrateRef};
+    use rg_ir_model::{CrateId, CrateRef, PackageSlot};
     use rg_package_store::{PackageEntry, PackageStore};
 
     use crate::{BodyIrDb, CrateBodies, CrateBodiesCoverage, PackageBodies};
@@ -239,11 +224,11 @@ mod tests {
 
         assert_eq!(
             db.crate_coverage(first_crate),
-            Some(CrateBodiesCoverage::Missing),
+            Some(&CrateBodiesCoverage::Missing),
         );
         assert_eq!(
             db.crate_coverage(second_crate),
-            Some(CrateBodiesCoverage::SkippedByPolicy),
+            Some(&CrateBodiesCoverage::SkippedByPolicy),
         );
 
         db.replace_package(
@@ -261,7 +246,7 @@ mod tests {
         .expect("Body IR package slot should exist");
         assert_eq!(
             db.crate_coverage(first_crate),
-            Some(CrateBodiesCoverage::Complete),
+            Some(&CrateBodiesCoverage::Complete),
         );
 
         db.offload_package(package)
@@ -269,11 +254,11 @@ mod tests {
         assert!(db.resident_package(package).is_none());
         assert_eq!(
             db.crate_coverage(first_crate),
-            Some(CrateBodiesCoverage::Complete),
+            Some(&CrateBodiesCoverage::Complete),
         );
         assert_eq!(
             db.crate_coverage(second_crate),
-            Some(CrateBodiesCoverage::SkippedByPolicy),
+            Some(&CrateBodiesCoverage::SkippedByPolicy),
         );
     }
 }

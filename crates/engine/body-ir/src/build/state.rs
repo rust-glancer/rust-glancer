@@ -10,7 +10,8 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMap, DefMapReadTxn};
 use rg_ir_model::{
-    BodyId, BodyRef, BodySource, ConstRef, CrateRef, DefMapRef, ItemOwner, ModuleRef, StaticRef,
+    BodyId, BodyRef, BodySource, ConstRef, CrateRef, DefMapRef, FileId, ItemOwner, ModuleRef, Span,
+    StaticRef,
 };
 use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, SemanticIrReadTxn,
@@ -26,8 +27,7 @@ use crate::{
 };
 
 use super::{
-    body_def_map::BodyDefMapCollector,
-    body_item_store::BodyItemStoreCollector,
+    local_items::LocalItemSource,
     lower::{
         BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, LoweredBodyTask,
         LoweredCrateBodies,
@@ -73,6 +73,7 @@ pub(super) struct CrateBodyBuildState<'crate_data> {
     body_facts: Arena<BodyId, BodyFacts>,
     body_local_items: Arena<BodyId, Option<BodyLocalItems>>,
     interner: &'crate_data mut NameInterner,
+    cancellation: rg_std::CancellationToken,
 }
 
 impl<'crate_data> CrateBodyBuildState<'crate_data> {
@@ -81,6 +82,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         parse_package: &'crate_data rg_parse::Package,
         crate_bodies: LoweredCrateBodies,
         interner: &'crate_data mut NameInterner,
+        cancellation: rg_std::CancellationToken,
     ) -> Self {
         let mut body_refs = Arena::with_capacity(crate_bodies.bodies().len());
         let mut body_slots = HashMap::with_capacity(crate_bodies.bodies().len());
@@ -99,6 +101,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_facts: Arena::new(),
             body_local_items: Arena::new(),
             interner,
+            cancellation,
         }
     }
 
@@ -109,6 +112,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         crate_bodies: LoweredCrateBodies,
         body_refs: Vec<BodyRef>,
         interner: &'crate_data mut NameInterner,
+        cancellation: rg_std::CancellationToken,
     ) -> anyhow::Result<Self> {
         anyhow::ensure!(
             crate_bodies.bodies().len() == body_refs.len(),
@@ -139,6 +143,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_facts: Arena::new(),
             body_local_items: Arena::new(),
             interner,
+            cancellation,
         })
     }
 
@@ -193,7 +198,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // `BodyBuildQuerySource`.
         let phase_started = Instant::now();
         let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
-        let item_lookup_query = ItemLookupQuery::build_with_cache(&crate_items, item_lookup_cache)?;
+        let item_lookup_query =
+            ItemLookupQuery::build_with_cache(&crate_items, item_lookup_cache, &self.cancellation)?;
         let elapsed = phase_started.elapsed();
         let item_lookup_query_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {
@@ -204,7 +210,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             );
         }
         let trait_selection =
-            TraitSelectionSession::new_with_declaration_cache(self.crate_ref, declarations.clone());
+            TraitSelectionSession::new_with_declaration_cache(self.crate_ref, declarations.clone())
+                .with_cancellation(self.cancellation.clone());
         let semantic_timings = self.resolve_semantics(
             def_map,
             semantic_ir,
@@ -220,6 +227,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // defmap/item store.
         let body_count = self.crate_bodies.bodies().len();
         let finish_started = Instant::now();
+        rg_std::check_cancel!(self.cancellation, "finalize crate bodies");
         let bodies = self.finish();
         let finish_ms = finish_started.elapsed().as_millis();
         tracing::trace!(
@@ -269,7 +277,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         while self.body_local_items.len() < self.crate_bodies.bodies().len() {
             let body = self.body_local_items.next_id();
             let body_ref = self.body_ref(body);
-            let items = self.collect_body_local_items(body, def_map, semantic_ir)?;
+            let items = self
+                .collect_body_local_items(body, def_map, semantic_ir)
+                .context("collect body-local declarations")?;
             if let Some((owner, owner_module)) = Self::request_root_owner_context(
                 body_ref,
                 self.crate_bodies.bodies()[body].body(),
@@ -285,36 +295,44 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 body_data.fallback_module(),
                 items.def_map(),
                 items.item_store(),
-            );
+                &self.cancellation,
+            )
+            .context("collect nested body tasks")?;
             let allocated = self.body_local_items.alloc(Some(items));
             debug_assert_eq!(allocated, body);
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(task_source, &mut self.crate_bodies, cfg, self.interner)
-                    .lower_tasks(&nested_tasks, &mut macro_expansion)?
-                    .into_iter()
-                    .try_for_each(|lowered| {
-                        let body_ref = body_ref_for_nested(lowered)?;
-                        anyhow::ensure!(
-                            body_ref.crate_ref == self.crate_ref,
-                            "nested body identity belongs to a different crate",
-                        );
-                        anyhow::ensure!(
-                            !self.body_slots.contains_key(&body_ref),
-                            "nested body identity {:?} was allocated more than once",
-                            body_ref.body,
-                        );
-                        let allocated = self.body_refs.alloc(body_ref);
-                        anyhow::ensure!(
-                            allocated == lowered.body,
-                            "nested body identity worklist is not aligned with lowered bodies",
-                        );
-                        anyhow::ensure!(
-                            self.body_slots.insert(body_ref, allocated).is_none(),
-                            "nested body identity was already present in the worklist",
-                        );
-                        Ok(())
-                    })?;
+                BodyTaskLowering::new(
+                    task_source,
+                    &mut self.crate_bodies,
+                    cfg,
+                    self.interner,
+                    &self.cancellation,
+                )
+                .lower_tasks(&nested_tasks, &mut macro_expansion)?
+                .into_iter()
+                .try_for_each(|lowered| {
+                    let body_ref = body_ref_for_nested(lowered)?;
+                    anyhow::ensure!(
+                        body_ref.crate_ref == self.crate_ref,
+                        "nested body identity belongs to a different crate",
+                    );
+                    anyhow::ensure!(
+                        !self.body_slots.contains_key(&body_ref),
+                        "nested body identity {:?} was allocated more than once",
+                        body_ref.body,
+                    );
+                    let allocated = self.body_refs.alloc(body_ref);
+                    anyhow::ensure!(
+                        allocated == lowered.body,
+                        "nested body identity worklist is not aligned with lowered bodies",
+                    );
+                    anyhow::ensure!(
+                        self.body_slots.insert(body_ref, allocated).is_none(),
+                        "nested body identity was already present in the worklist",
+                    );
+                    Ok(())
+                })?;
             }
         }
 
@@ -416,6 +434,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     }
 
     // Collects the local items within a single already-lowered body.
+    #[rg_std::cancelable("body declaration worklist", token = self.cancellation)]
     fn collect_body_local_items(
         &self,
         body: BodyId,
@@ -434,12 +453,9 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             &self.body_slots,
             &self.body_local_items,
         );
-        let def_map = BodyDefMapCollector::new(body_ref, body)
-            .collect()
-            .finalize(source)?;
-        let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
-
-        Ok(BodyLocalItems::new(def_map, item_store))
+        LocalItemSource::for_body(body)
+            .collect(body_ref, source, &self.cancellation)
+            .context("collect body-local declarations")
     }
 
     fn nested_body_tasks(
@@ -449,13 +465,15 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         fallback_module: ModuleRef,
         def_map: &DefMap,
         item_store: &ItemStore,
-    ) -> Vec<BodyLoweringTask> {
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<BodyLoweringTask>> {
         let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
 
         // Associated items share the function/const arenas with module items. Their body still
         // belongs to the associated item, but type lookup starts from the owning impl/trait module.
         for (function_ref, function_data) in item_store.functions_with_refs() {
+            rg_std::check_cancel!(cancellation, "nested body task");
             if function_ref.origin != origin {
                 continue;
             }
@@ -490,6 +508,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
 
         for (const_id, const_data) in item_store.consts().iter_with_ids() {
+            rg_std::check_cancel!(cancellation, "nested body task");
             let const_ref = ConstRef {
                 origin,
                 id: const_id,
@@ -522,6 +541,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // Foreign statics have no initializer to lower. Unlike functions, their declaration data
         // has no `has_body` bit, so the retained extern-block owner carries that distinction.
         for (static_id, static_data) in item_store.statics().iter_with_ids() {
+            rg_std::check_cancel!(cancellation, "nested body task");
             let static_ref = StaticRef {
                 origin,
                 id: static_id,
@@ -553,7 +573,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         }
 
         tasks.sort_by_key(|task| (task.file_id.0, task.span.text.start, task.span.text.end));
-        tasks
+        Ok(tasks)
     }
 
     /// Distinguish declarations written inside the selected body from contextual declarations.
@@ -563,8 +583,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
     /// selected method and must not extend this request's body worklist.
     fn source_is_nested_in_body(
         body_source: BodySource,
-        item_file: rg_parse::FileId,
-        item_span: rg_parse::Span,
+        item_file: FileId,
+        item_span: Span,
     ) -> bool {
         body_source.file_id == item_file
             && body_source.span.contains_span(item_span)
@@ -658,6 +678,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
+            rg_std::check_cancel!(self.cancellation, "body impl headers");
             let body_ref = self.body_ref(body_id);
             let body = lowered_body.body();
             let resolved_headers = {
@@ -698,6 +719,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
+                    rg_std::check_cancel!(self.cancellation, "local impl header");
                     if owner.origin != DefMapRef::Body(body_ref) {
                         continue;
                     }
@@ -756,6 +778,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         );
 
         for (body_id, body) in self.crate_bodies.bodies_mut().iter_mut_with_ids() {
+            rg_std::check_cancel!(self.cancellation, "body pattern bindings");
             let body_ref = self.body_refs[body_id];
             PatternBindingMaterializationPass::new(
                 &source,
@@ -792,6 +815,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         debug_assert!(self.body_facts.is_empty());
 
         for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
+            rg_std::check_cancel!(self.cancellation, "body inference");
             let body_ref = self.body_refs[body_id];
             let body = body.body();
             let body_source = body.source();
@@ -829,6 +853,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
     /// Finish request-local bodies without requiring their IDs to match worklist slots.
     pub(super) fn finish_current(mut self) -> anyhow::Result<Vec<CurrentBody>> {
+        rg_std::check_cancel!(self.cancellation, "finalize current bodies");
         let body_count = self.crate_bodies.bodies().len();
         anyhow::ensure!(
             body_count == self.body_refs.len()

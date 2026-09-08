@@ -10,10 +10,10 @@ use std::{
 
 use rg_analysis::{Analysis, SavedSourceView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
-use rg_ir_model::{CrateId, CrateRef};
+use rg_def_map::{DefMapDb, DefMapReadTxn};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_package_store::{PackageStoreError, PackageSubset};
-use rg_parse::{FileId, ParseDb};
+use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
@@ -32,7 +32,11 @@ use super::{
     txn::ProjectReadTxn,
 };
 
-/// Identity of one successfully published saved-source project generation.
+/// Identifies one saved version of a [`Project`](crate::Project).
+///
+/// Publishing a source or workspace change gives the project a new id. Adding body analysis for
+/// the same source keeps the id, so [`SavedBodyProducts`](crate::SavedBodyProducts) can use it to
+/// check that their source and declarations still match before being installed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub struct ProjectGenerationId(u64);
@@ -48,7 +52,7 @@ impl ProjectGenerationId {
     }
 }
 
-/// Fully built project generation.
+/// Owns the saved source and analysis for one version of [`Project`](crate::Project).
 ///
 /// Package slots are the coherence key across resident and offloaded phases. Parse metadata stays
 /// resident for every package so source locations remain addressable, while DefMap, Semantic IR,
@@ -79,7 +83,9 @@ pub(crate) struct ProjectState {
     #[memsize(skip)]
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
-    pub(crate) parse: ParseDb,
+    /// Shared with saved body builds. Source updates copy the metadata before changing its file
+    /// and target inventory, so outstanding builds keep the source context they started with.
+    pub(crate) parse: Arc<ParseDb>,
     pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
     pub(crate) def_map: DefMapDb,
     pub(crate) semantic_ir: SemanticIrDb,
@@ -112,7 +118,7 @@ impl ProjectState {
     }
 
     pub(crate) fn parse_db_mut(&mut self) -> &mut ParseDb {
-        &mut self.parse
+        Arc::make_mut(&mut self.parse)
     }
 
     /// Reallocate the small cache-backed state after indexing allocations have died.
@@ -133,20 +139,28 @@ impl ProjectState {
             return false;
         }
 
-        *self = self.clone();
+        let mut compact = self.clone();
+        // The ordinary clone shares parse metadata with body builds. Copy it here as well so the
+        // compacted state can release the old metadata allocations once their last reader leaves.
+        compact.parse = Arc::new((*self.parse).clone());
+        *self = compact;
         true
     }
 
     /// Starts a read transaction over resident and lazy-loadable offloaded packages.
-    pub(crate) fn read_txn(&self) -> anyhow::Result<ProjectReadTxn<'_>> {
-        ProjectReadTxn::new(self)
+    pub(crate) fn read_txn(
+        &self,
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<ProjectReadTxn<'_>> {
+        ProjectReadTxn::new(self, cancellation)
     }
 
     pub(crate) fn read_txn_for_subset(
         &self,
         subset: &PackageSubset,
+        cancellation: rg_std::CancellationToken,
     ) -> anyhow::Result<ProjectReadTxn<'_>> {
-        ProjectReadTxn::for_subset(self, subset)
+        ProjectReadTxn::for_subset(self, subset, cancellation)
     }
 
     /// Create one request-owned loader set for this saved project snapshot.

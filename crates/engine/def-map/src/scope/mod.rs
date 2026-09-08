@@ -602,10 +602,10 @@ impl<'a> ScopeEntryRef<'a> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::CrateId;
-    use rg_ir_model::{CrateRef, DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef};
+    use rg_ir_model::{
+        CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef, PackageSlot,
+    };
     use rg_text::Name;
-    use rg_workspace::PackageSlot;
 
     use super::{
         ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeResolutionRef,

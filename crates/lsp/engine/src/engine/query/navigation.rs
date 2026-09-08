@@ -9,10 +9,8 @@ use std::{collections::HashMap, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
-use rg_parse::FileId;
 use rg_project::{DocumentSourceView, ProjectSnapshot};
 use rg_std::UniqueVec;
 
@@ -43,8 +41,9 @@ impl QueryRunner<'_> {
     pub(crate) fn goto_implementation(
         &mut self,
         input: GlobalPositionSnapshot,
+        cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<ls_types::Location>, QueryRunError> {
-        self.saved_implementation_query(input)
+        self.saved_implementation_query(input, cancellation)
     }
 
     /// Resolve a definition or type definition using the current body and saved declarations.
@@ -74,7 +73,8 @@ impl QueryRunner<'_> {
         };
         let mut locations = UniqueVec::new();
         let mut omitted_unsafe_target = false;
-        let mut destinations = CapturedNavigationDocuments::new(current.snapshot, &documents);
+        let mut destinations =
+            CapturedNavigationDocuments::new(current.snapshot, &documents, cancellation.token());
         let offset = current.offset();
 
         for source in &current.targets {
@@ -151,9 +151,10 @@ impl QueryRunner<'_> {
     fn saved_implementation_query(
         &mut self,
         input: GlobalPositionSnapshot,
+        cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<ls_types::Location>, QueryRunError> {
         if let Some(path) = self
-            .save_required_for_global_operation(&input)
+            .save_required_for_global_operation(&input, cancellation)
             .context("check implementation source safety")?
         {
             return Err(QueryRunError::SaveRequired(path));
@@ -162,7 +163,7 @@ impl QueryRunner<'_> {
         let path = document.source_path().to_path_buf();
         let position = input.position();
         let started = Instant::now();
-        self.ensure_path("implementation", &path)
+        self.ensure_path("implementation", &path, cancellation)
             .context("prepare implementation path")?;
         let snapshot = self
             .project
@@ -175,7 +176,7 @@ impl QueryRunner<'_> {
             .map(|(_, crate_ref, _)| *crate_ref)
             .collect::<Vec<_>>();
         let analysis = snapshot
-            .analysis_for_crates(&analysis_crates)
+            .analysis_for_crates(&analysis_crates, cancellation.token())
             .context("load implementation analysis")?;
         let mut locations = UniqueVec::new();
 
@@ -184,6 +185,7 @@ impl QueryRunner<'_> {
                 .goto_implementation(crate_ref, context.file, offset)
                 .context("resolve implementation targets")?
             {
+                rg_std::check_cancel!(cancellation, "implementation locations");
                 let Some(location) = navigation_proto::location_for_target(snapshot, &target)
                     .context("convert implementation target")?
                 else {
@@ -231,6 +233,7 @@ impl CurrentNavigationQuery {
 struct CapturedNavigationDocuments<'documents, 'project> {
     snapshot: ProjectSnapshot<'project>,
     documents: &'documents [EditorDocumentSnapshot],
+    cancellation: rg_std::CancellationToken,
     sources: HashMap<(PackageSlot, FileId), CapturedNavigationSource>,
 }
 
@@ -238,15 +241,18 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
     fn new(
         snapshot: ProjectSnapshot<'project>,
         documents: &'documents [EditorDocumentSnapshot],
+        cancellation: rg_std::CancellationToken,
     ) -> Self {
         Self {
             snapshot,
             documents,
+            cancellation,
             sources: HashMap::new(),
         }
     }
 
     /// Convert one saved target after proving which source owns its editor range.
+    #[rg_std::cancelable("navigation source conversion", token = self.cancellation)]
     fn location_for_saved_target(
         &mut self,
         target: &NavigationTarget,
@@ -337,7 +343,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         };
         let source = self
             .snapshot
-            .prepare_document_source(&[(crate_ref, file)], document.text())
+            .prepare_document_source(&[(crate_ref, file)], document.text(), &self.cancellation)
             .context("prepare open navigation destination source")?;
 
         Ok(CapturedNavigationSource::Open(Box::new(

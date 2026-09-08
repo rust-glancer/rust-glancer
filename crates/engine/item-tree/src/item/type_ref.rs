@@ -2,11 +2,9 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::{Mutability, Path, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
-
-use rg_ir_model::{Mutability, Path};
 
 /// Source-backed const-expression syntax retained by the item tree.
 ///
@@ -786,7 +784,7 @@ impl TypeFormatter<'static, CanonicalTypeNames> {
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::{Span, TextSpan};
+    use rg_ir_model::{Span, TextSpan};
     use rg_text::Name;
 
     use super::{TypePath, TypePathAnchor, TypePathSegment, TypeRef};

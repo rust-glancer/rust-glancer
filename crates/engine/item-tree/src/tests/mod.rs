@@ -5,7 +5,8 @@ use crate::{
     TypeRef,
 };
 use expect_test::expect;
-use rg_parse::{LineColumnSpan, LineIndex, Position, TextSpan};
+use rg_ir_model::TextSpan;
+use rg_parse::{LineColumnSpan, LineIndex, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 
@@ -887,7 +888,7 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
         .line_index()
         .expect("fixture line index should load");
     assert_eq!(
-        function.span.line_column(line_index),
+        line_index.line_column_span(function.span),
         LineColumnSpan {
             start: Position { line: 0, column: 0 },
             end: Position { line: 2, column: 1 },

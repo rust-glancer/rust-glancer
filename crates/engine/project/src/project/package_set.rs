@@ -1,7 +1,9 @@
-use rg_body_ir::BodyIrFile;
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use std::path::Path;
+
+use anyhow::Context as _;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
+use rg_parse::ParseDb;
 use rg_std::{MemorySize, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
@@ -28,16 +30,6 @@ impl PhasePackageSet {
         }
     }
 
-    pub(super) fn from_body_files(files: &[BodyIrFile]) -> Self {
-        let mut packages = files
-            .iter()
-            .map(|file| file.crate_ref.package)
-            .collect::<UniqueVec<_>>()
-            .into_vec();
-        packages.sort_by_key(|package| package.0);
-        Self { packages }
-    }
-
     pub(super) fn from_crates(crates: &[CrateRef]) -> Self {
         let mut packages = crates
             .iter()
@@ -48,8 +40,27 @@ impl PhasePackageSet {
         Self { packages }
     }
 
+    pub(super) fn from_path(parse: &ParseDb, path: &Path) -> anyhow::Result<Self> {
+        let path = path
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", path.display()))?;
+        // Shared source files can appear in several targets or packages. Keep each owner once.
+        let mut packages = parse
+            .file_refs_for_path(&path)
+            .into_iter()
+            .map(|file| PackageSlot(file.package))
+            .collect::<Vec<_>>();
+        packages.sort_unstable();
+        packages.dedup();
+        Ok(Self { packages })
+    }
+
     pub(super) fn as_slice(&self) -> &[PackageSlot] {
         &self.packages
+    }
+
+    pub(super) fn into_vec(self) -> Vec<PackageSlot> {
+        self.packages
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -89,45 +100,17 @@ impl PhasePackageSet {
 
 #[cfg(test)]
 mod tests {
-    use rg_parse::FileId;
+    use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 
-    use super::*;
+    use super::PhasePackageSet;
 
     #[test]
-    fn body_file_sets_are_sorted_and_deduplicated() {
-        let files = [
-            BodyIrFile::new(
-                CrateRef {
-                    package: PackageSlot(2),
-                    crate_id: rg_ir_model::CrateId(0),
-                },
-                FileId(0),
-            ),
-            BodyIrFile::new(
-                CrateRef {
-                    package: PackageSlot(0),
-                    crate_id: rg_ir_model::CrateId(0),
-                },
-                FileId(1),
-            ),
-            BodyIrFile::new(
-                CrateRef {
-                    package: PackageSlot(2),
-                    crate_id: rg_ir_model::CrateId(1),
-                },
-                FileId(2),
-            ),
-            BodyIrFile::new(
-                CrateRef {
-                    package: PackageSlot(1),
-                    crate_id: rg_ir_model::CrateId(0),
-                },
-                FileId(3),
-            ),
-        ];
-
-        let set = PhasePackageSet::from_body_files(&files);
-
+    fn crate_sets_are_sorted_and_deduplicated_by_package() {
+        let crates = [(2, 0), (0, 0), (2, 1), (1, 0)].map(|(package, crate_id)| CrateRef {
+            package: PackageSlot(package),
+            crate_id: CrateId(crate_id),
+        });
+        let set = PhasePackageSet::from_crates(&crates);
         assert_eq!(
             set.as_slice(),
             &[PackageSlot(0), PackageSlot(1), PackageSlot(2)]

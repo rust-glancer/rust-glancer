@@ -4,13 +4,12 @@
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
 use anyhow::Context as _;
-use rg_ir_model::identity::DeclarationRef;
+use rg_ir_model::{FileId, Span, identity::DeclarationRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceSurface, SourceOccurrenceView},
 };
-use rg_parse::Span;
 
 use crate::{
     Analysis, ReferenceQuery, SymbolKind,
@@ -39,7 +38,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     pub(crate) fn prepare_rename(
         &self,
         crate_ref: rg_ir_model::CrateRef,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<RenameTarget>> {
         let Some(symbol) = self
@@ -56,7 +55,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     pub(crate) fn rename(
         &self,
         crate_ref: rg_ir_model::CrateRef,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
         offset: u32,
         new_name: &str,
         query: ReferenceQuery<'_>,
@@ -118,6 +117,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     }
 
     /// Converts one matched source occurrence into the concrete source edit for its spelling.
+    #[rg_std::cancelable("rename edit collection", token = self.analysis)]
     fn rename_edit_for_symbol(
         &self,
         symbol: SourceSymbol,
@@ -362,6 +362,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             SourceSymbolResolver::new(self.analysis.view_db()).declarations_for_symbol(symbol)?;
         let mut unique = Vec::new();
         for declaration in declarations {
+            rg_std::check_cancel!(self.analysis, "rename edits");
             if !unique.contains(&declaration) {
                 unique.push(declaration);
             }

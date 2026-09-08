@@ -10,8 +10,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use super::SemanticIrLoader;

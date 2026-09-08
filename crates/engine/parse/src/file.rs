@@ -9,8 +9,9 @@ use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_text::RustEdition;
 
-use crate::{fs, line_index::LineIndex, span::Span};
-use rg_std::{MemorySize, Shrink};
+use crate::{fs, line_index::LineIndex};
+use rg_ir_model::{FileId, Span};
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Parse source text with the Rust edition of its owning package.
@@ -25,22 +26,6 @@ pub fn parse_source_file(source: &str, edition: RustEdition) -> SyntaxParse<Sour
         RustEdition::Edition2024 => Edition::Edition2024,
     };
     SourceFile::parse(source, edition)
-}
-
-/// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub struct FileId(pub usize);
-
-impl rg_arena::ArenaId for FileId {
-    fn from_index(index: usize) -> Self {
-        Self(index)
-    }
-
-    fn index(self) -> usize {
-        self.0
-    }
 }
 
 /// Internal parsed representation used by the parser cache.

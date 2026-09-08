@@ -2,10 +2,9 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::Span;
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span, StmtId};
 use rg_text::Name;
 
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, StmtId};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_std::{MemorySize, Shrink};
 

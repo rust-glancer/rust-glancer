@@ -19,6 +19,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         let mut symbols = Vec::new();
 
         for symbol in SymbolView::new(self.0).workspace_symbols()? {
+            rg_std::check_cancel!(self.0, "workspace symbol filtering");
             if !query.matches(symbol.name().as_ref()) {
                 continue;
             }

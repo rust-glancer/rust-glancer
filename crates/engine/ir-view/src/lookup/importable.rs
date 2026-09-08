@@ -165,6 +165,7 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
         let mut by_declaration = HashMap::new();
 
         while let Some(module) = pending.pop_front() {
+            rg_std::check_cancel!(self.db, "importable module search");
             if visited.len() >= Self::MAX_MODULES || results.len() >= Self::MAX_RESULTS {
                 break;
             }
@@ -176,6 +177,7 @@ impl<'a, 'db> ImportableNameSearch<'a, 'db> {
                 .visible_scope_defs(importing_module, module.module)
                 .context("walk auto-import module scope")?;
             for visible_def in visible_defs {
+                rg_std::check_cancel!(self.db, "importable name search");
                 // Descendants may legally spell a crate-root private import as `crate::Name`, but
                 // that binding is an implementation detail of the parent module. Reusing it would
                 // make the new import depend on an unrelated private `use`, and its short path

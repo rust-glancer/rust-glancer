@@ -26,7 +26,8 @@ use crate::{
 };
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{
-    CrateId, CrateRef, DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
+    CrateId, CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
+    PackageSlot, Span,
 };
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode,
@@ -38,7 +39,6 @@ use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
 use crate::MacroSourceFileRequest;
-use crate::PackageSlot;
 
 use super::macros::{
     ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
@@ -150,7 +150,7 @@ impl CrateState {
         context: &ModuleFileContext,
         module_name: &str,
         path_override: Option<&str>,
-    ) -> Option<(rg_parse::FileId, Arc<ModuleFileContext>)> {
+    ) -> Option<(FileId, Arc<ModuleFileContext>)> {
         self.known_module_files
             .resolve(context, module_name, path_override)
     }
@@ -158,7 +158,7 @@ impl CrateState {
 
 /// Canonical package paths used to connect syntax-only module declarations to parsed files.
 pub(super) struct KnownModuleFiles {
-    by_path: HashMap<PathBuf, rg_parse::FileId>,
+    by_path: HashMap<PathBuf, FileId>,
 }
 
 impl KnownModuleFiles {
@@ -184,7 +184,7 @@ impl KnownModuleFiles {
         context: &ModuleFileContext,
         module_name: &str,
         path_override: Option<&str>,
-    ) -> Option<(rg_parse::FileId, Arc<ModuleFileContext>)> {
+    ) -> Option<(FileId, Arc<ModuleFileContext>)> {
         context
             .resolve_known_module_name(module_name, path_override, |path| {
                 self.by_path.get(path).copied().or_else(|| {
@@ -273,7 +273,7 @@ struct CrateScopeCollector<'db> {
     textual_macro_scopes: TextualMacroScopes,
     macro_use_imports: Vec<MacroUseImport>,
     macro_directives: Vec<MacroDirective>,
-    active_files: HashSet<rg_parse::FileId>,
+    active_files: HashSet<FileId>,
 }
 
 impl<'db> CrateScopeCollector<'db> {
@@ -310,7 +310,7 @@ impl<'db> CrateScopeCollector<'db> {
         mut self,
         item_tree: &ItemTreePackage,
         target: &CargoTarget,
-        root_file: rg_parse::FileId,
+        root_file: FileId,
         root_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<CrateState> {
         let root_file_tree = item_tree.file(root_file).with_context(|| {
@@ -378,7 +378,7 @@ impl<'db> CrateScopeCollector<'db> {
         &mut self,
         parent: Option<ModuleId>,
         name: Option<Name>,
-        name_span: Option<rg_parse::Span>,
+        name_span: Option<Span>,
         docs: Option<rg_item_tree::Documentation>,
         user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,
@@ -411,7 +411,7 @@ impl<'db> CrateScopeCollector<'db> {
         &mut self,
         item_tree: &ItemTreePackage,
         module_id: ModuleId,
-        file_id: rg_parse::FileId,
+        file_id: FileId,
         items: &[ItemTreeId],
         module_file_context: Arc<ModuleFileContext>,
     ) -> anyhow::Result<()> {

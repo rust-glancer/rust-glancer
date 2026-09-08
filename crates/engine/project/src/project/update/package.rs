@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 
-use rg_def_map::PackageSlot;
+use rg_body_ir::BodyIrBuilder;
+use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_std::Shrink;
 
@@ -58,8 +59,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // Replace the package file table before discovering modules again. Keeping the old table would
     // make removed modules permanent members of source validation and cache snapshots even after
     // the new ItemTree stopped reaching them.
-    state
-        .parse
+    Arc::make_mut(&mut state.parse)
         .reset_packages_from_workspace(&state.workspace, &package_indices)
         .context("while attempting to reset rebuilt package source roots")?;
 
@@ -68,14 +68,17 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
-    let mut item_tree =
-        ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
-            .context("while attempting to rebuild affected item-tree packages")?;
+    let mut item_tree = ItemTreeDb::build_packages(
+        Arc::make_mut(&mut state.parse),
+        &package_indices,
+        &mut state.names,
+    )
+    .context("while attempting to rebuild affected item-tree packages")?;
 
     // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
     // declarations, and body lowering reparses only the files it needs.
-    state.parse.evict_syntax_trees();
-    state.parse.shrink_to_fit();
+    Arc::make_mut(&mut state.parse).evict_syntax_trees();
+    Arc::make_mut(&mut state.parse).shrink_to_fit();
     state
         .memory_hooks
         .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
@@ -97,7 +100,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &state.def_map,
         &old_def_map_txn,
         &state.workspace,
-        &mut state.parse,
+        Arc::make_mut(&mut state.parse),
         &mut item_tree,
         &packages,
         &copy_compact_packages,
@@ -127,27 +130,40 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .context("while attempting to rebuild affected semantic IR packages")?;
     drop(generated_items);
 
-    let body_builder = state
-        .body_ir
-        .builder(
-            &state.parse,
-            &def_map,
-            &semantic_ir,
-            packages.as_slice(),
-            &copy_compact_packages,
-            &mut state.names,
-            loaders.def_map.clone(),
-            loaders.semantic_ir.clone(),
-            &rebuild_subset,
-        )
-        .worker_limit(state.indexing_preference.body_ir_worker_limit());
-    let body_builder = match state.split_indexing_mode {
-        SplitIndexingMode::Full => body_builder.configured_bodies(state.body_ir_policy),
-        SplitIndexingMode::EarlyStart => body_builder.coverage_only(state.body_ir_policy),
-    };
-    let body_ir = body_builder
-        .build()
-        .context("while attempting to rebuild affected body IR packages")?;
+    let body_builder = BodyIrBuilder::new(
+        &state.parse,
+        &def_map,
+        &semantic_ir,
+        packages.as_slice(),
+        &copy_compact_packages,
+        &mut state.names,
+        loaders.def_map.clone(),
+        loaders.semantic_ir.clone(),
+        &rebuild_subset,
+    )
+    .worker_limit(state.indexing_preference.body_ir_worker_limit());
+    let mut body_ir = state.body_ir.clone();
+    match state.split_indexing_mode {
+        SplitIndexingMode::Full => {
+            let products = body_builder
+                .configured_bodies(state.body_ir_policy)
+                .build()
+                .context("rebuild body products")?;
+            body_ir
+                .replace_built_packages(products)
+                .context("assemble rebuilt body packages")?;
+        }
+        SplitIndexingMode::EarlyStart => {
+            for (package, coverage) in body_builder
+                .prepare_coverage(state.body_ir_policy)
+                .context("prepare rebuilt body coverage")?
+            {
+                body_ir
+                    .replace_package(package, coverage)
+                    .context("initialize rebuilt body directory")?;
+            }
+        }
+    }
     // Validate every late read and missing-path probe before the candidate replaces retained state.
     state
         .parse

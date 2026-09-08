@@ -5,11 +5,9 @@
 //! payload as anonymous generated syntax.
 
 use rg_cfg_eval::CfgPredicate;
-use rg_parse::FileId;
+use rg_ir_model::{BuiltinMacroExprKind, FileId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
-
-use rg_ir_model::BuiltinMacroExprKind;
 
 use super::super::ItemTreeId;
 

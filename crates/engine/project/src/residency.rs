@@ -12,7 +12,7 @@
 use rg_std::MemorySize;
 use std::collections::HashSet;
 
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_workspace::{Package, PackageId, PackageSource, WorkspaceMetadata};
 use serde::{Deserialize, Serialize};
 
@@ -172,7 +172,7 @@ mod tests {
     use test_fixture::fixture_crate;
 
     use super::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
-    use rg_def_map::PackageSlot;
+    use rg_ir_model::PackageSlot;
     use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 
     #[test]

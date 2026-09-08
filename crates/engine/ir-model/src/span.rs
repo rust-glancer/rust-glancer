@@ -1,7 +1,5 @@
-use rg_syntax::TextRange;
-
-use crate::LineIndex;
 use rg_std::{MemorySize, Shrink};
+use text_size::TextRange;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Span representation in UTF-8 byte offsets from the beginning of the file.
@@ -19,14 +17,6 @@ impl Span {
 
         Self {
             text: TextSpan { start, end },
-        }
-    }
-
-    /// Converts this byte span into zero-based line/column coordinates on demand.
-    pub fn line_column(self, line_index: &LineIndex) -> LineColumnSpan {
-        LineColumnSpan {
-            start: line_index.position(self.text.start),
-            end: line_index.position(self.text.end),
         }
     }
 
@@ -89,22 +79,6 @@ impl TextSpan {
     pub fn is_empty(self) -> bool {
         self.start >= self.end
     }
-}
-
-/// A half-open line/column range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[shrink(leaf)]
-pub struct LineColumnSpan {
-    pub start: Position,
-    pub end: Position,
-}
-
-/// A zero-based line/column coordinate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[shrink(leaf)]
-pub struct Position {
-    pub line: u32,
-    pub column: u32,
 }
 
 #[cfg(test)]

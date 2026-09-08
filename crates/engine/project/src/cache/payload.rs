@@ -7,9 +7,14 @@
 //! Semantic IR splits each crate into declarations and a lookup index, and Body IR uses source-file
 //! shards. Writes borrow those phase values through [`PackageCacheWriteInput`] instead of assembling
 //! an owned aggregate.
+//! When only body analysis changes, the writer combines new results with unchanged data copied
+//! from the existing cache file.
 
-use rg_body_ir::{CrateBodiesCoverage, PackageBodies};
+use rg_body_ir::{
+    CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, PackageBodies, PackageBodiesManifest,
+};
 use rg_def_map::{PackageDefMaps as DefMapPackage, PackageDefMapsManifest};
+use rg_ir_model::CrateId;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_std::MemorySize;
@@ -32,29 +37,86 @@ pub(crate) struct PackageCacheWriteInput<'a> {
     pub(crate) body_ir: &'a PackageBodies,
 }
 
-/// Resident data used when an exact Body IR rebuild preserves cached declarations.
+/// The bodies to write for each Cargo target in one package cache file.
 ///
-/// DefMap and Semantic IR are deliberately absent. Their encoded sections are copied from the
-/// pinned prior artifact, while this input supplies the new source snapshot and Body IR coverage.
+/// New results are borrowed [`CrateBodies`]. Unchanged targets use a [`CrateBodiesManifest`] read
+/// from the existing cache file, so the writer can copy their encoded bodies without reconstructing
+/// expressions and inferred facts in memory. The manifest and copied bytes must come from the same
+/// open [`PackageArtifactReader`](super::PackageArtifactReader).
+#[derive(Debug)]
+pub(crate) struct BodyIrWriteInput<'a> {
+    pub(crate) crates: Vec<CrateBodyWriteInput<'a>>,
+}
+
+#[derive(Debug)]
+pub(crate) enum CrateBodyWriteInput<'a> {
+    Resident(&'a CrateBodies),
+    /// Copy encoded bodies from the same open cache file that supplied this manifest.
+    Cached(&'a CrateBodiesManifest),
+}
+
+impl<'a> BodyIrWriteInput<'a> {
+    pub(crate) fn resident(package: &'a PackageBodies) -> Self {
+        Self {
+            crates: package
+                .crates()
+                .iter()
+                .map(|bodies| CrateBodyWriteInput::Resident(bodies))
+                .collect(),
+        }
+    }
+
+    pub(crate) fn update(
+        previous: &'a PackageBodiesManifest,
+        replacements: &'a [(CrateId, CrateBodies)],
+    ) -> Self {
+        Self {
+            crates: previous
+                .crates()
+                .iter()
+                .enumerate()
+                .map(
+                    |(index, manifest)| match replacements.iter().find(|(id, _)| id.0 == index) {
+                        Some((_, bodies)) => CrateBodyWriteInput::Resident(bodies),
+                        None => CrateBodyWriteInput::Cached(manifest),
+                    },
+                )
+                .collect(),
+        }
+    }
+
+    pub(crate) fn manifest(&self) -> PackageBodiesManifest {
+        PackageBodiesManifest::new(
+            self.crates
+                .iter()
+                .map(|source| match source {
+                    CrateBodyWriteInput::Resident(bodies) => bodies.manifest(),
+                    CrateBodyWriteInput::Cached(manifest) => (*manifest).clone(),
+                })
+                .collect(),
+        )
+    }
+
+    pub(crate) fn coverage(&self) -> Vec<CrateBodiesCoverage> {
+        self.crates
+            .iter()
+            .map(|source| match source {
+                CrateBodyWriteInput::Resident(bodies) => bodies.coverage().clone(),
+                CrateBodyWriteInput::Cached(manifest) => manifest.coverage().clone(),
+            })
+            .collect()
+    }
+}
+
+/// New body analysis and startup metadata for a package cache file.
+///
+/// DefMap and Semantic IR are unchanged. The writer copies their encoded data from the existing
+/// cache file rather than loading the declarations into memory to serialize them again.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PackageCacheBodyUpdateInput<'a> {
     pub(crate) header: &'a PackageCacheHeader,
     pub(crate) parse: &'a PackageParseSnapshot,
-    pub(crate) body_ir: &'a PackageBodies,
-}
-
-impl<'a> PackageCacheBodyUpdateInput<'a> {
-    pub(crate) fn new(
-        header: &'a PackageCacheHeader,
-        parse: &'a PackageParseSnapshot,
-        body_ir: &'a PackageBodies,
-    ) -> Self {
-        Self {
-            header,
-            parse,
-            body_ir,
-        }
-    }
+    pub(crate) body_ir: &'a BodyIrWriteInput<'a>,
 }
 
 impl<'a> PackageCacheWriteInput<'a> {
@@ -89,7 +151,7 @@ pub(crate) struct PackageCacheProbe {
 
 /// Validated startup data retained after the temporary artifact reader is closed.
 ///
-/// The probe owns source identity and Body IR coverage. The DefMap directory is also retained
+/// The probe owns source identity and Body IR coverage. The [`PackageDefMapsManifest`] is retained
 /// because dependency visibility and file routing are frequent cross-package queries that should
 /// not reopen every artifact merely to discover which crate payload would be relevant.
 #[derive(Debug, Clone)]
@@ -101,15 +163,6 @@ pub(crate) struct PackageCacheStartup {
 impl PackageCacheProbe {
     /// Build the small validation section without serializing the retained phase payloads.
     pub(crate) fn from_write_input(input: PackageCacheWriteInput<'_>) -> Self {
-        Self::from_body_update(PackageCacheBodyUpdateInput::new(
-            input.header,
-            input.parse,
-            input.body_ir,
-        ))
-    }
-
-    /// Rebuilds startup data after a Body-only update without touching declaration payloads.
-    pub(crate) fn from_body_update(input: PackageCacheBodyUpdateInput<'_>) -> Self {
         Self {
             header: input.header.clone(),
             parse: input.parse.clone(),
@@ -117,8 +170,17 @@ impl PackageCacheProbe {
                 .body_ir
                 .crates()
                 .iter()
-                .map(|crate_bodies| crate_bodies.coverage())
+                .map(|bodies| bodies.coverage().clone())
                 .collect(),
+        }
+    }
+
+    /// Update the startup record of which bodies have been analyzed, leaving declarations alone.
+    pub(crate) fn from_body_update(input: PackageCacheBodyUpdateInput<'_>) -> Self {
+        Self {
+            header: input.header.clone(),
+            parse: input.parse.clone(),
+            body_ir_coverage: input.body_ir.coverage(),
         }
     }
 }

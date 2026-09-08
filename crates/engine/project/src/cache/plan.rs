@@ -7,8 +7,9 @@
 use rg_std::MemorySize;
 use std::path::Path;
 
+use rg_ir_model::PackageSlot;
 use rg_parse::{PackageParseSnapshot, ParseDb};
-use rg_workspace::{PackageSlot, WorkspaceMetadata};
+use rg_workspace::WorkspaceMetadata;
 
 use super::{
     CachedDependency, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,

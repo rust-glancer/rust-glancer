@@ -21,13 +21,13 @@ use crate::{
     LocalImplData, MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
     Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_ir_model::{DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span};
 use rg_item_tree::{
     Documentation, ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId,
     ItemTreeRef, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
     Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
 };
-use rg_parse::{FileId, ModuleFileContext};
+use rg_parse::ModuleFileContext;
 use rg_text::Name;
 
 use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
@@ -778,7 +778,7 @@ impl SourceFragmentCollector<'_> {
         &mut self,
         parent: Option<ModuleId>,
         name: Option<Name>,
-        name_span: Option<rg_parse::Span>,
+        name_span: Option<Span>,
         docs: Option<Documentation>,
         user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,

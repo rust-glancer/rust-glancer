@@ -1,4 +1,4 @@
-use rg_parse::{FileId, Span};
+use rg_ir_model::{FileId, Span};
 
 /// One best-effort editor annotation anchored to a source span.
 #[derive(Debug, Clone, PartialEq, Eq)]

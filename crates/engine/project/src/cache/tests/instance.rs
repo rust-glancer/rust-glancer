@@ -1,4 +1,4 @@
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_parse::ParseDb;
 
 use crate::{

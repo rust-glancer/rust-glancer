@@ -45,7 +45,9 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
 
     let fixture = TraitSelectionFixture::new(&source);
     let lookup = fixture.lookup_query();
-    let relevant_traits = lookup.traits_with_function_name("target");
+    let relevant_traits = lookup
+        .traits_with_function_name("target")
+        .expect("candidate lookup succeeds");
     assert_eq!(
         relevant_traits.as_slice(),
         &[fixture

@@ -11,8 +11,7 @@
 
 use anyhow::Context as _;
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_std::UniqueVec;
 
 use super::{state::ProjectState, subset};
@@ -32,19 +31,22 @@ impl<'a> ReferenceSearchPlanner<'a> {
     /// Queries scan the selected declaration packages and their package reverse-dependency
     /// closure. Workspace-origin queries keep that closure focused on workspace members, falling
     /// back to the whole workspace only when the declaration package is graph-opaque.
+    #[rg_std::cancelable("reference package planning", token = cancellation)]
     pub(super) fn crates(
         &self,
         origin_package: PackageSlot,
         declaration_crates: &[CrateRef],
-    ) -> Vec<CrateRef> {
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<CrateRef>> {
         let packages = self.packages(origin_package, declaration_crates);
         let mut crates = UniqueVec::new();
         for package in packages {
+            rg_std::check_cancel!(cancellation, "reference package planning");
             for crate_ref in self.state.crate_refs_for_package(package) {
                 crates.push(crate_ref);
             }
         }
-        crates.into_vec()
+        Ok(crates.into_vec())
     }
 
     /// Returns crate/file pairs whose source text contains one of the safe reference labels.
@@ -55,6 +57,7 @@ impl<'a> ReferenceSearchPlanner<'a> {
         &self,
         search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
         let Some(prefilter) = ReferenceTextPrefilter::new(labels) else {
             return Ok(None);
@@ -66,11 +69,13 @@ impl<'a> ReferenceSearchPlanner<'a> {
 
         let mut files = UniqueVec::new();
         for package in packages {
+            rg_std::check_cancel!(cancellation, "reference package planning");
             let Some(parsed_package) = self.state.parse_db().package(package.0) else {
                 continue;
             };
 
             for parsed_file in parsed_package.parsed_files() {
+                rg_std::check_cancel!(cancellation, "reference source prefilter");
                 let source = parsed_file.source_text().with_context(|| {
                     format!(
                         "while attempting to read source text for {}",

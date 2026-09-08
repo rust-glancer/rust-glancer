@@ -14,9 +14,9 @@ use crate::{
 };
 use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
-use rg_ir_model::{BodySource, CrateRef, PackageSlot};
+use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span, TextSpan};
 use rg_ir_view::testonly::ViewFixture;
-use rg_parse::{FileId, ParseDb, Span, TextSpan};
+use rg_parse::ParseDb;
 use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{
@@ -1374,16 +1374,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
-        let line_column = span.line_column(
-            self.db
-                .parse_db()
-                .package(package.0)
-                .expect("span package should exist while rendering analysis query")
-                .parsed_file(file_id)
-                .expect("span file should exist while rendering analysis query")
-                .line_index()
-                .expect("span file line index should load while rendering analysis query"),
-        );
+        let line_column = self
+            .db
+            .parse_db()
+            .package(package.0)
+            .expect("span package should exist while rendering analysis query")
+            .parsed_file(file_id)
+            .expect("span file should exist while rendering analysis query")
+            .line_index()
+            .expect("span file line index should load while rendering analysis query")
+            .line_column_span(span);
         format!(
             "{}:{}-{}:{}",
             line_column.start.line + 1,
@@ -1636,16 +1636,16 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     }
 
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
-        let line_column = span.line_column(
-            self.db
-                .parse_db()
-                .package(package.0)
-                .expect("span package should exist while rendering analysis symbol")
-                .parsed_file(file_id)
-                .expect("span file should exist while rendering analysis symbol")
-                .line_index()
-                .expect("span file line index should load while rendering analysis symbol"),
-        );
+        let line_column = self
+            .db
+            .parse_db()
+            .package(package.0)
+            .expect("span package should exist while rendering analysis symbol")
+            .parsed_file(file_id)
+            .expect("span file should exist while rendering analysis symbol")
+            .line_index()
+            .expect("span file line index should load while rendering analysis symbol")
+            .line_column_span(span);
         format!(
             "{}:{}-{}:{}",
             line_column.start.line + 1,

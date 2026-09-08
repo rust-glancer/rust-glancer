@@ -11,7 +11,8 @@ use rg_source::SourceRevision;
 use rg_syntax::{Parse as SyntaxParse, SourceFile};
 use rg_text::RustEdition;
 
-use crate::{LineIndex, Span, parse_source_file};
+use crate::{LineIndex, parse_source_file};
+use rg_ir_model::Span;
 
 /// Source data derived from one immutable editor document snapshot.
 ///

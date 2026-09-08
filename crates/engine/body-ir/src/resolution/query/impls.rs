@@ -225,27 +225,36 @@ where
         scope: ScopeId,
         surface: BodyTraitSurface<'_>,
     ) -> Result<std::sync::Arc<UniqueVec<TraitDefRef>>, PackageStoreError> {
-        self.context
-            .trait_cache()
-            .surface_or_try_init(scope, surface, || {
+        let result = self.context.trait_cache().surface_or_try_init(
+            scope,
+            surface,
+            || -> Result<_, rg_std::OperationError<PackageStoreError>> {
                 let body_items = self.context.body_local_items();
                 let item_lookup = self.context.item_lookup_query();
                 let (body_traits, saved_traits) = match surface {
                     BodyTraitSurface::AssociatedItems => (
-                        body_items.traits_with_associated_items()?,
-                        item_lookup.traits_with_associated_items(),
+                        body_items
+                            .traits_with_associated_items()
+                            .map_err(rg_std::OperationError::Source)?,
+                        item_lookup.traits_with_associated_items()?,
                     ),
                     BodyTraitSurface::Functions => (
-                        body_items.traits_with_functions()?,
-                        item_lookup.traits_with_functions(),
+                        body_items
+                            .traits_with_functions()
+                            .map_err(rg_std::OperationError::Source)?,
+                        item_lookup.traits_with_functions()?,
                     ),
                     BodyTraitSurface::FunctionNamed(name) => (
-                        body_items.traits_with_function_name(name)?,
-                        item_lookup.traits_with_function_name(name),
+                        body_items
+                            .traits_with_function_name(name)
+                            .map_err(rg_std::OperationError::Source)?,
+                        item_lookup.traits_with_function_name(name)?,
                     ),
                     BodyTraitSurface::ConstNamed(name) => (
-                        body_items.traits_with_const_name(name)?,
-                        item_lookup.traits_with_const_name(name),
+                        body_items
+                            .traits_with_const_name(name)
+                            .map_err(rg_std::OperationError::Source)?,
+                        item_lookup.traits_with_const_name(name)?,
                     ),
                 };
                 let mut traits = body_traits.iter().copied().collect::<UniqueVec<_>>();
@@ -255,12 +264,25 @@ where
                 // implicit lookup then asks the independent lexical question: which of those
                 // traits are in method scope at this use site? Both facts are stable for one
                 // immutable body, so fixed-point retries reuse this filtered result.
-                let traits_in_scope = self.context.traits().traits_in_scope(scope)?;
+                let traits_in_scope = self
+                    .context
+                    .traits()
+                    .traits_in_scope(scope)
+                    .map_err(rg_std::OperationError::Source)?;
+                rg_std::check_cancel!(self.context, "body trait surface");
                 Ok(traits
                     .into_iter()
                     .filter(|trait_ref| traits_in_scope.contains(trait_ref))
                     .collect())
-            })
+            },
+        );
+        // Keep cancellation out of the source-only type resolver interface, but propagate it
+        // through the initializer first so the cache never stores an incomplete trait surface.
+        match result {
+            Ok(traits) => Ok(traits),
+            Err(rg_std::OperationError::Source(error)) => Err(error),
+            Err(rg_std::OperationError::Cancelled(_)) => Ok(std::sync::Arc::default()),
+        }
     }
 
     /// Match current-body inherent impls first, then impls of caller-selected traits.

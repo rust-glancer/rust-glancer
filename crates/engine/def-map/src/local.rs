@@ -14,14 +14,14 @@
 //! those identities separate prevents macro lookup from exposing a function call signature.
 
 use rg_ir_model::{
-    CrateRef, DefMapRef, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef, ModuleId,
+    CrateRef, DefMapRef, FileId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
+    ModuleId, Span,
 };
 use rg_item_tree::{
     BuiltinMacroKind, Documentation, ItemKind, ItemTag, MacroDefinitionItem, ProcMacroKind,
     UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::DeclarativeMacroDefinition;
-use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::{Name, RustEdition};
 use rg_tt::TopSubtree;

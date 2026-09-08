@@ -4,11 +4,7 @@
 //! route has already selected the path used by this project, so document queries can use that path
 //! directly. Only callers that start with an ordinary filesystem path need canonicalization here.
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::Path,
-    sync::Arc,
-};
+use std::{collections::HashSet, path::Path, sync::Arc};
 
 use anyhow::Context as _;
 
@@ -16,16 +12,12 @@ use rg_analysis::{
     Analysis, CurrentSourceView, ReferenceSearchFile, ReferenceSearchLabel,
     SavedSourceRelationship, SavedSourceView,
 };
-use rg_body_ir::{
-    CurrentBodyBuildCheckpoint, CurrentBodyBuildOutcome, CurrentBodySelection, CurrentBodySet,
-    CurrentBodyUnavailable,
-};
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
-use rg_ir_view::current::CurrentImplView;
+use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection};
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 #[cfg(test)]
 use rg_parse::ParseDb;
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, FileId, LineIndex, Span};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex};
 use rg_std::{MemorySize, UniqueVec};
 use rg_text::RustEdition;
 
@@ -68,45 +60,26 @@ impl DocumentSourceView {
     }
 }
 
-/// Describes what happened while current bodies were built for one request.
-///
-/// One editor path may belong to several crate contexts, and each context is built separately. The
-/// returned analysis already contains every body that succeeded. This summary lets diagnostics and
-/// tests see whether another context was unavailable and which source spans were rebuilt.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CurrentBodyBuildSummary {
-    unavailable: Vec<(CrateRef, CurrentBodyUnavailable)>,
-    rebuilt_body_spans: Vec<(CrateRef, FileId, Span)>,
-}
-
-impl CurrentBodyBuildSummary {
-    /// Returns whether body selection and rebuilding succeeded in every requested crate context.
-    pub fn is_complete(&self) -> bool {
-        self.unavailable.is_empty()
-    }
-
-    /// Source spans of bodies that were rebuilt from the editor text.
-    pub fn rebuilt_body_spans(&self) -> &[(CrateRef, FileId, Span)] {
-        &self.rebuilt_body_spans
-    }
-
-    #[cfg(test)]
-    pub(crate) fn unavailable(&self) -> &[(CrateRef, CurrentBodyUnavailable)] {
-        &self.unavailable
-    }
-}
-
 impl<'a> ProjectSnapshot<'a> {
     /// Returns a full-project analysis view.
-    pub fn full_analysis(&self) -> anyhow::Result<Analysis<'a>> {
-        let txn = self.state.read_txn()?;
+    pub fn full_analysis(
+        &self,
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<Analysis<'a>> {
+        let txn = self.state.read_txn(cancellation)?;
         Ok(self.state.analysis(&txn))
     }
 
     /// Returns an analysis view scoped to the package dependency closure of crate queries.
-    pub fn analysis_for_crates(&self, crates: &[CrateRef]) -> anyhow::Result<Analysis<'a>> {
+    pub fn analysis_for_crates(
+        &self,
+        crates: &[CrateRef],
+        cancellation: rg_std::CancellationToken,
+    ) -> anyhow::Result<Analysis<'a>> {
         let subset = subset::crates_with_visible_dependencies(self.state.workspace(), crates);
-        let txn = self.state.read_txn_for_subset(&subset)?;
+        let txn = self
+            .state
+            .read_txn_for_subset(&subset, cancellation.clone())?;
         Ok(self.state.analysis(&txn))
     }
 
@@ -120,6 +93,7 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         targets: &[(CrateRef, FileId)],
         source: &str,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<DocumentSourceView> {
         let &(first_crate, first_file) = targets
             .first()
@@ -127,6 +101,7 @@ impl<'a> ProjectSnapshot<'a> {
 
         let source_revision = rg_source::SourceRevision::from_bytes(source.as_bytes());
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let saved_file = self
                 .state
                 .parse_db()
@@ -136,7 +111,7 @@ impl<'a> ProjectSnapshot<'a> {
                 .context("saved-source target has no parsed file")?;
             if saved_file.source_revision() != source_revision {
                 return self
-                    .prepare_current_source(targets, source)
+                    .prepare_current_source(targets, source, cancellation)
                     .map(DocumentSourceView::Current);
             }
         }
@@ -149,30 +124,6 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(DocumentSourceView::SavedExact(line_index))
     }
 
-    /// Rebuild the body at `offset` for every requested crate context, checking for cancellation after
-    /// each build phase.
-    ///
-    /// The returned `Analysis` borrows declarations, traits, and impls from this saved project, but
-    /// uses the supplied source for any body that can be matched to a saved owner. A body that
-    /// cannot be matched is left out; this method never creates a second unsaved project.
-    pub fn analysis_for_current_bodies_at_offset(
-        &self,
-        targets: &[(CrateRef, FileId)],
-        source: &str,
-        offset: u32,
-        cancellation: rg_std::CancellationToken,
-        checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
-    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
-        let source = self.prepare_current_source(targets, source)?;
-        self.analysis_for_current_bodies_from_source(
-            targets,
-            source,
-            CurrentBodySelection::AtOffset(offset),
-            cancellation,
-            checkpoint,
-        )
-    }
-
     /// Prepare editor text and its relationship to every requested saved file interpretation.
     ///
     /// Text, line indexes, and current syntax are shared. Equality and declaration associations
@@ -182,6 +133,7 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         targets: &[(CrateRef, FileId)],
         source: &str,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<CurrentSourceView> {
         // `CurrentSource` keys parses by edition, so repeated crate interpretations can be passed
         // through directly without maintaining a second uniqueness policy here.
@@ -200,6 +152,7 @@ impl<'a> ProjectSnapshot<'a> {
         let mut prepared_files = HashSet::<(PackageSlot, FileId)>::new();
 
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let key = (crate_ref.package, file);
             if !prepared_files.insert(key) {
                 continue;
@@ -240,19 +193,19 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(current_source_view)
     }
 
-    /// Build current Body IR from source data already prepared for this request.
+    /// Prepare bodies and selected declarations from this request's captured source.
     ///
     /// The selection keeps cursor recovery and range overlap as separate policies. The callback is
     /// part of every prepared-source build so an interactive request can stop between expensive
     /// phases.
-    pub fn analysis_for_current_bodies_from_source(
+    pub fn analysis_for_current_source(
         &self,
         targets: &[(CrateRef, FileId)],
         current_source_view: CurrentSourceView,
-        selection: CurrentBodySelection,
+        selection: CurrentSourceSelection,
         cancellation: rg_std::CancellationToken,
-        mut checkpoint: impl FnMut(CurrentBodyBuildCheckpoint) -> anyhow::Result<()>,
-    ) -> anyhow::Result<(Analysis<'a>, CurrentBodyBuildSummary)> {
+        mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
+    ) -> anyhow::Result<(Analysis<'a>, CurrentSourceBuildSummary)> {
         let current_source = current_source_view.source();
 
         let crates = targets
@@ -261,123 +214,49 @@ impl<'a> ProjectSnapshot<'a> {
             .collect::<UniqueVec<_>>();
         let subset =
             subset::crates_with_visible_dependencies(self.state.workspace(), crates.as_slice());
-        let txn = self.state.read_txn_for_subset(&subset)?;
+        let txn = self
+            .state
+            .read_txn_for_subset(&subset, cancellation.clone())?;
         let view_db = txn.view_db();
-        let mut bodies = Vec::new();
-        let mut unavailable = Vec::new();
-        let mut rebuilt_body_spans = Vec::new();
-        let mut masked_files = HashSet::new();
-        let mut next_synthetic_body_ids = HashMap::<CrateRef, usize>::new();
+        let mut builder = view_db.current_source_builder(current_source);
 
         for &(crate_ref, file) in targets {
+            rg_std::check_cancel!(cancellation, "current source target");
             let parse_package = self
                 .state
                 .parse_db()
                 .package(crate_ref.package.0)
-                .context("current-body target has no parse package")?;
+                .context("current-source target has no parse package")?;
             let associations = current_source_view
                 .declaration_associations(crate_ref.package, file)
-                .context("current-body target has no declaration associations")?;
-            if current_source_view.relationship(crate_ref.package, file)
-                == Some(SavedSourceRelationship::Different)
-            {
-                masked_files.insert((crate_ref, file));
-            }
-
-            let mut synthetic_body_ref = || {
-                let body_ref = match next_synthetic_body_ids.entry(crate_ref) {
-                    std::collections::hash_map::Entry::Occupied(mut entry) => {
-                        let body = *entry.get();
-                        *entry.get_mut() = body
-                            .checked_add(1)
-                            .context("request-only body identity overflowed")?;
-                        BodyRef {
-                            crate_ref,
-                            body: BodyId(body),
-                        }
-                    }
-                    std::collections::hash_map::Entry::Vacant(entry) => {
-                        let first = view_db
-                            .first_synthetic_body_ref(crate_ref)
-                            .context("allocate first request-only body identity")?;
-                        entry.insert(
-                            first
-                                .body
-                                .0
-                                .checked_add(1)
-                                .context("request-only body identity overflowed")?,
-                        );
-                        first
-                    }
-                };
-                Ok(body_ref)
-            };
-            let CurrentBodyBuildOutcome {
-                bodies: built_bodies,
-                unavailable: body_unavailable,
-            } = view_db.build_current_bodies(
-                parse_package,
-                crate_ref,
-                file,
-                current_source,
-                associations,
-                selection,
-                cancellation.clone(),
-                &mut synthetic_body_ref,
-                &mut checkpoint,
-            )?;
-            for body in built_bodies {
-                let source_span = body.source_span();
-                rebuilt_body_spans.push((crate_ref, file, source_span));
-                bodies.push(body);
-            }
-            unavailable.extend(
-                body_unavailable
-                    .into_iter()
-                    .map(|reason| (crate_ref, reason)),
-            );
+                .context("current-source target has no declaration associations")?;
+            let source_changed = current_source_view.relationship(crate_ref.package, file)
+                == Some(SavedSourceRelationship::Different);
+            builder
+                .prepare_target(
+                    parse_package,
+                    crate_ref,
+                    file,
+                    associations,
+                    source_changed,
+                    selection,
+                    view_db
+                        .trait_selection(crate_ref)
+                        .with_cancellation(cancellation.clone()),
+                    &mut checkpoint,
+                )
+                .context("prepare current-source target")?;
         }
 
-        let current = CurrentBodySet::new(masked_files, bodies)
-            .context("assemble current bodies for the request")?;
-        let mut view_db = txn.view_db().clone().with_current_body_set(current);
-
-        // A cursor on an impl header has no Body IR root to rebuild. Give that declaration the
-        // same request-local semantic shape as a saved impl, while leaving ordinary body requests
-        // on the smaller Body IR path above.
-        if let CurrentBodySelection::AtOffset(offset) = selection {
-            for &(crate_ref, file) in targets {
-                if current_source_view.relationship(crate_ref.package, file)
-                    != Some(SavedSourceRelationship::Different)
-                {
-                    continue;
-                }
-                let body_owns_offset =
-                    rebuilt_body_spans
-                        .iter()
-                        .any(|(body_crate, body_file, span)| {
-                            *body_crate == crate_ref && *body_file == file && span.touches(offset)
-                        });
-                if body_owns_offset {
-                    continue;
-                }
-                if let Some(current_impl) =
-                    CurrentImplView::at_offset(&view_db, crate_ref, file, current_source, offset)
-                        .context("build current impl header semantics")?
-                {
-                    view_db = current_impl.into_db();
-                }
-            }
-        }
-        let analysis = Analysis::new(view_db, SavedSourceView::new(self.state.parse_db()))
-            .with_current_source(current_source_view);
-        Ok((
-            analysis,
-            CurrentBodyBuildSummary {
-                unavailable,
-                rebuilt_body_spans,
-            },
-        ))
+        let (current, summary) = builder
+            .finish()
+            .context("finish current-source preparation")?;
+        let analysis = Analysis::new(
+            view_db.clone().with_current_source(current),
+            SavedSourceView::new(self.state.parse_db()),
+        )
+        .with_current_source(current_source_view);
+        Ok((analysis, summary))
     }
 
     /// Returns a def-map view over exactly the listed packages, without dependency expansion.
@@ -395,8 +274,13 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         origin_package: PackageSlot,
         declaration_crates: &[CrateRef],
-    ) -> Vec<CrateRef> {
-        ReferenceSearchPlanner::new(self.state).crates(origin_package, declaration_crates)
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<Vec<CrateRef>> {
+        ReferenceSearchPlanner::new(self.state).crates(
+            origin_package,
+            declaration_crates,
+            cancellation,
+        )
     }
 
     /// Returns crate/file pairs whose source text contains one of the safe reference labels.
@@ -407,8 +291,13 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Option<Vec<ReferenceSearchFile>>> {
-        ReferenceSearchPlanner::new(self.state).files_matching_labels(search_crates, labels)
+        ReferenceSearchPlanner::new(self.state).files_matching_labels(
+            search_crates,
+            labels,
+            cancellation,
+        )
     }
 
     #[cfg(test)]

@@ -14,8 +14,6 @@ mod store;
 pub mod testonly;
 mod visible;
 
-pub use rg_workspace::PackageSlot;
-
 pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{

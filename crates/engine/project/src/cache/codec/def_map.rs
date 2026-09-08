@@ -6,9 +6,9 @@
 
 use anyhow::Context as _;
 use rg_def_map::{CrateData, PackageDefMaps, PackageDefMapsManifest};
-#[cfg(test)]
-use rg_ir_model::CrateId;
 use rg_ir_model::CrateRef;
+#[cfg(test)]
+use rg_ir_model::{CrateId, PackageSlot};
 use wincode::{SchemaRead, SchemaWrite};
 
 #[cfg(test)]
@@ -128,7 +128,7 @@ impl PackageCacheCodec {
             .context("read package cache DefMap manifest bytes")?;
         let index = Self::decode_def_map_index(manifest_bytes, section_len, probe)
             .context("decode package cache DefMap index")?;
-        let package = rg_def_map::PackageSlot(
+        let package = PackageSlot(
             usize::try_from(probe.header.package.package.0)
                 .context("cached package slot does not fit usize")?,
         );

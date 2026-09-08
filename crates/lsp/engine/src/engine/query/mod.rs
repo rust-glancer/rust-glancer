@@ -1,8 +1,8 @@
 //! Runs editor queries against one saved project.
 //!
 //! A feature method first finds every crate context in which the target file appears. It loads any
-//! saved package data needed by the feature, optionally rebuilds the body around the cursor from
-//! the editor text, runs `rg_analysis`, and converts the result to LSP types. Rebuilt bodies belong
+//! saved package data needed by the feature, prepares selected bodies and declarations from the
+//! editor text, runs `rg_analysis`, and converts the result to LSP types. Current semantics belong
 //! only to that request; they do not turn the saved project into an unsaved copy.
 //!
 //! The `lifecycle` module wraps this feature work with cancellation, stale-source recovery, result
@@ -23,6 +23,7 @@ use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger, CompletionQuery,
     CompletionSource, InlayHint as AnalysisInlayHint,
 };
+use rg_ir_model::TextSpan;
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
     DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot,
@@ -30,7 +31,7 @@ use rg_lsp_proto::{
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
-    AnalysisSurface, CurrentBodyBuildCheckpoint, CurrentBodySelection, DocumentSourceView,
+    AnalysisSurface, CurrentSourceBuildCheckpoint, CurrentSourceSelection, DocumentSourceView,
     FileContext, ProjectSnapshot,
 };
 use rg_std::UniqueVec;
@@ -68,11 +69,14 @@ enum DocumentSelection {
 }
 
 impl DocumentSelection {
-    fn to_current_body_selection(&self, line_index: &LineIndex) -> Option<CurrentBodySelection> {
+    fn to_current_source_selection(
+        &self,
+        line_index: &LineIndex,
+    ) -> Option<CurrentSourceSelection> {
         match self {
             Self::Position(position) => line_index
                 .offset_from_utf16_position(crate::proto::position::parse_position(*position))
-                .map(CurrentBodySelection::AtOffset),
+                .map(CurrentSourceSelection::AtOffset),
             Self::Range(range) => {
                 let start = line_index.offset_from_utf16_position(
                     crate::proto::position::parse_position(range.start),
@@ -80,9 +84,10 @@ impl DocumentSelection {
                 let end = line_index.offset_from_utf16_position(
                     crate::proto::position::parse_position(range.end),
                 )?;
-                Some(CurrentBodySelection::IntersectingRange(
-                    rg_parse::TextSpan { start, end },
-                ))
+                Some(CurrentSourceSelection::IntersectingRange(TextSpan {
+                    start,
+                    end,
+                }))
             }
         }
     }
@@ -122,23 +127,23 @@ struct DocumentAnalysis<'project> {
     analysis: Analysis<'project>,
     targets: Vec<DocumentTarget>,
     source: DocumentAnalysisSource,
-    selection: CurrentBodySelection,
+    selection: CurrentSourceSelection,
 }
 
 impl DocumentAnalysis<'_> {
     fn offset(&self) -> u32 {
         match self.selection {
-            CurrentBodySelection::AtOffset(offset) => offset,
-            CurrentBodySelection::IntersectingRange(_) => {
+            CurrentSourceSelection::AtOffset(offset) => offset,
+            CurrentSourceSelection::IntersectingRange(_) => {
                 unreachable!("position query should retain a cursor selection")
             }
         }
     }
 
-    fn range(&self) -> rg_parse::TextSpan {
+    fn range(&self) -> TextSpan {
         match self.selection {
-            CurrentBodySelection::IntersectingRange(range) => range,
-            CurrentBodySelection::AtOffset(_) => {
+            CurrentSourceSelection::IntersectingRange(range) => range,
+            CurrentSourceSelection::AtOffset(_) => {
                 unreachable!("range query should retain a range selection")
             }
         }
@@ -156,22 +161,25 @@ impl<'a> QueryRunner<'a> {
         }
     }
 
-    /// Give cancellation logs a stable name for each shared current-body build boundary.
-    fn current_body_checkpoint(checkpoint: CurrentBodyBuildCheckpoint) -> &'static str {
+    /// Give cancellation logs a stable name for each shared current-source preparation boundary.
+    fn current_source_checkpoint(checkpoint: CurrentSourceBuildCheckpoint) -> &'static str {
         match checkpoint {
-            CurrentBodyBuildCheckpoint::SourceParsed => "after current source parsing",
-            CurrentBodyBuildCheckpoint::OwnerAssociated => "after current body owner association",
-            CurrentBodyBuildCheckpoint::BodyLowered => "after current body lowering",
-            CurrentBodyBuildCheckpoint::BodyLocalItemsCollected => {
+            CurrentSourceBuildCheckpoint::DeclarationsPrepared => {
+                "after current declaration preparation"
+            }
+            CurrentSourceBuildCheckpoint::SourceParsed => "after current source parsing",
+            CurrentSourceBuildCheckpoint::OwnerAssociated => "after current body owner association",
+            CurrentSourceBuildCheckpoint::BodyLowered => "after current body lowering",
+            CurrentSourceBuildCheckpoint::BodyLocalItemsCollected => {
                 "after current body-local item collection"
             }
-            CurrentBodyBuildCheckpoint::ImplHeadersResolved => {
+            CurrentSourceBuildCheckpoint::ImplHeadersResolved => {
                 "after current body-local impl header resolution"
             }
-            CurrentBodyBuildCheckpoint::PatternBindingsMaterialized => {
+            CurrentSourceBuildCheckpoint::PatternBindingsMaterialized => {
                 "after current pattern binding resolution"
             }
-            CurrentBodyBuildCheckpoint::BodyResolved => "after current body resolution",
+            CurrentSourceBuildCheckpoint::BodyResolved => "after current body resolution",
         }
     }
 
@@ -196,6 +204,7 @@ impl<'a> QueryRunner<'a> {
     fn save_required_for_global_operation(
         &self,
         input: &GlobalPositionSnapshot,
+        cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<std::path::PathBuf>> {
         let snapshot = self
             .project
@@ -203,12 +212,14 @@ impl<'a> QueryRunner<'a> {
             .context("borrow saved project for global-operation safety")?;
 
         for document in input.documents() {
+            rg_std::check_cancel!(cancellation, "open document safety");
             let contexts = Self::file_contexts(snapshot, document.source_path())
                 .context("resolve open document for global-operation safety")?;
             if contexts.is_empty() {
                 return Ok(Some(document.path().to_path_buf()));
             }
             for context in contexts {
+                rg_std::check_cancel!(cancellation, "saved source safety");
                 let saved = snapshot
                     .file_source_text(context.package, context.file)
                     .context("load saved source for global-operation safety")?;
@@ -221,7 +232,7 @@ impl<'a> QueryRunner<'a> {
         Ok(None)
     }
 
-    /// Prepare saved or current-body analysis for one editor source selection.
+    /// Prepare saved or current-source analysis for one editor source selection.
     ///
     /// Exact captured text can use the saved line index and Body IR directly. Changed text follows
     /// the request-local body path. Cursor and range queries share this source decision but retain
@@ -237,7 +248,7 @@ impl<'a> QueryRunner<'a> {
 
         // Resolve every saved interpretation, then choose its source coordinate space once. Exact
         // text returns before current syntax or declaration associations are built.
-        let (targets, body_targets, source, body_selection) = {
+        let (targets, source_targets, source, source_selection) = {
             let snapshot = self
                 .project
                 .saved_snapshot()
@@ -259,18 +270,18 @@ impl<'a> QueryRunner<'a> {
             if targets.is_empty() {
                 return Ok(None);
             }
-            let body_targets = targets
+            let source_targets = targets
                 .iter()
                 .map(|target| (target.crate_ref, target.context.file))
                 .collect::<Vec<_>>();
             let source = snapshot
-                .prepare_document_source(&body_targets, document.text())
+                .prepare_document_source(&source_targets, document.text(), &cancellation.token())
                 .context("prepare document source")?;
-            let Some(body_selection) = selection.to_current_body_selection(source.line_index())
+            let Some(source_selection) = selection.to_current_source_selection(source.line_index())
             else {
                 return Ok(None);
             };
-            (targets, body_targets, source, body_selection)
+            (targets, source_targets, source, source_selection)
         };
 
         let prepared = match source {
@@ -283,11 +294,12 @@ impl<'a> QueryRunner<'a> {
                     .map(|target| (target.crate_ref, target.context.file))
                     .collect::<UniqueVec<_>>();
                 self.project
-                    .materialize_saved_project(AnalysisSurface::Files(files.as_slice()))
+                    .materialize_saved_project(
+                        AnalysisSurface::Files(files.as_slice()),
+                        &cancellation.token(),
+                    )
                     .context("prepare exact saved document analysis")?;
-                cancellation
-                    .checkpoint("after exact saved document preparation")
-                    .context("check cancellation after exact saved document preparation")?;
+                rg_std::check_cancel!(cancellation, "after exact saved document preparation");
 
                 let snapshot = self
                     .project
@@ -298,14 +310,14 @@ impl<'a> QueryRunner<'a> {
                     .map(|target| target.crate_ref)
                     .collect::<UniqueVec<_>>();
                 let analysis = snapshot
-                    .analysis_for_crates(crates.as_slice())
+                    .analysis_for_crates(crates.as_slice(), cancellation.token())
                     .context("load exact saved document analysis")?;
                 DocumentAnalysis {
                     snapshot,
                     analysis,
                     targets,
                     source: DocumentAnalysisSource::SavedExact(line_index),
-                    selection: body_selection,
+                    selection: source_selection,
                 }
             }
             DocumentSourceView::Current(source_view) => {
@@ -316,19 +328,23 @@ impl<'a> QueryRunner<'a> {
                     .context("borrow saved project for current document")?;
                 let source = source_view.shared_source();
                 let (analysis, build_summary) = snapshot
-                    .analysis_for_current_bodies_from_source(
-                        &body_targets,
+                    .analysis_for_current_source(
+                        &source_targets,
                         source_view,
-                        body_selection,
+                        source_selection,
                         cancellation.token(),
                         |checkpoint| {
-                            cancellation.checkpoint(Self::current_body_checkpoint(checkpoint))
+                            rg_std::check_cancel!(
+                                cancellation,
+                                Self::current_source_checkpoint(checkpoint)
+                            );
+                            Ok(())
                         },
                     )
-                    .context("build current document body analysis")?;
+                    .context("prepare current document analysis")?;
                 tracing::trace!(
                     query,
-                    complete_current_body_build = build_summary.is_complete(),
+                    complete_current_source_build = build_summary.is_complete(),
                     "current document bodies prepared"
                 );
                 DocumentAnalysis {
@@ -336,7 +352,7 @@ impl<'a> QueryRunner<'a> {
                     analysis,
                     targets,
                     source: DocumentAnalysisSource::Current(source),
-                    selection: body_selection,
+                    selection: source_selection,
                 }
             }
         };
@@ -356,7 +372,12 @@ impl<'a> QueryRunner<'a> {
     ///
     /// A path can appear in several crate roots. Preserve every exact crate/file interpretation so
     /// preparing a shared source does not implicitly materialize sibling Cargo targets.
-    fn ensure_path(&mut self, query: &'static str, path: &Path) -> anyhow::Result<()> {
+    fn ensure_path(
+        &mut self,
+        query: &'static str,
+        path: &Path,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<()> {
         let started = Instant::now();
 
         // Resolve the path before mutating the project. One file can have several crate contexts,
@@ -379,7 +400,7 @@ impl<'a> QueryRunner<'a> {
                 .collect::<Vec<_>>()
         };
         self.project
-            .materialize_saved_project(AnalysisSurface::Files(&files))
+            .materialize_saved_project(AnalysisSurface::Files(&files), &cancellation.token())
             .with_context(|| format!("prepare {query} query path"))?;
         tracing::trace!(
             query,
@@ -420,21 +441,15 @@ impl<'a> QueryRunner<'a> {
         let completion_source = CompletionSource::new(source_text, offset);
         let completion_source_us = completion_source_started.elapsed().as_micros();
 
-        cancellation
-            .checkpoint("after completion syntax preparation")
-            .context("check cancellation after completion syntax preparation")?;
+        rg_std::check_cancel!(cancellation, "after completion syntax preparation");
 
-        cancellation
-            .checkpoint("before semantic completion")
-            .context("check cancellation before semantic completion")?;
+        rg_std::check_cancel!(cancellation, "before semantic completion");
 
         let mut completions = UniqueVec::new();
         let mut analysis_compute_us = 0_u128;
         let mut protocol_conversion_us = 0_u128;
         for target in &current.targets {
-            cancellation
-                .checkpoint("before completion crate interpretation")
-                .context("check cancellation before completion crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before completion crate interpretation");
             let mut query = CompletionQuery::new(target.crate_ref, target.context.file, offset)
                 .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
                     snippet_support: client_capabilities.snippet_support,
@@ -452,11 +467,12 @@ impl<'a> QueryRunner<'a> {
 
             // A crate query is synchronous. If it was overtaken, discard its items before
             // conversion and before starting another crate interpretation.
-            cancellation
-                .checkpoint("after completion crate interpretation")
-                .context("check cancellation after completion crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "after completion crate interpretation");
             let protocol_conversion_started = Instant::now();
-            for item in items {
+            for (index, item) in items.into_iter().enumerate() {
+                if index % 64 == 0 {
+                    rg_std::check_cancel!(cancellation, "completion conversion");
+                }
                 completions.push(completion::completion_item(
                     item,
                     current.source.line_index(),
@@ -550,13 +566,11 @@ impl<'a> QueryRunner<'a> {
         };
         let mut actions = UniqueVec::new();
         for target in &current.targets {
-            cancellation
-                .checkpoint("before code action crate interpretation")
-                .context("check cancellation before code action crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before code action crate interpretation");
             let query = CodeActionQuery::new(
                 target.crate_ref,
                 target.context.file,
-                rg_parse::TextSpan { start, end },
+                TextSpan { start, end },
                 document.text(),
             )
             .with_kinds(kinds)
@@ -567,15 +581,14 @@ impl<'a> QueryRunner<'a> {
                     .code_actions(query)
                     .context("compute code actions")?,
             );
-            cancellation
-                .checkpoint("after code action crate interpretation")
-                .context("check cancellation after code action crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "after code action crate interpretation");
         }
 
         // 3. Convert UTF-8 edits only after analysis is finished, attaching the URI and captured
         // document version to every action.
         let mut lsp_actions = Vec::new();
         for action in actions {
+            rg_std::check_cancel!(cancellation, "code action conversion");
             lsp_actions.push(
                 code_action::code_action(
                     document.path(),
@@ -772,9 +785,7 @@ impl<'a> QueryRunner<'a> {
         let text_range = current.range();
         let mut hints = UniqueVec::<AnalysisInlayHint>::new();
         for target in &current.targets {
-            cancellation
-                .checkpoint("before inlay hint crate interpretation")
-                .context("check cancellation before inlay hint crate interpretation")?;
+            rg_std::check_cancel!(cancellation, "before inlay hint crate interpretation");
             hints.extend(
                 current
                     .analysis
@@ -784,8 +795,18 @@ impl<'a> QueryRunner<'a> {
         }
         let lsp_hints = hints
             .into_iter()
-            .map(|hint| inlay_hint::inlay_hint_with_line_index(current.source.line_index(), hint))
-            .collect::<Vec<_>>();
+            .enumerate()
+            .map(|(index, hint)| {
+                if index % 64 == 0 {
+                    rg_std::check_cancel!(cancellation, "inlay hint conversion");
+                }
+                Ok(inlay_hint::inlay_hint_with_line_index(
+                    current.source.line_index(),
+                    hint,
+                ))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()
+            .context("convert inlay hints")?;
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
@@ -801,6 +822,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn workspace_symbol(
         &mut self,
         query: &str,
+        cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<ls_types::WorkspaceSymbol>, QueryRunError> {
         let started = Instant::now();
         let lsp_symbols = self
@@ -808,7 +830,7 @@ impl<'a> QueryRunner<'a> {
             .saved_snapshot()
             .and_then(|snapshot| {
                 let analysis = snapshot
-                    .full_analysis()
+                    .full_analysis(cancellation.token())
                     .context("load workspace-symbol analysis")?;
                 let mut lsp_symbols = UniqueVec::new();
 
@@ -816,6 +838,7 @@ impl<'a> QueryRunner<'a> {
                     .workspace_symbols(query)
                     .context("search workspace symbols")?
                 {
+                    rg_std::check_cancel!(cancellation, "workspace symbol conversion");
                     let Some(symbol) = symbols::workspace_symbol(snapshot, symbol)
                         .context("convert workspace symbol")?
                     else {

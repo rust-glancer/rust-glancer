@@ -1,6 +1,6 @@
 use expect_test::expect;
-use rg_def_map::{ItemSourceKind, PackageSlot};
-use rg_ir_model::{BodyId, BodyRef, CrateRef};
+use rg_def_map::ItemSourceKind;
+use rg_ir_model::{BodyId, BodyRef, CrateRef, PackageSlot};
 
 use crate::testonly::BodyIrFixture;
 

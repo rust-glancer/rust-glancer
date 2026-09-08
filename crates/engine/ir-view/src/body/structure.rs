@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use rg_body_ir::{ExprKind, ExprWrapperKind};
-use rg_ir_model::{CrateRef, ExprId};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{CrateRef, ExprId, FileId, Span};
 use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
@@ -96,9 +95,11 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     ) -> anyhow::Result<Vec<MethodChainExprTy>> {
         let mut expr_tys = Vec::new();
         for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
+            rg_std::check_cancel!(self.db, "body structure");
             let parent_dot_by_receiver = Self::method_parent_dots_by_receiver(body);
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
+                rg_std::check_cancel!(self.db, "body structure");
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }
@@ -141,6 +142,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         let items = ItemStoreQuery::new(self.db);
         let mut blocks = Vec::new();
         for (_, body) in self.db.body_ir.bodies(crate_ref, Some(file_id))? {
+            rg_std::check_cancel!(self.db, "body structure");
             let body_source = body.source();
             if body_source.file_id == file_id
                 && let Some(function) = body.function_owner()
@@ -156,6 +158,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
             }
 
             for expr in body.exprs() {
+                rg_std::check_cancel!(self.db, "body structure");
                 if !expr.source.is_written_in_file(file_id) {
                     continue;
                 }

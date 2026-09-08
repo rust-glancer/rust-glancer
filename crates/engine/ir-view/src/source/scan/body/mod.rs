@@ -29,11 +29,10 @@ mod unqualified_completion_site;
 mod walk;
 
 use rg_ir_model::{
-    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FunctionRef, GenericDefRef,
-    LocalDefRef, Path, ScopeId, SemanticItemRef,
+    BindingId, BodyRef, EnumVariantRef, ExprId, FieldKey, FieldRef, FileId, FunctionRef,
+    GenericDefRef, LocalDefRef, Path, ScopeId, SemanticItemRef, Span,
 };
 use rg_item_tree::TypeRef;
-use rg_parse::{FileId, Span};
 
 pub(crate) use self::{
     cursor::BodyCursorScanner, dot_completion_site::DotCompletionSiteScanner,

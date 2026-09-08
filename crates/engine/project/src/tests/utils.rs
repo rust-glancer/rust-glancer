@@ -2,9 +2,7 @@ use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
-use rg_def_map::PackageSlot;
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use test_fixture::fixture_path_for_snapshot;
 
 use crate::{
@@ -68,7 +66,7 @@ impl HostFixture {
             .flat_map(|context| context.crates.iter().copied())
             .collect::<Vec<_>>();
         let analysis = snapshot
-            .analysis_for_crates(&targets)
+            .analysis_for_crates(&targets, rg_std::CancellationToken::new())
             .expect("fixture analysis should materialize");
         let mut names = Vec::new();
 
@@ -93,7 +91,7 @@ impl HostFixture {
             .fixture
             .project()
             .snapshot()
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("fixture analysis should construct before lazy package load");
 
         match analysis.workspace_symbols(query) {
@@ -279,7 +277,7 @@ impl HostFixture {
 
         let snapshot = project.snapshot();
         let mut symbols = snapshot
-            .full_analysis()
+            .full_analysis(rg_std::CancellationToken::new())
             .expect("fixture analysis should materialize")
             .workspace_symbols(query)
             .expect("fixture workspace symbols should resolve");
@@ -510,7 +508,7 @@ fn nominal_type_names_at(
         .next()
         .expect("fixture file should be owned by a target");
     let analysis = snapshot
-        .analysis_for_crates(&[target])
+        .analysis_for_crates(&[target], rg_std::CancellationToken::new())
         .expect("fixture analysis should materialize");
     let Some(ty) = analysis
         .type_at(target, file_id, offset)

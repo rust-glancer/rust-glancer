@@ -3,8 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rg_def_map::PackageSlot;
-use rg_parse::{FileId, ParseDb};
+use rg_ir_model::{FileId, PackageSlot};
+use rg_parse::ParseDb;
 use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 

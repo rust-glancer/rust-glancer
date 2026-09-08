@@ -18,7 +18,8 @@ mod string;
 
 use std::sync::OnceLock;
 
-use rg_parse::{Span, TextSpan, enclosing_inline_module_path};
+use rg_ir_model::{Span, TextSpan};
+use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{
     AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextRange, TextSize,
     ast,

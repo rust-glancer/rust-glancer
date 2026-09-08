@@ -1,8 +1,7 @@
 //! Cursor/source symbol indexing over indexed source occurrences.
 
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId};
 use rg_ir_view::{IndexedViewDb, source::SourceOccurrenceView};
-use rg_parse::FileId;
 use rg_syntax::SourceFile;
 
 use super::SourceSymbol;

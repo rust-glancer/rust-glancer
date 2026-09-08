@@ -55,12 +55,17 @@ where
     /// semantic origins without loading the corresponding declaration stores.
     pub(super) fn visible_indexes(
         &self,
-    ) -> Result<Vec<(CrateRef, &'item ItemLookupIndex)>, I::Error>
+        cancellation: &rg_std::CancellationToken,
+    ) -> Result<Vec<(CrateRef, &'item ItemLookupIndex)>, rg_std::OperationError<I::Error>>
     where
         I: ItemLookupIndexSource<'item>,
     {
-        let crates = self.def_maps.item_lookup_crates_from(self.use_site)?;
-        self.items.indexes_for_crates(crates.as_slice())
+        let crates = self
+            .def_maps
+            .item_lookup_crates_from(self.use_site)
+            .map_err(rg_std::OperationError::Source)?;
+        self.items
+            .indexes_for_crates(crates.as_slice(), cancellation)
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.

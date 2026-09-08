@@ -5,7 +5,8 @@
 //! phase payloads remain behind the artifact readers used by later queries.
 
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodiesCoverage};
-use rg_def_map::{PackageDefMapsManifest, PackageSlot};
+use rg_def_map::PackageDefMapsManifest;
+use rg_ir_model::PackageSlot;
 use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 

@@ -1,5 +1,5 @@
 use rg_cfg_eval::CfgExpr;
-use rg_parse::{FileId, Span};
+use rg_ir_model::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};

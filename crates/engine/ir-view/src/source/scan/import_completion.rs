@@ -12,10 +12,8 @@
 //! ```
 
 use rg_def_map::{DefMap, DefMapReadTxn, ImportPath, ModuleOrigin};
-use rg_ir_model::{CrateRef, DefMapRef, ModuleRef};
-use rg_ir_model::{Path, PathRoot};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span, TextSpan};
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span, TextSpan};
 
 use super::NarrowestSourceSite;
 

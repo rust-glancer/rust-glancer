@@ -21,10 +21,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::{BodyRef, CrateId, CrateRef};
+use rg_ir_model::{BodyRef, CrateId, CrateRef, FileId, PackageSlot};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 
 use super::BodyIrLoader;
 use crate::{
@@ -74,6 +72,14 @@ impl<'db> LazyPackage<'db> {
             .manifest
             .crate_manifest(crate_ref.crate_id)
             .map(|manifest| manifest.body_count()))
+    }
+
+    pub(super) fn body_files(&self, crate_ref: CrateRef) -> Result<Vec<FileId>, PackageStoreError> {
+        Ok(self
+            .loaded(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+            .map(|data| data.shards.iter().map(|(file, _)| *file).collect())
+            .unwrap_or_default())
     }
 
     /// Load the complete crate representation.

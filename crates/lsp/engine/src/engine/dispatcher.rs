@@ -143,7 +143,7 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, _| runner.goto_implementation(input),
+                        |runner, cancellation| runner.goto_implementation(input, cancellation),
                     );
                 }
                 EngineCommand::References {
@@ -164,7 +164,9 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, _| runner.references(input, include_declaration),
+                        |runner, cancellation| {
+                            runner.references(input, include_declaration, cancellation)
+                        },
                     );
                 }
                 EngineCommand::PrepareRename { input, respond_to } => {
@@ -180,7 +182,7 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, _| runner.prepare_rename(input),
+                        |runner, cancellation| runner.prepare_rename(input, cancellation),
                     );
                 }
                 EngineCommand::Rename {
@@ -200,7 +202,7 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, _| runner.rename(input, new_name),
+                        |runner, cancellation| runner.rename(input, new_name, cancellation),
                     );
                 }
                 EngineCommand::DocumentHighlight { input, respond_to } => {
@@ -370,7 +372,7 @@ impl EngineDispatcher {
                         context,
                         respond_to,
                         cancellation,
-                        |runner, _| runner.workspace_symbol(&query),
+                        |runner, cancellation| runner.workspace_symbol(&query, cancellation),
                     );
                 }
                 EngineCommand::ReindexWorkspace { respond_to } => {
@@ -391,16 +393,12 @@ impl EngineDispatcher {
                         .set_deferred_indexing_priority(path, prioritized);
                     let _ = respond_to.send(Ok(()));
                 }
-                EngineCommand::DeferredIndexingPriorityPackageFinished {
-                    generation,
-                    finished,
-                } => {
-                    tracing::trace!(
-                        generation,
-                        "engine command started: deferred_indexing_priority_package_finished"
+                EngineCommand::DeferredIndexingProducts { products } => {
+                    tracing::debug!(
+                        generation = products.generation_id().get(),
+                        "engine command started: deferred_indexing_products"
                     );
-                    self.project
-                        .deferred_indexing_priority_package_finished(generation, *finished);
+                    self.project.deferred_indexing_products(*products);
                 }
                 EngineCommand::DeferredIndexingProgress {
                     generation,

@@ -52,12 +52,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         module: ModuleRef,
     ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
-        Ok(NameLookupView::new(self.db)
+        NameLookupView::new(self.db)
             .extern_crate_names(module)
             .context("read extern crate completion candidates")?
             .into_iter()
-            .filter_map(|name| self.module_candidate(name))
-            .collect())
+            .filter_map(|name| self.module_candidate(name).transpose())
+            .collect::<Result<_, _>>()
+            .context("prepare extern crate completion candidates")
     }
 
     /// Return only module names legal in a restricted visibility path.
@@ -66,12 +67,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         module: ModuleRef,
         qualifier: &Path,
     ) -> anyhow::Result<Vec<DefinitionCompletionCandidate>> {
-        Ok(NameLookupView::new(self.db)
+        NameLookupView::new(self.db)
             .visibility_module_names_for_path(module, qualifier)
             .context("read visibility module completion candidates")?
             .into_iter()
-            .filter_map(|name| self.module_candidate(name))
-            .collect())
+            .filter_map(|name| self.module_candidate(name).transpose())
+            .collect::<Result<_, _>>()
+            .context("prepare visibility module completion candidates")
     }
 
     /// Find the importing module for a qualified site, then resolve its written qualifier.
@@ -134,6 +136,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     .lexical_scope_modules(scope.body_ir(), scope.scope_id())
                     .context("read body-local module scopes")?
                 {
+                    rg_std::check_cancel!(self.db, "completion candidate");
                     let direct_item_names = body_view
                         .direct_item_names(scope.body_ir(), scope_id)
                         .context("read direct body-local item names")?;
@@ -180,7 +183,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .module_names_for_path(importing_module, qualifier)
             .context("read qualified module candidate names")?
         {
-            if let Some(candidate) = self.module_candidate(name) {
+            if let Some(candidate) = self
+                .module_candidate(name)
+                .context("prepare qualified module candidate")?
+            {
                 candidates.push(candidate);
             }
         }
@@ -196,24 +202,30 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .unqualified_module_names(module)
             .context("read unqualified module candidate names")?
         {
-            if let Some(candidate) = self.module_candidate(name) {
+            if let Some(candidate) = self
+                .module_candidate(name)
+                .context("prepare unqualified module candidate")?
+            {
                 candidates.push(candidate);
             }
         }
         Ok(candidates)
     }
 
+    #[rg_std::cancelable("completion candidate", token = self.db)]
     pub(super) fn module_candidate(
         &self,
         name: ModuleScopeName,
-    ) -> Option<DefinitionCompletionCandidate> {
-        let kind = Self::completion_kind(name.kind())?;
+    ) -> Result<Option<DefinitionCompletionCandidate>, rg_std::Cancelled> {
+        let Some(kind) = Self::completion_kind(name.kind()) else {
+            return Ok(None);
+        };
         let function = name.function();
         let target = function
             .map(CompletionTarget::Function)
             .unwrap_or_else(|| CompletionTarget::Declaration(name.declaration()));
 
-        Some(DefinitionCompletionCandidate {
+        Ok(Some(DefinitionCompletionCandidate {
             label: name.label().to_string(),
             namespace: name.namespace(),
             module_origin: Some(name.origin()),
@@ -225,7 +237,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             macro_kind: name.macro_kind(),
             import_path: None,
             import_path_len: None,
-        })
+        }))
     }
 
     pub(super) fn completion_kind(kind: SymbolKind) -> Option<CompletionKind> {

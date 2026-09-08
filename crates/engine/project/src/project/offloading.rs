@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
+use rg_ir_model::PackageSlot;
 use rg_std::Shrink;
 
 use crate::{
@@ -208,21 +208,13 @@ impl<'a> ResidencyApplication<'a> {
 
     /// Return whether this package can produce a coherent replacement artifact.
     ///
-    /// A normal build writes three resident phases. An exact Body IR rebuild instead keeps both
-    /// declaration phases offloaded and copies their encoded sections from the prior artifact.
+    /// Full-phase residency writes three resident phases from one saved source generation.
     fn package_artifact_is_writable(project: &ProjectState, package: PackageSlot) -> bool {
         if !split_indexing::package_deferred_payload_is_durable(project, package) {
             return false;
         }
-        let Some(body_ir) = project.body_ir.resident_package(package) else {
-            return false;
-        };
-        let declarations_resident = project.def_map.resident_package(package).is_some()
-            && project.semantic_ir.resident_package(package).is_some();
-        let declarations_offloaded = project.def_map.package_is_offloaded(package)
-            && project.semantic_ir.package_is_offloaded(package)
-            && body_ir.has_cached_payloads();
-        declarations_resident || declarations_offloaded
+        project.def_map.resident_package(package).is_some()
+            && project.semantic_ir.resident_package(package).is_some()
     }
 
     /// Returns whether dropping this package would leave every resident value durably backed.
@@ -239,9 +231,8 @@ impl<'a> ResidencyApplication<'a> {
 
     /// Writes every replacement artifact before any selected resident payload is dropped.
     ///
-    /// A replacement may encode all three resident phases or copy offloaded declaration sections
-    /// while updating Body IR. Package-local writes can run in parallel, but the package-set marker
-    /// is committed only after every artifact succeeds.
+    /// Package-local writes can run in parallel, but the package-set marker is committed only
+    /// after every artifact succeeds.
     fn write_package_artifacts(&self, packages: &PhasePackageSet) -> anyhow::Result<()> {
         if packages.is_empty() {
             return Ok(());
@@ -271,8 +262,7 @@ impl<'a> ResidencyApplication<'a> {
             // File ids and paths remain resident as the source inventory. Line indexes are larger
             // and can be reconstructed from saved source text when a query needs LSP coordinates.
             let offloaded_package_indices = offloaded_packages.package_indices();
-            self.project
-                .parse
+            Arc::make_mut(&mut self.project.parse)
                 .offload_line_indexes_for_packages(&offloaded_package_indices);
         }
     }

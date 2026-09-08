@@ -3,10 +3,9 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
     AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
-    SemanticItemRef, TypeDefRef,
+    SemanticItemRef, Span, TypeDefRef,
 };
 use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
-use rg_parse::Span;
 use rg_text::Name;
 
 use super::{

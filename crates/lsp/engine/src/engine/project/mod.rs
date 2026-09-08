@@ -2,8 +2,8 @@
 //!
 //! Queries borrow this project and may ask the coordinator to load package data that was left on
 //! disk. Saves and file-watcher events build and publish a new project generation. Background
-//! indexing may do expensive work elsewhere, but its result comes back to this module before it can
-//! be merged. The project is therefore never shared as mutable state between those paths.
+//! indexing may do expensive work elsewhere, but its products come back through this module for
+//! publication. The project is therefore never shared as mutable state between those paths.
 //!
 //! A filesystem burst can keep changing after a watcher command reaches the engine. Project
 //! construction reports that race as a typed stale-source error. The coordinator waits for another
@@ -21,8 +21,9 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_proto::{IndexingProgress, IndexingStage, ServiceNotification};
 use rg_project::{
-    AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
-    SavedFileChange, SplitIndexingMode, SplitIndexingProgress, SplitIndexingStage,
+    AnalysisChangeSummary, AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    ProjectSnapshot, SavedBodyProducts, SavedFileChange, SplitIndexingMode, SplitIndexingProgress,
+    SplitIndexingStage,
 };
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
@@ -205,8 +206,8 @@ impl ProjectCoordinator {
                 }
             }
         };
-        // Publish the saved project before deciding whether detached work remains. If a worker is
-        // needed, any later source generation makes its result stale.
+        // Publish the saved project before deciding whether deferred work remains. If a worker is
+        // needed, any later source generation makes its products stale.
         self.workspace_root = Some(workspace_root.clone());
         self.project.replace_saved(project);
         self.stale_source = None;
@@ -323,7 +324,7 @@ impl ProjectCoordinator {
         &mut self,
         operation: &'static str,
         mut changes: Vec<SavedFileChange>,
-    ) -> anyhow::Result<(rg_project::AnalysisChangeSummary, usize, usize)> {
+    ) -> anyhow::Result<(AnalysisChangeSummary, usize, usize)> {
         let captured_paths = changes
             .iter()
             .filter_map(|change| {
@@ -410,9 +411,9 @@ impl ProjectCoordinator {
             self.project.compact_if_fully_offloaded();
         }
 
-        // Reconciliation consumes the detached result on every path: merged, stale, failed, or
-        // unknown. Purge only after that ownership boundary so the background project's Body IR
-        // can actually leave allocator arenas instead of waiting for the next query cleanup.
+        // Completion arrives after every worker has drained and dropped its saved inputs. Purge
+        // after that ownership boundary so transient declaration and solver allocations can leave
+        // allocator arenas instead of waiting for the next query cleanup.
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
         let Some(terminal) = terminal else {
@@ -465,17 +466,9 @@ impl ProjectCoordinator {
             });
     }
 
-    /// Publish one resolved priority package without ending the lifecycle.
-    pub(super) fn deferred_indexing_priority_package_finished(
-        &mut self,
-        generation: u64,
-        finished: rg_project::FinishedSplitIndexing,
-    ) {
-        self.deferred_indexing_finish.priority_package_returned(
-            &mut self.project,
-            generation,
-            finished,
-        );
+    pub(super) fn deferred_indexing_products(&mut self, products: SavedBodyProducts) {
+        self.deferred_indexing_finish
+            .products_returned(&mut self.project, products);
     }
 
     /// Update package scheduling priority from an editor open/close hint.
@@ -494,9 +487,10 @@ impl ProjectCoordinator {
     pub(super) fn materialize_saved_project(
         &mut self,
         surface: AnalysisSurface<'_>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<()> {
         self.project
-            .materialize_saved_project(surface)
+            .materialize_saved_project(surface, cancellation)
             .context("materialize saved analysis surface")
     }
 
@@ -587,10 +581,9 @@ impl ProjectCoordinator {
 
     /// Run one saved-project mutation and reconcile the background finish afterward.
     ///
-    /// A detached clone may now describe an older generation. The deferred controller either
-    /// starts work for the remaining saved state or records one restart after the in-flight clone
-    /// returns, keeping peak memory bounded to one detached project. A rejected mutation changes no
-    /// generation, so it must not schedule a misleading deferred finish.
+    /// A successful mutation can make the active worker obsolete. The deferred controller cancels
+    /// it and waits for its jobs to drain before capturing replacement inputs. A rejected mutation
+    /// changes no generation, so it must not schedule a misleading deferred finish.
     fn mutate_saved_and_schedule_deferred_finish<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,

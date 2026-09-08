@@ -65,7 +65,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 .lexical_names(name_scope)
                 .context("read lexical completion candidates")?
             {
-                let Some(candidate) = self.lexical_candidate(*namespace, candidate) else {
+                let Some(candidate) = self
+                    .lexical_candidate(*namespace, candidate)
+                    .context("prepare lexical completion candidate")?
+                else {
                     continue;
                 };
                 if candidates
@@ -126,6 +129,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .generic_scope_names(owner)
             .context("read completion generic scope names")?
         {
+            rg_std::check_cancel!(self.db, "completion candidate");
             if matches!(name.target(), GenericScopeNameTarget::ImplSelf(_)) && !impl_self_visible {
                 continue;
             }
@@ -263,11 +267,12 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         Ok(candidates)
     }
 
+    #[rg_std::cancelable("completion candidate", token = self.db)]
     fn lexical_candidate(
         &self,
         namespace: ValueOrTypeNamespace,
         candidate: BodyLexicalName,
-    ) -> Option<LexicalCompletionCandidate> {
+    ) -> Result<Option<LexicalCompletionCandidate>, rg_std::Cancelled> {
         let candidate = match candidate {
             BodyLexicalName::Binding {
                 binding,
@@ -293,6 +298,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 scope_distance,
                 has_value_constructor,
             } => {
+                let Some(kind) = CompletionKind::from_semantic_item_kind(kind) else {
+                    return Ok(None);
+                };
                 let mut shadow_namespaces = vec![NameNamespace::Types];
                 if matches!(namespace, ValueOrTypeNamespace::Values) && has_value_constructor {
                     shadow_namespaces.push(NameNamespace::Values);
@@ -303,7 +311,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     namespace: namespace.into(),
                     scope_distance,
                     target: CompletionTarget::Declaration(declaration),
-                    kind: CompletionKind::from_semantic_item_kind(kind)?,
+                    kind,
                     declaration: Some(declaration),
                     function: None,
                     shadow_namespaces,
@@ -314,16 +322,21 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 kind,
                 label,
                 scope_distance,
-            } => LexicalCompletionCandidate {
-                label,
-                namespace: NameNamespace::Values,
-                scope_distance,
-                target: CompletionTarget::Declaration(DeclarationRef::from(item)),
-                kind: CompletionKind::from_semantic_item_kind(kind)?,
-                declaration: Some(DeclarationRef::from(item)),
-                function: None,
-                shadow_namespaces: vec![NameNamespace::Values],
-            },
+            } => {
+                let Some(kind) = CompletionKind::from_semantic_item_kind(kind) else {
+                    return Ok(None);
+                };
+                LexicalCompletionCandidate {
+                    label,
+                    namespace: NameNamespace::Values,
+                    scope_distance,
+                    target: CompletionTarget::Declaration(DeclarationRef::from(item)),
+                    kind,
+                    declaration: Some(DeclarationRef::from(item)),
+                    function: None,
+                    shadow_namespaces: vec![NameNamespace::Values],
+                }
+            }
             BodyLexicalName::Function {
                 function,
                 label,
@@ -343,6 +356,6 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             }
         };
 
-        Some(candidate)
+        Ok(Some(candidate))
     }
 }

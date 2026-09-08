@@ -5,9 +5,8 @@
 //! analysis reconstruct module ancestry from source text.
 
 use rg_def_map::{DefMap, DefMapReadTxn, ModuleFileSelection, ModuleOrigin};
-use rg_ir_model::{CrateRef, DefMapRef, ModuleId, ModuleRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleId, ModuleRef};
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
 
 use super::NarrowestSourceSite;
 

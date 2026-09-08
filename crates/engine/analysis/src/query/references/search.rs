@@ -8,8 +8,7 @@
 //! `ReferenceSearchLabel` is a plain Rust identifier that analysis has validated before the project
 //! layer uses it for fast text prefiltering.
 
-use rg_ir_model::CrateRef;
-use rg_parse::FileId;
+use rg_ir_model::{CrateRef, FileId};
 
 impl<'a> ReferenceQuery<'a> {
     /// Returns a query for explicit find-references requests.

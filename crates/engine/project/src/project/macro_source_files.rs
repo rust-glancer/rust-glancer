@@ -28,10 +28,11 @@ use std::{
 use anyhow::Context as _;
 use rg_def_map::{
     DefMapBuildOutput, DefMapBuildProgress, DefMapBuildSession, DefMapDb, DefMapReadTxn,
-    MacroExpansionPerformancePreference, MacroSourceFileRequest, PackageSlot,
+    MacroExpansionPerformancePreference, MacroSourceFileRequest,
 };
+use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::ItemTreeDb;
-use rg_parse::{FileId, ParseDb};
+use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 

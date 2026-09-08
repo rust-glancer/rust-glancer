@@ -13,10 +13,9 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
-use rg_ir_model::{BodyRef, CrateRef, ScopeId};
+use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span, TextSpan};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span, TextSpan};
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
 

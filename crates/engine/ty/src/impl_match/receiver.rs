@@ -149,13 +149,21 @@ where
         &self,
         receiver_ty: &Ty,
     ) -> Result<ReceiverImplMatches, D::Error> {
+        // Matching uses the solver's fail-soft exit when discovery is cancelled. Its operation
+        // owner rejects the result through the shared token before publishing body facts or UI.
         let mut inherent_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
-            inherent_impls.extend(
-                self.context
-                    .item_lookup()
-                    .inherent_impls_for_type(receiver.def),
-            );
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
+            let Ok(candidates) = self
+                .context
+                .item_lookup()
+                .inherent_impls_for_type(receiver.def)
+            else {
+                return Ok(ReceiverImplMatches::default());
+            };
+            inherent_impls.extend(candidates);
         }
 
         let mut matches =
@@ -189,7 +197,13 @@ where
                 .context
                 .item_lookup()
                 .lang_trait(LangItem::PointeeSized);
-            for impl_ref in self.context.item_lookup().structural_inherent_impls() {
+            let Ok(candidates) = self.context.item_lookup().structural_inherent_impls() else {
+                return Ok(ReceiverImplMatches::default());
+            };
+            for impl_ref in candidates {
+                if self.context.trait_selection().cancellation().is_cancelled() {
+                    return Ok(Default::default());
+                }
                 let Some(impl_data) = self.context.item_paths().items().impl_data(impl_ref)? else {
                     continue;
                 };
@@ -238,6 +252,9 @@ where
         let mut selections = UniqueVec::new();
 
         for trait_ref in trait_refs {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let Some(candidates) = self.context.trait_selection().trait_impl_candidates_for_ty(
                 self.context.item_lookup(),
                 trait_ref,
@@ -267,6 +284,9 @@ where
     ) -> Result<UniqueVec<TraitSelection>, D::Error> {
         let mut selections = UniqueVec::new();
         for trait_impl in trait_impls {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let Some(selection) =
                 self.trait_impl_selection_for_ty(trait_impl, receiver_ty, table)?
             else {
@@ -311,6 +331,9 @@ where
         let mut matches = ReceiverImplMatches::default();
 
         for impl_ref in inherent_impls {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
@@ -346,10 +369,16 @@ where
         let mut functions = Vec::new();
 
         for impl_match in matches.inherent() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
                 continue;
             };
             for function in impl_data.functions() {
+                if self.context.trait_selection().cancellation().is_cancelled() {
+                    return Ok(Default::default());
+                }
                 if let Some(name) = function_name {
                     let Some(function_data) = item_query.function_data(function)? else {
                         continue;
@@ -368,15 +397,31 @@ where
         }
 
         for selection in matches.traits() {
+            if self.context.trait_selection().cancellation().is_cancelled() {
+                return Ok(Default::default());
+            }
             let trait_ref = selection.trait_impl.trait_ref;
-            let trait_functions = if let Some(name) = function_name
-                && let Some(functions) = self
+            let named = match function_name {
+                Some(name) => self
                     .context
                     .item_lookup()
-                    .trait_functions_by_name(trait_ref, name)
-            {
-                functions
-            } else if let Some(functions) = self.context.item_lookup().trait_functions(trait_ref) {
+                    .trait_functions_by_name(trait_ref, name),
+                None => Ok(None),
+            };
+            let Ok(named) = named else {
+                return Ok(Vec::new());
+            };
+            let indexed = match named {
+                Some(functions) => Some(functions),
+                None => {
+                    let Ok(functions) = self.context.item_lookup().trait_functions(trait_ref)
+                    else {
+                        return Ok(Vec::new());
+                    };
+                    functions
+                }
+            };
+            let trait_functions = if let Some(functions) = indexed {
                 functions
             } else {
                 // Saved-project traits are guaranteed to be present in the semantic lookup query.
@@ -392,6 +437,9 @@ where
             };
 
             for function in trait_functions {
+                if self.context.trait_selection().cancellation().is_cancelled() {
+                    return Ok(Default::default());
+                }
                 if let Some(name) = function_name {
                     let Some(function_data) = item_query.function_data(function)? else {
                         continue;

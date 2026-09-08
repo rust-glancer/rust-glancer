@@ -257,10 +257,15 @@ where
         )?;
 
         if ty.def.origin.as_crate_ref().is_some() {
-            let semantic_impls = self
+            let Ok(semantic_impls) = self
                 .context
                 .item_lookup_query()
-                .trait_impls_for_type(ty.def);
+                .trait_impls_for_type(ty.def)
+            else {
+                // Inference and analysis reject this fail-soft result through their token before
+                // it can become body facts or an editor response.
+                return Ok(UniqueVec::new());
+            };
             self.push_matching_qualified_trait_impls(&mut impls, semantic_impls, ty, application)?;
         }
 

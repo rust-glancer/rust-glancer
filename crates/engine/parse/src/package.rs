@@ -4,9 +4,8 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgOptions;
 
-use crate::{
-    CargoTarget, CargoTargetId, FileId, LineIndex, ParsedFile, ParsedFileSnapshot, file::FileDb,
-};
+use crate::{CargoTarget, CargoTargetId, LineIndex, ParsedFile, ParsedFileSnapshot, file::FileDb};
+use rg_ir_model::FileId;
 use rg_source::{SourceEntry, SourceInventory};
 use rg_std::MemorySize;
 use rg_text::RustEdition;

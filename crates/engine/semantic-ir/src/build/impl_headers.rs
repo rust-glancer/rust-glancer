@@ -17,8 +17,10 @@ use std::collections::HashMap;
 
 use crate::ItemResolutionQuery;
 use crate::ItemStoreQuery;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{CrateId, CrateRef, ImplRef, ModuleRef, PrimitiveTy, TraitDefRef, TypeDefRef};
+use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{
+    CrateId, CrateRef, ImplRef, ModuleRef, PackageSlot, PrimitiveTy, TraitDefRef, TypeDefRef,
+};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;

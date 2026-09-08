@@ -1,5 +1,5 @@
 use crate::DefMap;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_text::PackageNameInterners;
@@ -8,7 +8,7 @@ use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
     DefMapBuildOutput, DefMapBuildProgress, DefMapDb, GeneratedItemStores,
-    MacroExpansionPerformancePreference, PackageSlot,
+    MacroExpansionPerformancePreference,
 };
 
 /// End-to-end fixture for tests that need name resolution data.

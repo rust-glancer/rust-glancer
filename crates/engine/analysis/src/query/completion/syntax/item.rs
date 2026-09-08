@@ -1,7 +1,6 @@
 //! Item, signature-type, and statement-boundary classification.
 
-use rg_ir_model::Path;
-use rg_parse::{Span, TextSpan};
+use rg_ir_model::{Path, Span, TextSpan};
 use rg_syntax::{
     AstNode as _, SyntaxKind, SyntaxNode, SyntaxToken,
     ast::{self, HasAttrs as _, HasName as _},

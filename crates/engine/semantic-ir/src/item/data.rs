@@ -1,13 +1,12 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
-    TraitDefRef, TypeDefRef,
+    AssocItemId, FileId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
+    Span, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ParamKind, TypeBound,
     TypeRef, VisibilityLevel,
 };
-use rg_parse::{FileId, Span};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};

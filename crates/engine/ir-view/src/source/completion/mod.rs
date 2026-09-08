@@ -27,12 +27,12 @@ mod signature;
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, GenericDefRef, ImplRef, ModuleRef, Path,
-    TraitDefRef, TypeDefRef,
+    BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, FileId, GenericDefRef, ImplRef, ModuleRef,
+    Path, Span, TraitDefRef, TypeDefRef,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_item_tree::{FromAst as _, TypePath, TypeRef};
-use rg_parse::{FileId, LineIndex, Span};
+use rg_parse::LineIndex;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 
@@ -629,7 +629,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<IndexedAssociatedTypeBindingSite>> {
-        for origin in self.db.current_signature_origins(crate_ref, file_id)? {
+        for origin in self.db.current_signature_origins(crate_ref, file_id) {
             let Some(site) =
                 SignatureSourceScanner::implicit_associated_type_binding_site_at_origin(
                     self.db, origin, file_id, offset,

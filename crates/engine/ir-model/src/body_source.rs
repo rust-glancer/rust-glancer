@@ -1,7 +1,7 @@
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_parse::{FileId, Span};
+use crate::{FileId, Span};
 
 /// Whether a body source span belongs to the user's syntax or to lowered macro output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

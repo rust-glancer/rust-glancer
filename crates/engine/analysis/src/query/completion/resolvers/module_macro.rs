@@ -50,6 +50,7 @@ impl<'a, 'db, 'source> ModuleMacroCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
 
         for candidate in candidates {
+            rg_std::check_cancel!(self.analysis, "completion candidate");
             let Some(completion) = renderer
                 .completion(DefinitionCompletionRequest {
                     candidate: &candidate,

@@ -1,9 +1,13 @@
 //! Cache paths and atomic package-set updates.
 //!
 //! A generation directory belongs to one workspace graph and residency policy. Individual package
-//! files are replaced atomically, while an update marker extends that guarantee across the package
-//! set: an interrupted update is discarded on the next startup instead of exposing mutually
-//! inconsistent artifacts.
+//! files are replaced atomically. A source update can change identities across several packages,
+//! so it also uses a package-set marker: an interrupted update is discarded on the next startup
+//! instead of exposing mutually inconsistent artifacts.
+//!
+//! Body-only updates keep the saved declarations and their identities. They prepare and commit
+//! individual artifacts without a package-set marker; the project publisher owns the matching
+//! coverage and residency changes.
 //!
 //! The on-disk shape under one claimed cache instance is:
 //!
@@ -14,8 +18,8 @@
 //!     package-<slot>-<name>-<package fingerprint>.rgpkg
 //! ```
 //!
-//! The marker is written before the first change and removed only after a successful commit. It is
-//! intentionally coarse: if the process stops after replacing three out of ten artifacts, startup
+//! A package-set update writes the marker before the first change and removes it only after every
+//! package succeeds. If the process stops after replacing three out of ten artifacts, startup
 //! removes the disposable package cache instead of trying to determine which cross-package ids
 //! still agree.
 
@@ -28,10 +32,12 @@ use std::{
 use crate::PackageResidencyPolicy;
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
+use rg_ir_model::PackageSlot;
 
 use super::super::{
-    CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec,
+    CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec, PackageCacheHeader,
     PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
+    codec::EncodedPackageCacheArtifact,
 };
 use super::artifact::PackageArtifactReader;
 
@@ -48,6 +54,23 @@ const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 pub struct PackageCacheStore {
     root: PathBuf,
     generation: Fingerprint,
+}
+
+/// Holds a fully written replacement for a package cache file until the caller commits it.
+///
+/// [`Self::commit`] atomically replaces the old file; dropping this value discards the replacement.
+/// This lets the caller check cancellation after encoding and writing, before changing the cache
+/// that other readers will see.
+pub(crate) struct PreparedPackageArtifact {
+    file: AtomicWriteFile,
+}
+
+impl PreparedPackageArtifact {
+    pub(crate) fn commit(self) -> anyhow::Result<()> {
+        self.file
+            .commit()
+            .context("commit prepared package artifact")
+    }
 }
 
 impl PackageCacheStore {
@@ -231,13 +254,77 @@ impl PackageCacheStore {
         }
     }
 
+    /// Serialize the supplied analysis into a temporary package cache file.
+    ///
+    /// The existing cache file stays unchanged until the caller commits the returned
+    /// [`PreparedPackageArtifact`]. The caller can check cancellation before that final step.
+    pub(crate) fn prepare_write_input(
+        &self,
+        input: PackageCacheWriteInput<'_>,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<PreparedPackageArtifact> {
+        let encoded = PackageCacheCodec::encode_write_input(input, cancellation)
+            .context("encode resident package artifact")?;
+        self.prepare_artifact(input.header, encoded)
+    }
+
+    /// Write a temporary cache file combining new body analysis with unchanged data from `reader`.
+    ///
+    /// Declarations and bodies for unchanged targets are copied from the same open file. The reader
+    /// keeps reading that file's contents even if another write replaces its path during preparation.
+    /// The replacement becomes visible only when the returned [`PreparedPackageArtifact`] is committed.
+    pub(crate) fn prepare_body_update(
+        &self,
+        package: PackageSlot,
+        input: PackageCacheBodyUpdateInput<'_>,
+        reader: &PackageArtifactReader,
+        cancellation: &rg_std::CancellationToken,
+    ) -> anyhow::Result<PreparedPackageArtifact> {
+        let def_map = reader
+            .read_encoded_def_map_section()
+            .map_err(|error| error.into_package_store_error(package))
+            .context("read cached DefMap section")?;
+        let semantic_ir = reader
+            .read_encoded_semantic_ir_section()
+            .map_err(|error| error.into_package_store_error(package))
+            .context("read cached Semantic IR section")?;
+        let encoded = PackageCacheCodec::encode_body_update_reusing_cached_sections(
+            input,
+            def_map,
+            semantic_ir,
+            |crate_id, file| {
+                reader
+                    .read_encoded_body_file_shard(crate_id, file)
+                    .map_err(|error| anyhow::Error::new(error.into_package_store_error(package)))
+            },
+            cancellation,
+        )
+        .context("encode body update")?;
+        self.prepare_artifact(input.header, encoded)
+    }
+
+    fn prepare_artifact(
+        &self,
+        header: &PackageCacheHeader,
+        encoded: EncodedPackageCacheArtifact,
+    ) -> anyhow::Result<PreparedPackageArtifact> {
+        let path = self.package_artifact_path(&header.package);
+        fs::create_dir_all(self.generation_dir()).context("create package artifact directory")?;
+        let mut file = AtomicWriteFile::options()
+            .open(&path)
+            .context("start package artifact preparation")?;
+        encoded
+            .write_to(&mut file)
+            .context("write prepared package artifact")?;
+        Ok(PreparedPackageArtifact { file })
+    }
+
     /// Replace one complete file without exposing a partially written payload.
     fn write_atomically(
         path: &Path,
         write: impl FnOnce(&mut AtomicWriteFile) -> std::io::Result<()>,
     ) -> anyhow::Result<()> {
-        // Cache artifacts must appear atomically: readers either observe the previous complete
-        // payload or the newly committed one, never a partially written file.
+        // Marker creation is atomic too: startup sees either a complete marker or no marker.
         let mut file = AtomicWriteFile::options().open(path).with_context(|| {
             format!(
                 "while attempting to start atomic package cache write {}",
@@ -290,65 +377,10 @@ impl PackageCacheUpdate<'_> {
     /// affected packages and calls `commit`. The borrowed resident phases are encoded directly into
     /// write-ready fragments rather than cloned into an owned aggregate first.
     pub(crate) fn write_input(&self, input: PackageCacheWriteInput<'_>) -> anyhow::Result<()> {
-        let encoded = PackageCacheCodec::encode_write_input(input)?;
-        let path = self.store.package_artifact_path(&input.header.package);
-        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
-    }
-
-    /// Rewrites one package while copying encoded Body IR shards for untouched cached targets.
-    ///
-    /// DefMap and Semantic IR are newly encoded because their resident packages were rebuilt. Only
-    /// sibling Body IR files outside the exact build scope are copied from the pinned reader.
-    pub(crate) fn write_input_reusing_cached_body_ir(
-        &self,
-        input: PackageCacheWriteInput<'_>,
-        reader: &PackageArtifactReader,
-    ) -> anyhow::Result<()> {
-        let encoded = PackageCacheCodec::encode_write_input_reusing_cached_body_ir(
-            input,
-            |crate_id, file| {
-                reader
-                    .read_encoded_body_file_shard(crate_id, file)
-                    .map_err(anyhow::Error::new)
-            },
-        )?;
-        let path = self.store.package_artifact_path(&input.header.package);
-        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
-    }
-
-    /// Rewrites Body IR while copying both declaration sections from the prior artifact.
-    ///
-    /// This path is used after exact Body materialization leaves declarations offloaded. The reader
-    /// pins the old revision while the new atomic artifact is assembled, so copied sections and
-    /// untouched Body shards cannot come from different revisions.
-    pub(crate) fn write_body_update_reusing_cached_sections(
-        &self,
-        input: PackageCacheBodyUpdateInput<'_>,
-        reader: &PackageArtifactReader,
-    ) -> anyhow::Result<()> {
-        // The outer ranges were validated when the reader opened. Preserve their bytes without
-        // decoding sibling crates; later exact reads still validate the nested declarations.
-        let def_map = reader
-            .read_encoded_def_map_section()
-            .map_err(anyhow::Error::new)
-            .context("read cached DefMap section")?;
-        let semantic_ir = reader
-            .read_encoded_semantic_ir_section()
-            .map_err(anyhow::Error::new)
-            .context("read cached Semantic IR section")?;
-        let encoded = PackageCacheCodec::encode_body_update_reusing_cached_sections(
-            input,
-            def_map,
-            semantic_ir,
-            |crate_id, file| {
-                reader
-                    .read_encoded_body_file_shard(crate_id, file)
-                    .map_err(anyhow::Error::new)
-            },
-        )
-        .context("encode Body IR update with cached declaration sections")?;
-        let path = self.store.package_artifact_path(&input.header.package);
-        PackageCacheStore::write_atomically(&path, |file| encoded.write_to(file))
+        self.store
+            .prepare_write_input(input, &rg_std::CancellationToken::new())
+            .context("prepare package artifact")?
+            .commit()
     }
 
     /// Commit the package set by removing the marker only after every artifact is durable.

@@ -3,15 +3,12 @@
 use std::sync::Arc;
 
 use crate::{DefMap, MacroExpansionLimitReport, PackageDefMaps, PackageDefMapsManifest};
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_text::PackageNameInterners;
 
-use crate::{
-    DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionPerformancePreference,
-    PackageSlot,
-};
+use crate::{DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionPerformancePreference};
 use rg_std::{MemorySize, Shrink};
 use rg_workspace::{PackageOrigin, WorkspaceMetadata};
 

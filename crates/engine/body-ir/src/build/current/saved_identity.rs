@@ -8,8 +8,7 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{BodyRef, ConstRef, CrateRef, DefMapRef, StaticRef};
-use rg_parse::{FileId, Span};
+use rg_ir_model::{BodyRef, ConstRef, CrateRef, DefMapRef, FileId, Span, StaticRef};
 use rg_semantic_ir::ItemStore;
 use rg_std::{ExpectedUnique, UniqueVec};
 

@@ -1,27 +1,23 @@
 //! Trait-member lookup and source text shared by completion and bulk implementation actions.
 //!
-//! Both features first select the impl from the editor buffer. An unchanged impl can use its saved
-//! identity directly. A new or changed impl gets a request-local semantic header, resolved in the
-//! saved module that still contains it. Once missing-member lookup supplies a substituted
-//! declaration such as `fn run(&self)` or `type Output`, this module also turns it into a compact
-//! completion detail and complete plain Rust source for insertion.
+//! Both features select the impl from the editor buffer and read the declaration context prepared
+//! for it. The missing-member projection supplies substituted declarations such as `fn run(&self)`
+//! or `type Output`; this module turns those into completion details and insertable Rust source.
 
 use anyhow::Context as _;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
-    current::CurrentTraitImplView,
     source::SourceCompletionView,
     trait_impl::{MissingTraitMember, MissingTraitMemberScaffold, TraitImplView},
 };
-use rg_parse::{FileId, LineIndex, enclosing_inline_module_path};
 use rg_syntax::{AstNode as _, ast};
 
 use crate::Analysis;
 
 /// Resolves missing members for the trait impl currently shown by one analysis request.
 ///
-/// Saved lookup remains the cheap path. Only an impl without a usable saved identity pays for the
-/// small source-to-semantic lowering step, and the resulting store lives only for this call.
+/// Saved-only queries use indexed source sites. Current-source queries use the impl identity chosen
+/// during preparation, including its decision to reuse saved semantics where possible.
 pub(crate) struct TraitImplMemberQuery<'analysis, 'db, 'source> {
     analysis: &'analysis Analysis<'db>,
     crate_ref: CrateRef,
@@ -79,7 +75,7 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
         self.missing_members(&impl_)
     }
 
-    /// Use saved semantics when the impl still has a saved identity, otherwise lower this header.
+    /// Read the complete impl selected for this source, without constructing semantic state here.
     pub(crate) fn missing_members(
         &self,
         impl_: &ast::Impl,
@@ -87,64 +83,37 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
         if impl_.trait_().is_none() {
             return Ok(Vec::new());
         }
-        let owner_start = u32::from(impl_.syntax().text_range().start());
-
-        // An associated saved declaration already has a complete item store and resolved header.
-        // Keep that path on retained semantics instead of building a request-local item store.
-        if let Some(saved_owner_start) = self
-            .analysis
-            .saved_header_offset_for_current(self.crate_ref, self.file_id, owner_start)
-            .context("map current trait impl header to saved source")?
-            && let Some(site) = SourceCompletionView::new(self.analysis.view_db())
-                .trait_impl_site_at(self.crate_ref, self.file_id, saved_owner_start)
-                .context("resolve saved trait impl owner")?
-        {
-            return TraitImplView::new(self.analysis.view_db())
-                .missing_members(site.impl_ref(), site.trait_ref())
-                .context("collect saved trait impl members");
-        }
-
-        // A new impl has no semantic owner, but its enclosing module normally still does. Lower
-        // only this impl and resolve its header as though it were declared in that saved module.
-        let inline_module_path = enclosing_inline_module_path(impl_.syntax())
-            .into_iter()
-            .map(|name| name.to_string())
-            .collect::<Vec<_>>();
-        let Some(module) = SourceCompletionView::new(self.analysis.view_db())
-            .module_syntax_source_site(self.crate_ref, self.file_id, &inline_module_path)
-            .context("resolve current trait impl module")?
-            .map(|site| site.module())
-        else {
-            return Ok(Vec::new());
-        };
-
-        let fallback_line_index;
-        let line_index = match self
+        let db = self.analysis.view_db();
+        let span = Span::from_text_range(impl_.syntax().text_range());
+        if let Some(source) = self
             .analysis
             .current_source(self.crate_ref.package, self.file_id)
-            .filter(|source| source.text() == self.source_text)
         {
-            Some(source) => source.line_index(),
-            None => {
-                fallback_line_index = LineIndex::new(self.source_text);
-                &fallback_line_index
+            // Source coordinates and selected declarations belong to the same captured document.
+            if source.text() != self.source_text {
+                return Ok(Vec::new());
             }
-        };
-        let Some(current) = CurrentTraitImplView::new(
-            self.analysis.view_db(),
-            self.crate_ref,
-            self.file_id,
-            module,
-            line_index,
-            impl_,
-        )
-        .context("resolve current trait impl")?
+            let Some(impl_ref) = db.selected_current_impl(self.crate_ref, self.file_id, span)
+            else {
+                return Ok(Vec::new());
+            };
+            return TraitImplView::new(db)
+                .missing_members_for_prepared_impl(impl_ref)
+                .context("collect prepared trait impl members");
+        }
+
+        // An exact saved document needs no current-source preparation. Its indexed source site
+        // already carries the resolved trait identity used by the ordinary member projection.
+        let owner_start = u32::from(impl_.syntax().text_range().start());
+        let Some(site) = SourceCompletionView::new(db)
+            .trait_impl_site_at(self.crate_ref, self.file_id, owner_start)
+            .context("resolve saved trait impl owner")?
         else {
             return Ok(Vec::new());
         };
-        current
-            .missing_members()
-            .context("collect current trait impl members")
+        TraitImplView::new(db)
+            .missing_members(site.impl_ref(), site.trait_ref())
+            .context("collect saved trait impl members")
     }
 }
 

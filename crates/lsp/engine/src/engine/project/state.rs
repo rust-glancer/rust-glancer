@@ -3,15 +3,15 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use rg_def_map::PackageSlot;
-use rg_project::{AnalysisSurface, DetachedSplitIndexing, Project, ProjectSnapshot};
+use rg_ir_model::PackageSlot;
+use rg_project::{AnalysisSurface, Project, ProjectSnapshot, SavedBodyBuildInputs};
 
 /// Owns the one saved project used by all analysis queries in this engine.
 ///
-/// Background indexing remembers the project's generation id. When it finishes, the command loop
-/// uses that id to reject work from a project that has since been replaced. Finishing deferred
-/// indexing or loading an offloaded package keeps the same id because the saved source did not
-/// change.
+/// Background indexing tags each product batch with the project's generation id. The command loop
+/// forwards those batches to the project's publisher, which rejects work from replaced generations.
+/// Publishing body products or loading an offloaded package keeps the same id because the saved
+/// source did not change.
 #[derive(Debug)]
 pub(super) struct ProjectState {
     saved: Option<Project>,
@@ -40,26 +40,20 @@ impl ProjectState {
             .unwrap_or(0)
     }
 
-    /// Return whether cloning the saved project would start real deferred work.
+    /// Return whether the saved project still has configured deferred work.
     pub(super) fn has_unfinished_split_indexing(&self) -> bool {
         self.saved
             .as_ref()
             .is_some_and(Project::has_unfinished_split_indexing)
     }
 
-    /// Clone saved analysis into a generation-paired deferred-finish handle.
-    ///
-    /// Raw `Project` ownership stays on the coordinator lane. Background split-indexing only needs
-    /// a detached finish capability, and the paired generation lets the coordinator reject a
-    /// result produced from an older saved-source snapshot.
-    pub(super) fn detach_saved_split_indexing(
-        &self,
-    ) -> anyhow::Result<(u64, DetachedSplitIndexing)> {
-        let saved = self
+    /// Capture read-only declaration/source inputs and the unfinished target selection.
+    pub(super) fn saved_body_build_inputs(&self) -> anyhow::Result<SavedBodyBuildInputs> {
+        Ok(self
             .saved
             .as_ref()
-            .context("saved project is not initialized")?;
-        Ok((saved.generation_id().get(), saved.detach_split_indexing()))
+            .context("saved project is not initialized")?
+            .deferred_body_build())
     }
 
     /// Run a mutation that may publish a new saved-source generation.
@@ -79,7 +73,7 @@ impl ProjectState {
 
     /// Enrich analysis data for the same saved source snapshot.
     ///
-    /// Background merging can replace package payloads without changing source identity.
+    /// Publishing body products can replace package payloads without changing source identity.
     pub(super) fn mutate_saved_preserving_generation<T>(
         &mut self,
         mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
@@ -113,6 +107,7 @@ impl ProjectState {
     pub(super) fn materialize_saved_project(
         &mut self,
         surface: AnalysisSurface<'_>,
+        cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<()> {
         let saved = self
             .saved
@@ -121,7 +116,7 @@ impl ProjectState {
         if saved.split_indexing().needs_materialization(surface) {
             saved
                 .split_indexing()
-                .materialize(surface)
+                .materialize(surface, cancellation)
                 .context("materialize saved project analysis surface")?;
         }
         Ok(())

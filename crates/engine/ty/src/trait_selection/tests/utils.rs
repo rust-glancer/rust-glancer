@@ -71,8 +71,11 @@ impl TraitSelectionFixture {
     }
 
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
-        ItemLookupQuery::build_from(&CrateItemQuery::new(self, self, self.target))
-            .expect("fixture lookup query should build")
+        ItemLookupQuery::build_from(
+            &CrateItemQuery::new(self, self, self.target),
+            &rg_std::CancellationToken::new(),
+        )
+        .expect("fixture lookup query should build")
     }
 
     pub(super) fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {

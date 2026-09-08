@@ -7,7 +7,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
+use rg_std::{OperationError, UniqueVec};
 
 use crate::{
     Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates, Ty, TyContext,
@@ -30,11 +30,14 @@ where
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
-    pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, D::Error> {
+    pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
         let mut impls = UniqueVec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
+            rg_std::check_cancel!(self.context, "implementation candidates");
             for ty in candidate.ty().as_adts() {
+                rg_std::check_cancel!(self.context, "implementation candidates");
                 for impl_ref in self.impls_for_type_def(ty.def)? {
+                    rg_std::check_cancel!(self.context, "implementation candidates");
                     impls.push(impl_ref);
                 }
             }
@@ -43,13 +46,31 @@ where
     }
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
-    pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.context.item_lookup().impls_for_type(ty))
+    pub fn impls_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
+        let mut impls = UniqueVec::new();
+        for candidate in self.context.item_lookup().impls_for_type(ty) {
+            rg_std::check_cancel!(self.context, "implementation candidates");
+            impls.push(candidate);
+        }
+        rg_std::check_cancel!(self.context, "implementation candidates");
+        Ok(impls)
     }
 
     /// Returns impl blocks that resolve to the requested trait.
-    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
-        Ok(self.context.item_lookup().impls_for_trait(trait_ref))
+    pub fn impls_for_trait(
+        &self,
+        trait_ref: TraitDefRef,
+    ) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
+        let mut impls = UniqueVec::new();
+        for candidate in self.context.item_lookup().impls_for_trait(trait_ref) {
+            rg_std::check_cancel!(self.context, "implementation candidates");
+            impls.push(candidate);
+        }
+        rg_std::check_cancel!(self.context, "implementation candidates");
+        Ok(impls)
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -60,8 +81,14 @@ where
         &self,
         function: FunctionRef,
         receiver_ty: Option<&Ty>,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.context.item_paths().items().function_data(function)? else {
+    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
+        let Some(data) = self
+            .context
+            .item_paths()
+            .items()
+            .function_data(function)
+            .map_err(OperationError::Source)?
+        else {
             return Ok(UniqueVec::new());
         };
 
@@ -85,7 +112,7 @@ where
         trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: Option<&Ty>,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
         match receiver_ty {
             Some(receiver_ty) => {
                 self.impl_methods_for_trait_method_receiver(trait_ref, method_name, receiver_ty)
@@ -99,17 +126,20 @@ where
         trait_ref: TraitDefRef,
         method_name: &str,
         receiver_ty: &Ty,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
         let autoderef = Autoderef::new(self.context.clone());
         let matcher = ImplMatcher::new(self.context.clone());
         let table = InferenceTable::new();
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
-            let candidate = candidate?;
+            rg_std::check_cancel!(self.context, "implementation candidates");
+            let candidate = candidate.map_err(OperationError::Source)?;
             for ty in candidate.ty().as_adts() {
-                let trait_impls = self.context.item_lookup().trait_impls_for_type(ty.def);
+                rg_std::check_cancel!(self.context, "implementation candidates");
+                let trait_impls = self.context.item_lookup().trait_impls_for_type(ty.def)?;
                 for trait_impl in trait_impls {
+                    rg_std::check_cancel!(self.context, "implementation candidates");
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }
@@ -117,18 +147,21 @@ where
                     // args. Reuse method lookup's applicability check so implementation lookup
                     // follows the receiver the user actually called the method on.
                     if !matcher
-                        .trait_impl_applicability(trait_impl, ty, &table)?
+                        .trait_impl_applicability(trait_impl, ty, &table)
+                        .map_err(OperationError::Source)?
                         .is_applicable()
                     {
                         continue;
                     }
                     for function in self.matching_impl_methods(trait_impl.impl_ref, method_name)? {
+                        rg_std::check_cancel!(self.context, "implementation candidates");
                         functions.push(function);
                     }
                 }
             }
         }
 
+        rg_std::check_cancel!(self.context, "implementation candidates");
         Ok(functions)
     }
 
@@ -136,13 +169,16 @@ where
         &self,
         trait_ref: TraitDefRef,
         method_name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
         let mut functions = UniqueVec::new();
         for impl_ref in self.impls_for_trait(trait_ref)? {
+            rg_std::check_cancel!(self.context, "implementation candidates");
             for function in self.matching_impl_methods(impl_ref, method_name)? {
+                rg_std::check_cancel!(self.context, "implementation candidates");
                 functions.push(function);
             }
         }
+        rg_std::check_cancel!(self.context, "implementation candidates");
         Ok(functions)
     }
 
@@ -150,13 +186,20 @@ where
         &self,
         impl_ref: ImplRef,
         method_name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
-        let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
+    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
+        let Some(data) = self
+            .context
+            .item_paths()
+            .items()
+            .impl_data(impl_ref)
+            .map_err(OperationError::Source)?
+        else {
             return Ok(UniqueVec::new());
         };
 
         let mut functions = UniqueVec::new();
         for item in &data.items {
+            rg_std::check_cancel!(self.context, "implementation candidates");
             let &AssocItemId::Function(id) = item else {
                 continue;
             };
@@ -164,7 +207,12 @@ where
                 origin: impl_ref.origin,
                 id,
             };
-            let Some(function_data) = self.context.item_paths().items().function_data(function)?
+            let Some(function_data) = self
+                .context
+                .item_paths()
+                .items()
+                .function_data(function)
+                .map_err(OperationError::Source)?
             else {
                 continue;
             };
@@ -173,6 +221,7 @@ where
             }
             functions.push(function);
         }
+        rg_std::check_cancel!(self.context, "implementation candidates");
         Ok(functions)
     }
 }

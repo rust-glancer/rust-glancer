@@ -7,8 +7,8 @@
 //! make those declarations available to workspace-wide features, but the outline of the current
 //! document should still match what is on screen before save.
 
+use rg_ir_model::Span;
 use rg_ir_view::SymbolKind;
-use rg_parse::Span;
 use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast, ast::HasModuleItem as _};
 
 use crate::DocumentSymbol;

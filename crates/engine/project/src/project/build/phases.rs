@@ -8,8 +8,11 @@
 
 use anyhow::Context as _;
 
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb, CrateBodiesCoverage, PackageBodiesCoverage};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_body_ir::{
+    BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, CrateBodiesCoverage, PackageBodiesCoverage,
+};
+use rg_def_map::DefMapDb;
+use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
@@ -286,28 +289,40 @@ pub(super) fn build(
         .into_iter()
         .map(PackageEntry::offloaded_with)
         .collect();
-    let baseline_body_ir =
-        BodyIrDb::from_package_store(PackageStore::from_entries(body_ir_entries));
-    let mut body_builder = baseline_body_ir
-        .builder(
-            &parse,
-            &def_map,
-            &semantic_ir,
-            build_plan.source_packages.as_slice(),
-            &copy_compact_source_packages,
-            &mut names,
-            loaders.def_map,
-            loaders.semantic_ir,
-            &rebuild_subset,
-        )
-        .worker_limit(indexing_preference.body_ir_worker_limit());
-    body_builder = match split_indexing_mode {
-        SplitIndexingMode::Full => body_builder.configured_bodies(body_ir_policy),
-        SplitIndexingMode::EarlyStart => body_builder.coverage_only(body_ir_policy),
-    };
-    let body_ir = body_builder
-        .build()
-        .context("while attempting to build body ir db")?;
+    let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(body_ir_entries));
+    let body_builder = BodyIrBuilder::new(
+        &parse,
+        &def_map,
+        &semantic_ir,
+        build_plan.source_packages.as_slice(),
+        &copy_compact_source_packages,
+        &mut names,
+        loaders.def_map,
+        loaders.semantic_ir,
+        &rebuild_subset,
+    )
+    .worker_limit(indexing_preference.body_ir_worker_limit());
+    match split_indexing_mode {
+        SplitIndexingMode::Full => {
+            let products = body_builder
+                .configured_bodies(body_ir_policy)
+                .build()
+                .context("build body products")?;
+            body_ir
+                .replace_built_packages(products)
+                .context("assemble body packages")?;
+        }
+        SplitIndexingMode::EarlyStart => {
+            for (package, coverage) in body_builder
+                .prepare_coverage(body_ir_policy)
+                .context("prepare body coverage")?
+            {
+                body_ir
+                    .replace_package(package, coverage)
+                    .context("initialize body package directory")?;
+            }
+        }
+    }
     // This validation covers both captured late files and the missing-path probes that answered
     // macro source-file requests, so a concurrent source change rejects the whole candidate.
     parse
@@ -369,7 +384,8 @@ pub(super) fn build(
 #[derive(MemorySize)]
 pub(super) struct PackageBuildPlan {
     pub(super) source_packages: PhasePackageSet,
-    /// One compact DefMap directory per cache hit; source-built slots have no usable old directory.
+    /// A [`rg_def_map::PackageDefMapsManifest`] for each cache hit, mapping files to crate payloads.
+    /// Packages rebuilt from source have no valid cached manifest.
     pub(super) def_map_manifests: Vec<Option<rg_def_map::PackageDefMapsManifest>>,
     /// Exact cache-hit coverage plus a conservative seed for packages rebuilt immediately.
     pub(super) body_ir_coverage: Vec<PackageBodiesCoverage>,
@@ -423,9 +439,9 @@ impl PackageBuildPlan {
                 .collect(),
         );
 
-        // Shape both provisional stores in package-slot order. Cache hits keep the DefMap directory
+        // Shape both provisional stores in package-slot order. Cache hits keep the DefMap manifest
         // and exact Body IR coverage accepted by probing. Source packages have no valid old
-        // directory and receive conservative Body coverage that their build output replaces.
+        // manifest and receive conservative Body coverage that their build output replaces.
         let (def_map_manifests, body_ir_coverage) = parse
             .packages()
             .iter()

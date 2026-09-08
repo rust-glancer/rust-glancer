@@ -1,9 +1,8 @@
 //! Document symbol query for editor outlines.
 
 use anyhow::Result;
-use rg_ir_model::CrateRef;
+use rg_ir_model::{CrateRef, FileId};
 use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
-use rg_parse::FileId;
 
 use crate::model::{DocumentOutline, DocumentSymbol};
 

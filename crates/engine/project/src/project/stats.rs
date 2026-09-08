@@ -5,7 +5,8 @@
 //! intentionally absent from memory.
 
 use rg_body_ir::BodyIrStats;
-use rg_def_map::{DefMapDb, DefMapStats, PackageSlot};
+use rg_def_map::{DefMapDb, DefMapStats};
+use rg_ir_model::PackageSlot;
 use rg_semantic_ir::SemanticIrStats;
 use rg_std::MemorySize;
 

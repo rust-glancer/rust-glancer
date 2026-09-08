@@ -5,17 +5,15 @@ use expect_test::Expect;
 use crate::ItemResolutionQuery;
 use crate::{CrateItemQuery, ItemLookupQuery, ItemStore, ItemStoreQuery};
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
-use rg_ir_model::Path;
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, TypeAliasId};
+use rg_ir_model::{
+    AssocItemId, ConstId, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId, ImplRef,
+    ItemId, ModuleId, ModuleRef, PackageSlot, Path, TraitDefRef, TypeAliasId, TypeDefId,
+    TypeDefRef,
+};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
-
-use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitDefRef, TypeDefId,
-    TypeDefRef,
-};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);
@@ -110,7 +108,7 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
                         CrateSemanticIrSnapshot {
                             project: self.project,
                             crate_ref: CrateRef {
-                                package: rg_def_map::PackageSlot(package_slot),
+                                package: PackageSlot(package_slot),
                                 crate_id: CrateId(target.id.0),
                             },
                             target_name: &target.name,
@@ -163,8 +161,9 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "resident semantic IR fixture",
                 ));
         let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
-        let lookup_query = ItemLookupQuery::build_from(&crate_items)
-            .expect("fixture semantic lookup query should build");
+        let lookup_query =
+            ItemLookupQuery::build_from(&crate_items, &rg_std::CancellationToken::new())
+                .expect("fixture semantic lookup query should build");
         let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
@@ -187,13 +186,18 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         type_defs
             .into_iter()
             .map(|ty| {
-                let trait_impls = lookup_query.trait_impls_for_type(ty);
+                let trait_impls = lookup_query
+                    .trait_impls_for_type(ty)
+                    .expect("candidate lookup succeeds");
                 let mut traits = UniqueVec::new();
                 let mut trait_functions = UniqueVec::new();
                 let mut trait_impl_functions = UniqueVec::new();
                 for trait_impl in &trait_impls {
                     traits.push(trait_impl.trait_ref);
-                    if let Some(functions) = lookup_query.trait_functions(trait_impl.trait_ref) {
+                    if let Some(functions) = lookup_query
+                        .trait_functions(trait_impl.trait_ref)
+                        .expect("candidate lookup succeeds")
+                    {
                         trait_functions.extend(functions.iter().copied());
                     }
                     if let Some(data) = crate_items
@@ -218,7 +222,6 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "impls",
                     lookup_query
                         .impls_for_type(ty)
-                        .into_iter()
                         .map(|impl_ref| self.render_impl_ref(&semantic_ir_txn, impl_ref))
                         .collect(),
                 );
@@ -321,7 +324,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 
         (
             CrateRef {
-                package: rg_def_map::PackageSlot(package_slot),
+                package: PackageSlot(package_slot),
                 crate_id: CrateId(target.id.0),
             },
             target,

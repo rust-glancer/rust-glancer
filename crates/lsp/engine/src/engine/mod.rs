@@ -199,4 +199,102 @@ mod tests {
 
         assert!(queued.cancellation.is_cancelled());
     }
+
+    #[tokio::test]
+    async fn dropping_running_query_releases_the_lane_for_the_next_request() {
+        use crate::memory::{AllocatorStats, MemoryControl};
+        use std::sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        };
+        use std::time::Duration;
+
+        #[derive(Debug, Default)]
+        struct QueryBarrier {
+            armed: Mutex<Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>>,
+            purges: AtomicUsize,
+        }
+        impl MemoryControl for QueryBarrier {
+            fn allocator_stats(&self) -> Option<AllocatorStats> {
+                let barrier = self.armed.lock().expect("query barrier lock").take();
+                if let Some((started, resume)) = barrier {
+                    // The lifecycle has passed its queued-cancellation check and now owns cleanup.
+                    started.send(()).expect("query observer exists");
+                    resume
+                        .recv_timeout(Duration::from_secs(5))
+                        .expect("query owner releases barrier");
+                }
+                None
+            }
+            fn try_purge_allocator(&self) -> bool {
+                self.purges.fetch_add(1, Ordering::SeqCst);
+                false
+            }
+        }
+        let (fixture, _) = test_fixture::fixture_crate_with_markers(
+            r#"
+//- /Cargo.toml
+[package]
+name = "running_cancellation"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Ready;
+"#,
+        );
+        let memory = Arc::new(QueryBarrier::default());
+        let engine = EngineHandle::spawn(
+            memory.clone(),
+            ServiceNotificationsSink::from_publisher(NoopNotifications),
+        );
+        engine
+            .request(|respond_to| EngineCommand::Initialize {
+                root: fixture.path(""),
+                configuration: rg_lsp_proto::AnalysisConfig {
+                    sysroot_discovery: rg_lsp_proto::SysrootDiscovery::Disabled,
+                    ..Default::default()
+                }
+                .into(),
+                respond_to,
+            })
+            .await
+            .expect("fixture engine initializes");
+        let purges_before = memory.purges.load(Ordering::SeqCst);
+        let (started, observed) = mpsc::sync_channel(1);
+        let (resume, paused) = mpsc::channel();
+        *memory.armed.lock().expect("query barrier lock") = Some((started, paused));
+        let mut abandoned = Box::pin(engine.query(|respond_to| EngineCommand::WorkspaceSymbol {
+            query: "Ready".into(),
+            respond_to,
+        }));
+        let mut context = Context::from_waker(noop_waker_ref());
+        assert!(abandoned.as_mut().poll(&mut context).is_pending());
+        observed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("request reaches running lifecycle");
+        let mut next = Box::pin(engine.query(|respond_to| EngineCommand::WorkspaceSymbol {
+            query: "Ready".into(),
+            respond_to,
+        }));
+        assert!(next.as_mut().poll(&mut context).is_pending());
+        drop(abandoned);
+        resume
+            .send(())
+            .expect("running request remains at its checkpoint");
+        let result = tokio::time::timeout(Duration::from_secs(5), next)
+            .await
+            .expect("next queued request can run")
+            .expect("saved project remains queryable");
+        assert_eq!(result.value().len(), 1);
+        assert_eq!(result.value()[0].name, "Ready");
+        assert!(
+            memory.purges.load(Ordering::SeqCst) > purges_before,
+            "abandoned request finishes cleanup before the next command"
+        );
+        engine
+            .request(EngineCommand::Shutdown)
+            .await
+            .expect("fixture engine shuts down");
+    }
 }
