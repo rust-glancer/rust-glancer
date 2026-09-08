@@ -6,7 +6,7 @@ use std::{
 
 use rg_arena::Arena;
 use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
-use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
+use rg_syntax::{Edition, LexedStr, Parse as SyntaxParse, SourceFile, SyntaxKind};
 use rg_text::RustEdition;
 
 use crate::{fs, line_index::LineIndex};
@@ -20,6 +20,21 @@ use wincode::{SchemaRead, SchemaWrite};
 /// editor text that a caller wants to inspect without adding it to the saved parse database.
 pub fn parse_source_file(source: &str, edition: RustEdition) -> SyntaxParse<SourceFile> {
     SourceFile::parse(source, syntax_edition(edition))
+}
+
+/// Inspect the token at a UTF-8 byte offset without building a syntax tree. Comments and
+/// whitespace are included, so callers can decide whether they need to parse the source.
+/// Token ranges include their start and exclude their end: a shared boundary selects the
+/// following token, and offsets at or beyond the end of the source return `None`.
+pub fn lexical_token_kind_at(
+    source: &str,
+    edition: RustEdition,
+    offset: u32,
+) -> Option<SyntaxKind> {
+    let tokens = LexedStr::new(syntax_edition(edition), source);
+    (0..tokens.len())
+        .find(|&index| tokens.text_range(index).contains(&(offset as usize)))
+        .map(|index| tokens.kind(index))
 }
 
 /// Translate the project edition into the parser's edition vocabulary.

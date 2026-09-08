@@ -33,7 +33,7 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
     ) -> anyhow::Result<Vec<Highlight>> {
         let source = SourceDocumentationQuery::new(self.0);
         let Some(syntax) = source
-            .syntax(crate_ref, file)
+            .syntax_for_query(crate_ref, file, None)
             .context("read highlight syntax")?
         else {
             return Ok(Vec::new());

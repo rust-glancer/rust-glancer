@@ -16,7 +16,9 @@ pub use self::{
     current_source::CurrentSource,
     db::{PackageFileRef, ParseDb, SavedFileRefresh},
     declaration_header::{DeclarationAssociationIndex, DeclarationHeaderCursor},
-    file::{ParsedFile, ParsedFileSnapshot, parse_source_file, syntax_edition},
+    file::{
+        ParsedFile, ParsedFileSnapshot, lexical_token_kind_at, parse_source_file, syntax_edition,
+    },
     line_index::{LineColumnSpan, LineEndings, LineIndex, Position},
     module::{
         ModuleFileContext, ModuleFileResolution, enclosing_inline_module_path, module_path_override,

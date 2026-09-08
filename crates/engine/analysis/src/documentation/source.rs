@@ -10,7 +10,7 @@ use rg_ir_view::{
     item::documentation::{DocumentationLinkResolution, DocumentationView},
     source::{DocumentationPlacement, DocumentationSource, DocumentationSourceView},
 };
-use rg_parse::{TextRangeMap, parse_source_file};
+use rg_parse::{TextRangeMap, lexical_token_kind_at, parse_source_file};
 use rg_std::ExpectedUnique;
 use rg_syntax::{
     AstNode as _, SourceFile, SyntaxKind, SyntaxNode, TextRange, TextSize,
@@ -165,7 +165,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<SourceDocumentationLink>> {
         let Some(syntax) = self
-            .syntax(crate_ref, file)
+            .syntax_for_query(crate_ref, file, Some(offset))
             .context("read documentation syntax")?
         else {
             return Ok(None);
@@ -234,12 +234,15 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         )
     }
 
-    /// Read the captured editor syntax when this request has it for the file, otherwise parse
-    /// the saved text. This also supplies saved syntax for docs in a module's other file.
-    pub(crate) fn syntax(
+    /// Reuse captured editor syntax, or parse saved text when the request has no syntax for it.
+    /// Before parsing for a link query, check whether its cursor could be in documentation.
+    /// `None` can mean syntax is unavailable or that the cursor made parsing unnecessary.
+    /// Highlighting and counterpart docs need the whole file and pass no cursor.
+    pub(crate) fn syntax_for_query(
         &self,
         crate_ref: CrateRef,
         file: FileId,
+        link_offset: Option<u32>,
     ) -> anyhow::Result<Option<SourceFile>> {
         let edition = self
             .0
@@ -249,11 +252,24 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         if let Some(source) = self.0.current_source(crate_ref.package, file) {
             return Ok(source.parse(edition).map(|parsed| parsed.tree()));
         }
-        Ok(self
+        let Some(text) = self
             .0
             .saved_source_text_for_file(crate_ref.package, file)
             .context("read saved documentation source")?
-            .map(|text| parse_source_file(&text, edition).tree()))
+        else {
+            return Ok(None);
+        };
+        // Saved files have no retained syntax tree. Lexing is enough to rule out ordinary
+        // code without constructing one on every hover or navigation request. Use Rust tokens
+        // so multiline comments and raw doc strings work too; the syntax check in `link_at`
+        // still decides whether a string belongs to a doc attribute.
+        if let Some(offset) = link_offset {
+            let kind = lexical_token_kind_at(&text, edition, offset);
+            if !matches!(kind, Some(SyntaxKind::COMMENT | SyntaxKind::STRING)) {
+                return Ok(None);
+            }
+        }
+        Ok(Some(parse_source_file(&text, edition).tree()))
     }
 
     /// Collect complete documents for the comments in this syntax, associating owners when possible.
@@ -378,7 +394,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             return Ok(());
         }
         let Some(syntax) = self
-            .syntax(crate_ref, other)
+            .syntax_for_query(crate_ref, other, None)
             .context("read counterpart syntax")?
         else {
             return Ok(());

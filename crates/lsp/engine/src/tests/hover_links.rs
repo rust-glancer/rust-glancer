@@ -412,6 +412,10 @@ async fn source_doc_links_hover_and_navigate() {
         pub struct Disambiguated;
         pub struct Record;
         pub fn Record() {}
+        #[doc = r#"
+        [`Pro$raw_attribute$file`]
+        "#]
+        pub struct RawAttributeDocs;
 
         //- /src/api.rs
         //! [pro$reference$file][profile-id] and [`Pro$inner$file`].
@@ -426,6 +430,7 @@ async fn source_doc_links_hover_and_navigate() {
                 LspQuery::goto_definition("source member navigation", "method"),
                 LspQuery::goto_definition("source field navigation", "field"),
                 LspQuery::goto_definition("source attribute navigation", "attribute"),
+                LspQuery::goto_definition("source raw attribute navigation", "raw_attribute"),
                 LspQuery::goto_definition("source block navigation", "block"),
                 LspQuery::goto_definition("source disambiguator navigation", "kind"),
                 LspQuery::goto_definition("cross-file reference definition", "reference"),
@@ -450,6 +455,9 @@ async fn source_doc_links_hover_and_navigate() {
         - /src/lib.rs:6:22-6:26
 
         source attribute navigation
+        - /src/lib.rs:0:11-0:18
+
+        source raw attribute navigation
         - /src/lib.rs:0:11-0:18
 
         source block navigation

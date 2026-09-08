@@ -47,7 +47,7 @@ pub use crate::{
     },
     token_text::TokenText,
 };
-pub use parser::{Edition, SyntaxKind, T};
+pub use parser::{Edition, LexedStr, SyntaxKind, T};
 pub use rustc_literal_escaper as unescape;
 pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 
