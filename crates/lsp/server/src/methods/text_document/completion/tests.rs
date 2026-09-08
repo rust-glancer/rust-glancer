@@ -88,8 +88,7 @@ async fn did_change_retries_completion_at_rebased_position() {
     };
 
     // Both edits must describe the final target document revision, not the shorter text from the
-    // first attempt.
-    // attempt. Applying them in source order produces the expected final document.
+    // first attempt. Applying them in source order produces the expected final document.
     let mut applied = "impl RwLock".to_string();
     applied.replace_range(5..11, &primary_edit.new_text);
     applied.insert_str(0, &additional_edit.new_text);
@@ -109,8 +108,7 @@ async fn cancelled_completion_does_not_restart_after_did_change() {
     attempt.expect_cancelled().await;
 
     lsp.type_at_cursor("X").await;
-    lsp.expect_no_attempt().await;
-
+    // Shutdown drains the transport and checks that no additional engine attempt was submitted.
     lsp.shutdown().await;
 }
 
@@ -143,6 +141,7 @@ struct CompletionLspFixture {
     client_input: DuplexStream,
     client_output: BufReader<DuplexStream>,
     server: JoinHandle<()>,
+    engine_server: JoinHandle<()>,
     attempts: mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
     opened: Arc<Notify>,
     changed: Arc<Notify>,
@@ -156,7 +155,7 @@ struct CompletionLspFixture {
 impl CompletionLspFixture {
     async fn open(marked_text: &str) -> Self {
         let (text, cursor) = Self::text_and_cursor(marked_text);
-        let (engine_client, attempts) = GatedCompletionEngine::spawn();
+        let (engine_client, attempts, engine_server) = GatedCompletionEngine::spawn();
         let editor = EditorStateHandle::default();
         let scheduler = CompletionScheduler::default();
         let opened = Arc::new(Notify::new());
@@ -191,6 +190,7 @@ impl CompletionLspFixture {
             client_input,
             client_output: BufReader::new(client_output),
             server,
+            engine_server,
             attempts,
             opened,
             changed,
@@ -357,17 +357,6 @@ impl CompletionLspFixture {
         );
     }
 
-    async fn expect_no_attempt(&mut self) {
-        tokio::task::yield_now().await;
-        match self.attempts.try_recv() {
-            Err(mpsc::error::TryRecvError::Empty) => {}
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                panic!("test engine attempt channel closed unexpectedly")
-            }
-            Ok(_) => panic!("editor change restarted a cancelled completion request"),
-        }
-    }
-
     async fn shutdown(mut self) {
         let id = self.next_id();
         self.send(serde_json::json!({
@@ -391,6 +380,18 @@ impl CompletionLspFixture {
             .await
             .expect("raw LSP server should stop after exit")
             .expect("raw LSP server task should not panic");
+
+        // The LSP service has dropped its engine client. Wait for the RPC server and all its
+        // handlers to finish before checking the remaining observations. An empty queue while
+        // those tasks are still running would not establish that no extra attempt was submitted.
+        tokio::time::timeout(TEST_TIMEOUT, self.engine_server)
+            .await
+            .expect("engine RPC server should stop after its client is dropped")
+            .expect("engine RPC handlers should not panic");
+        assert!(
+            self.attempts.recv().await.is_none(),
+            "no unobserved completion attempt should remain after shutdown"
+        );
     }
 
     async fn send(&mut self, value: serde_json::Value) {
@@ -574,21 +575,20 @@ impl GatedCompletionEngine {
     fn spawn() -> (
         EngineClient,
         mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
+        JoinHandle<()>,
     ) {
         let (attempts, attempt_rx) = mpsc::unbounded_channel();
         let engine = Self { attempts };
         let (client_transport, server_transport) = tarpc::transport::channel::unbounded();
         let server = BaseChannel::with_defaults(server_transport);
-        tokio::spawn(
+        let engine_server = tokio::spawn(
             server
                 .execute(engine.serve())
-                .for_each(|response| async move {
-                    tokio::spawn(response);
-                }),
+                .for_each_concurrent(None, |response| response),
         );
         let client =
             EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
-        (EngineClient::new(client), attempt_rx)
+        (EngineClient::new(client), attempt_rx, engine_server)
     }
 }
 

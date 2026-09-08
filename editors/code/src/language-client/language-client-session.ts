@@ -15,7 +15,6 @@ import {
 import { SERVER_COMMANDS, SERVER_NOTIFICATIONS } from "../commands";
 import { ExtensionConfig } from "../config";
 import { hoverMiddleware } from "../features/hover-actions";
-import { isExtensionTestMode } from "../logging/server-output-channel";
 import {
   ClientStatus,
   type ActiveWorkspaceState,
@@ -23,10 +22,6 @@ import {
   type DeferredIndexingOutcome,
 } from "../status/client-status";
 import { StatusView } from "../status/status-view";
-import {
-  CompletionObserver,
-  type CompletionObservation,
-} from "../test-support/completion-observer";
 import { isRustFile } from "../utils/lsp-utils";
 import { ResolvedServer } from "./server";
 
@@ -34,15 +29,12 @@ export interface LanguageClientSessionSnapshot extends ClientStatusSnapshot {
   readonly workspaceRoot: string;
   readonly workspaceUri: string;
   readonly hasClient: boolean;
-  readonly completionObservations: readonly CompletionObservation[];
-  readonly activeCompletionAttempts: number;
 }
 
 export class LanguageClientSession implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
   private readonly clientStatus: ClientStatus;
-  private completionObserver: CompletionObserver | undefined;
 
   public constructor(
     private readonly extensionLog: vscode.LogOutputChannel,
@@ -84,8 +76,6 @@ export class LanguageClientSession implements vscode.Disposable {
     this.extensionLog.info(`server source: ${statusDetails.serverSource}`);
     this.clientStatus.starting(statusDetails);
 
-    const completionObserver = isExtensionTestMode() ? new CompletionObserver() : undefined;
-    this.completionObserver = completionObserver;
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "rust" }],
       diagnosticCollectionName: "rust-glancer",
@@ -97,7 +87,7 @@ export class LanguageClientSession implements vscode.Disposable {
         cargo: config.cargo,
         cache: config.cache,
       },
-      middleware: this.middleware(completionObserver),
+      middleware: this.middleware(),
     };
 
     const client = new LanguageClient(
@@ -120,8 +110,6 @@ export class LanguageClientSession implements vscode.Disposable {
             break;
           case State.Stopped:
             if (this.client === client) {
-              this.completionObserver?.dispose();
-              this.completionObserver = undefined;
               this.clientStatus.stopped("language client stopped", statusDetails);
             }
             break;
@@ -158,8 +146,6 @@ export class LanguageClientSession implements vscode.Disposable {
       this.extensionLog.info("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
-      this.completionObserver = undefined;
-      completionObserver?.dispose();
       this.clientState?.dispose();
       this.clientState = undefined;
       this.clientStatus.failed(String(error), statusDetails);
@@ -202,9 +188,6 @@ export class LanguageClientSession implements vscode.Disposable {
   public async stop(): Promise<void> {
     const client = this.client;
     this.client = undefined;
-    const completionObserver = this.completionObserver;
-    this.completionObserver = undefined;
-    completionObserver?.dispose();
     this.clientState?.dispose();
     this.clientState = undefined;
 
@@ -226,8 +209,6 @@ export class LanguageClientSession implements vscode.Disposable {
       workspaceRoot: this.workspaceRoot(),
       workspaceUri: this.workspaceKey(),
       hasClient: this.client !== undefined,
-      completionObservations: this.completionObserver?.snapshot() ?? [],
-      activeCompletionAttempts: this.completionObserver?.activeAttemptCount() ?? 0,
       ...status,
     };
   }
@@ -236,12 +217,9 @@ export class LanguageClientSession implements vscode.Disposable {
     void this.stop();
   }
 
-  private middleware(
-    completionObserver: CompletionObserver | undefined,
-  ): LanguageClientOptions["middleware"] {
+  private middleware(): LanguageClientOptions["middleware"] {
     return {
       ...hoverMiddleware(() => this.client, this.extensionLog),
-      ...completionObserver?.middleware(),
       handleWorkDoneProgress: (token, params, next) => {
         this.clientStatus.handleWorkDoneProgress(token, params, this.isActiveRustDocumentDirty());
         next(token, params);

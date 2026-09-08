@@ -16,8 +16,8 @@ export default defineConfig({
   env: {
     RUST_GLANCER_VSCODE_USER_DATA_DIR: userDataDir,
   },
-  // The rapid-typing test needs renderer key events: programmatic document edits do not exercise
-  // VS Code's completion trigger path. Keep the debugger local and let Chromium choose the port.
+  // The completion smoke test needs renderer input: programmatic document edits do not exercise
+  // automatic suggestions. Keep the debugger local and let Chromium choose the port.
   launchArgs: [
     "--disable-extensions",
     "--disable-workspace-trust",

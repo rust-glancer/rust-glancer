@@ -1,295 +1,123 @@
 import * as assert from "node:assert/strict";
 import * as vscode from "vscode";
 
-import type { CompletionObservation } from "../src/test-support/completion-observer";
-import {
-  currentCompletionObservations,
-  readySession,
-  waitForClientState,
-  waitForCompletionObservation,
-} from "./extension-harness";
-import { RendererKeyboard } from "./renderer-keyboard";
+import { waitFor, withTimeout } from "./async";
+import { RendererEditor } from "./renderer-editor";
 
-interface EditorSettings {
-  readonly quickSuggestions: unknown;
-  readonly quickSuggestionsDelay: unknown;
-  readonly wordBasedSuggestions: unknown;
-}
+/** Exercise automatic suggestions and keyboard acceptance against the real language server. */
+export async function completeInEditor(document: vscode.TextDocument): Promise<void> {
+  assert.equal(document.isDirty, false, "completion fixture should start from its saved contents");
+  const editor = await vscode.window.showTextDocument(document);
+  const config = vscode.workspace.getConfiguration("editor", document.uri);
+  const settings = {
+    quickSuggestions: { other: "on", comments: "off", strings: "off" },
+    quickSuggestionsDelay: 0,
+    wordBasedSuggestions: "allDocuments",
+  };
+  const previousSettings = Object.keys(settings).map(
+    (key) => [key, config.inspect<unknown>(key)?.globalValue] as const,
+  );
+  const eol = document.eol === vscode.EndOfLine.CRLF ? "\r\n" : "\n";
+  const beforeCursor = `${document.getText()}${eol}fn example() {${eol}    let note = model::Note::`;
+  const afterCursor = `;${eol}}${eol}`;
+  let renderer: RendererEditor | undefined;
+  let failed = false;
+  let failure: unknown;
 
-interface EditorPoint {
-  readonly version: number;
-  readonly line: number;
-  readonly character: number;
-}
-
-/** Drives native renderer typing while exposing the completion lifecycle as named scenarios. */
-export class CompletionScenario {
-  private keyboard: RendererKeyboard | undefined;
-
-  private constructor(
-    private readonly editor: vscode.TextEditor,
-    private readonly editorConfig: vscode.WorkspaceConfiguration,
-    private readonly originalText: string,
-    private readonly previousSettings: EditorSettings,
-  ) {}
-
-  public static async run(document: vscode.TextDocument): Promise<void> {
-    const editor = await vscode.window.showTextDocument(document);
-    const editorConfig = vscode.workspace.getConfiguration("editor", document.uri);
-    const scenario = new CompletionScenario(editor, editorConfig, document.getText(), {
-      quickSuggestions: editorConfig.inspect<unknown>("quickSuggestions")?.globalValue,
-      quickSuggestionsDelay: editorConfig.inspect<unknown>("quickSuggestionsDelay")?.globalValue,
-      wordBasedSuggestions: editorConfig.inspect<unknown>("wordBasedSuggestions")?.globalValue,
-    });
-
-    try {
-      await scenario.enableImmediateQuickSuggestions();
-      scenario.keyboard = await RendererKeyboard.connect();
-
-      // Reuse the same open document and LSP session. Each run checks that VS Code can keep
-      // filtering one complete semantic list locally without starting a provider refresh for
-      // every additional character.
-      for (let run = 1; run <= 3; run += 1) {
-        await scenario.completeThroughRapidClientFiltering(run);
-      }
-      await scenario.dismissWithoutOpeningASuccessor();
-    } finally {
-      await scenario.restore();
+  try {
+    for (const [key, value] of Object.entries(settings)) {
+      await withTimeout(config.update(key, value, vscode.ConfigurationTarget.Global), `set ${key}`);
     }
-  }
+    renderer = await RendererEditor.connect();
 
-  private async enableImmediateQuickSuggestions(): Promise<void> {
-    await this.editorConfig.update(
-      "quickSuggestions",
-      { other: "on", comments: "off", strings: "off" },
-      vscode.ConfigurationTarget.Global,
-    );
-    await this.editorConfig.update("quickSuggestionsDelay", 0, vscode.ConfigurationTarget.Global);
-    await this.editorConfig.update(
-      "wordBasedSuggestions",
-      "allDocuments",
-      vscode.ConfigurationTarget.Global,
-    );
-    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-  }
-
-  private async completeThroughRapidClientFiltering(run: number): Promise<void> {
-    await this.prepareScratch();
-    const before = await currentCompletionObservations();
-
-    // Ordinary quick suggestions produce one complete semantic list. The remaining prefix arrives
-    // through the renderer's native input path and should be filtered from that list client-side.
-    await this.type("Comp");
-    const initial = this.currentPoint();
-    const initialReady = await waitForCompletionObservation(
-      before.length,
-      (observation) =>
-        observation.phase === "finish" &&
-        observation.outcome === "ready" &&
-        observation.observedVersion === initial.version &&
-        observation.incomplete === false &&
-        hasSemanticFixture(observation),
-      `run ${run} initial semantic quick suggestion`,
-    );
-    assert.equal(initialReady.outcome, "ready");
-
-    await this.type("l");
-    await this.type("etion");
-    await this.type("Fix");
-    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(true);
-
-    // Accepting the only matching semantic item gives this completion session a concrete end. By
-    // the time the exact edit and the hidden widget are observed, any refresh belonging to the
-    // session must already have entered the provider middleware.
-    const acceptedText = `${this.originalText}\nimpl CompletionFixture`;
-    const accepted = waitForDocumentText(this.editor.document, acceptedText);
-    await this.keyboardOrThrow().acceptSelectedSuggestion();
-    await accepted;
-    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(false);
-    await waitForClientState((state) => state.session?.activeCompletionAttempts === 0);
-
-    const observations = (await currentCompletionObservations()).slice(before.length);
-    assert.deepEqual(
-      observations
-        .filter((observation) => observation.phase === "start")
-        .map((observation) => observation.attempt),
-      [initialReady.attempt],
-      `run ${run} must filter the complete semantic result without another provider request: ${JSON.stringify(observations)}`,
-    );
-  }
-
-  private async dismissWithoutOpeningASuccessor(): Promise<void> {
-    await this.prepareScratch();
-    const before = await currentCompletionObservations();
-
-    await this.type("Comp");
-    const initial = this.currentPoint();
-    await waitForCompletionObservation(
-      before.length,
-      (observation) =>
-        observation.phase === "finish" &&
-        observation.outcome === "ready" &&
-        observation.observedVersion === initial.version &&
-        observation.incomplete === false &&
-        hasSemanticFixture(observation),
-      "dismissal setup semantic result",
-    );
-
-    await this.type("l");
-    const unchanged = this.currentPoint();
-    await this.keyboardOrThrow().escape();
-    await this.keyboardOrThrow().waitForSuggestWidgetVisibility(false);
-
-    const state = await waitForClientState(
-      (candidate) => candidate.session?.activeCompletionAttempts === 0,
-    );
-    assert.equal(state.session?.activeCompletionAttempts, 0);
-    const observations = (await currentCompletionObservations()).slice(before.length);
-    assert.ok(
-      !observations.some(
-        (observation) => observation.phase === "start" && isAt(observation, unchanged),
-      ),
-      `complete results and Escape must not open a provider request at the unchanged point: ${JSON.stringify(observations)}`,
-    );
-  }
-
-  private async prepareScratch(): Promise<void> {
-    const document = this.editor.document;
-    const currentText = document.getText();
-    const wholeDocument = new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(currentText.length),
-    );
-    const scratch = `${this.originalText}\nimpl `;
-    assert.equal(
-      await this.editor.edit((edit) => edit.replace(wholeDocument, scratch)),
-      true,
-      "completion scratch setup should apply",
-    );
-    const end = document.positionAt(scratch.length);
-    this.editor.selection = new vscode.Selection(end, end);
-    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-  }
-
-  private async type(text: string): Promise<void> {
-    await vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup");
-    const document = this.editor.document;
-    const insertionOffset = document.offsetAt(this.editor.selection.active);
-    const textBefore = document.getText();
-    const expectedText = `${textBefore.slice(0, insertionOffset)}${text}${textBefore.slice(insertionOffset)}`;
-    const changed = waitForDocumentText(document, expectedText);
-    await this.keyboardOrThrow().type(text);
-    await changed.catch(async () => {
-      const activeElement = await this.keyboardOrThrow().activeElementDescription();
-      const currentText = document.getText();
-      assert.fail(
-        [
-          `renderer keyboard did not type ${JSON.stringify(text)}`,
-          `active element: ${activeElement}`,
-          `document version: ${document.version}`,
-          `selection: ${this.editor.selection.active.line}:${this.editor.selection.active.character}`,
-          `expected tail: ${JSON.stringify(expectedText.slice(-80))}`,
-          `current tail: ${JSON.stringify(currentText.slice(-80))}`,
-        ].join("; "),
+    for (const action of ["accept", "dismiss"] as const) {
+      const wholeDocument = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(document.getText().length),
       );
-    });
-  }
+      assert.equal(
+        await withTimeout(
+          editor.edit((edit) => edit.replace(wholeDocument, beforeCursor + afterCursor)),
+          "prepare completion input",
+        ),
+        true,
+      );
+      const cursor = document.positionAt(beforeCursor.length);
+      editor.selection = new vscode.Selection(cursor, cursor);
+      editor.revealRange(new vscode.Range(cursor, cursor));
+      await withTimeout(
+        vscode.commands.executeCommand("workbench.action.focusActiveEditorGroup"),
+        "focus completion editor",
+      );
+      await renderer.focus();
 
-  private currentPoint(): EditorPoint {
-    return {
-      version: this.editor.document.version,
-      line: this.editor.selection.active.line,
-      character: this.editor.selection.active.character,
-    };
-  }
+      // Only setup edits use the extension API. Input events must open suggestions automatically,
+      // and more typing must leave the desired item available for ordinary keyboard acceptance.
+      await renderer.type("ne");
+      await renderer.waitForSuggestion("new");
+      await renderer.type("w");
+      await waitFor(
+        "typed completion prefix",
+        () => document.getText(),
+        (text) => text === `${beforeCursor}new${afterCursor}`,
+      );
+      await renderer.waitForSuggestion("new");
 
-  private keyboardOrThrow(): RendererKeyboard {
-    assert.ok(this.keyboard, "renderer keyboard should be connected");
-    return this.keyboard;
-  }
-
-  private async restore(): Promise<void> {
-    this.keyboard?.dispose();
-    const document = this.editor.document;
-    const currentText = document.getText();
-    const currentDocument = new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(currentText.length),
-    );
-    assert.equal(
-      await this.editor.edit((edit) => edit.replace(currentDocument, this.originalText)),
-      true,
-      "completion fixture cleanup should restore the document",
-    );
-    assert.equal(
-      await document.save(),
-      true,
-      "completion fixture cleanup should restore the saved editor state",
-    );
-    await this.editorConfig.update(
-      "quickSuggestions",
-      this.previousSettings.quickSuggestions,
-      vscode.ConfigurationTarget.Global,
-    );
-    await this.editorConfig.update(
-      "quickSuggestionsDelay",
-      this.previousSettings.quickSuggestionsDelay,
-      vscode.ConfigurationTarget.Global,
-    );
-    await this.editorConfig.update(
-      "wordBasedSuggestions",
-      this.previousSettings.wordBasedSuggestions,
-      vscode.ConfigurationTarget.Global,
-    );
-    await waitForClientState((state) => readySession(state) !== undefined);
-  }
-}
-
-function waitForDocumentText(document: vscode.TextDocument, expectedText: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (error?: Error): void => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timeout);
-      changed.dispose();
-      if (error === undefined) {
-        resolve();
+      if (action === "accept") {
+        await renderer.acceptSuggestion("new");
+        // Word suggestions can insert a name, but only the semantic provider knows the call's
+        // arguments. This checks the accepted result without inspecting provider identities.
+        await waitFor(
+          "accepted function call",
+          () => document.getText(),
+          (text) => text === `${beforeCursor}new(id, body)${afterCursor}`,
+        );
       } else {
-        reject(error);
+        await renderer.escape();
+        assert.equal(document.getText(), `${beforeCursor}new${afterCursor}`);
       }
-    };
-    const changed = vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document === document && document.getText() === expectedText) {
-        finish();
-      }
-    });
-    const timeout = setTimeout(
-      () => finish(new Error("document did not observe renderer text")),
-      2_000,
-    );
-    if (document.getText() === expectedText) {
-      finish();
+      await renderer.waitForSuggestionsHidden();
     }
-  });
-}
-
-function isAt(observation: CompletionObservation, point: EditorPoint): boolean {
-  return (
-    observation.version === point.version &&
-    observation.line === point.line &&
-    observation.character === point.character
-  );
-}
-
-function hasSemanticFixture(observation: CompletionObservation): boolean {
-  return (
-    observation.candidates?.some(
-      (candidate) =>
-        candidate.label === "CompletionFixture" &&
-        candidate.kind === vscode.CompletionItemKind.Struct,
-    ) === true
-  );
+  } catch (error) {
+    failed = true;
+    failure = error;
+    if (renderer !== undefined) {
+      try {
+        console.error("Renderer state before cleanup:", await renderer.snapshot());
+      } catch (diagnosticError) {
+        console.error("Could not read renderer state:", diagnosticError);
+      }
+    }
+  } finally {
+    renderer?.dispose();
+    // Discard the unsaved scratch text. Every cleanup is attempted, and cleanup errors must not
+    // hide the original test failure. No source file needs to be written to disk for this test.
+    const cleanup = [
+      () => vscode.commands.executeCommand("workbench.action.files.revert", document.uri),
+      ...previousSettings.map(
+        ([key, value]) =>
+          () =>
+            config.update(key, value, vscode.ConfigurationTarget.Global),
+      ),
+    ];
+    const errors: unknown[] = [];
+    for (const restore of cleanup) {
+      try {
+        await withTimeout(restore(), "restore completion fixture");
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      if (failed) {
+        console.error("Completion cleanup failed:", errors);
+      } else {
+        failed = true;
+        failure = new AggregateError(errors, "Completion cleanup failed");
+      }
+    }
+  }
+  if (failed) {
+    throw failure;
+  }
 }
