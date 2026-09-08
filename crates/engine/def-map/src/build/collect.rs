@@ -21,8 +21,9 @@ use anyhow::Context as _;
 
 use crate::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
+    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding,
+    ScopeBindingProvenance, Visibility,
 };
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{
@@ -30,8 +31,8 @@ use rg_ir_model::{
     PackageSlot, Span,
 };
 use rg_item_tree::{
-    Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode,
-    ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
+    EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ItemKind, ItemNode, ItemTreeId,
+    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
     ModuleSource, Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_parse::{CargoTarget, ModuleFileContext, Package};
@@ -324,7 +325,7 @@ impl<'db> CrateScopeCollector<'db> {
             None,
             None,
             None,
-            root_file_tree.docs.clone(),
+            ModuleDocumentation::new(None, root_file_tree.docs.clone()),
             UserFacingAttrs::default(),
             Visibility::Public,
             ModuleOrigin::Root {
@@ -379,7 +380,7 @@ impl<'db> CrateScopeCollector<'db> {
         parent: Option<ModuleId>,
         name: Option<Name>,
         name_span: Option<Span>,
-        docs: Option<rg_item_tree::Documentation>,
+        docs: Option<ModuleDocumentation>,
         user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,
         origin: ModuleOrigin,
@@ -949,7 +950,7 @@ impl<'db> CrateScopeCollector<'db> {
             Some(parent_module),
             Some(module_name.clone()),
             item.name_span,
-            Documentation::concat(item.docs.clone(), inner_docs),
+            ModuleDocumentation::new(item.docs.clone(), inner_docs),
             item.user_facing_attrs,
             semantic_visibility,
             origin,

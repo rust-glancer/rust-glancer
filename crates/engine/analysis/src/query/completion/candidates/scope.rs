@@ -118,7 +118,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             IndexedUnqualifiedNameScope::Signature { scope, context, .. } => (
                 scope.generic_owner(),
                 *context,
-                scope.context().impl_ref.is_some(),
+                scope.context().impl_ref().is_some(),
             ),
             IndexedUnqualifiedNameScope::Module { .. }
             | IndexedUnqualifiedNameScope::Import { .. } => return Ok(Vec::new()),

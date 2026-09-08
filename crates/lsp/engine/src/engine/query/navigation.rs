@@ -11,6 +11,7 @@ use anyhow::Context as _;
 use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
+use rg_parse::LineIndex;
 use rg_project::{DocumentSourceView, ProjectSnapshot};
 use rg_std::UniqueVec;
 
@@ -90,34 +91,21 @@ impl QueryRunner<'_> {
             };
 
             for target in targets {
-                let location = match target.source {
-                    NavigationTargetSource::Current => {
-                        let same_current_file = target.crate_ref.package == source.context.package
-                            && target.file_id == source.context.file;
-                        if !same_current_file {
-                            // Current Body IR is built only for the request target. A current span
-                            // claiming another file would have no captured source to interpret it.
-                            omitted_unsafe_target = true;
-                            None
-                        } else {
-                            navigation_proto::location_for_current_document(
-                                document.path(),
-                                current.source.line_index(),
-                                &target,
-                            )
-                        }
+                let location = match destinations
+                    .location_for_target(
+                        &target,
+                        (source.context.package, source.context.file),
+                        document,
+                        current.source.line_index(),
+                    )
+                    .context("convert navigation target for captured documents")?
+                {
+                    CapturedTargetLocation::Ready(location) => Some(location),
+                    CapturedTargetLocation::Unsafe => {
+                        omitted_unsafe_target = true;
+                        None
                     }
-                    NavigationTargetSource::Saved => match destinations
-                        .location_for_saved_target(&target)
-                        .context("convert saved navigation target for captured documents")?
-                    {
-                        CapturedTargetLocation::Ready(location) => Some(location),
-                        CapturedTargetLocation::Unsafe => {
-                            omitted_unsafe_target = true;
-                            None
-                        }
-                        CapturedTargetLocation::Unavailable => None,
-                    },
+                    CapturedTargetLocation::Unavailable => None,
                 };
                 if let Some(location) = location {
                     locations.push(location);
@@ -230,7 +218,7 @@ impl CurrentNavigationQuery {
 /// destination, this value prepares its current line index and compares it with the selected saved
 /// project only if a result actually points there. A dirty destination is mapped through the same
 /// conservative declaration association used by current-body analysis.
-struct CapturedNavigationDocuments<'documents, 'project> {
+pub(crate) struct CapturedNavigationDocuments<'documents, 'project> {
     snapshot: ProjectSnapshot<'project>,
     documents: &'documents [EditorDocumentSnapshot],
     cancellation: rg_std::CancellationToken,
@@ -238,7 +226,7 @@ struct CapturedNavigationDocuments<'documents, 'project> {
 }
 
 impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
-    fn new(
+    pub(crate) fn new(
         snapshot: ProjectSnapshot<'project>,
         documents: &'documents [EditorDocumentSnapshot],
         cancellation: rg_std::CancellationToken,
@@ -248,6 +236,42 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
             documents,
             cancellation,
             sources: HashMap::new(),
+        }
+    }
+
+    /// Hover links and goto requests must interpret a destination in the same captured text.
+    ///
+    /// A saved target may need its span moved into an open document's unsaved text. A current
+    /// target already uses editor offsets, but those offsets belong only to the request's
+    /// target document. Return `Unsafe` when we cannot establish that correspondence.
+    pub(crate) fn location_for_target(
+        &mut self,
+        target: &NavigationTarget,
+        current_file: (PackageSlot, FileId),
+        current_document: &EditorDocumentSnapshot,
+        current_index: &LineIndex,
+    ) -> anyhow::Result<CapturedTargetLocation> {
+        match target.source {
+            NavigationTargetSource::Saved => self
+                .location_for_saved_target(target)
+                .context("convert saved navigation destination"),
+            NavigationTargetSource::Current => {
+                // Current analysis is built only for the request target. A current span in
+                // another file would have no captured source against which to interpret it.
+                if (target.crate_ref.package, target.file_id) != current_file {
+                    return Ok(CapturedTargetLocation::Unsafe);
+                }
+                Ok(
+                    match navigation_proto::location_for_current_document(
+                        current_document.path(),
+                        current_index,
+                        target,
+                    ) {
+                        Some(location) => CapturedTargetLocation::Ready(location),
+                        None => CapturedTargetLocation::Unavailable,
+                    },
+                )
+            }
         }
     }
 
@@ -368,7 +392,7 @@ struct CapturedOpenNavigationSource {
     source: DocumentSourceView,
 }
 
-enum CapturedTargetLocation {
+pub(crate) enum CapturedTargetLocation {
     Ready(ls_types::Location),
     Unsafe,
     Unavailable,

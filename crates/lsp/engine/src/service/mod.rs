@@ -259,7 +259,7 @@ impl EngineService for Service {
     async fn hover(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Hover { input, respond_to })

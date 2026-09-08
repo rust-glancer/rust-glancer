@@ -20,7 +20,7 @@ use rg_lsp_proto::{
     DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
     FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
     QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
-    SysrootDiscovery, TargetDocumentRevision,
+    SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -674,7 +674,7 @@ impl LspEngineFixture {
             LspQuery::Hover { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.document_snapshot(path.clone()).with_position(position);
+                let input = self.global_position_snapshot(path.clone(), position);
                 let outcome = self
                     .service
                     .clone()
@@ -855,7 +855,17 @@ impl LspEngineFixture {
 
         writeln!(rendered, "- markdown:").expect("snapshot should be writable");
         match &hover.contents {
-            HoverContents::Markup(markup) => Self::write_indented(rendered, &markup.value, "  "),
+            HoverContents::Markup(markup) => {
+                // Open-document paths and Cargo's saved paths can differ through symlinks.
+                let root = self.fixture.path("");
+                let canonical_root = root.canonicalize().expect("fixture root should exist");
+                let mut markdown = markup.value.clone();
+                for root in [root, canonical_root] {
+                    let uri = path_to_file_uri(&root).expect("fixture root should have a file URI");
+                    markdown = markdown.replace(uri.as_str().trim_end_matches('/'), "file://$ROOT");
+                }
+                Self::write_indented(rendered, &markdown, "  ");
+            }
             HoverContents::Scalar(marked) => {
                 Self::write_indented(rendered, &format!("{marked:?}"), "  ")
             }

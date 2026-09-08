@@ -224,8 +224,8 @@ pub enum IndexedTypePathScope {
 
 /// Semantic owner of a type path written in an item signature.
 ///
-/// The type-path context resolves module names and impl `Self`; the generic owner identifies the
-/// type and const parameters inherited by this particular declaration. For example, the cursor in
+/// The type-path context resolves module names and the `Self` binding; the generic owner identifies
+/// the type and const parameters inherited by this particular declaration. For example, the cursor in
 /// `impl<T> Wrapper<T> { fn map<U>(_: U$0) {} }` needs the function owner to see `U`, while its
 /// type-path context supplies the impl's module and `Self` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

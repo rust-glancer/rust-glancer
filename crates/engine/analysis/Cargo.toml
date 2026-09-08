@@ -11,6 +11,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+pulldown-cmark.workspace = true
 derive_more = { workspace = true, features = ["display", "from"] }
 rg_syntax.workspace = true
 rg_ir_model.workspace = true

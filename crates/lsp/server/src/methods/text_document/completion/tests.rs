@@ -731,7 +731,7 @@ impl EngineService for GatedCompletionEngine {
     async fn hover(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
+        _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         panic!("test engine only supports completion")
     }

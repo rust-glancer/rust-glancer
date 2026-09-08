@@ -4,7 +4,7 @@
 //! as well: docs, display path, symbol kind, and a compact signature. Keeping those projections in
 //! the view crate prevents editor-facing analysis code from reaching into storage queries directly.
 
-use rg_def_map::{DefMapQuery, DefMapSource};
+use rg_def_map::{DefMapQuery, DefMapSource, ModuleDocumentation};
 use rg_ir_model::{
     BodyBindingRef, ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
@@ -300,7 +300,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             kind: SymbolKind::Module,
             path: PathView::new(self.db, self.edition).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
-            docs: module.docs.as_ref().map(Documentation::text),
+            docs: module.docs.as_ref().map(ModuleDocumentation::text),
         }))
     }
 

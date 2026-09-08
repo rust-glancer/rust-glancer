@@ -11,7 +11,7 @@ use crate::scope::{ModuleScope, Visibility};
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
-    pub docs: Option<Documentation>,
+    pub docs: Option<ModuleDocumentation>,
     pub user_facing_attrs: UserFacingAttrs,
     /// Visibility of the declaration that introduced this module identity.
     ///
@@ -26,6 +26,47 @@ pub struct ModuleData {
     pub unresolved_imports: Vec<ImportId>,
     pub scope: ModuleScope,
     pub origin: ModuleOrigin,
+}
+
+/// Module docs can contain comments written in two different scopes.
+///
+/// ```text
+/// /// [User] -- looked up in the parent module
+/// mod api {
+///     //! [User] -- looked up in api
+/// }
+/// ```
+///
+/// The outer link sees the parent module's imports and the inner link sees `api`'s imports.
+/// Keep the text together so Markdown references can cross the boundary, and retain just the
+/// offset where inner docs begin.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ModuleDocumentation {
+    text: Documentation,
+    inner_start: usize,
+}
+
+impl ModuleDocumentation {
+    pub fn new(outer: Option<Documentation>, inner: Option<Documentation>) -> Option<Self> {
+        // Include the separating newline that `Documentation::concat` puts between the parts.
+        let inner_start = outer.as_ref().map_or(0, |docs| docs.as_str().len() + 1);
+        Some(Self {
+            text: Documentation::concat(outer, inner)?,
+            inner_start,
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.text.as_str()
+    }
+
+    pub fn text(&self) -> String {
+        self.text.text()
+    }
+
+    pub fn is_inner_at(&self, offset: usize) -> bool {
+        offset >= self.inner_start
+    }
 }
 
 /// Where a module-like scope came from.

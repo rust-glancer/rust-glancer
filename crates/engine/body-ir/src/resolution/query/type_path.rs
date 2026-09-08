@@ -91,7 +91,7 @@ where
         item_paths.resolve_type_path(
             TypePathContext {
                 module: fallback_module,
-                impl_ref: context.impl_ref,
+                ..context
             },
             path,
         )
@@ -148,19 +148,7 @@ where
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
         if path.is_self_type() {
-            let Some(impl_ref) = context.impl_ref else {
-                return Ok(TypePathResolution::Unknown);
-            };
-            let Some(impl_data) = self.context.item_query().impl_data(impl_ref)? else {
-                return Ok(TypePathResolution::Unknown);
-            };
-
-            // Keep path resolution at the identity layer. Impl-header lowering uses this resolver
-            // for clauses such as `where Self: Trait`; asking for the full header here would make
-            // resolving that `Self` depend recursively on the header being built.
-            return Ok(TypePathResolution::self_type(
-                impl_data.resolved_self_ty.clone(),
-            ));
+            return self.context.item_paths().resolve_type_path(context, path);
         }
 
         // Associated aliases are not ordinary module-scope path items, so handle `Type::Alias`
@@ -202,7 +190,7 @@ where
         item_paths.resolve_type_path(
             TypePathContext {
                 module: fallback_module,
-                impl_ref: context.impl_ref,
+                ..context
             },
             path,
         )

@@ -75,7 +75,7 @@ pub(crate) enum EngineCommand {
         respond_to: QueryResponder<Vec<ls_types::DocumentHighlight>>,
     },
     Hover {
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         respond_to: QueryResponder<Option<ls_types::Hover>>,
     },
     CodeAction {

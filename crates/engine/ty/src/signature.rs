@@ -11,7 +11,7 @@ use rg_ir_model::{
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef,
 };
 use rg_item_tree::{FunctionQualifiers, ParamKind, SelfParamKind};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext};
 
 use crate::{
     Clause, ItemPathQuery, OpaqueTy, Substitution, TraitRefLowering, Ty, TypeLoweringAnchor,
@@ -432,7 +432,7 @@ where
     let owner = GenericDefRef::Impl(impl_ref);
     let context = TypePathContext {
         module: data.owner,
-        impl_ref: Some(impl_ref),
+        self_owner: Some(SelfTypeOwner::Impl(impl_ref)),
     };
     let lowering = TypeLoweringQuery::new(item_paths, resolver);
     let mut session = lowering.session(TypeLoweringEnv::new(

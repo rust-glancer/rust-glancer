@@ -1,13 +1,17 @@
-//! Associated declarations resolved from body, signature, and import qualifiers.
+//! Associated declarations resolved from body, signature, module, and import qualifiers.
 
 use anyhow::Context as _;
 use rg_body_ir::BodyAssociatedPathPrefix;
-use rg_ir_model::{BodyRef, EnumVariantRef, Path, ScopeId, TraitApplicability, TypeDefId};
+use rg_ir_model::{
+    BodyRef, EnumVariantRef, ModuleRef, Path, ScopeId, SemanticItemRef, TraitApplicability,
+    TypeDefId, identity::DeclarationRef,
+};
 use rg_item_tree::Documentation;
 use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
 use rg_ty::{
-    AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery,
-    SemanticSignatureQuery, Ty, TyContext, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
+    AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, GenericArgs, ItemPathQuery,
+    SemanticSignatureQuery, TraitApplication, Ty, TyContext, TypeLoweringAnchor, TypeLoweringEnv,
+    TypeLoweringQuery,
 };
 
 use super::{
@@ -16,7 +20,9 @@ use super::{
 use crate::{
     SymbolKind,
     body::BodyResolutionView,
+    lookup::resolution::ResolutionView,
     source::{IndexedAssociatedPathQualifier, IndexedSignatureTypeScope},
+    ty::IndexedType,
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
@@ -166,6 +172,55 @@ impl<'a, 'db> MemberView<'a, 'db> {
             }
         }
 
+        Ok(Self::project_associated_candidates(candidates))
+    }
+
+    /// Return associated declarations for a module-scoped path without a generic owner.
+    ///
+    /// Module and macro docs have imports to resolve against, but no surrounding signature
+    /// that could supply generic bounds such as `T: Factory`.
+    ///
+    /// The resolved type supplies impl candidates. The written qualifier also matters:
+    /// `Factory::` names a trait even when it has no receiver type.
+    pub fn associated_item_candidates_for_module(
+        &self,
+        module: ModuleRef,
+        qualifier: &Path,
+        qualifier_ty: &IndexedType,
+    ) -> anyhow::Result<Vec<MemberAssociatedItemCandidate>> {
+        let use_site = module.origin.origin_crate();
+        let context = TyContext::new(
+            self.db,
+            self.db,
+            self.db
+                .item_lookup_query(use_site)
+                .context("assemble module associated item lookup")?,
+            self.db.trait_selection(use_site),
+        );
+        let query = AssociatedItemQuery::new(context);
+        let mut candidates = query
+            .candidates_for_ty(qualifier_ty.raw())
+            .context("resolve module associated item candidates")?;
+        // If the path names a trait, its own items and supertrait items are available even
+        // when there was no receiver type from which to collect impl candidates.
+        for declaration in ResolutionView::new(self.db)
+            .declarations_for_use_path(module, qualifier)
+            .context("resolve module associated path trait")?
+        {
+            if let DeclarationRef::Item(SemanticItemRef::Trait(def)) = declaration {
+                candidates.extend(
+                    query
+                        .candidates_for_trait_applications(
+                            [TraitApplication {
+                                def,
+                                args: GenericArgs::empty(),
+                            }],
+                            TraitApplicability::Yes,
+                        )
+                        .context("resolve module trait associated item candidates")?,
+                );
+            }
+        }
         Ok(Self::project_associated_candidates(candidates))
     }
 

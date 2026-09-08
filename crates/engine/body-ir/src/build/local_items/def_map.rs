@@ -7,17 +7,16 @@ use rg_def_map::{
     BodyItemSourceRef, CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding,
     ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
     LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv,
-    MacroDefinitionView, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    ScopeResolutionEnv, ScopeResolver, Visibility,
+    MacroDefinitionView, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance,
+    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, Visibility,
 };
 use rg_ir_model::{
     BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
     ModuleRef,
 };
 use rg_item_tree::{
-    Documentation, EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId,
-    ModuleSource,
+    EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -269,9 +268,9 @@ impl<'source> LocalDefMapCollector<'source> {
         };
         let docs = match &module_item.source {
             ModuleSource::Inline { .. } => {
-                Documentation::concat(item.docs.clone(), module_item.inner_docs.clone())
+                ModuleDocumentation::new(item.docs.clone(), module_item.inner_docs.clone())
             }
-            ModuleSource::OutOfLine => item.docs.clone(),
+            ModuleSource::OutOfLine => ModuleDocumentation::new(item.docs.clone(), None),
         };
         let visibility = self.builder.resolve_visibility(parent, &item.visibility);
 

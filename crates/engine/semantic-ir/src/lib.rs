@@ -26,8 +26,8 @@ pub use self::{
         GenericsQuery, ImplData, ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery,
         ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore,
         ItemStoreBuilder, ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader,
-        SemanticItemView, StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData,
-        TypeAliasSignature, TypePathContext, TypePathResolution, UnionData,
+        SelfTypeOwner, SemanticItemView, StaticData, StructData, TraitData, TraitImplSelfHead,
+        TypeAliasData, TypeAliasSignature, TypePathContext, TypePathResolution, UnionData,
     },
     store::{LoadSemanticIr, SemanticIrDb, SemanticIrLoader, SemanticIrReadTxn},
 };

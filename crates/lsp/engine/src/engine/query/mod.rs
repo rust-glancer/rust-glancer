@@ -15,6 +15,7 @@ mod source;
 
 use self::lifecycle::QueryRunError;
 pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
+use self::navigation::{CapturedNavigationDocuments, CapturedTargetLocation};
 
 use std::{path::Path, sync::Arc, time::Instant};
 
@@ -610,18 +611,25 @@ impl<'a> QueryRunner<'a> {
     }
 
     /// Return the first usable hover from the path's possible crate contexts.
+    ///
+    /// A hover is read from one document, but its item links can point into other open files.
+    /// The input includes those documents so links can follow declarations moved by unsaved edits.
     pub(super) fn hover(
         &mut self,
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Option<ls_types::Hover>, QueryRunError> {
-        let (document, position) = input.into_parts();
+        let (target, _, documents, position) = input.into_parts();
+        let document = documents
+            .iter()
+            .find(|document| document.target() == &target)
+            .context("target document is absent from hover input")?;
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let Some(current) = self
             .document_analysis(
                 "hover",
-                &document,
+                document,
                 DocumentSelection::Position(position),
                 cancellation,
             )
@@ -631,6 +639,10 @@ impl<'a> QueryRunner<'a> {
         };
 
         let mut hover = None;
+        // Destination source is prepared only when a link points to that file. Keep this
+        // conversion shared with goto requests so both features use the same editor positions.
+        let mut destinations =
+            CapturedNavigationDocuments::new(current.snapshot, &documents, cancellation.token());
         let offset = current.offset();
         for target in &current.targets {
             let info = current
@@ -640,7 +652,26 @@ impl<'a> QueryRunner<'a> {
             let Some(info) = info else {
                 continue;
             };
-            let Some(value) = hover::hover(info, current.source.line_index()) else {
+            let Some(value) = hover::hover(info, current.source.line_index(), |destination| {
+                Ok(
+                    match destinations
+                        .location_for_target(
+                            destination,
+                            (target.context.package, target.context.file),
+                            document,
+                            current.source.line_index(),
+                        )
+                        .context("convert hover link destination")?
+                    {
+                        CapturedTargetLocation::Ready(location) => Some(location),
+                        CapturedTargetLocation::Unsafe | CapturedTargetLocation::Unavailable => {
+                            None
+                        }
+                    },
+                )
+            })
+            .context("render hover documentation")?
+            else {
                 continue;
             };
             hover = Some(value);

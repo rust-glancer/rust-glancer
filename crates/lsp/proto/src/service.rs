@@ -70,7 +70,7 @@ pub trait EngineService {
     ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError>;
 
     async fn hover(
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError>;
 
     async fn code_action(

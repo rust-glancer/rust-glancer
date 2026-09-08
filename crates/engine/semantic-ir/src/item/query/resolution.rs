@@ -8,7 +8,7 @@ use rg_ir_model::{DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefR
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::{TypePathContext, TypePathResolution};
+use crate::{SelfTypeOwner, TypePathContext, TypePathResolution};
 
 /// Resolves Rust paths into semantic item identities without projecting them into `Ty`.
 #[derive(Clone)]
@@ -40,13 +40,20 @@ where
         path: &Path,
     ) -> Result<TypePathResolution, D::Error> {
         if path.is_self_type() {
-            let Some(impl_ref) = context.impl_ref else {
-                return Ok(TypePathResolution::Unknown);
-            };
-            if let Some(data) = self.items.impl_data(impl_ref)? {
-                return Ok(TypePathResolution::self_type(data.resolved_self_ty.clone()));
-            }
-            return Ok(TypePathResolution::Unknown);
+            return Ok(match context.self_owner {
+                Some(SelfTypeOwner::TypeDef(type_def)) => TypePathResolution::SelfType(type_def),
+                Some(SelfTypeOwner::Trait(trait_ref)) => TypePathResolution::Trait(trait_ref),
+                Some(SelfTypeOwner::Impl(impl_ref)) => {
+                    // Stay at declaration identity here. Lowering the complete impl header
+                    // would make resolving `where Self: Trait` depend on that same header.
+                    self.items
+                        .impl_data(impl_ref)?
+                        .map_or(TypePathResolution::Unknown, |data| {
+                            TypePathResolution::self_type(data.resolved_self_ty.clone())
+                        })
+                }
+                None => TypePathResolution::Unknown,
+            });
         }
 
         Ok(Self::type_resolution_from_items(
@@ -80,13 +87,15 @@ where
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
         if path.is_self_type() {
-            if let Some(impl_ref) = context.impl_ref
-                && let Some(data) = self.items.impl_data(impl_ref)?
-                && let Some(ty) = data.resolved_self_ty.as_option()
-            {
-                return Ok([SemanticItemRef::from(*ty)].into_iter().collect());
-            }
-            return Ok(UniqueVec::new());
+            let item = match self.resolve_type_path(context, path)? {
+                TypePathResolution::SelfType(type_def) | TypePathResolution::TypeDef(type_def) => {
+                    Some(SemanticItemRef::from(type_def))
+                }
+                TypePathResolution::TypeAlias(alias) => Some(SemanticItemRef::from(alias)),
+                TypePathResolution::Trait(trait_ref) => Some(SemanticItemRef::from(trait_ref)),
+                TypePathResolution::Unknown => None,
+            };
+            return Ok(item.into_iter().collect());
         }
 
         self.semantic_items_for_path(context.module, path)

@@ -5,6 +5,7 @@
 //! symbols, and completion. Its result models deliberately contain no LSP types, so protocol
 //! conversion stays outside the analysis boundary.
 
+mod documentation;
 mod model;
 mod query;
 mod source_symbol;
@@ -34,10 +35,10 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 pub use self::model::{
     CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
     CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
-    DocumentOutline, DocumentSymbol, Fold, FoldKind, HoverBlock, HoverInfo, InlayHint,
-    InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-    NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
-    SyntheticCompletionTarget, WorkspaceSymbol,
+    DocumentOutline, DocumentSymbol, DocumentationLink, Fold, FoldKind, HoverBlock, HoverInfo,
+    InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget,
+    NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult,
+    RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
 };
 
 /// Request-scoped façade for editor queries over one frozen project view.
