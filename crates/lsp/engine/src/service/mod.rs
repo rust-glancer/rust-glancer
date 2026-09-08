@@ -337,6 +337,21 @@ impl EngineService for Service {
             .await
     }
 
+    async fn semantic_tokens(
+        self,
+        _: context::Context,
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::SemanticTokens {
+                snapshot,
+                range,
+                respond_to,
+            })
+            .await
+    }
+
     async fn inlay_hint(
         self,
         _: context::Context,

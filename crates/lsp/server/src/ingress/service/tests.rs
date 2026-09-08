@@ -27,6 +27,16 @@ fn folding_range_is_a_document_request() {
     assert!(is_document_request("textDocument/foldingRange"));
 }
 
+#[test]
+fn semantic_tokens_capture_the_requested_document() {
+    for method in [
+        "textDocument/semanticTokens/full",
+        "textDocument/semanticTokens/range",
+    ] {
+        assert!(is_document_request(method), "{method}");
+    }
+}
+
 #[tokio::test]
 async fn later_request_keeps_incrementally_changed_text_when_futures_finish_in_reverse() {
     let captured = Arc::new(Mutex::new(Vec::new()));

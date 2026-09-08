@@ -3,6 +3,7 @@
 """Run bounded editor queries against rust-glancer's real LSP."""
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 import json
 import os
@@ -21,6 +22,7 @@ DEFAULT_TIMEOUT_MS = 180_000
 MAX_HINTS = 200
 MAX_COMPLETIONS = 200
 MAX_CODE_ACTIONS = 100
+MAX_TOKENS = 200
 STDERR_TAIL_BYTES = 64 * 1024
 MAX_SERVER_LOG_BYTES = 64 * 1024 * 1024
 MAX_PROTOCOL_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -80,6 +82,7 @@ Usage:
   just agent-debug lsp-query --file <path> code-action --marker <text> [--delta <n>] [--label <name>]
   just agent-debug lsp-query --file <path> code-action --line <1-based> --col <1-based> [--label <name>]
   just agent-debug lsp-query --file <path> inlay --start-marker <text> --end-marker <text> [--label <name>]
+  just agent-debug lsp-query --file <path> semantic-tokens [--start-marker <text> --end-marker <text>]
   just agent-debug lsp-query --query-file <path> [--json]
   just agent-debug lsp-query --query-json <json> [--json]
 
@@ -96,7 +99,9 @@ Query file shape:
        "context": {"triggerKind": 2, "triggerCharacter": "."}},
       {"kind": "code-action", "label": "fix", "marker": "MissingType",
        "context": {"triggerKind": 1, "only": ["quickfix"]}},
-      {"kind": "inlay", "label": "block", "range": {"startMarker": "let value", "endMarker": "next_line"}}
+      {"kind": "inlay", "label": "block", "range": {"startMarker": "let value", "endMarker": "next_line"}},
+      {"kind": "semantic-tokens", "label": "documentation"},
+      {"kind": "semantic-tokens", "label": "cancellation", "cancelAfterMs": 1}
     ]
   }
 
@@ -344,9 +349,9 @@ def query_range(query: Dict[str, Any], text: str) -> Dict[str, Dict[str, int]]:
 
 def single_query_from_options(options: Options) -> Dict[str, Any]:
     if not options.command:
-        fail("missing query command; expected hover, completion, code-action, or inlay")
+        fail("missing query command; expected hover, completion, code-action, inlay, or semantic-tokens")
     kind = "inlay" if options.command == "inlay-hints" else options.command
-    if kind not in {"hover", "completion", "code-action", "inlay"}:
+    if kind not in {"hover", "completion", "code-action", "inlay", "semantic-tokens"}:
         fail("unsupported query command: {}".format(options.command))
 
     query: Dict[str, Any] = {
@@ -365,7 +370,7 @@ def single_query_from_options(options: Options) -> Dict[str, Any]:
             "startMarker": options.start_marker,
             "endMarker": options.end_marker,
         }
-    else:
+    elif kind != "semantic-tokens" or options.start_line is not None:
         query["range"] = {
             "startLine": options.start_line,
             "startCol": options.start_col,
@@ -443,6 +448,7 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
             "code-action",
             "inlay",
             "inlay-hints",
+            "semantic-tokens",
         }:
             fail("unsupported query kind: {}".format(query.get("kind")))
         if query["kind"] == "inlay-hints":
@@ -469,6 +475,10 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
                     fail("code-action context diagnostics must be an array")
             else:
                 fail("query context is only supported for completion and code-action")
+        if "cancelAfterMs" in query:
+            delay = query["cancelAfterMs"]
+            if query["kind"] != "semantic-tokens" or type(delay) is not int or not 0 <= delay <= options.timeout_ms:
+                fail("cancelAfterMs requires a semantic-tokens query and a delay within its timeout")
         queries.append(query)
 
     output_format = plan.get("format", "text")
@@ -692,7 +702,8 @@ class LspClient:
         await self.process.stdin.drain()
 
     async def request(
-        self, method: str, params: Any, timeout_ms: Optional[int] = None
+        self, method: str, params: Any, timeout_ms: Optional[int] = None,
+        cancel_after_ms: Optional[int] = None,
     ) -> Dict[str, Any]:
         if self.exited:
             raise RuntimeError("LSP process exited before {}".format(method))
@@ -702,13 +713,23 @@ class LspClient:
         self.next_id += 1
         future = asyncio.get_running_loop().create_future()
         self.pending[request_id] = future
+        cancellation = None
+
+        async def cancel_request() -> None:
+            await asyncio.sleep(cancel_after_ms / 1000)
+            await self.notify("$/cancelRequest", {"id": request_id})
+
         try:
             await self.send({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
+            if cancel_after_ms is not None:
+                cancellation = asyncio.create_task(cancel_request())
             response = await asyncio.wait_for(
                 asyncio.shield(future), (timeout_ms or self.timeout_ms) / 1000
             )
             # JSON-RPC transports method failures as ordinary responses. Turn them into CLI
             # failures here so no caller can accidentally interpret a missing result as success.
+            if cancel_after_ms is not None and response.get("error", {}).get("code") == -32800:
+                return response
             if response.get("error") is not None:
                 raise LspQueryError(
                     "{} failed: {}".format(
@@ -724,6 +745,12 @@ class LspClient:
             self.pending.pop(request_id, None)
             future.cancel()
             raise
+
+        finally:
+            if cancellation is not None:
+                cancellation.cancel()
+                with suppress(asyncio.CancelledError):
+                    await cancellation
 
     async def notify(self, method: str, params: Any) -> None:
         await self.send({"jsonrpc": "2.0", "method": method, "params": params})
@@ -933,6 +960,41 @@ def normalize_code_actions(actions_value: Any, max_actions: int) -> Dict[str, An
     }
 
 
+def normalize_tokens(result: Any, legend: Dict[str, Any], source: str) -> Dict[str, Any]:
+    """Decode relative UTF-16 tokens, checking the source ranges before displaying a bounded sample."""
+    data = result.get("data", []) if isinstance(result, dict) else []
+    if len(data) % 5:
+        fail("semantic token data must contain groups of five integers")
+    lines = source.splitlines()
+    tokens = []
+    line = col = previous_end = 0
+    for index in range(0, len(data), 5):
+        delta_line, delta_col, length, kind, modifiers = data[index:index + 5]
+        if delta_line:
+            line += delta_line
+            col = delta_col
+            previous_end = 0
+        else:
+            col += delta_col
+        if length <= 0 or col < previous_end or line >= len(lines):
+            fail("semantic tokens must be nonempty, ordered, and inside source lines")
+        encoded = lines[line].encode("utf-16-le")
+        if (col + length) * 2 > len(encoded):
+            fail("semantic token extends past its source line")
+        text = encoded[col * 2:(col + length) * 2].decode("utf-16-le")
+        previous_end = col + length
+        if len(tokens) < MAX_TOKENS:
+            tokens.append({
+                "line": line + 1, "col": col + 1, "length": length,
+                "kind": legend["tokenTypes"][kind],
+                "modifiers": [name for bit, name in enumerate(legend["tokenModifiers"])
+                              if modifiers & (1 << bit)],
+                "text": text,
+            })
+    return {"tokens": tokens, "totalCount": len(data) // 5,
+            "truncated": len(data) // 5 > MAX_TOKENS}
+
+
 def without_none(value: Any) -> Any:
     if isinstance(value, dict):
         return {key: without_none(item) for key, item in value.items() if item is not None}
@@ -952,7 +1014,7 @@ async def run(argv: Sequence[str]) -> None:
     results = []
 
     try:
-        await client.request(
+        initialized = await client.request(
             "initialize",
             {
                 "processId": os.getpid(),
@@ -975,6 +1037,15 @@ async def run(argv: Sequence[str]) -> None:
                             "isPreferredSupport": True,
                         },
                         "inlayHint": {"dynamicRegistration": False},
+                        "semanticTokens": {
+                            "requests": {"full": True, "range": True},
+                            "tokenTypes": ["namespace", "type", "struct", "enum", "interface",
+                                           "function", "method", "macro", "property", "enumMember",
+                                           "variable", "parameter", "typeParameter", "keyword",
+                                           "string", "number", "operator", "comment"],
+                            "tokenModifiers": ["documentation", "readonly"],
+                            "formats": ["relative"],
+                        },
                     }
                 },
                 "initializationOptions": plan["initializationOptions"],
@@ -1089,6 +1160,24 @@ async def run(argv: Sequence[str]) -> None:
                         **actions,
                     }
                 )
+            elif query["kind"] == "semantic-tokens":
+                params = {"textDocument": {"uri": uri}}
+                method = "textDocument/semanticTokens/full"
+                if query.get("range") is not None:
+                    params["range"] = query_range(query, plan["text"])
+                    method = "textDocument/semanticTokens/range"
+                request_started = time.perf_counter_ns()
+                response = await client.request(method, params, cancel_after_ms=query.get("cancelAfterMs"))
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
+                provider = initialized["result"]["capabilities"]["semanticTokensProvider"]
+                tokens = normalize_tokens(response.get("result"), provider["legend"], plan["text"])
+                results.append({
+                    "kind": "semantic-tokens",
+                    "cancelled": response.get("error", {}).get("code") == -32800,
+                    "label": query.get("label", "semantic-tokens"),
+                    "elapsedMs": round(elapsed_ms, 3),
+                    **tokens,
+                })
             elif query["kind"] == "inlay":
                 query_range_value = query_range(query, plan["text"])
                 request_started = time.perf_counter_ns()
@@ -1201,6 +1290,14 @@ async def run(argv: Sequence[str]) -> None:
                         version_detail,
                     )
                 )
+            if result["truncated"]:
+                print("  <truncated>")
+        elif result["kind"] == "semantic-tokens":
+            print("\nsemantic-tokens{} ({:.3f} ms, {} tokens)".format(
+                label, result["elapsedMs"], result["totalCount"]))
+            for token in result["tokens"]:
+                print("  {}:{} {} {}".format(token["line"], token["col"],
+                      token["kind"], json.dumps(token["text"], ensure_ascii=False)))
             if result["truncated"]:
                 print("  <truncated>")
         else:

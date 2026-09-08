@@ -343,6 +343,22 @@ impl EngineDispatcher {
                         |runner, _| runner.folding_range(snapshot, client_capabilities),
                     );
                 }
+                EngineCommand::SemanticTokens {
+                    snapshot,
+                    range,
+                    respond_to,
+                } => {
+                    let context =
+                        QueryContext::target_document("semantic_tokens", queue_elapsed, &snapshot);
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, cancellation| {
+                            runner.semantic_tokens(snapshot, range, cancellation)
+                        },
+                    );
+                }
                 EngineCommand::InlayHint { input, respond_to } => {
                     tracing::trace!(
                         path = %input.document().path().display(),

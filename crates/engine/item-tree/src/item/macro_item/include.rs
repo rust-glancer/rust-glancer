@@ -13,6 +13,7 @@
 
 use std::path::{Path, PathBuf};
 
+use rg_parse::syntax_edition;
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
@@ -187,7 +188,7 @@ impl IncludePathExpression {
         }
         let arguments = arguments.strip_suffix(',').unwrap_or(arguments);
         let tuple = format!("({arguments},)");
-        let ast::Expr::TupleExpr(tuple) = ast::Expr::parse(&tuple, Self::syntax_edition(edition))
+        let ast::Expr::TupleExpr(tuple) = ast::Expr::parse(&tuple, syntax_edition(edition))
             .ok()
             .ok()?
         else {
@@ -220,15 +221,6 @@ impl IncludePathExpression {
             .segment()?
             .name_ref()
             .map(|name| name.text().to_string())
-    }
-
-    fn syntax_edition(edition: RustEdition) -> rg_syntax::Edition {
-        match edition {
-            RustEdition::Edition2015 => rg_syntax::Edition::Edition2015,
-            RustEdition::Edition2018 => rg_syntax::Edition::Edition2018,
-            RustEdition::Edition2021 => rg_syntax::Edition::Edition2021,
-            RustEdition::Edition2024 => rg_syntax::Edition::Edition2024,
-        }
     }
 
     fn matching_delimiters(open: SyntaxKind, close: SyntaxKind) -> bool {

@@ -1,10 +1,16 @@
-//! Markdown adaptation for item links in editor documentation.
+//! Markdown interpretation for rendered hover docs and documentation in Rust source.
 //!
 //! The parser identifies actual links, including rustdoc's shortcuts without reference
-//! definitions. Resolution and source navigation remain in their existing semantic layers.
-//! This module joins those steps: it pairs link ranges with source targets while leaving the
-//! original Markdown alone. The LSP renderer can then replace the links without rebuilding
-//! paragraphs, code examples, or other formatting from parser events.
+//! definitions. Rust path resolution and navigation stay in their existing semantic layers.
+//! Rendered hovers receive link replacements; source queries keep the authored coordinates
+//! for hover, navigation, and coloring. Fenced examples use temporary Rust syntax for coloring.
+
+mod highlight;
+mod source;
+
+pub(crate) use highlight::DocumentationHighlighter;
+
+pub(crate) use source::SourceDocumentationQuery;
 
 use std::ops::Range;
 
@@ -50,7 +56,12 @@ impl<'a, 'db> DocumentationLinkResolver<'a, 'db> {
             // Module docs can combine outer and inner comments. The link's offset tells the
             // semantic view which comment scope to use within that combined text.
             let target = match view
-                .resolve_link(owner, link.range.start, &link.destination)
+                .resolve_link(
+                    owner,
+                    view.placement_at(owner, link.range.start)
+                        .context("read hover link placement")?,
+                    &link.destination,
+                )
                 .context("resolve documentation link")?
             {
                 DocumentationLinkResolution::NotAnItemLink => continue,
@@ -80,7 +91,7 @@ impl<'a, 'db> DocumentationLinkResolver<'a, 'db> {
 /// Here `range` covers the first line, `label` covers `**profile**`, and `destination` is
 /// `super::Profile`. Both ranges are byte offsets in the input, so replacing the destination
 /// can preserve the label's Markdown without reconstructing it from rendered text.
-struct MarkdownLink<'a> {
+pub(crate) struct MarkdownLink<'a> {
     range: Range<usize>,
     label: Range<usize>,
     destination: CowStr<'a>,

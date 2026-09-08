@@ -19,13 +19,17 @@ use wincode::{SchemaRead, SchemaWrite};
 /// This entry point does not assign a project file id or retain the syntax tree. It is intended for
 /// editor text that a caller wants to inspect without adding it to the saved parse database.
 pub fn parse_source_file(source: &str, edition: RustEdition) -> SyntaxParse<SourceFile> {
-    let edition = match edition {
+    SourceFile::parse(source, syntax_edition(edition))
+}
+
+/// Translate the project edition into the parser's edition vocabulary.
+pub fn syntax_edition(edition: RustEdition) -> Edition {
+    match edition {
         RustEdition::Edition2015 => Edition::Edition2015,
         RustEdition::Edition2018 => Edition::Edition2018,
         RustEdition::Edition2021 => Edition::Edition2021,
         RustEdition::Edition2024 => Edition::Edition2024,
-    };
-    SourceFile::parse(source, edition)
+    }
 }
 
 /// Internal parsed representation used by the parser cache.

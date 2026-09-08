@@ -2,9 +2,8 @@ use crate::MacroDefinitionView;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodySource, CrateRef, FileId, LocalDefRef, ModuleRef, Span};
 use rg_item_tree::BuiltinMacroKind;
-use rg_macro_runtime::{
-    DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest, macro_edition,
-};
+use rg_macro_runtime::{DeclarativeMacroDefinition, ExpansionParseKind, MacroExpansionRequest};
+use rg_parse::syntax_edition;
 use rg_syntax::{ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
@@ -176,7 +175,7 @@ impl BodyMacroInvocation {
 
         let span_factory = SpanFactory::new(
             u32::try_from(file_id.0).expect("file id should fit macro span storage"),
-            macro_edition(edition),
+            syntax_edition(edition),
         );
         let args =
             syntax_node_to_token_tree_with_span(&args, &mut |range| span_factory.span_for(range));

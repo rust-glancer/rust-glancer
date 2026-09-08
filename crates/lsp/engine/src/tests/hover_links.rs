@@ -384,3 +384,87 @@ async fn hover_links_use_unsaved_destination_positions() {
         .await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn source_doc_links_hover_and_navigate() {
+    let fixture = LspEngineFixture::initialized(
+        r##"
+        //- /Cargo.toml
+        [package]
+        name = "source_docs"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Profile;
+        /// [profile][profile-id]
+        ///
+        /// [profile-id]: crate::Profile
+        pub mod api;
+        /// [`Self::bu$method$ild`], [`Self::na$field$me`]
+        pub struct User { pub name: Profile }
+        impl User { pub fn build() -> Self { Self { name: Profile } } }
+        #[doc = "An escaped \u{1f980} [`Pro$attribute$file`]."]
+        pub struct AttributeDocs;
+        /** [`Pro$block$file`] */
+        pub struct BlockDocs;
+        /// [`str$kind$uct@Record`]
+        pub struct Disambiguated;
+        pub struct Record;
+        pub fn Record() {}
+
+        //- /src/api.rs
+        //! [pro$reference$file][profile-id] and [`Pro$inner$file`].
+        pub struct Profile;
+        "##,
+    )
+    .await;
+    fixture
+        .check(
+            &[
+                LspQuery::hover("source member hover", "method"),
+                LspQuery::goto_definition("source member navigation", "method"),
+                LspQuery::goto_definition("source field navigation", "field"),
+                LspQuery::goto_definition("source attribute navigation", "attribute"),
+                LspQuery::goto_definition("source block navigation", "block"),
+                LspQuery::goto_definition("source disambiguator navigation", "kind"),
+                LspQuery::goto_definition("cross-file reference definition", "reference"),
+                LspQuery::goto_definition("inner module scope", "inner"),
+            ],
+            expect![[r#"
+        source member hover
+        - range: /src/lib.rs:5:4-5:19
+        - markdown:
+          ```rust
+          source_docs::User::build
+          ```
+
+          ```rust
+          pub fn build() -> Self
+          ```
+
+        source member navigation
+        - /src/lib.rs:7:19-7:24
+
+        source field navigation
+        - /src/lib.rs:6:22-6:26
+
+        source attribute navigation
+        - /src/lib.rs:0:11-0:18
+
+        source block navigation
+        - /src/lib.rs:0:11-0:18
+
+        source disambiguator navigation
+        - /src/lib.rs:14:11-14:17
+
+        cross-file reference definition
+        - /src/lib.rs:0:11-0:18
+
+        inner module scope
+        - /src/api.rs:1:11-1:18
+    "#]],
+        )
+        .await;
+    fixture.shutdown().await;
+}

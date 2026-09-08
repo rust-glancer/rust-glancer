@@ -1,13 +1,13 @@
 //! Resolves Rust item paths from the scope that owns their documentation.
 //!
 //! Markdown parsing belongs to the editor feature. This view receives one link destination
-//! and its offset in the docs, and uses the same indexed declarations and member queries as
+//! and its comment placement, and uses the same indexed declarations and member queries as
 //! source navigation. It neither builds documentation URLs nor retains a parsed document.
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
-use rg_item_tree::{FromAst, TypePath, TypeRef};
+use rg_item_tree::{DocumentationPlacement, FromAst, TypePath, TypeRef};
 use rg_parse::{LineIndex, parse_source_file};
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -54,13 +54,13 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
 
     /// Find the declaration named by one link destination, such as `super::Profile`.
     ///
-    /// `owner` is the documented declaration, not the place where it was hovered. `offset`
-    /// points to the link in that declaration's unmodified docs. Module docs need it because
-    /// outer comments use the parent scope while inner comments use the module itself.
+    /// `owner` is the documented declaration, not the place where it was hovered. Outer module
+    /// comments use the parent scope while inner comments use the module itself. Source queries
+    /// carry that placement from syntax so edited comments never depend on saved text offsets.
     pub fn resolve_link(
         &self,
         owner: DeclarationRef,
-        offset: usize,
+        placement: DocumentationPlacement,
         destination: &str,
     ) -> anyhow::Result<DocumentationLinkResolution> {
         let edition = self
@@ -75,7 +75,7 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
             return Ok(DocumentationLinkResolution::Unresolved);
         }
         let Some(scope) = self
-            .scope(owner, offset)
+            .scope(owner, placement)
             .context("read documentation scope")?
         else {
             return Ok(DocumentationLinkResolution::Unresolved);
@@ -96,6 +96,26 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         }
         self.select_unique_target(declarations, disambiguator)
             .context("select documentation link target")
+    }
+
+    /// Rendered module docs concatenate outer and inner comments. Recover the link's origin
+    /// from that stored text; source queries already know the origin from their syntax.
+    pub fn placement_at(
+        &self,
+        owner: DeclarationRef,
+        offset: usize,
+    ) -> anyhow::Result<DocumentationPlacement> {
+        if let DeclarationRef::Module(module) = owner
+            && self
+                .db
+                .module_data(module)
+                .context("read documentation placement")?
+                .and_then(|module| module.docs.as_ref())
+                .is_some_and(|docs| docs.is_inner_at(offset))
+        {
+            return Ok(DocumentationPlacement::Inner);
+        }
+        Ok(DocumentationPlacement::Outer)
     }
 
     /// Parse rustdoc's destination spelling into a Rust path and an optional item-kind hint.
@@ -213,14 +233,10 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         let view = DeclarationView::new(self.db);
         let mut matching = ExpectedUnique::new();
         for declaration in declarations {
-            let kind = if matches!(declaration, DeclarationRef::Module(_)) {
-                SymbolKind::Module
-            } else if let Some(item) = view
-                .declaration(declaration)
+            let Some(kind) = view
+                .kind(declaration)
                 .context("read documentation target kind")?
-            {
-                item.kind()
-            } else {
+            else {
                 continue;
             };
             if Self::matches_disambiguator(disambiguator, kind) {
@@ -297,7 +313,7 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
     fn scope(
         &self,
         owner: DeclarationRef,
-        offset: usize,
+        placement: DocumentationPlacement,
     ) -> anyhow::Result<Option<DocumentationScope>> {
         let items = ItemStoreQuery::new(self.db);
         let item = match owner {
@@ -309,13 +325,9 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                // The module's displayed docs join comments from outside and inside it.
-                // Select the scope using the retained boundary, not the hover's location.
-                let module = if module
-                    .docs
-                    .as_ref()
-                    .is_some_and(|docs| !docs.is_inner_at(offset))
-                {
+                // Outer docs on `mod api` use imports beside the declaration; inner docs use
+                // the imports inside `api`, including when its body lives in another file.
+                let module = if placement == DocumentationPlacement::Outer {
                     ModuleRef {
                         module: module.parent.unwrap_or(module_ref.module),
                         ..module_ref

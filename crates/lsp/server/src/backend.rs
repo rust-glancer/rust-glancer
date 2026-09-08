@@ -473,6 +473,29 @@ impl LanguageServer for Backend {
         methods::text_document::inlay_hint::inlay_hint(context, params).await
     }
 
+    #[tracing::instrument(skip_all, fields(rg.method = "semanticTokens/full", rg.uri = %params.text_document.uri.as_str()))]
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> Result<Option<SemanticTokensResult>> {
+        let context = self.document_context_for(&params.text_document.uri).await?;
+        let tokens =
+            methods::text_document::semantic_tokens::semantic_tokens(context, None).await?;
+        Ok(Some(SemanticTokensResult::Tokens(tokens)))
+    }
+
+    #[tracing::instrument(skip_all, fields(rg.method = "semanticTokens/range", rg.uri = %params.text_document.uri.as_str()))]
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> Result<Option<SemanticTokensRangeResult>> {
+        let context = self.document_context_for(&params.text_document.uri).await?;
+        let tokens =
+            methods::text_document::semantic_tokens::semantic_tokens(context, Some(params.range))
+                .await?;
+        Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
+    }
+
     #[tracing::instrument(skip_all, fields(rg.method = "workspaceSymbol"))]
     async fn symbol(
         &self,

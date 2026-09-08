@@ -11,6 +11,7 @@
 mod lifecycle;
 mod navigation;
 mod references;
+mod semantic_tokens;
 mod source;
 
 use self::lifecycle::QueryRunError;

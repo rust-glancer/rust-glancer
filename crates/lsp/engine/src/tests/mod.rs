@@ -1,6 +1,7 @@
 mod code_action_flow;
 mod dirty_flow;
 mod document_read_flow;
+mod documentation_flow;
 mod external_flow;
 mod flow;
 mod folding_flow;

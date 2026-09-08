@@ -770,6 +770,15 @@ impl EngineService for GatedCompletionEngine {
         panic!("test engine only supports completion")
     }
 
+    async fn semantic_tokens(
+        self,
+        _: context::Context,
+        _: EditorDocumentSnapshot,
+        _: Option<tower_lsp_server::ls_types::Range>,
+    ) -> Result<QueryValue<tower_lsp_server::ls_types::SemanticTokens>, QueryError> {
+        panic!("test engine only supports completion")
+    }
+
     async fn inlay_hint(
         self,
         _: context::Context,

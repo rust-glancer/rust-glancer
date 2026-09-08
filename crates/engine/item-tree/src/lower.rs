@@ -17,7 +17,7 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{FileId, Span};
-use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage};
+use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_text::{Name, NameInterner};
 use rg_tt::{
     Span as TtSpan,
@@ -296,7 +296,7 @@ impl<'db> PackageLowering<'db> {
         };
         let span_factory = SpanFactory::new(
             current_file_id.0.try_into().unwrap_or(u32::MAX),
-            macro_edition(self.parse_package.edition()),
+            syntax_edition(self.parse_package.edition()),
         );
         let mut span_for_range = |range| span_factory.span_for(range);
         let args = syntax_node_to_token_tree_with_span(&args, &mut span_for_range);
@@ -366,7 +366,7 @@ impl<'db> PackageLowering<'db> {
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let edition = self.parse_package.edition();
-        let macro_edition = macro_edition(edition);
+        let macro_edition = syntax_edition(edition);
         let item_id = match item {
             ast::Item::AsmExpr(item) => Some(builder.alloc_item(
                 ItemKind::AsmExpr,
@@ -622,7 +622,7 @@ impl<'db> PackageLowering<'db> {
                         &item,
                     ),
                     ast::ExternItem::MacroCall(item) => {
-                        let macro_edition = macro_edition(self.parse_package.edition());
+                        let macro_edition = syntax_edition(self.parse_package.edition());
                         let mut span_for_range =
                             |range| builder.tt_span_for_range(range, macro_edition);
                         builder.alloc_documented_item(
@@ -740,7 +740,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(None);
         };
         let mut span_for_range =
-            |range| builder.tt_span_for_range(range, macro_edition(self.parse_package.edition()));
+            |range| builder.tt_span_for_range(range, syntax_edition(self.parse_package.edition()));
         let args = syntax_node_to_token_tree_with_span(&args, &mut span_for_range);
         let Some(cfg_select) = CfgSelect::parse(&args) else {
             return Ok(None);
@@ -944,7 +944,7 @@ impl<'db> PackageLowering<'db> {
                     .lower_builtin_macro(builder, &item, module_file_context)
                     .context("while attempting to lower associated builtin macro payload")?;
                 let mut span_for_range = |range| {
-                    builder.tt_span_for_range(range, macro_edition(self.parse_package.edition()))
+                    builder.tt_span_for_range(range, syntax_edition(self.parse_package.edition()))
                 };
                 Some(builder.alloc_documented_item(
                     ItemKind::MacroCall(MacroCallItem::from_ast(
@@ -1088,15 +1088,6 @@ impl<'a> FileTreeBuilder<'a> {
 
 fn file_id_u32(file_id: FileId) -> u32 {
     u32::try_from(file_id.0).expect("file id should fit macro span storage")
-}
-
-fn macro_edition(edition: rg_text::RustEdition) -> rg_tt::Edition {
-    match edition {
-        rg_text::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
-        rg_text::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
-        rg_text::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
-        rg_text::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
-    }
 }
 
 fn macro_call_terminal_name(item: &ast::MacroCall) -> Option<String> {

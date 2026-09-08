@@ -79,7 +79,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         Ok(SourceOccurrenceView::new(self.db)
-            .saved_declaration_occurrences_at(crate_ref, file_id, offset)?
+            .saved_declaration_occurrences(crate_ref, file_id, Some(offset))?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())

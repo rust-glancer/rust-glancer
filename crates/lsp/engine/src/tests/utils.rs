@@ -771,6 +771,74 @@ impl LspEngineFixture {
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_document_symbols(rendered, &symbols, 0);
             }
+            LspQuery::SemanticTokens { title, path, range } => {
+                let document = self.document_snapshot(self.fixture.path(path));
+                let range = range.map(|(start, end)| {
+                    Range::new(
+                        self.marker_position(markers, start),
+                        self.marker_position(markers, end),
+                    )
+                });
+                let outcome = self
+                    .service
+                    .clone()
+                    .semantic_tokens(context::current(), document.clone(), range)
+                    .await
+                    .expect("semantic tokens should succeed");
+                let tokens = outcome.into_value();
+                let legend = rg_lsp_proto::semantic_tokens_legend();
+                let index = LineIndex::new(document.text());
+                let mut position = Position::default();
+                let mut previous_end = Position::default();
+                writeln!(rendered, "{title}").expect("snapshot should be writable");
+                for token in tokens.data {
+                    position = Position::new(
+                        position.line + token.delta_line,
+                        if token.delta_line == 0 {
+                            position.character + token.delta_start
+                        } else {
+                            token.delta_start
+                        },
+                    );
+                    let end = Position::new(position.line, position.character + token.length);
+                    assert!(
+                        token.length > 0 && position >= previous_end,
+                        "tokens are nonempty and nonoverlapping"
+                    );
+                    assert!(range.is_none_or(|range| range.start <= position && end <= range.end));
+                    previous_end = end;
+                    let start_byte = index
+                        .offset_from_utf16_position(crate::proto::position::parse_position(
+                            position,
+                        ))
+                        .expect("token start is a UTF-16 boundary")
+                        as usize;
+                    let end_byte = index
+                        .offset_from_utf16_position(crate::proto::position::parse_position(end))
+                        .expect("token end is a UTF-16 boundary")
+                        as usize;
+                    let kind = &legend.token_types[token.token_type as usize];
+                    let modifiers = legend
+                        .token_modifiers
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| token.token_modifiers_bitset & (1 << index) != 0)
+                        .map(|(_, modifier)| format!(".{}", modifier.as_str()))
+                        .collect::<String>();
+                    writeln!(
+                        rendered,
+                        "- {}:{}-{}:{} {}{} {:?}",
+                        position.line,
+                        position.character,
+                        end.line,
+                        end.character,
+                        kind.as_str(),
+                        modifiers,
+                        &document.text()[start_byte..end_byte]
+                    )
+                    .expect("snapshot should be writable");
+                }
+            }
             LspQuery::InlayHint {
                 title,
                 path,
@@ -1362,6 +1430,11 @@ pub(super) enum LspQuery {
         title: &'static str,
         path: &'static str,
     },
+    SemanticTokens {
+        title: &'static str,
+        path: &'static str,
+        range: Option<(&'static str, &'static str)>,
+    },
     InlayHint {
         title: &'static str,
         path: &'static str,
@@ -1440,6 +1513,14 @@ impl LspQuery {
 
     pub(super) fn document_symbol(title: &'static str, path: &'static str) -> Self {
         Self::DocumentSymbol { title, path }
+    }
+
+    pub(super) fn semantic_tokens(
+        title: &'static str,
+        path: &'static str,
+        range: Option<(&'static str, &'static str)>,
+    ) -> Self {
+        Self::SemanticTokens { title, path, range }
     }
 
     pub(super) fn inlay_hint(

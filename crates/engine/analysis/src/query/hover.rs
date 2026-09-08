@@ -10,9 +10,9 @@ use rg_ir_view::{
 
 use crate::{
     Analysis, SymbolKind,
-    documentation::DocumentationLinkResolver,
+    documentation::{DocumentationLinkResolver, SourceDocumentationQuery},
     model::{HoverBlock, HoverInfo, SymbolAt},
-    source_symbol::SourceSymbolResolver,
+    source_symbol::{SourceSymbol, SourceSymbolResolver},
 };
 
 pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
@@ -28,6 +28,15 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
+        if let Some(link) = SourceDocumentationQuery::new(self.0)
+            .link_at(crate_ref, file_id, offset)
+            .context("find hovered documentation link")?
+        {
+            return self.hover_for_source_symbol(
+                crate_ref,
+                SourceSymbol::plain_declaration(link.declaration, crate_ref, file_id, link.span),
+            );
+        }
         let Some(source_symbol) = self
             .0
             .source_symbol_at_for_query(crate_ref, file_id, offset)?
@@ -40,7 +49,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     fn hover_for_source_symbol(
         &self,
         crate_ref: CrateRef,
-        source_symbol: crate::source_symbol::SourceSymbol,
+        source_symbol: SourceSymbol,
     ) -> anyhow::Result<Option<HoverInfo>> {
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();

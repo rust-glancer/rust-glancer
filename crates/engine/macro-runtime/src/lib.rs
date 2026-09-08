@@ -20,5 +20,4 @@ pub use self::{
         MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
         PreparedMacroExpansionResult,
     },
-    syntax::macro_edition,
 };

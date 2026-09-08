@@ -101,6 +101,11 @@ pub(crate) enum EngineCommand {
         client_capabilities: FoldingClientCapabilities,
         respond_to: QueryResponder<Vec<ls_types::FoldingRange>>,
     },
+    SemanticTokens {
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+        respond_to: QueryResponder<ls_types::SemanticTokens>,
+    },
     InlayHint {
         input: DocumentRangeSnapshot,
         respond_to: QueryResponder<Vec<ls_types::InlayHint>>,

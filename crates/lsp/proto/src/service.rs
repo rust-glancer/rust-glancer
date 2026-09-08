@@ -96,6 +96,11 @@ pub trait EngineService {
         client_capabilities: FoldingClientCapabilities,
     ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError>;
 
+    async fn semantic_tokens(
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError>;
+
     async fn inlay_hint(
         input: DocumentRangeSnapshot,
     ) -> Result<QueryValue<Vec<ls_types::InlayHint>>, QueryError>;
