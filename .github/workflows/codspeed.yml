@@ -7,6 +7,12 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Superseded PR commits no longer need runners. Keep every main-branch run so
+# cache refreshes and performance baselines can finish independently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   benchmarks:
     name: Run benchmarks

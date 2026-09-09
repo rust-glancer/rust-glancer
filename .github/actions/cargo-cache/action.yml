@@ -1,5 +1,5 @@
 name: Cargo cache
-description: Restore and save Cargo dependency and build artifacts.
+description: Restore Cargo artifacts and refresh shared caches from main.
 
 inputs:
   scope:
@@ -15,17 +15,49 @@ inputs:
 runs:
   using: composite
   steps:
+    # Cache compilation directories explicitly. Archiving the whole target
+    # directory would include incremental state even with glob exclusions,
+    # because the cache action's tar command recurses into matched directories.
+    # Cargo unpacks registry sources from the cached archives when needed.
+    #
+    # PR caches are only reusable by the same PR. Let main populate the caches
+    # every branch can restore, so abandoned PR snapshots do not evict them.
     - name: Cache Cargo artifacts
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
       with:
         path: |
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
-          ~/.cargo/registry/src
           ~/.cargo/git/db
           ~/.cargo/git/checkouts
-          ${{ inputs.target-dir }}
-        key: cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-${{ github.sha }}
+          ${{ inputs.target-dir }}/**/.fingerprint
+          ${{ inputs.target-dir }}/**/build
+          ${{ inputs.target-dir }}/**/deps
+          ${{ inputs.target-dir }}/**/examples
+          ${{ inputs.target-dir }}/.rustc_info.json
+        key: cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-${{ github.sha }}
         restore-keys: |
-          cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-
-          cargo-${{ runner.os }}-${{ inputs.scope }}-
+          cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-
+          cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-
+
+    # The restore-only action has no post-job save. Keep its paths identical to
+    # the main-branch action: paths are part of the cache's version identifier.
+    - name: Restore Cargo artifacts
+      if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+          ~/.cargo/git/checkouts
+          ${{ inputs.target-dir }}/**/.fingerprint
+          ${{ inputs.target-dir }}/**/build
+          ${{ inputs.target-dir }}/**/deps
+          ${{ inputs.target-dir }}/**/examples
+          ${{ inputs.target-dir }}/.rustc_info.json
+        key: cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-${{ github.sha }}
+        restore-keys: |
+          cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-
+          cargo-v2-${{ runner.os }}-${{ runner.arch }}-${{ inputs.scope }}-

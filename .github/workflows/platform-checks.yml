@@ -1,0 +1,127 @@
+name: Platform checks
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Runner platform for the server and its consumers.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-server:
+    uses: ./.github/workflows/build-server.yml
+    with:
+      os: ${{ inputs.os }}
+
+  client:
+    name: client
+    needs: build-server
+    runs-on: ${{ inputs.os }}
+    defaults:
+      run:
+        working-directory: editors/code
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/download-server
+        with:
+          name: rust-glancer-${{ inputs.os }}
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: editors/code/package-lock.json
+      - name: Install client dependencies
+        run: npm ci
+      - name: Check client formatting
+        run: npm run fmt:check
+      - name: Lint client
+        run: npm run lint
+      - name: Check client
+        run: npm run check
+      - name: Check client tests
+        run: npm run check:test
+      - name: Check client unit tests
+        run: npm run check:unit
+      - name: Run client unit tests
+        run: npm run test:unit
+      - name: Run client end-to-end tests on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:e2e:prebuilt
+      - name: Run client end-to-end tests natively
+        if: runner.os != 'Linux'
+        run: npm run test:e2e:prebuilt
+
+  build-editor-packages:
+    name: build-editor-packages
+    needs: build-server
+    runs-on: ${{ inputs.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/download-server
+        with:
+          name: rust-glancer-${{ inputs.os }}
+          path: target/${{ needs.build-server.outputs.target }}/release
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: editors/code/package-lock.json
+      - name: Install client dependencies
+        run: npm ci
+        working-directory: editors/code
+      - name: Package VSIX
+        run: npm run package:vsix -- --skip-build
+        working-directory: editors/code
+      - name: Verify packaged VSIX
+        run: >-
+          node -e "if (!require('node:fs').readdirSync('../../dist').some((name) => name.endsWith('.vsix')))
+          throw new Error('Expected a host-native VSIX to be created')"
+        working-directory: editors/code
+      - name: Package standalone language server
+        env:
+          RUST_TARGET: ${{ needs.build-server.outputs.target }}
+        shell: bash
+        run: |
+          python=python3
+          if [ "$RUNNER_OS" = Windows ]; then
+            python=python
+          fi
+          "$python" .github/scripts/package_server_archive.py --target "$RUST_TARGET" --version 0.0.0
+
+  compare-lsp-windows:
+    name: compare-lsp (windows)
+    if: inputs.os == 'windows-latest'
+    needs: build-server
+    runs-on: ${{ inputs.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/download-server
+        with:
+          name: rust-glancer-${{ inputs.os }}
+      - name: Fetch rust-analyzer fixture
+        shell: bash
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+      - name: Install rust-analyzer server
+        run: rustup component add rust-analyzer
+      - name: Run LSP comparison
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force .ci/lsp | Out-Null
+          $env:RUST_GLANCER_COMPARE_LSP_RUST_ANALYZER = rustup which rust-analyzer
+          & ./target/release/rust-glancer.exe compare-lsp rust_analyzer `
+            --path test_targets/bench_fixtures/rust-analyzer `
+            --format json > .ci/lsp/result.json
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Check LSP comparison liveness
+        run: >-
+          python .github/scripts/check_lsp_compatibility_liveness.py
+          --report .ci/lsp/result.json

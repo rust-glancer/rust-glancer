@@ -1,0 +1,59 @@
+name: Build server
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: Runner platform for the native server.
+        required: true
+        type: string
+    outputs:
+      target:
+        description: Rust target triple of the server artifact.
+        value: ${{ jobs.build.outputs.target }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build-server
+    runs-on: ${{ inputs.os }}
+    outputs:
+      target: ${{ steps.host.outputs.target }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: server
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+      - name: Detect host Rust target
+        id: host
+        shell: bash
+        run: |
+          rustc -vV | sed -n 's/^host: /target=/p' >> "$GITHUB_OUTPUT"
+      - name: Build rust-glancer
+        env:
+          RUST_TARGET: ${{ steps.host.outputs.target }}
+        shell: bash
+        run: cargo build --release --locked -p rust-glancer --target "$RUST_TARGET"
+      # Artifact downloads do not retain executable permissions. A tar archive
+      # keeps them intact for the Linux and macOS consumers.
+      - name: Archive server
+        env:
+          RUST_TARGET: ${{ steps.host.outputs.target }}
+        shell: bash
+        run: |
+          server=rust-glancer
+          if [ "$RUNNER_OS" = Windows ]; then
+            server=rust-glancer.exe
+          fi
+          tar -cf rust-glancer.tar -C "target/$RUST_TARGET/release" "$server"
+      - name: Upload server
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rust-glancer-${{ inputs.os }}
+          path: rust-glancer.tar
+          if-no-files-found: error
+          retention-days: 1

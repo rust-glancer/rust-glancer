@@ -27,10 +27,11 @@
     "labels": [
         "dependencies"
     ],
-    "timezone": "Asia/Dubai",
+    "timezone": "UTC",
     "schedule": [
-        "before 8am on monday"
+        "* 0-5 * * 0"
     ],
+    "updateNotScheduled": false,
     "prHourlyLimit": 2,
     "prConcurrentLimit": 5,
 
@@ -45,8 +46,8 @@
     // accepted PRs leave dependency intent visible in Cargo.toml/package.json.
     "rangeStrategy": "bump",
 
-    // Keep update branches testing against the current base branch. This burns
-    // a little more CI, but stale dependency PRs are much harder to trust.
+    // Refresh existing branches during the same Sunday 00:00-06:00 UTC window.
+    // Main-branch activity should not trigger dependency CI throughout the week.
     "rebaseWhen": "behind-base-branch",
 
     // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
@@ -54,7 +55,7 @@
     "lockFileMaintenance": {
         "enabled": true,
         "schedule": [
-            "before 8am on monday"
+            "* 0-5 * * 0"
         ],
         "automerge": false
     },
