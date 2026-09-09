@@ -92,18 +92,6 @@
             "enabled": false
         },
         {
-            // Gungraun is only used by CI benchmarks, and its crate plus runner
-            // must stay protocol-compatible. Renovate can pick a stable manifest
-            // version while Cargo resolves a newer pending runner into Cargo.lock,
-            // so automated updates create more work than they save here.
-            "description": "Do not update Gungraun benchmark tooling automatically",
-            "matchDepNames": [
-                "gungraun",
-                "gungraun-runner"
-            ],
-            "enabled": false
-        },
-        {
             "description": "Group non-major Rust dependencies",
             "matchManagers": [
                 "cargo"
