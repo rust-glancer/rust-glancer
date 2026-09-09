@@ -11,10 +11,6 @@ inputs:
   dependency-key:
     description: Hash or version string that changes when Rust dependencies/toolchain change.
     required: true
-  exclude-paths:
-    description: Optional newline-separated cache path patterns to exclude.
-    required: false
-    default: ""
 
 runs:
   using: composite
@@ -29,7 +25,6 @@ runs:
           ~/.cargo/git/db
           ~/.cargo/git/checkouts
           ${{ inputs.target-dir }}
-          ${{ inputs.exclude-paths }}
         key: cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-${{ github.sha }}
         restore-keys: |
           cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-

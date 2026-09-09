@@ -7,7 +7,6 @@ on:
       - "Cargo.toml"
       - "crates/**"
       - "rust-toolchain.toml"
-      - ".github/scripts/render_benchmark_comment.py"
       - ".github/scripts/check_lsp_compatibility_liveness.py"
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
@@ -16,7 +15,6 @@ on:
       - ".github/actions/download-performance-baseline/**"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
-      - "test_targets/moderate_workspace/**"
   push:
     branches:
       - main
@@ -25,7 +23,6 @@ on:
       - "Cargo.toml"
       - "crates/**"
       - "rust-toolchain.toml"
-      - ".github/scripts/render_benchmark_comment.py"
       - ".github/scripts/check_lsp_compatibility_liveness.py"
       - ".github/scripts/render_lsp_compatibility_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
@@ -34,7 +31,6 @@ on:
       - ".github/actions/download-performance-baseline/**"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
-      - "test_targets/moderate_workspace/**"
   workflow_dispatch:
 
 permissions:
@@ -103,96 +99,6 @@ jobs:
         with:
           name: memory-profile-baseline
           path: .ci/memory/current/result.json
-          if-no-files-found: error
-          retention-days: 30
-
-  benchmark:
-    name: benchmark
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-
-      - uses: ./.github/actions/cargo-cache
-        with:
-          scope: performance-${{ github.job }}
-          target-dir: target
-          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
-          exclude-paths: |
-            !target/gungraun
-            !target/gungraun/**
-
-      - name: Install rust-src
-        run: rustup component add rust-src
-
-      - uses: awalsh128/cache-apt-pkgs-action@2c09a5e66da6c8016428a2172bd76e5e4f14bb17 # v1
-        with:
-          packages: valgrind
-          version: valgrind-cache-v1
-
-      - name: Install Gungraun runner
-        uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
-        with:
-          # Renovate keeps this CLI version grouped with the gungraun crate so
-          # the bench harness and runner stay protocol-compatible.
-          tool: gungraun-runner@0.18.2
-          fallback: none
-
-      - name: Download base Gungraun baseline
-        if: github.event_name == 'pull_request'
-        uses: ./.github/actions/download-performance-baseline
-        with:
-          artifact-name: gungraun-baseline
-          base-sha: ${{ github.event.pull_request.base.sha }}
-          path: target/gungraun
-          github-token: ${{ github.token }}
-
-      - name: Run pull request benchmark
-        if: github.event_name == 'pull_request'
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --baseline=main \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
-
-      - name: Run main-branch benchmark
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --save-baseline=main \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
-
-      - name: Run ad-hoc benchmark
-        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
-
-      - name: Render benchmark section
-        run: |
-          python3 .github/scripts/render_benchmark_comment.py \
-            --input .ci/benchmark/current/gungraun.jsonl \
-            --output .ci/benchmark/comment.md \
-            --section-title "Benchmark results"
-          cat .ci/benchmark/comment.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload benchmark section
-        if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: benchmark-comment
-          path: .ci/benchmark/comment.md
-
-      - name: Upload main-branch Gungraun baseline
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gungraun-baseline
-          path: target/gungraun
           if-no-files-found: error
           retention-days: 30
 
@@ -285,7 +191,6 @@ jobs:
     if: github.event_name == 'pull_request'
     needs:
       - memory-profile
-      - benchmark
       - lsp-compatibility
     runs-on: ubuntu-latest
     steps:
@@ -297,12 +202,6 @@ jobs:
           name: memory-profile-comment
           path: .ci/performance/memory
 
-      - name: Download benchmark section
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: benchmark-comment
-          path: .ci/performance/benchmark
-
       - name: Download LSP compatibility section
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
@@ -313,7 +212,6 @@ jobs:
         run: |
           python3 .github/scripts/render_performance_comment.py \
             --memory .ci/performance/memory/comment.md \
-            --benchmark .ci/performance/benchmark/comment.md \
             --lsp .ci/performance/lsp/comment.md \
             --output .ci/performance/comment.md
           tee -a "$GITHUB_STEP_SUMMARY" < .ci/performance/comment.md

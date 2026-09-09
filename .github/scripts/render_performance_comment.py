@@ -10,7 +10,6 @@ def main() -> None:
     markdown = "\n\n".join(
         [
             render_section(args.memory, "Memory usage analysis"),
-            render_section(args.benchmark, "Benchmark results"),
             render_section(args.lsp, "LSP compatibility"),
             "",
         ]
@@ -22,7 +21,6 @@ def main() -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--memory", type=Path, required=True)
-    parser.add_argument("--benchmark", type=Path, required=True)
     parser.add_argument("--lsp", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
