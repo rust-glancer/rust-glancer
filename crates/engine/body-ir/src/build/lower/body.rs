@@ -118,10 +118,6 @@ impl<'a> BodyLowering<'a> {
         )
         .context("lower function declarations")?;
         let function_params = self.lower_params(function.param_list(), param_scope);
-        let params = function_params
-            .iter()
-            .flat_map(|param| param.bindings.iter().copied())
-            .collect();
         let root_expr = self.lower_block_expr(body, param_scope);
 
         Ok(self.builder.finish(
@@ -132,7 +128,6 @@ impl<'a> BodyLowering<'a> {
             param_scope,
             root_expr,
             function_params,
-            params,
         ))
     }
 
@@ -181,7 +176,6 @@ impl<'a> BodyLowering<'a> {
             self.body_source,
             root_scope,
             root_expr,
-            Vec::new(),
             Vec::new(),
         )
     }

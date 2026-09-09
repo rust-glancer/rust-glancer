@@ -87,7 +87,6 @@ impl BodyBuilder {
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
-        params: Vec<BindingId>,
     ) -> LoweredBodyData {
         let Self {
             source_items,
@@ -111,7 +110,6 @@ impl BodyBuilder {
                 param_scope,
                 root_expr,
                 function_params,
-                params,
                 scopes,
                 bindings,
                 pats,

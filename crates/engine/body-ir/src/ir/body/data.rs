@@ -52,13 +52,17 @@ impl BodyData {
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
-        params: Vec<BindingId>,
         scopes: Arena<ScopeId, ScopeData>,
         bindings: Arena<BindingId, BindingData>,
         pats: Arena<PatId, PatData>,
         statements: Arena<StmtId, StmtData>,
         exprs: Arena<ExprId, ExprData>,
     ) -> Self {
+        let params = function_params
+            .iter()
+            .flat_map(|param| param.bindings.iter().copied())
+            .collect();
+
         Self {
             owner,
             owner_module,
@@ -397,7 +401,6 @@ mod tests {
                 bindings: vec![BindingId(0), BindingId(1)],
                 annotation: None,
             }],
-            vec![BindingId(0), BindingId(1)],
             scopes,
             bindings,
             Arena::new(),
