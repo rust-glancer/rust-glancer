@@ -5,10 +5,16 @@
 //! of locations reached through multiple crate roots. `NavigationQuery` only selects the semantic
 //! operation inside that shared flow.
 
-use std::{collections::HashMap, path::PathBuf, time::Instant};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
 use anyhow::Context as _;
-use rg_analysis::{NavigationTarget, NavigationTargetSource, SavedSourceRelationship};
+use rg_analysis::{
+    CurrentSourceView, NavigationTarget, NavigationTargetSource, SavedSourceRelationship,
+};
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
 use rg_parse::LineIndex;
@@ -97,6 +103,7 @@ impl QueryRunner<'_> {
                         (source.context.package, source.context.file),
                         document,
                         current.source.line_index(),
+                        current.analysis.current_source_view(),
                     )
                     .context("convert navigation target for captured documents")?
                 {
@@ -250,8 +257,21 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         current_file: (PackageSlot, FileId),
         current_document: &EditorDocumentSnapshot,
         current_index: &LineIndex,
+        current_source: Option<&CurrentSourceView>,
     ) -> anyhow::Result<CapturedTargetLocation> {
         match target.source {
+            NavigationTargetSource::Saved
+                if (target.crate_ref.package, target.file_id) == current_file =>
+            {
+                // Analysis already prepared this file's syntax and declaration associations.
+                // Borrow them when a link returns to the same file instead of preparing it again.
+                Ok(Self::location_for_open_target(
+                    target,
+                    current_document.path(),
+                    current_index,
+                    current_source,
+                ))
+            }
             NavigationTargetSource::Saved => self
                 .location_for_saved_target(target)
                 .context("convert saved navigation destination"),
@@ -304,47 +324,53 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
             CapturedNavigationSource::Unavailable => Ok(CapturedTargetLocation::Unavailable),
             CapturedNavigationSource::Open(open) => {
                 let CapturedOpenNavigationSource { path, source } = open.as_ref();
-                let mapped_span = match source {
-                    DocumentSourceView::SavedExact(_) => target.span,
-                    DocumentSourceView::Current(source) => {
-                        match (
-                            target.span,
-                            source.relationship(target.crate_ref.package, target.file_id),
-                        ) {
-                            (None, _) => None,
-                            (Some(span), Some(SavedSourceRelationship::Exact)) => Some(span),
-                            (Some(span), Some(SavedSourceRelationship::Different)) => {
-                                let Some(associations) = source.declaration_associations(
-                                    target.crate_ref.package,
-                                    target.file_id,
-                                ) else {
-                                    return Ok(CapturedTargetLocation::Unsafe);
-                                };
-                                let Some(current) =
-                                    associations.current_header_span_for_saved(span)
-                                else {
-                                    return Ok(CapturedTargetLocation::Unsafe);
-                                };
-                                Some(current)
-                            }
-                            (Some(_), None) => return Ok(CapturedTargetLocation::Unavailable),
-                        }
-                    }
-                };
-                let mut current_target = target.clone();
-                current_target.source = NavigationTargetSource::Current;
-                current_target.span = mapped_span;
-                Ok(
-                    match navigation_proto::location_for_current_document(
-                        path,
-                        source.line_index(),
-                        &current_target,
-                    ) {
-                        Some(location) => CapturedTargetLocation::Ready(location),
-                        None => CapturedTargetLocation::Unavailable,
+                Ok(Self::location_for_open_target(
+                    target,
+                    path,
+                    source.line_index(),
+                    match source {
+                        DocumentSourceView::SavedExact(_) => None,
+                        DocumentSourceView::Current(source) => Some(source),
                     },
-                )
+                ))
             }
+        }
+    }
+
+    /// Move a saved declaration into the editor using the associations prepared for that text.
+    /// Without a current-source view, the editor text is identical to its saved interpretation.
+    fn location_for_open_target(
+        target: &NavigationTarget,
+        path: &Path,
+        line_index: &LineIndex,
+        source: Option<&CurrentSourceView>,
+    ) -> CapturedTargetLocation {
+        let mapped_span = match source {
+            None => target.span,
+            Some(source) => match (
+                target.span,
+                source.relationship(target.crate_ref.package, target.file_id),
+            ) {
+                (None, _) => None,
+                (Some(span), Some(SavedSourceRelationship::Exact)) => Some(span),
+                (Some(span), Some(SavedSourceRelationship::Different)) => {
+                    let Some(current) = source
+                        .declaration_associations(target.crate_ref.package, target.file_id)
+                        .and_then(|associations| associations.current_header_span_for_saved(span))
+                    else {
+                        return CapturedTargetLocation::Unsafe;
+                    };
+                    Some(current)
+                }
+                (Some(_), None) => return CapturedTargetLocation::Unavailable,
+            },
+        };
+        let mut current_target = target.clone();
+        current_target.source = NavigationTargetSource::Current;
+        current_target.span = mapped_span;
+        match navigation_proto::location_for_current_document(path, line_index, &current_target) {
+            Some(location) => CapturedTargetLocation::Ready(location),
+            None => CapturedTargetLocation::Unavailable,
         }
     }
 

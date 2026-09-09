@@ -45,20 +45,13 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
             .context("read example edition")?;
         let declarations = DeclarationView::new(self.0.view_db());
         let mut highlights = Vec::new();
-        // Assemble each document first, including any docs in the module's other file.
-        // Documents with no source text in the requested region need no coloring work.
+        // Select documents by their local comments before reading any counterpart module files.
+        // Each selected document still includes all of its reference definitions.
         for docs in source
-            .documents(crate_ref, file, &syntax)
+            .documents(crate_ref, file, &syntax, range)
             .context("read highlighted documentation")?
         {
             rg_std::check_cancel!(self.0, "documentation highlighting");
-            if docs
-                .source_ranges(file, 0..docs.text.len())
-                .iter()
-                .all(|span| Self::clip(*span, range).is_none())
-            {
-                continue;
-            }
             // A link gets its target's color, such as struct or method. Resolve only links
             // touching the requested region, while letting Markdown see every reference definition.
             for link in MarkdownLink::extract(&docs.text) {

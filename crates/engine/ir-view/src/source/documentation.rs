@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 use rg_def_map::{DefMapSource, ModuleOrigin};
 use rg_ir_model::{CrateRef, FileId, ModuleRef, Span, identity::DeclarationRef};
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 
 pub use rg_item_tree::{DocumentationPlacement, DocumentationSource};
 
@@ -23,6 +23,52 @@ pub struct ModuleDocumentationSource {
     pub definition: Option<FileId>,
 }
 
+/// Find documentation owners by saved header position without scanning every declaration.
+/// Most spans cover just a name, but tuple fields and unnamed items can cover wider syntax.
+/// Keep overlapping spans so a position with distinct owners remains ambiguous.
+pub struct DocumentationDeclarationIndex {
+    declarations: Vec<(Span, DeclarationRef)>,
+    /// The furthest end seen through each entry. Unlike individual span ends, these are sorted
+    /// even when a wider declaration contains another one.
+    prefix_ends: Vec<u32>,
+}
+
+impl DocumentationDeclarationIndex {
+    fn new(mut declarations: Vec<(Span, DeclarationRef)>) -> Self {
+        declarations.sort_unstable_by_key(|(span, _)| (span.text.start, span.text.end));
+        let mut end = 0;
+        let prefix_ends = declarations
+            .iter()
+            .map(|(span, _)| {
+                end = end.max(span.text.end);
+                end
+            })
+            .collect();
+        Self {
+            declarations,
+            prefix_ends,
+        }
+    }
+
+    /// Match all spans containing this saved byte offset. Repeated occurrences of the same
+    /// declaration count as one owner; distinct declarations leave the association unknown.
+    pub fn declaration_at(&self, offset: u32) -> Option<DeclarationRef> {
+        // Skip the prefix in which every span ends before the cursor, then stop once starts
+        // pass it. A containing outer span must remain a candidate even if inner spans ended.
+        let first = self.prefix_ends.partition_point(|end| *end <= offset);
+        let mut owner = ExpectedUnique::new();
+        for (span, declaration) in self.declarations[first..]
+            .iter()
+            .take_while(|(span, _)| span.text.start <= offset)
+        {
+            if span.contains(offset) {
+                owner.push(*declaration);
+            }
+        }
+        owner.into_option()
+    }
+}
+
 /// Read the saved declarations and module locations needed to attach source docs to a scope.
 /// The syntax being edited may have different offsets, so callers associate its declaration
 /// headers with these saved names before choosing a documentation owner.
@@ -35,20 +81,19 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
         Self { db }
     }
 
-    /// Pair saved declaration spans with the identities used for link resolution.
-    /// A caller can collect this once for a file, then match each documented item's header
-    /// against it. Current header offsets must first be translated into saved coordinates.
+    /// Index saved declaration spans for link resolution. Build this once for a file, then
+    /// look up each documented item's header after translating it into saved coordinates.
     ///
     /// Collecting declarations alone avoids requiring body analysis just to find doc owners.
     /// TODO: Include body-local doc owners when their declarations can be read without scanning
     /// body occurrences or making a whole-file highlighting request materialize function bodies.
-    pub fn declaration_names(
+    pub fn declaration_index(
         &self,
         crate_ref: CrateRef,
         file: FileId,
-    ) -> anyhow::Result<UniqueVec<(Span, DeclarationRef)>> {
+    ) -> anyhow::Result<DocumentationDeclarationIndex> {
         let resolution = ResolutionView::new(self.db);
-        let mut declarations = UniqueVec::new();
+        let mut declarations = Vec::new();
         for occurrence in SourceOccurrenceView::new(self.db)
             .saved_declaration_occurrences(crate_ref, file, None)
             .context("read documentation owner declarations")?
@@ -65,7 +110,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
                 ));
             }
         }
-        Ok(declarations)
+        Ok(DocumentationDeclarationIndex::new(declarations))
     }
 
     /// File-level `//!` comments belong to the module whose definition uses that file.

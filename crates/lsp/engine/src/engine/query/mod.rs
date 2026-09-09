@@ -661,6 +661,7 @@ impl<'a> QueryRunner<'a> {
                             (target.context.package, target.context.file),
                             document,
                             current.source.line_index(),
+                            current.analysis.current_source_view(),
                         )
                         .context("convert hover link destination")?
                     {

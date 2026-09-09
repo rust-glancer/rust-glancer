@@ -82,6 +82,15 @@ impl DocumentationSource {
         &self.text
     }
 
+    /// Does any retained Markdown come from this range in the Rust file? Comment prefixes and
+    /// omitted whitespace do not count. This selects relevant docs without assembling other parts
+    /// of their Markdown document, which may require reading a module's other file.
+    pub fn intersects_source_range(&self, range: Range<usize>) -> bool {
+        self.mappings.project(0..self.text.len()).any(|mapping| {
+            mapping.original.start.max(range.start) < mapping.original.end.min(range.end)
+        })
+    }
+
     /// Keep only the Markdown for storage, discarding the temporary source mappings.
     /// Whitespace-only text means there is no documentation to store.
     pub fn into_documentation(self) -> Option<Documentation> {

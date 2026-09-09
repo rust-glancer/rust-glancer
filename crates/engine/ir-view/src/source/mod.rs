@@ -24,7 +24,8 @@ pub use completion::{
     SourceCompletionView,
 };
 pub use documentation::{
-    DocumentationPlacement, DocumentationSource, DocumentationSourceView, ModuleDocumentationSource,
+    DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
+    DocumentationSourceView, ModuleDocumentationSource,
 };
 pub use occurrence::{
     IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,

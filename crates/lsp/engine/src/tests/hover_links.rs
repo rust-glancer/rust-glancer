@@ -347,7 +347,7 @@ async fn hover_links_use_unsaved_destination_positions() {
 
         //- /src/lib.rs
         pub mod model;
-        /// [`model::Profile`].
+        /// [`model::Profile`] and [`Self`].
         pub struct Us$hover$er;
 
         //- /src/model.rs
@@ -378,7 +378,37 @@ async fn hover_links_use_unsaved_destination_positions() {
                   pub struct User
                   ```
 
-                  [`model::Profile`](<file://$ROOT/src/model.rs#L3,16>).
+                  [`model::Profile`](<file://$ROOT/src/model.rs#L3,16>) and [`Self`](<file://$ROOT/src/lib.rs#L3,12>).
+            "#]],
+        )
+        .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let current = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                "// Source and destination declarations have both moved.\n\npub mod model;\n/// [`model::Profile`] and [`Self`].\npub struct Us$hover$er;\n",
+            ),
+        )
+        .await;
+    fixture
+        .check_dirty(
+            &current,
+            &[LspQuery::hover("links from a moved declaration", "hover")],
+            expect![[r#"
+                links from a moved declaration
+                - range: /src/lib.rs:4:11-4:15
+                - markdown:
+                  ```rust
+                  hover_links::User
+                  ```
+
+                  ```rust
+                  pub struct User
+                  ```
+
+                  [`model::Profile`](<file://$ROOT/src/model.rs#L3,16>) and [`Self`](<file://$ROOT/src/lib.rs#L5,12>).
             "#]],
         )
         .await;

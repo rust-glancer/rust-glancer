@@ -5,13 +5,15 @@
 use std::ops::Range;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, Span, TextSpan, identity::DeclarationRef};
 use rg_ir_view::{
     item::documentation::{DocumentationLinkResolution, DocumentationView},
-    source::{DocumentationPlacement, DocumentationSource, DocumentationSourceView},
+    source::{
+        DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
+        DocumentationSourceView,
+    },
 };
 use rg_parse::{TextRangeMap, lexical_token_kind_at, parse_source_file};
-use rg_std::ExpectedUnique;
 use rg_syntax::{
     AstNode as _, SourceFile, SyntaxKind, SyntaxNode, TextRange, TextSize,
     ast::{self, HasAttrs as _},
@@ -186,7 +188,15 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             return Ok(None);
         }
         for docs in self
-            .documents(crate_ref, file, &syntax)
+            .documents(
+                crate_ref,
+                file,
+                &syntax,
+                Some(TextSpan {
+                    start: offset,
+                    end: offset.saturating_add(1),
+                }),
+            )
             .context("read source documentation")?
         {
             let Some(markdown_offset) = docs.markdown_offset(file, offset) else {
@@ -272,20 +282,19 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         Ok(Some(parse_source_file(&text, edition).tree()))
     }
 
-    /// Collect complete documents for the comments in this syntax, associating owners when possible.
+    /// Select comments touching the requested source range, then assemble their complete documents.
     /// Even a request for a small range needs the rest of each document: `[profile][target]` may
     /// refer to a definition outside that range, or in the module's other file. The requested
-    /// range limits output spans; it must not truncate the Markdown before parsing.
+    /// range selects documents; it must not truncate their Markdown before parsing.
     pub(crate) fn documents(
         &self,
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
+        range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<SourceDocumentation>> {
         let view = DocumentationSourceView::new(self.0.view_db());
-        let names = view
-            .declaration_names(crate_ref, file)
-            .context("read documentation declarations")?;
+        let mut names = None;
         let mut documents = Vec::new();
         for node in syntax.syntax().descendants() {
             rg_std::check_cancel!(self.0, "source documentation owner");
@@ -297,6 +306,14 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
                 && !ast::RecordField::can_cast(node.kind())
                 && !ast::TupleField::can_cast(node.kind())
             {
+                continue;
+            }
+            // Skip unrelated items before copying their comments. A containing module still
+            // needs the more precise check below: its own docs may be outside this range.
+            if range.is_some_and(|range| {
+                let span = Span::from_text_range(node.text_range());
+                span.text.start >= range.end || span.text.end <= range.start
+            }) {
                 continue;
             }
             let outer = DocumentationSource::from_node(&node, DocumentationPlacement::Outer);
@@ -313,6 +330,18 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             {
                 continue;
             }
+            // Check only the parts authored here before associating an owner or opening another
+            // file. An unrelated `mod api;` must not make a small query parse all of `api.rs`.
+            if let Some(range) = range {
+                let range = range.start as usize..range.end as usize;
+                if !outer.intersects_source_range(range.clone())
+                    && inner
+                        .as_ref()
+                        .is_none_or(|docs| !docs.intersects_source_range(range.clone()))
+                {
+                    continue;
+                }
+            }
             // File-level inner docs use the file's module directly. Item docs need their
             // current header associated with a saved declaration before links have a scope.
             let owner = if is_file {
@@ -320,7 +349,15 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
                     .context("find documented file module")?
                     .map(DeclarationRef::Module)
             } else {
-                self.owner(crate_ref, file, &node, names.as_slice())
+                let names = if let Some(names) = &names {
+                    names
+                } else {
+                    names.insert(
+                        view.declaration_index(crate_ref, file)
+                            .context("read documentation declarations")?,
+                    )
+                };
+                self.owner(crate_ref, file, &node, names)
                     .context("associate documentation owner")?
             };
             let mut docs = SourceDocumentation {
@@ -426,7 +463,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         crate_ref: CrateRef,
         file: FileId,
         node: &SyntaxNode,
-        names: &[(Span, DeclarationRef)],
+        names: &DocumentationDeclarationIndex,
     ) -> anyhow::Result<Option<DeclarationRef>> {
         // Enum fields do not have their own DeclarationRef. Their variant supplies the same
         // module and `Self` scope, so use that indexed owner without inventing a field identity.
@@ -457,12 +494,6 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         else {
             return Ok(None);
         };
-        let mut owner = ExpectedUnique::new();
-        for (span, declaration) in names {
-            if span.contains(saved) {
-                owner.push(*declaration);
-            }
-        }
-        Ok(owner.into_option())
+        Ok(names.declaration_at(saved))
     }
 }

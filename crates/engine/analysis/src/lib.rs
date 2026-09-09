@@ -180,6 +180,12 @@ impl<'a> Analysis<'a> {
         Some(current.source())
     }
 
+    /// Borrow the editor syntax and declaration associations already prepared for this request.
+    /// A saved-source analysis has no current-source view.
+    pub fn current_source_view(&self) -> Option<&CurrentSourceView> {
+        self.current_source.as_ref()
+    }
+
     /// Return how this request's source relates to one saved file interpretation.
     pub fn current_source_relationship(
         &self,

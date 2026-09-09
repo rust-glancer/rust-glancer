@@ -57,6 +57,7 @@ async fn source_documentation_tokens_cover_links_and_rust_examples() {
             },
             Profile(/** [`Profile`] */ Profile),
         }
+        pub struct Wrapped(/** [`Self`] */ pub Profile);
         "###,
     )
     .await;
@@ -123,10 +124,61 @@ async fn source_documentation_tokens_cover_links_and_rust_examples() {
                 - 32:4-32:21 struct.documentation "[profile][target]"
                 - 38:12-38:23 struct.documentation "[`Profile`]"
                 - 41:16-41:27 struct.documentation "[`Profile`]"
+                - 43:23-43:31 struct.documentation "[`Self`]"
 
                 range with external reference definition
                 - 32:4-32:21 struct.documentation "[profile][target]"
             "##]],
+        )
+        .await;
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn documentation_ranges_keep_reference_definitions_in_the_other_module_file() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "doc_module_ranges"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Profile;
+        /// $outer_start$[profile][inner-target]$outer_end$
+        ///
+        /// [outer-target]: crate::Profile
+        pub mod api;
+
+        //- /src/api.rs
+        //! $inner_start$[profile][outer-target]$inner_end$
+        //!
+        //! [inner-target]: crate::Profile
+        "#,
+    )
+    .await;
+    fixture
+        .check(
+            &[
+                LspQuery::semantic_tokens(
+                    "outer link with inner reference definition",
+                    "src/lib.rs",
+                    Some(("outer_start", "outer_end")),
+                ),
+                LspQuery::semantic_tokens(
+                    "inner link with outer reference definition",
+                    "src/api.rs",
+                    Some(("inner_start", "inner_end")),
+                ),
+            ],
+            expect![[r#"
+                outer link with inner reference definition
+                - 1:4-1:27 struct.documentation "[profile][inner-target]"
+
+                inner link with outer reference definition
+                - 0:4-0:27 struct.documentation "[profile][outer-target]"
+            "#]],
         )
         .await;
     fixture.shutdown().await;
