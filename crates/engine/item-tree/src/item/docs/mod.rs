@@ -1,5 +1,10 @@
+mod source;
+
+pub use source::{DocumentationPlacement, DocumentationSource};
+
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
 /// User-facing documentation attached to one source declaration.
 ///
 /// The text is already stripped from Rust doc-comment/doc-attribute syntax, but otherwise remains

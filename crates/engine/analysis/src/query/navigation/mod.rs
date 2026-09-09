@@ -12,5 +12,5 @@ mod type_definition;
 
 pub(crate) use self::{
     goto::GotoResolver, implementation::ImplementationResolver, symbol::SymbolResolver,
-    type_definition::TypeDefinitionResolver,
+    target::NavigationTargetProjection, type_definition::TypeDefinitionResolver,
 };

@@ -259,7 +259,7 @@ impl EngineService for Service {
     async fn hover(
         self,
         _: context::Context,
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Hover { input, respond_to })
@@ -332,6 +332,21 @@ impl EngineService for Service {
             .query(|respond_to| EngineCommand::FoldingRange {
                 snapshot,
                 client_capabilities,
+                respond_to,
+            })
+            .await
+    }
+
+    async fn semantic_tokens(
+        self,
+        _: context::Context,
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError> {
+        self.engine
+            .query(|respond_to| EngineCommand::SemanticTokens {
+                snapshot,
+                range,
                 respond_to,
             })
             .await

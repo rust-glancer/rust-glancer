@@ -89,6 +89,7 @@ mimalloc = { version = "=0.1.52", default-features = false }
 notify-debouncer-full = "0.7.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
 proc-macro2 = "1.0.106"
+pulldown-cmark = { version = "0.13.4", default-features = false }
 quote = "1.0.45"
 ra-ap-rustc_lexer = "=0.160.0"
 wincode = { version = "0.5.3", features = ["derive"] }

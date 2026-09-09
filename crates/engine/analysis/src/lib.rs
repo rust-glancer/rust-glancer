@@ -5,6 +5,7 @@
 //! symbols, and completion. Its result models deliberately contain no LSP types, so protocol
 //! conversion stays outside the analysis boundary.
 
+mod documentation;
 mod model;
 mod query;
 mod source_symbol;
@@ -34,10 +35,10 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 pub use self::model::{
     CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
     CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
-    DocumentOutline, DocumentSymbol, Fold, FoldKind, HoverBlock, HoverInfo, InlayHint,
-    InlayHintKind, InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-    NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
-    SyntheticCompletionTarget, WorkspaceSymbol,
+    DocumentOutline, DocumentSymbol, DocumentationLink, Fold, FoldKind, Highlight, HighlightKind,
+    HoverBlock, HoverInfo, InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion,
+    NavigationTarget, NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit,
+    RenameResult, RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
 };
 
 /// Request-scoped façade for editor queries over one frozen project view.
@@ -82,6 +83,19 @@ impl rg_std::Cancelable for Analysis<'_> {
 }
 
 impl<'a> Analysis<'a> {
+    /// Highlight documentation in the request's source, using saved declarations for link targets.
+    /// Examples need syntax only; this operation does not require current or saved body analysis.
+    pub fn documentation_highlights(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        range: Option<TextSpan>,
+    ) -> anyhow::Result<Vec<Highlight>> {
+        self.run_query("documentation highlighting", || {
+            documentation::DocumentationHighlighter::new(self).highlight(crate_ref, file, range)
+        })
+    }
+
     /// Builds a query API over one request-scoped indexed view and its matching source snapshot.
     pub fn new(view_db: IndexedViewDb<'a>, saved_source: SavedSourceView<'a>) -> Self {
         Self {
@@ -91,7 +105,8 @@ impl<'a> Analysis<'a> {
         }
     }
 
-    /// Attach the request-owned source used to build current Body IR in this analysis.
+    /// Attach captured syntax and its associations with saved declarations. Body queries also
+    /// prepare matching current Body IR; documentation queries only need this source view.
     pub fn with_current_source(mut self, current_source: CurrentSourceView) -> Self {
         self.current_source = Some(current_source);
         self
@@ -163,6 +178,12 @@ impl<'a> Analysis<'a> {
         let current = self.current_source.as_ref()?;
         current.relationship(package, file)?;
         Some(current.source())
+    }
+
+    /// Borrow the editor syntax and declaration associations already prepared for this request.
+    /// A saved-source analysis has no current-source view.
+    pub fn current_source_view(&self) -> Option<&CurrentSourceView> {
+        self.current_source.as_ref()
     }
 
     /// Return how this request's source relates to one saved file interpretation.

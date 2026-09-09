@@ -11,6 +11,7 @@ use rg_ir_model::{Path, PathRoot};
 use rg_item_tree::{
     FieldKey, TypeBound, TypeBoundListDisplay, TypeNameFormatter, TypeRef, TypeRefDisplay,
 };
+use rg_parse::syntax_edition;
 use rg_text::{Name, RustEdition};
 
 /// Creates borrowed Rust-syntax display adapters for one use-site edition.
@@ -37,7 +38,7 @@ impl SyntaxRenderer {
     pub fn name<'a>(self, name: &'a str) -> NameDisplay<'a> {
         NameDisplay {
             name,
-            edition: self.syntax_edition(),
+            edition: syntax_edition(self.edition),
         }
     }
 
@@ -68,15 +69,6 @@ impl SyntaxRenderer {
     /// Displays a semantic path as valid source for the use-site edition.
     pub fn path<'a>(self, path: &'a Path) -> PathDisplay<'a> {
         PathDisplay { syntax: self, path }
-    }
-
-    fn syntax_edition(self) -> rg_syntax::Edition {
-        match self.edition {
-            RustEdition::Edition2015 => rg_syntax::Edition::Edition2015,
-            RustEdition::Edition2018 => rg_syntax::Edition::Edition2018,
-            RustEdition::Edition2021 => rg_syntax::Edition::Edition2021,
-            RustEdition::Edition2024 => rg_syntax::Edition::Edition2024,
-        }
     }
 }
 

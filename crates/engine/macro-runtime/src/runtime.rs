@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 
 use rg_ir_model::{FileId, LocalDefRef, Span};
+use rg_parse::syntax_edition;
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
 
@@ -21,7 +22,7 @@ use super::{
         MacroExpansionExecutor, MacroExpansionJob, MacroExpansionOutput,
         MacroExpansionPerformancePreference, MacroExpansionWork,
     },
-    syntax::{macro_edition, tt_span_for_parse_span},
+    syntax::tt_span_for_parse_span,
 };
 
 /// Owns declarative macro compilation, expansion caching, and worker-pool execution.
@@ -48,7 +49,7 @@ impl MacroExpansionRuntime {
         let compile_result = self.cache.compile(
             request.def_ref,
             request.definition,
-            macro_edition(request.definition.edition()),
+            syntax_edition(request.definition.edition()),
         );
         let Some(macro_) = compile_result.macro_ else {
             return PreparedMacroExpansionResult {
@@ -61,7 +62,7 @@ impl MacroExpansionRuntime {
         let call_site = tt_span_for_parse_span(
             request.call_file_id,
             request.call_span,
-            macro_edition(request.call_edition),
+            syntax_edition(request.call_edition),
         );
         let prepared_expansion = self.cache.prepare_expansion(
             request.def_ref,

@@ -75,7 +75,7 @@ pub(crate) enum EngineCommand {
         respond_to: QueryResponder<Vec<ls_types::DocumentHighlight>>,
     },
     Hover {
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
         respond_to: QueryResponder<Option<ls_types::Hover>>,
     },
     CodeAction {
@@ -100,6 +100,11 @@ pub(crate) enum EngineCommand {
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
         respond_to: QueryResponder<Vec<ls_types::FoldingRange>>,
+    },
+    SemanticTokens {
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+        respond_to: QueryResponder<ls_types::SemanticTokens>,
     },
     InlayHint {
         input: DocumentRangeSnapshot,

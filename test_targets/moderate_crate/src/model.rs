@@ -1,5 +1,10 @@
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
+/// Create a note with [`Self::new`].
+///
+/// ```rust
+/// let note = Note::new(7, "hello");
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Note {
     pub id: usize,

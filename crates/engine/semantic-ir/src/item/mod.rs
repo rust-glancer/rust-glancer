@@ -18,7 +18,7 @@ mod type_path_resolution;
 mod view;
 
 pub use self::{
-    context::TypePathContext,
+    context::{SelfTypeOwner, TypePathContext},
     data::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         StructData, TraitData, TypeAliasData, UnionData,

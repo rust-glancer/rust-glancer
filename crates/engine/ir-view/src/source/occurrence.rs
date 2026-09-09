@@ -224,8 +224,8 @@ pub enum IndexedTypePathScope {
 
 /// Semantic owner of a type path written in an item signature.
 ///
-/// The type-path context resolves module names and impl `Self`; the generic owner identifies the
-/// type and const parameters inherited by this particular declaration. For example, the cursor in
+/// The type-path context resolves module names and the `Self` binding; the generic owner identifies
+/// the type and const parameters inherited by this particular declaration. For example, the cursor in
 /// `impl<T> Wrapper<T> { fn map<U>(_: U$0) {} }` needs the function owner to see `U`, while its
 /// type-path context supplies the impl's module and `Self` type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,7 +348,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = self.body_occurrences_at(crate_ref, file_id, offset)?;
-        occurrences.extend(self.saved_declaration_occurrences_at(crate_ref, file_id, offset)?);
+        occurrences.extend(self.saved_declaration_occurrences(crate_ref, file_id, Some(offset))?);
         Ok(occurrences)
     }
 
@@ -428,22 +428,33 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
 
     /// Return declaration occurrences whose coordinates come from saved source indexes.
     ///
-    /// Callers need a saved offset or an exact-source proof before using this method. Body IR is
+    /// With no offset, collect the whole file for consumers that associate several declarations.
+    /// These are saved coordinates; callers must map current headers before comparing positions. Body IR is
     /// intentionally excluded so an explicitly mapped saved header cannot collide with a current
     /// body at the same numeric range.
-    pub fn saved_declaration_occurrences_at(
+    pub fn saved_declaration_occurrences(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        offset: u32,
+        offset: Option<u32>,
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
-        for candidate in DefinitionSourceScanner::at(self.db, crate_ref, file_id, offset).scan()? {
+        for candidate in match offset {
+            Some(offset) => DefinitionSourceScanner::at(self.db, crate_ref, file_id, offset),
+            None => DefinitionSourceScanner::in_crate(self.db, crate_ref, Some(file_id)),
+        }
+        .scan()?
+        {
             if let Some(occurrence) = Self::definition_occurrence(crate_ref, candidate) {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in SignatureSourceScanner::at(self.db, crate_ref, file_id, offset).scan()? {
+        for candidate in match offset {
+            Some(offset) => SignatureSourceScanner::at(self.db, crate_ref, file_id, offset),
+            None => SignatureSourceScanner::in_crate(self.db, crate_ref, Some(file_id)),
+        }
+        .scan()?
+        {
             if let Some(occurrence) =
                 self.signature_occurrence(crate_ref, candidate, Some(file_id))?
             {

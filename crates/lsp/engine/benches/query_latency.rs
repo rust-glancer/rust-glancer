@@ -272,9 +272,7 @@ impl PreparedEngine {
     }
 
     fn hover(&self, relative_path: &str, position: Position) -> Option<Hover> {
-        let input = self
-            .document_snapshot(relative_path)
-            .with_position(position);
+        let input = self.global_position_snapshot(relative_path, position);
         let outcome = self
             .runtime
             .block_on(self.service.clone().hover(context::current(), input))

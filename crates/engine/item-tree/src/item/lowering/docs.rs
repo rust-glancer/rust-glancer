@@ -1,5 +1,5 @@
-use crate::item::Documentation;
-use rg_syntax::{AstNode as _, ast};
+use crate::item::{Documentation, DocumentationPlacement, DocumentationSource};
+use rg_syntax::ast;
 
 use super::MaybeFromAst;
 
@@ -11,21 +11,8 @@ impl MaybeFromAst<OuterDocs> for Documentation {
     type Context<'a> = OuterDocs;
 
     fn maybe_from_ast(item: &Self::AstNode, _ctx: Self::Context<'_>) -> Option<Self> {
-        let mut lines = Vec::new();
-
-        for comment in item.doc_comments().filter(ast::Comment::is_outer) {
-            if let Some((text, _)) = comment.doc_comment() {
-                lines.push(normalize_doc_text(text));
-            }
-        }
-
-        for attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
-            if let Some(text) = doc_attr_text(&attr) {
-                lines.push(text);
-            }
-        }
-
-        Self::new(lines.join("\n"))
+        DocumentationSource::from_node(item.syntax(), DocumentationPlacement::Outer)
+            .into_documentation()
     }
 }
 
@@ -34,55 +21,12 @@ impl MaybeFromAst<InnerDocs> for Documentation {
     type Context<'a> = InnerDocs;
 
     fn maybe_from_ast(item: &Self::AstNode, _ctx: Self::Context<'_>) -> Option<Self> {
-        let inner_node = item.inner_attributes_node()?;
-        let mut lines = Vec::new();
-
-        // Inner module docs live on the module body (`mod foo { //! ... }`) or file itself
-        // (`//! ...`). They document the containing module rather than the next item.
-        for comment in
-            ast::DocCommentIter::from_syntax_node(&inner_node).filter(ast::Comment::is_inner)
-        {
-            if let Some((text, _)) = comment.doc_comment() {
-                lines.push(normalize_doc_text(text));
-            }
-        }
-
-        for attr in inner_node.children().filter_map(ast::Attr::cast) {
-            if attr.kind().is_inner()
-                && let Some(text) = doc_attr_text(&attr)
-            {
-                lines.push(text);
-            }
-        }
-
-        Self::new(lines.join("\n"))
+        DocumentationSource::from_node(
+            &item.inner_attributes_node()?,
+            DocumentationPlacement::Inner,
+        )
+        .into_documentation()
     }
-}
-
-fn doc_attr_text(attr: &ast::Attr) -> Option<String> {
-    let ast::Meta::KeyValueMeta(meta) = attr.meta()? else {
-        return None;
-    };
-    let path = meta.path()?;
-    if path.syntax().text() != "doc" {
-        return None;
-    }
-
-    let ast::Expr::Literal(literal) = meta.expr()? else {
-        return None;
-    };
-    let ast::LiteralKind::String(value) = literal.kind() else {
-        return None;
-    };
-
-    value.value().ok().map(|value| normalize_doc_text(&value))
-}
-
-fn normalize_doc_text(text: &str) -> String {
-    text.lines()
-        .map(|line| line.strip_prefix(' ').unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]

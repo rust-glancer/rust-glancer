@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import { EXTENSION_COMMANDS } from "../src/commands";
 import { waitFor, withTimeout } from "./async";
 import { completeInEditor } from "./completion-scenario";
+import { inspectDocumentation } from "./documentation-scenario";
 import {
   assertDefinition,
   clientState,
@@ -100,6 +101,15 @@ suite("Rust Glancer extension", () => {
     );
     await waitForReadyWorkspace("moderate_crate");
     await assertDefinition(moderate, "impl Display for |Note", "pub struct |Note");
+  });
+
+  test("colors documentation examples and resolves source links", async () => {
+    const document = await vscode.workspace.openTextDocument(
+      vscode.Uri.joinPath(projects, "moderate_crate", "src", "model.rs"),
+    );
+    await vscode.window.showTextDocument(document);
+    await waitForReadyWorkspace("moderate_crate");
+    await inspectDocumentation(document);
   });
 
   test("offers, accepts, and dismisses semantic completions in the editor", async () => {

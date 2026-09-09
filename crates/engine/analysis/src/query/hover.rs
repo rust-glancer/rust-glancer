@@ -1,6 +1,7 @@
 //! Builds hover payloads from resolved analysis declarations.
 
-use rg_ir_model::{CrateRef, FileId};
+use anyhow::Context as _;
+use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
@@ -9,8 +10,9 @@ use rg_ir_view::{
 
 use crate::{
     Analysis, SymbolKind,
+    documentation::{DocumentationLinkResolver, SourceDocumentationQuery},
     model::{HoverBlock, HoverInfo, SymbolAt},
-    source_symbol::SourceSymbolResolver,
+    source_symbol::{SourceSymbol, SourceSymbolResolver},
 };
 
 pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
@@ -26,6 +28,15 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
+        if let Some(link) = SourceDocumentationQuery::new(self.0)
+            .link_at(crate_ref, file_id, offset)
+            .context("find hovered documentation link")?
+        {
+            return self.hover_for_source_symbol(
+                crate_ref,
+                SourceSymbol::plain_declaration(link.declaration, crate_ref, file_id, link.span),
+            );
+        }
         let Some(source_symbol) = self
             .0
             .source_symbol_at_for_query(crate_ref, file_id, offset)?
@@ -38,7 +49,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     fn hover_for_source_symbol(
         &self,
         crate_ref: CrateRef,
-        source_symbol: crate::source_symbol::SourceSymbol,
+        source_symbol: SourceSymbol,
     ) -> anyhow::Result<Option<HoverInfo>> {
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
@@ -54,7 +65,9 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             let Some(details) = details.details_for_declaration(declaration, &context)? else {
                 continue;
             };
-            let block = Self::hover_block(details);
+            let block = self
+                .hover_block(declaration, details)
+                .context("resolve hover documentation")?;
             if !blocks.contains(&block) {
                 blocks.push(block);
             }
@@ -97,17 +110,29 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             signature: None,
             ty: Some(signature),
             docs: None,
+            doc_links: Vec::new(),
         }))
     }
 
-    fn hover_block(details: DeclarationDetails) -> HoverBlock {
+    fn hover_block(
+        &self,
+        declaration: DeclarationRef,
+        details: DeclarationDetails,
+    ) -> anyhow::Result<HoverBlock> {
         let (kind, path, signature, docs) = details.into_parts();
-        HoverBlock {
+        let doc_links = match &docs {
+            Some(docs) => DocumentationLinkResolver::new(self.0.view_db())
+                .resolve(declaration, docs)
+                .context("resolve hover item links")?,
+            None => Vec::new(),
+        };
+        Ok(HoverBlock {
             kind,
             path,
             signature,
             ty: None,
             docs,
-        }
+            doc_links,
+        })
     }
 }

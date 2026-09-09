@@ -8,8 +8,8 @@
 
 use anyhow::Context as _;
 use rg_def_map::{
-    DefMapQuery, DefMapSource, MacroDefinitionKind, Namespace, NamespaceSet, VisibleScopeDef,
-    VisibleScopeOrigin,
+    DefMapQuery, DefMapSource, MacroDefinitionKind, ModuleDocumentation, Namespace, NamespaceSet,
+    VisibleScopeDef, VisibleScopeOrigin,
 };
 use rg_ir_model::{
     DefId, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ModuleRef, Path, PathRoot,
@@ -398,7 +398,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let context = ItemStoreQuery::new(self.db)
             .type_path_context_for_generic_def(owner)
             .context("read generic scope type-path context")?;
-        if let Some(impl_ref) = context.and_then(|context| context.impl_ref)
+        if let Some(impl_ref) = context.and_then(|context| context.impl_ref())
             && seen.push(("Self".to_string(), GenericScopeNameKind::Type))
         {
             names.push(GenericScopeName {
@@ -476,7 +476,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 (
                     DeclarationRef::Module(module),
                     SymbolKind::Module,
-                    data.docs.as_ref().map(Documentation::text),
+                    data.docs.as_ref().map(ModuleDocumentation::text),
                     data.user_facing_attrs,
                 )
             }

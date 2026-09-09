@@ -25,7 +25,10 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 
-use crate::{SemanticIrReadTxn, TraitImplSelfHead, TypePathContext, store::SemanticIrDbMutator};
+use crate::{
+    SelfTypeOwner, SemanticIrReadTxn, TraitImplSelfHead, TypePathContext,
+    store::SemanticIrDbMutator,
+};
 
 /// Named identities and a conservative lookup key collected for one impl declaration.
 ///
@@ -178,7 +181,7 @@ fn trait_impl_self_head(
             {
                 let context = TypePathContext {
                     module: data.owner,
-                    impl_ref: Some(impl_ref),
+                    self_owner: Some(SelfTypeOwner::Impl(impl_ref)),
                 };
                 let declarations = ItemResolutionQuery::new(def_map, db)
                     .semantic_items_for_type_path(context, &path)?;

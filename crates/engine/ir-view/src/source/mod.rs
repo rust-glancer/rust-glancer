@@ -7,6 +7,7 @@
 //! span to the nearest indexed scope.
 
 mod completion;
+mod documentation;
 mod occurrence;
 mod scan;
 
@@ -21,6 +22,10 @@ pub use completion::{
     IndexedRecordOwner, IndexedSignatureTypeSite, IndexedTraitImplSite, IndexedTypeNamePosition,
     IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
     SourceCompletionView,
+};
+pub use documentation::{
+    DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
+    DocumentationSourceView, ModuleDocumentationSource,
 };
 pub use occurrence::{
     IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,

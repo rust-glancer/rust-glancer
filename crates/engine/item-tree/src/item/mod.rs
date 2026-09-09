@@ -13,7 +13,7 @@ pub use self::{
         StructItem, TraitItem, TypeAliasItem, TypeOrConstParamData, TypeParamData, UnionItem,
         WherePredicate,
     },
-    docs::Documentation,
+    docs::{Documentation, DocumentationPlacement, DocumentationSource},
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
         UsePathSegmentKind,

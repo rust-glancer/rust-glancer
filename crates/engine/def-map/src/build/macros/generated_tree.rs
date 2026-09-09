@@ -18,8 +18,8 @@ use rg_item_tree::{
     StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
     UserFacingAttrs, VisibilityLevel,
 };
-use rg_macro_runtime::{ExpansionSyntax, macro_edition};
-use rg_parse::LineIndex;
+use rg_macro_runtime::ExpansionSyntax;
+use rg_parse::{LineIndex, syntax_edition};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
@@ -595,7 +595,7 @@ fn tt_span_for_range(
         rg_syntax::TextRange::new(origin_span.text.start.into(), origin_span.text.end.into());
     SpanFactory::new(
         u32::try_from(origin_file_id.0).expect("file id should fit macro span storage"),
-        macro_edition(edition),
+        syntax_edition(edition),
     )
     .span_for(text_range)
 }

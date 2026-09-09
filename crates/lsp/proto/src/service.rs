@@ -70,7 +70,7 @@ pub trait EngineService {
     ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError>;
 
     async fn hover(
-        input: DocumentPositionSnapshot,
+        input: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError>;
 
     async fn code_action(
@@ -95,6 +95,11 @@ pub trait EngineService {
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
     ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError>;
+
+    async fn semantic_tokens(
+        snapshot: EditorDocumentSnapshot,
+        range: Option<ls_types::Range>,
+    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError>;
 
     async fn inlay_hint(
         input: DocumentRangeSnapshot,

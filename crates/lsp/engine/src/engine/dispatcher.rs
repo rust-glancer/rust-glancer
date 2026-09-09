@@ -226,13 +226,12 @@ impl EngineDispatcher {
                 }
                 EngineCommand::Hover { input, respond_to } => {
                     tracing::trace!(
-                        path = %input.document().path().display(),
+                        path = %input.target().path().display(),
                         line = input.position().line,
                         character = input.position().character,
                         "engine command started: hover"
                     );
-                    let context =
-                        QueryContext::target_document("hover", queue_elapsed, input.document());
+                    let context = QueryContext::global_operation("hover", queue_elapsed, &input);
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
@@ -342,6 +341,22 @@ impl EngineDispatcher {
                         respond_to,
                         cancellation,
                         |runner, _| runner.folding_range(snapshot, client_capabilities),
+                    );
+                }
+                EngineCommand::SemanticTokens {
+                    snapshot,
+                    range,
+                    respond_to,
+                } => {
+                    let context =
+                        QueryContext::target_document("semantic_tokens", queue_elapsed, &snapshot);
+                    self.query_runner().respond_to_query(
+                        context,
+                        respond_to,
+                        cancellation,
+                        |runner, cancellation| {
+                            runner.semantic_tokens(snapshot, range, cancellation)
+                        },
                     );
                 }
                 EngineCommand::InlayHint { input, respond_to } => {

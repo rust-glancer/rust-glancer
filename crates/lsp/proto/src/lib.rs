@@ -15,6 +15,7 @@ mod folding;
 mod notifications;
 mod query;
 mod saved_source;
+mod semantic_tokens;
 mod service;
 mod snapshot;
 
@@ -39,6 +40,7 @@ pub use self::{
     },
     query::{QueryError, QueryScope, QueryValue},
     saved_source::{CapturedSourceInput, SaveProposal, SavedProjectChanges},
+    semantic_tokens::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES, semantic_tokens_legend},
     service::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,
         NotificationsServiceClient,

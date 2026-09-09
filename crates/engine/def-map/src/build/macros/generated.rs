@@ -17,16 +17,16 @@ use anyhow::{Context as _, Result};
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace,
-    ScopeBinding, ScopeBindingProvenance, Visibility,
+    MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span,
 };
 use rg_item_tree::{
-    Documentation, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
-    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
-    ModuleSource, UseImport, UseItem,
+    ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
+    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport,
+    UseItem,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
@@ -602,7 +602,7 @@ impl GeneratedCollector<'_> {
         let child_module = self.state.def_map_builder.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
-            docs: Documentation::concat(item.docs.clone(), inner_docs),
+            docs: ModuleDocumentation::new(item.docs.clone(), inner_docs),
             user_facing_attrs: item.user_facing_attrs,
             visibility: semantic_visibility,
             parent: Some(parent_module),

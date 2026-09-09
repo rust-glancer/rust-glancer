@@ -165,6 +165,18 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         Self { db }
     }
 
+    /// Read the kind without requiring a source declaration for every module.
+    /// Root and synthetic modules still have a kind even though they have no declaration span.
+    pub fn kind(&self, declaration: DeclarationRef) -> anyhow::Result<Option<SymbolKind>> {
+        if matches!(declaration, DeclarationRef::Module(_)) {
+            return Ok(Some(SymbolKind::Module));
+        }
+        Ok(self
+            .declaration(declaration)
+            .context("read declaration kind")?
+            .map(|declaration| declaration.kind()))
+    }
+
     /// Return source facts for one declaration ref.
     #[rg_std::cancelable("declaration projection", token = self.db)]
     pub fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {

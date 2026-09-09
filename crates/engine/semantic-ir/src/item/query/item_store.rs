@@ -14,7 +14,8 @@ use rg_item_tree::{FieldList, GenericParams};
 use super::{ItemLookupIndexSource, ItemStoreSource};
 use crate::{
     ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemLookupIndex,
-    ItemStore, SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
+    ItemStore, SelfTypeOwner, SemanticItemView, StaticData, TraitData, TypeAliasData,
+    TypePathContext,
 };
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
@@ -149,15 +150,23 @@ where
     ) -> Result<Option<TypePathContext>, S::Error> {
         match owner {
             GenericDefRef::TypeDef(type_def) => {
-                Ok(self.type_def_owner(type_def)?.map(TypePathContext::module))
+                Ok(self
+                    .type_def_owner(type_def)?
+                    .map(|module| TypePathContext {
+                        module,
+                        self_owner: Some(SelfTypeOwner::TypeDef(type_def)),
+                    }))
             }
-            GenericDefRef::Trait(trait_ref) => Ok(self
-                .trait_data(trait_ref)?
-                .map(|data| TypePathContext::module(data.owner))),
+            GenericDefRef::Trait(trait_ref) => {
+                Ok(self.trait_data(trait_ref)?.map(|data| TypePathContext {
+                    module: data.owner,
+                    self_owner: Some(SelfTypeOwner::Trait(trait_ref)),
+                }))
+            }
             GenericDefRef::Impl(impl_ref) => {
                 Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
                     module: data.owner,
-                    impl_ref: Some(impl_ref),
+                    self_owner: Some(SelfTypeOwner::Impl(impl_ref)),
                 }))
             }
             GenericDefRef::Function(function) => self.type_path_context_for_function(function),
@@ -190,14 +199,18 @@ where
     ) -> Result<Option<TypePathContext>, S::Error> {
         match owner {
             ItemOwner::Module(module) => Ok(Some(TypePathContext::module(module))),
-            ItemOwner::Trait(id) => Ok(self
-                .trait_data(TraitDefRef { origin, id })?
-                .map(|data| TypePathContext::module(data.owner))),
+            ItemOwner::Trait(id) => {
+                let trait_ref = TraitDefRef { origin, id };
+                Ok(self.trait_data(trait_ref)?.map(|data| TypePathContext {
+                    module: data.owner,
+                    self_owner: Some(SelfTypeOwner::Trait(trait_ref)),
+                }))
+            }
             ItemOwner::Impl(id) => {
                 let impl_ref = ImplRef { origin, id };
                 Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
                     module: data.owner,
-                    impl_ref: Some(impl_ref),
+                    self_owner: Some(SelfTypeOwner::Impl(impl_ref)),
                 }))
             }
         }

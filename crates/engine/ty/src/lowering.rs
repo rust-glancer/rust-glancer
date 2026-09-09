@@ -12,7 +12,9 @@ use rg_ir_model::{
 use rg_item_tree::{
     GenericArg as ItemGenericArg, TypeBound, TypePath, TypePathAnchor, TypeRef, WherePredicate,
 };
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{
+    GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext, TypePathResolution,
+};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::inference::InferenceTable;
@@ -29,7 +31,7 @@ const MAX_TYPE_LOWERING_DEPTH: usize = 128;
 /// Name-lookup starting point for paths encountered during type lowering.
 ///
 /// A path written in a body may resolve through its lexical `Scope`, including body-local items.
-/// A path in an item signature instead uses the declaration's module and optional impl `Context`.
+/// A path in an item signature instead uses the declaration's module and `Self` binding.
 /// Only this lookup policy varies; both cases continue through the same recursive type visitor.
 #[derive(Debug, Clone, Copy)]
 pub enum TypeLoweringAnchor {
@@ -663,13 +665,13 @@ where
                 .unwrap_or(Ty::Param(param)));
         }
 
-        // An impl on `u32`, `[T]`, or another unkeyed shape cannot resolve `Self` through a
-        // `TypeDefRef`. Its canonical impl header still owns the exact type, so consult that
-        // header from the literal `Self` spelling before falling back to definition-path lookup.
+        // `Self` keeps the owner's generic arguments, including when the type has defaults.
+        // Impl receivers can also be primitive or structural, so recover the complete owner
+        // type before falling back to definition-path lookup.
         if path
             .single_name()
             .is_some_and(|name| name.as_str() == "Self")
-            && let Some(self_ty) = self.lower_impl_self()?
+            && let Some(self_ty) = self.lower_self()?
         {
             return Ok(self_ty);
         }
@@ -689,7 +691,7 @@ where
 
         match resolution {
             TypePathResolution::SelfType(def) => {
-                if let Some(self_ty) = self.lower_impl_self()? {
+                if let Some(self_ty) = self.lower_self()? {
                     return Ok(self_ty);
                 }
                 let generics = self
@@ -733,17 +735,29 @@ where
         }
     }
 
-    /// Lower `Self` through the impl header that defines it.
+    /// Lower `Self` through its owner while retaining that owner's generic arguments.
     ///
-    /// `Self` and the concrete spelling must produce the same `Adt` and argument list. Rebuilding
-    /// an ADT directly from the resolved definition would lose relationships such as
-    /// `impl<T> Wrapper<T> { fn get(&self) -> Self }`.
-    fn lower_impl_self(&mut self) -> Result<Option<Ty>, D::Error> {
+    /// In `struct Wrapper<T = u32>`, `Self` means `Wrapper<T>`, including before `T` is known.
+    /// An impl supplies its full receiver spelling, as in `impl<T> Wrapper<Vec<T>>`.
+    fn lower_self(&mut self) -> Result<Option<Ty>, D::Error> {
         let TypeLoweringAnchor::Context(context) = self.anchor else {
             return Ok(None);
         };
-        let Some(impl_ref) = context.impl_ref else {
-            return Ok(None);
+        let impl_ref = match context.self_owner {
+            Some(SelfTypeOwner::TypeDef(def)) => {
+                let generics = self
+                    .query
+                    .item_paths
+                    .generics()
+                    .generics(GenericDefRef::TypeDef(def))?;
+                return Ok(Some(Ty::adt(AdtTy {
+                    def,
+                    args: self.subst.args_for(&generics),
+                })));
+            }
+            Some(SelfTypeOwner::Impl(impl_ref)) => impl_ref,
+            // Trait `Self` is a generic parameter and is lowered before owner-type lookup.
+            Some(SelfTypeOwner::Trait(_)) | None => return Ok(None),
         };
         let Some(data) = self.query.item_paths.items().impl_data(impl_ref)? else {
             return Ok(None);

@@ -39,6 +39,14 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: rg_lsp_proto::semantic_tokens_legend(),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: Some(true),
+                ..Default::default()
+            },
+        )),
         // The VS Code extension sends this request directly, so keep the internal command out of
         // the editor command registry.
         execute_command_provider: None,
@@ -65,8 +73,8 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 #[cfg(test)]
 mod tests {
     use tower_lsp_server::ls_types::{
-        CodeActionKind, CodeActionProviderCapability, OneOf, TextDocumentSyncCapability,
-        TextDocumentSyncKind,
+        CodeActionKind, CodeActionProviderCapability, OneOf, SemanticTokensFullOptions,
+        SemanticTokensServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
     };
 
     use super::server_capabilities;
@@ -89,6 +97,14 @@ mod tests {
         assert!(capabilities.document_formatting_provider.is_some());
         assert!(capabilities.document_highlight_provider.is_some());
         assert!(capabilities.folding_range_provider.is_some());
+        let Some(SemanticTokensServerCapabilities::SemanticTokensOptions(tokens)) =
+            capabilities.semantic_tokens_provider
+        else {
+            panic!("semantic tokens should advertise the engine legend");
+        };
+        assert_eq!(tokens.legend, rg_lsp_proto::semantic_tokens_legend());
+        assert_eq!(tokens.full, Some(SemanticTokensFullOptions::Bool(true)));
+        assert_eq!(tokens.range, Some(true));
 
         let Some(CodeActionProviderCapability::Options(code_actions)) =
             capabilities.code_action_provider.as_ref()

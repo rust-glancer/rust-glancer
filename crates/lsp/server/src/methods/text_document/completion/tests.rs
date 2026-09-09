@@ -731,7 +731,7 @@ impl EngineService for GatedCompletionEngine {
     async fn hover(
         self,
         _: context::Context,
-        _: DocumentPositionSnapshot,
+        _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         panic!("test engine only supports completion")
     }
@@ -767,6 +767,15 @@ impl EngineService for GatedCompletionEngine {
         _: EditorDocumentSnapshot,
         _: FoldingClientCapabilities,
     ) -> Result<QueryValue<Vec<FoldingRange>>, QueryError> {
+        panic!("test engine only supports completion")
+    }
+
+    async fn semantic_tokens(
+        self,
+        _: context::Context,
+        _: EditorDocumentSnapshot,
+        _: Option<tower_lsp_server::ls_types::Range>,
+    ) -> Result<QueryValue<tower_lsp_server::ls_types::SemanticTokens>, QueryError> {
         panic!("test engine only supports completion")
     }
 

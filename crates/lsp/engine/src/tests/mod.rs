@@ -1,11 +1,13 @@
 mod code_action_flow;
 mod dirty_flow;
 mod document_read_flow;
+mod documentation_flow;
 mod external_flow;
 mod flow;
 mod folding_flow;
 mod formatting_flow;
 mod global_operation_flow;
+mod hover_links;
 mod rename_flow;
 mod save_flow;
 mod utils;

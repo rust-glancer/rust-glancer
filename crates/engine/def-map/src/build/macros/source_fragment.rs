@@ -18,13 +18,13 @@ use anyhow::{Context as _, Result};
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleFileSelection, ModuleOrigin, ModuleScope,
-    Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
+    ModuleOrigin, ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span};
 use rg_item_tree::{
-    Documentation, ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId,
-    ItemTreeRef, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
+    ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
+    MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
     Package as ItemTreePackage, UseImport, UseItem, UserFacingAttrs,
 };
 use rg_parse::ModuleFileContext;
@@ -704,7 +704,7 @@ impl SourceFragmentCollector<'_> {
             Some(parent_module),
             Some(module_name.clone()),
             item.name_span,
-            Documentation::concat(item.docs.clone(), inner_docs),
+            ModuleDocumentation::new(item.docs.clone(), inner_docs),
             item.user_facing_attrs,
             semantic_visibility,
             origin,
@@ -779,7 +779,7 @@ impl SourceFragmentCollector<'_> {
         parent: Option<ModuleId>,
         name: Option<Name>,
         name_span: Option<Span>,
-        docs: Option<Documentation>,
+        docs: Option<ModuleDocumentation>,
         user_facing_attrs: UserFacingAttrs,
         visibility: Visibility,
         origin: ModuleOrigin,

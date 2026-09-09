@@ -1,17 +1,7 @@
 //! Shared syntax helpers for declarative macro expansion call sites.
 
 use rg_ir_model::{FileId, Span};
-use rg_text::RustEdition;
 use rg_tt::{Edition, Span as TtSpan, syntax_bridge::SpanFactory};
-
-pub fn macro_edition(edition: RustEdition) -> Edition {
-    match edition {
-        RustEdition::Edition2015 => Edition::Edition2015,
-        RustEdition::Edition2018 => Edition::Edition2018,
-        RustEdition::Edition2021 => Edition::Edition2021,
-        RustEdition::Edition2024 => Edition::Edition2024,
-    }
-}
 
 pub(crate) fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
     let text_range = rg_syntax::TextRange::new(span.text.start.into(), span.text.end.into());

@@ -34,7 +34,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         Ok(targets)
     }
 
-    fn target_for_declaration(
+    pub(crate) fn target_for_declaration(
         &self,
         declaration_ref: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {

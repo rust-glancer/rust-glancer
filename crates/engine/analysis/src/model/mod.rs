@@ -3,6 +3,7 @@
 mod code_action;
 mod completion;
 mod folding;
+mod highlight;
 mod hover;
 mod inlay_hints;
 mod navigation;
@@ -17,7 +18,8 @@ pub use completion::{
     CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion, SyntheticCompletionTarget,
 };
 pub use folding::{Fold, FoldKind};
-pub use hover::{HoverBlock, HoverInfo};
+pub use highlight::{Highlight, HighlightKind};
+pub use hover::{DocumentationLink, HoverBlock, HoverInfo};
 pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
 pub use navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
 pub use references::ReferenceLocation;

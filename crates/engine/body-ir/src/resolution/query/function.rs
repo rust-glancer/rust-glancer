@@ -30,7 +30,7 @@ where
     ) -> Result<ExpectedUnique<AdtTy>, PackageStoreError> {
         let type_contexts = self.context.type_contexts();
         let context = type_contexts.for_function(function)?;
-        let Some(impl_ref) = context.impl_ref else {
+        let Some(impl_ref) = context.impl_ref() else {
             return Ok(ExpectedUnique::new());
         };
         let item_query = self.context.item_query();

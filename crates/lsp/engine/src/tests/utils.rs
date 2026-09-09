@@ -20,7 +20,7 @@ use rg_lsp_proto::{
     DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
     FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
     QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
-    SysrootDiscovery, TargetDocumentRevision,
+    SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -674,7 +674,7 @@ impl LspEngineFixture {
             LspQuery::Hover { title, marker } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.document_snapshot(path.clone()).with_position(position);
+                let input = self.global_position_snapshot(path.clone(), position);
                 let outcome = self
                     .service
                     .clone()
@@ -771,6 +771,74 @@ impl LspEngineFixture {
                 writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_document_symbols(rendered, &symbols, 0);
             }
+            LspQuery::SemanticTokens { title, path, range } => {
+                let document = self.document_snapshot(self.fixture.path(path));
+                let range = range.map(|(start, end)| {
+                    Range::new(
+                        self.marker_position(markers, start),
+                        self.marker_position(markers, end),
+                    )
+                });
+                let outcome = self
+                    .service
+                    .clone()
+                    .semantic_tokens(context::current(), document.clone(), range)
+                    .await
+                    .expect("semantic tokens should succeed");
+                let tokens = outcome.into_value();
+                let legend = rg_lsp_proto::semantic_tokens_legend();
+                let index = LineIndex::new(document.text());
+                let mut position = Position::default();
+                let mut previous_end = Position::default();
+                writeln!(rendered, "{title}").expect("snapshot should be writable");
+                for token in tokens.data {
+                    position = Position::new(
+                        position.line + token.delta_line,
+                        if token.delta_line == 0 {
+                            position.character + token.delta_start
+                        } else {
+                            token.delta_start
+                        },
+                    );
+                    let end = Position::new(position.line, position.character + token.length);
+                    assert!(
+                        token.length > 0 && position >= previous_end,
+                        "tokens are nonempty and nonoverlapping"
+                    );
+                    assert!(range.is_none_or(|range| range.start <= position && end <= range.end));
+                    previous_end = end;
+                    let start_byte = index
+                        .offset_from_utf16_position(crate::proto::position::parse_position(
+                            position,
+                        ))
+                        .expect("token start is a UTF-16 boundary")
+                        as usize;
+                    let end_byte = index
+                        .offset_from_utf16_position(crate::proto::position::parse_position(end))
+                        .expect("token end is a UTF-16 boundary")
+                        as usize;
+                    let kind = &legend.token_types[token.token_type as usize];
+                    let modifiers = legend
+                        .token_modifiers
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| token.token_modifiers_bitset & (1 << index) != 0)
+                        .map(|(_, modifier)| format!(".{}", modifier.as_str()))
+                        .collect::<String>();
+                    writeln!(
+                        rendered,
+                        "- {}:{}-{}:{} {}{} {:?}",
+                        position.line,
+                        position.character,
+                        end.line,
+                        end.character,
+                        kind.as_str(),
+                        modifiers,
+                        &document.text()[start_byte..end_byte]
+                    )
+                    .expect("snapshot should be writable");
+                }
+            }
             LspQuery::InlayHint {
                 title,
                 path,
@@ -855,7 +923,17 @@ impl LspEngineFixture {
 
         writeln!(rendered, "- markdown:").expect("snapshot should be writable");
         match &hover.contents {
-            HoverContents::Markup(markup) => Self::write_indented(rendered, &markup.value, "  "),
+            HoverContents::Markup(markup) => {
+                // Open-document paths and Cargo's saved paths can differ through symlinks.
+                let root = self.fixture.path("");
+                let canonical_root = root.canonicalize().expect("fixture root should exist");
+                let mut markdown = markup.value.clone();
+                for root in [root, canonical_root] {
+                    let uri = path_to_file_uri(&root).expect("fixture root should have a file URI");
+                    markdown = markdown.replace(uri.as_str().trim_end_matches('/'), "file://$ROOT");
+                }
+                Self::write_indented(rendered, &markdown, "  ");
+            }
             HoverContents::Scalar(marked) => {
                 Self::write_indented(rendered, &format!("{marked:?}"), "  ")
             }
@@ -1352,6 +1430,11 @@ pub(super) enum LspQuery {
         title: &'static str,
         path: &'static str,
     },
+    SemanticTokens {
+        title: &'static str,
+        path: &'static str,
+        range: Option<(&'static str, &'static str)>,
+    },
     InlayHint {
         title: &'static str,
         path: &'static str,
@@ -1430,6 +1513,14 @@ impl LspQuery {
 
     pub(super) fn document_symbol(title: &'static str, path: &'static str) -> Self {
         Self::DocumentSymbol { title, path }
+    }
+
+    pub(super) fn semantic_tokens(
+        title: &'static str,
+        path: &'static str,
+        range: Option<(&'static str, &'static str)>,
+    ) -> Self {
+        Self::SemanticTokens { title, path, range }
     }
 
     pub(super) fn inlay_hint(

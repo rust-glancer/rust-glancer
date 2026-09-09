@@ -108,6 +108,13 @@ export class RendererEditor {
     );
   }
 
+  /** Read rendered colors to check that semantic tokens really overlay the grammar colors. */
+  public async tokenColors(): Promise<{ text: string; color: string }[]> {
+    return this.evaluate(`Array.from(document.querySelectorAll('.view-lines .view-line span'))
+      .filter(span => span.childElementCount === 0)
+      .map(span => ({ text: span.textContent ?? '', color: getComputedStyle(span).color }))`);
+  }
+
   /** The same renderer state used for readiness is retained in failure messages. */
   public async snapshot(): Promise<RendererSnapshot> {
     return this.evaluate(`(() => {

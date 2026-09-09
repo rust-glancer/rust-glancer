@@ -350,6 +350,8 @@ fn is_document_request(method: &str) -> bool {
             | "textDocument/formatting"
             | "textDocument/documentSymbol"
             | "textDocument/foldingRange"
+            | "textDocument/semanticTokens/full"
+            | "textDocument/semanticTokens/range"
             | "textDocument/inlayHint"
     )
 }
