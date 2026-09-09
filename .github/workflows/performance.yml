@@ -13,6 +13,8 @@ on:
       - ".github/scripts/render_performance_comment.py"
       - ".github/actions/cargo-cache/**"
       - ".github/actions/download-performance-baseline/**"
+      - ".github/actions/download-server/**"
+      - ".github/workflows/build-server.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
   push:
@@ -29,6 +31,8 @@ on:
       - ".github/scripts/render_performance_comment.py"
       - ".github/actions/cargo-cache/**"
       - ".github/actions/download-performance-baseline/**"
+      - ".github/actions/download-server/**"
+      - ".github/workflows/build-server.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
   workflow_dispatch:
@@ -38,18 +42,28 @@ permissions:
   contents: read
   pull-requests: write
 
+# Superseded PR commits no longer need runners. Keep every main-branch run so
+# cache refreshes and performance baselines can finish independently.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  build-server:
+    uses: ./.github/workflows/build-server.yml
+    with:
+      os: ubuntu-latest
+
   memory-profile:
     name: memory-profile
+    needs: build-server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: ./.github/actions/cargo-cache
+      - uses: ./.github/actions/download-server
         with:
-          scope: performance-${{ github.job }}
-          target-dir: target
-          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+          name: rust-glancer-ubuntu-latest
 
       - name: Install rust-src
         run: rustup component add rust-src
@@ -65,9 +79,6 @@ jobs:
 
       - name: Fetch rust-analyzer fixture
         run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
-
-      - name: Build rust-glancer
-        run: cargo build --release --locked -p rust-glancer
 
       - name: Run memory profile
         run: |
@@ -104,15 +115,14 @@ jobs:
 
   lsp-compatibility:
     name: lsp-compatibility
+    needs: build-server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: ./.github/actions/cargo-cache
+      - uses: ./.github/actions/download-server
         with:
-          scope: performance-${{ github.job }}
-          target-dir: target
-          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+          name: rust-glancer-ubuntu-latest
 
       - name: Download base LSP compatibility
         if: github.event_name == 'pull_request'
@@ -128,9 +138,6 @@ jobs:
 
       - name: Install rust-analyzer server
         run: rustup component add rust-analyzer
-
-      - name: Build rust-glancer
-        run: cargo build --release --locked -p rust-glancer
 
       - name: Run LSP compatibility
         run: |
