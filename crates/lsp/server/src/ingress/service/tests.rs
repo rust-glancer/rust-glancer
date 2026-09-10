@@ -10,8 +10,8 @@ use serde_json::json;
 use test_fixture::fixture_crate;
 use tower::Service;
 use tower_lsp_server::{
+    gen_lsp_types::Uri,
     jsonrpc::{Request, Response},
-    ls_types::Uri,
 };
 
 use crate::{

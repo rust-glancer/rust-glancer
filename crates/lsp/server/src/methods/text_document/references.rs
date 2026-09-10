@@ -1,11 +1,11 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        rg.position = ?params.text_document_position.position,
+        rg.position = ?params.text_document_position_params.position,
         rg.include_declaration = params.context.include_declaration
     )
 )]
@@ -13,7 +13,7 @@ pub(crate) async fn references(
     ctx: DocumentMethodContext,
     params: ReferenceParams,
 ) -> Result<Option<Vec<Location>>> {
-    let position = params.text_document_position.position;
+    let position = params.text_document_position_params.position;
     let input = ctx.global_position(position)?;
     let include_declaration = params.context.include_declaration;
     tracing::trace!("references request received");

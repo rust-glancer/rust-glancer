@@ -11,7 +11,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-ls_types.workspace = true
+gen-lsp-types = { workspace = true, features = ["url"] }
 serde = { workspace = true, features = ["derive"] }
 tarpc.workspace = true
 thiserror.workspace = true

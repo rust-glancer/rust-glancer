@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::{AnalysisConfig, CargoMetadataTarget, section};
@@ -16,18 +16,18 @@ pub struct DiagnosticsConfig {
 }
 
 impl DiagnosticsConfig {
-    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(diagnostics) = section(options, "diagnostics") else {
             return Ok(Self::default());
         };
 
         let on_startup = diagnostics
             .get("onStartup")
-            .and_then(LSPAny::as_bool)
+            .and_then(LspAny::as_bool)
             .unwrap_or_default();
         let on_save = diagnostics
             .get("onSave")
-            .and_then(LSPAny::as_bool)
+            .and_then(LspAny::as_bool)
             .unwrap_or_default();
         let command = match diagnostics.get("command") {
             Some(command) => {
@@ -109,7 +109,7 @@ fn validate_cargo_subcommand(command: &str) -> anyhow::Result<()> {
 }
 
 fn parse_arguments(
-    diagnostics: &ls_types::LSPObject,
+    diagnostics: &gen_lsp_types::LspObject,
     key: &'static str,
     default: &[&str],
 ) -> anyhow::Result<Vec<String>> {
@@ -156,7 +156,9 @@ fn validate_diagnostics_argument(
     Ok(())
 }
 
-fn parse_extra_env(diagnostics: &ls_types::LSPObject) -> anyhow::Result<BTreeMap<String, String>> {
+fn parse_extra_env(
+    diagnostics: &gen_lsp_types::LspObject,
+) -> anyhow::Result<BTreeMap<String, String>> {
     let Some(extra_env) = diagnostics.get("extraEnv") else {
         return Ok(BTreeMap::new());
     };

@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use ls_types::{Diagnostic, NumberOrString};
+use gen_lsp_types::{Diagnostic, ProgressToken};
 use serde::{Deserialize, Serialize};
 
 /// Service-originated side effect that the LSP orchestrator should publish to the client.
@@ -22,12 +22,12 @@ pub enum ServiceNotification {
         saved_text: Option<String>,
     },
     BeginWorkDoneProgress {
-        token: NumberOrString,
+        token: ProgressToken,
         title: String,
         message: Option<String>,
     },
     EndWorkDoneProgress {
-        token: NumberOrString,
+        token: ProgressToken,
         message: Option<String>,
     },
     InlayHintRefresh,

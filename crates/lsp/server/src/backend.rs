@@ -14,8 +14,8 @@ use std::{borrow::Cow, path::Path};
 use anyhow::Context as _;
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
+    gen_lsp_types::*,
     jsonrpc::{Error, ErrorCode, Result},
-    ls_types::{request::*, *},
 };
 
 use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
@@ -236,7 +236,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(rg.method = "didChange", rg.uri = %params.text_document.uri.as_str())
+        fields(rg.method = "didChange", rg.uri = %params.text_document.text_document_identifier.uri.as_str())
     )]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         // `EditorIngress` already applied all accepted edits, or marked the synchronized text as
@@ -279,8 +279,8 @@ impl LanguageServer for Backend {
     )]
     async fn goto_definition(
         &self,
-        params: GotoDefinitionParams,
-    ) -> Result<Option<GotoDefinitionResponse>> {
+        params: DefinitionParams,
+    ) -> Result<Option<DefinitionResponse>> {
         let context = self
             .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
@@ -296,8 +296,8 @@ impl LanguageServer for Backend {
     )]
     async fn goto_type_definition(
         &self,
-        params: GotoTypeDefinitionParams,
-    ) -> Result<Option<GotoTypeDefinitionResponse>> {
+        params: TypeDefinitionParams,
+    ) -> Result<Option<TypeDefinitionResponse>> {
         let context = self
             .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
@@ -313,8 +313,8 @@ impl LanguageServer for Backend {
     )]
     async fn goto_implementation(
         &self,
-        params: GotoImplementationParams,
-    ) -> Result<Option<GotoImplementationResponse>> {
+        params: ImplementationParams,
+    ) -> Result<Option<ImplementationResponse>> {
         let context = self
             .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
@@ -325,12 +325,12 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "references",
-            rg.uri = %params.text_document_position.text_document.uri.as_str()
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
         let context = self
-            .document_context_for(&params.text_document_position.text_document.uri)
+            .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
         methods::text_document::references::references(context, params).await
     }
@@ -345,7 +345,7 @@ impl LanguageServer for Backend {
     async fn prepare_rename(
         &self,
         params: TextDocumentPositionParams,
-    ) -> Result<Option<PrepareRenameResponse>> {
+    ) -> Result<Option<PrepareRenameResult>> {
         let context = self.document_context_for(&params.text_document.uri).await?;
         methods::text_document::rename::prepare_rename(context, params).await
     }
@@ -354,12 +354,12 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "rename",
-            rg.uri = %params.text_document_position.text_document.uri.as_str()
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
         let context = self
-            .document_context_for(&params.text_document_position.text_document.uri)
+            .document_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
         methods::text_document::rename::rename(context, params).await
     }
@@ -402,7 +402,10 @@ impl LanguageServer for Backend {
             rg.uri = %params.text_document.uri.as_str()
         )
     )]
-    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> Result<Option<Vec<CodeActionResponse>>> {
         let client_capabilities = self
             .client_capabilities
             .get()
@@ -417,12 +420,12 @@ impl LanguageServer for Backend {
         skip_all,
         fields(
             rg.method = "completion",
-            rg.uri = %params.text_document_position.text_document.uri.as_str()
+            rg.uri = %params.text_document_position_params.text_document.uri.as_str()
         )
     )]
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let context = self
-            .completion_context_for(&params.text_document_position.text_document.uri)
+            .completion_context_for(&params.text_document_position_params.text_document.uri)
             .await?;
         methods::text_document::completion::completion(context, params).await
     }
@@ -477,23 +480,23 @@ impl LanguageServer for Backend {
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
-    ) -> Result<Option<SemanticTokensResult>> {
+    ) -> Result<Option<SemanticTokens>> {
         let context = self.document_context_for(&params.text_document.uri).await?;
         let tokens =
             methods::text_document::semantic_tokens::semantic_tokens(context, None).await?;
-        Ok(Some(SemanticTokensResult::Tokens(tokens)))
+        Ok(Some(tokens))
     }
 
     #[tracing::instrument(skip_all, fields(rg.method = "semanticTokens/range", rg.uri = %params.text_document.uri.as_str()))]
     async fn semantic_tokens_range(
         &self,
         params: SemanticTokensRangeParams,
-    ) -> Result<Option<SemanticTokensRangeResult>> {
+    ) -> Result<Option<SemanticTokens>> {
         let context = self.document_context_for(&params.text_document.uri).await?;
         let tokens =
             methods::text_document::semantic_tokens::semantic_tokens(context, Some(params.range))
                 .await?;
-        Ok(Some(SemanticTokensRangeResult::Tokens(tokens)))
+        Ok(Some(tokens))
     }
 
     #[tracing::instrument(skip_all, fields(rg.method = "workspaceSymbol"))]
@@ -502,7 +505,9 @@ impl LanguageServer for Backend {
         params: WorkspaceSymbolParams,
     ) -> Result<Option<WorkspaceSymbolResponse>> {
         let Some(engine_client) = self.active_engine_client().await? else {
-            return Ok(Some(WorkspaceSymbolResponse::Nested(Vec::new())));
+            return Ok(Some(WorkspaceSymbolResponse::WorkspaceSymbolList(
+                Vec::new(),
+            )));
         };
         methods::workspace::symbol::symbol(engine_client, params).await
     }
@@ -511,7 +516,7 @@ impl LanguageServer for Backend {
         skip_all,
         fields(rg.method = "executeCommand", rg.command = %params.command)
     )]
-    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LspAny>> {
         let Some(engine_client) = self.active_engine_client().await? else {
             return Err(Error {
                 code: ErrorCode::InvalidRequest,
@@ -524,11 +529,12 @@ impl LanguageServer for Backend {
 }
 
 fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<NormalizedPathBuf>> {
-    let mut folders = params
-        .workspace_folders
-        .as_ref()
-        .into_iter()
-        .flatten()
+    let workspace_folders = match &params.workspace_folders_initialize_params.workspace_folders {
+        Some(WorkspaceFolders::WorkspaceFolderList(folders)) => folders.as_slice(),
+        Some(WorkspaceFolders::Null) | None => &[],
+    };
+    let mut folders = workspace_folders
+        .iter()
         .map(|folder| {
             let path = rg_lsp_proto::file_uri_to_path(&folder.uri).with_context(|| {
                 format!("while converting workspace URI `{}`", folder.uri.as_str())
@@ -552,7 +558,10 @@ fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<Normalized
                 .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?,
         )
     } else {
-        params.root_path.as_deref().map(std::path::PathBuf::from)
+        match &params.root_path {
+            Some(RootPath::String(path)) => Some(std::path::PathBuf::from(path)),
+            Some(RootPath::Null) | None => None,
+        }
     };
 
     if let Some(path) = fallback_root {
@@ -572,7 +581,9 @@ mod tests {
     use std::{path::Path, str::FromStr};
 
     use rg_std::NormalizedPathBuf;
-    use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
+    use tower_lsp_server::gen_lsp_types::{
+        InitializeParams, Uri, WorkspaceFolder, WorkspaceFoldersInitializeParams,
+    };
 
     use super::workspace_folders;
 
@@ -584,11 +595,16 @@ mod tests {
         let project_a = root.join("project_a");
         let project_b = root.join("project_b");
         let params = InitializeParams {
-            workspace_folders: Some(vec![
-                workspace_folder(&project_b),
-                workspace_folder(&project_a),
-                workspace_folder(&project_b),
-            ]),
+            workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
+                workspace_folders: Some(
+                    vec![
+                        workspace_folder(&project_b),
+                        workspace_folder(&project_a),
+                        workspace_folder(&project_b),
+                    ]
+                    .into(),
+                ),
+            },
             ..Default::default()
         };
 
@@ -612,7 +628,9 @@ mod tests {
             root_uri: Some(
                 rg_lsp_proto::path_to_file_uri(&root).expect("test root should convert to a URI"),
             ),
-            workspace_folders: Some(Vec::new()),
+            workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
+                workspace_folders: Some(Vec::<WorkspaceFolder>::new().into()),
+            },
             ..Default::default()
         };
 
@@ -626,10 +644,16 @@ mod tests {
     #[test]
     fn workspace_folders_reject_non_file_uris() {
         let params = InitializeParams {
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: Uri::from_str("untitled:Scratch").expect("untitled URI should be valid"),
-                name: "scratch".to_string(),
-            }]),
+            workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
+                workspace_folders: Some(
+                    vec![WorkspaceFolder {
+                        uri: Uri::from_str("untitled:Scratch")
+                            .expect("untitled URI should be valid"),
+                        name: "scratch".to_string(),
+                    }]
+                    .into(),
+                ),
+            },
             ..Default::default()
         };
 

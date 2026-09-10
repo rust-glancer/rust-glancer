@@ -17,7 +17,7 @@ use anyhow::Context as _;
 use rg_lsp_proto::{CapturedSourceInput, EngineConfig, SavedProjectChanges};
 use rg_std::{NormalizedPathBuf, UniqueVec};
 use tokio::sync::Mutex;
-use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
+use tower_lsp_server::{Client as LspClient, gen_lsp_types::MessageType};
 
 use crate::{
     client_status::{ClientStatusCapabilities, ClientStatusPublisher},
@@ -574,7 +574,7 @@ impl EngineRegistry {
             "rust-glancer engine became unavailable"
         );
         lsp_client
-            .log_message(MessageType::ERROR, format!("Rust Glancer {error}"))
+            .log_message(MessageType::Error, format!("Rust Glancer {error}"))
             .await;
         client_status
             .workspace_unavailable(&root, Arc::<str>::from(error))
@@ -630,8 +630,8 @@ mod tests {
     use test_fixture::{CrateFixture, fixture_crate};
     use tower_lsp_server::{
         ClientSocket, LanguageServer, LspService,
+        gen_lsp_types::{InitializeParams, InitializeResult},
         jsonrpc::Result,
-        ls_types::{InitializeParams, InitializeResult},
     };
 
     use crate::client_status::ActiveWorkspaceState;

@@ -8,7 +8,7 @@
 //! another engine attempt. Keeping that state out of `DocumentMethodContext` makes the one-shot
 //! flow easier to see.
 
-use tower_lsp_server::{jsonrpc::Error, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Error};
 
 use rg_lsp_proto::{
     CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,

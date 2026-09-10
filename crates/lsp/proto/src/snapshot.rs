@@ -161,12 +161,12 @@ impl EditorDocumentSnapshot {
     }
 
     /// Add a position to an already captured document.
-    pub fn with_position(self, position: ls_types::Position) -> DocumentPositionSnapshot {
+    pub fn with_position(self, position: gen_lsp_types::Position) -> DocumentPositionSnapshot {
         DocumentPositionSnapshot::new(self, position)
     }
 
     /// Add a range to an already captured document.
-    pub fn with_range(self, range: ls_types::Range) -> DocumentRangeSnapshot {
+    pub fn with_range(self, range: gen_lsp_types::Range) -> DocumentRangeSnapshot {
         DocumentRangeSnapshot::new(self, range)
     }
 }
@@ -183,7 +183,7 @@ pub struct GlobalPositionSnapshot {
     target: TargetDocumentRevision,
     open_documents_revision: OpenDocumentsRevision,
     documents: Vec<EditorDocumentSnapshot>,
-    position: ls_types::Position,
+    position: gen_lsp_types::Position,
 }
 
 impl GlobalPositionSnapshot {
@@ -191,7 +191,7 @@ impl GlobalPositionSnapshot {
         target: TargetDocumentRevision,
         open_documents_revision: OpenDocumentsRevision,
         mut documents: Vec<EditorDocumentSnapshot>,
-        position: ls_types::Position,
+        position: gen_lsp_types::Position,
     ) -> Self {
         documents.sort_by(|left, right| left.path().cmp(right.path()));
         Self {
@@ -220,7 +220,7 @@ impl GlobalPositionSnapshot {
             .find(|document| document.target() == &self.target)
     }
 
-    pub const fn position(&self) -> ls_types::Position {
+    pub const fn position(&self) -> gen_lsp_types::Position {
         self.position
     }
 
@@ -230,7 +230,7 @@ impl GlobalPositionSnapshot {
         TargetDocumentRevision,
         OpenDocumentsRevision,
         Vec<EditorDocumentSnapshot>,
-        ls_types::Position,
+        gen_lsp_types::Position,
     ) {
         (
             self.target,
@@ -245,11 +245,11 @@ impl GlobalPositionSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentPositionSnapshot {
     document: EditorDocumentSnapshot,
-    position: ls_types::Position,
+    position: gen_lsp_types::Position,
 }
 
 impl DocumentPositionSnapshot {
-    pub fn new(document: EditorDocumentSnapshot, position: ls_types::Position) -> Self {
+    pub fn new(document: EditorDocumentSnapshot, position: gen_lsp_types::Position) -> Self {
         Self { document, position }
     }
 
@@ -257,11 +257,11 @@ impl DocumentPositionSnapshot {
         &self.document
     }
 
-    pub const fn position(&self) -> ls_types::Position {
+    pub const fn position(&self) -> gen_lsp_types::Position {
         self.position
     }
 
-    pub fn into_parts(self) -> (EditorDocumentSnapshot, ls_types::Position) {
+    pub fn into_parts(self) -> (EditorDocumentSnapshot, gen_lsp_types::Position) {
         (self.document, self.position)
     }
 }
@@ -270,11 +270,11 @@ impl DocumentPositionSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentRangeSnapshot {
     document: EditorDocumentSnapshot,
-    range: ls_types::Range,
+    range: gen_lsp_types::Range,
 }
 
 impl DocumentRangeSnapshot {
-    pub fn new(document: EditorDocumentSnapshot, range: ls_types::Range) -> Self {
+    pub fn new(document: EditorDocumentSnapshot, range: gen_lsp_types::Range) -> Self {
         Self { document, range }
     }
 
@@ -282,11 +282,11 @@ impl DocumentRangeSnapshot {
         &self.document
     }
 
-    pub const fn range(&self) -> ls_types::Range {
+    pub const fn range(&self) -> gen_lsp_types::Range {
         self.range
     }
 
-    pub fn into_parts(self) -> (EditorDocumentSnapshot, ls_types::Range) {
+    pub fn into_parts(self) -> (EditorDocumentSnapshot, gen_lsp_types::Range) {
         (self.document, self.range)
     }
 }
@@ -295,7 +295,7 @@ impl DocumentRangeSnapshot {
 mod tests {
     use std::path::PathBuf;
 
-    use ls_types::Position;
+    use gen_lsp_types::Position;
 
     use super::{DocumentRevision, EditorDocumentSnapshot, OpenDocumentSession};
 

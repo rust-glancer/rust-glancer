@@ -8,7 +8,7 @@ use rg_lsp_proto::{
     DocumentPositionSnapshot, DocumentRevision, EngineError, QueryError, TargetDocumentRevision,
 };
 use tokio::sync::watch;
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::gen_lsp_types::Position;
 
 use super::{
     request::{CompletionAttemptOutcome, CompletionFuture},

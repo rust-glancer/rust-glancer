@@ -12,14 +12,14 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ls_types::{
+use gen_lsp_types::{
     ClientCapabilities, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
     DocumentSymbolClientCapabilities, InitializeParams, InitializedParams,
-    InlayHintClientCapabilities, RenameClientCapabilities, TextDocumentClientCapabilities,
-    TextDocumentContentChangeEvent, TextDocumentItem, VersionedTextDocumentIdentifier,
+    InlayHintClientCapabilities, LanguageKind, Notification as _, RenameClientCapabilities,
+    Request as _, TextDocumentClientCapabilities, TextDocumentContentChangeWholeDocument,
+    TextDocumentIdentifier, TextDocumentItem, VersionedTextDocumentIdentifier,
     WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities,
-    WorkspaceEditClientCapabilities, WorkspaceFolder, notification,
-    notification::Notification as _, request, request::Request as _,
+    WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceFoldersInitializeParams,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -117,12 +117,15 @@ impl RunningServer {
         let initialize = self
             .client
             .request(
-                request::Initialize::METHOD,
+                gen_lsp_types::InitializeRequest::METHOD.as_str(),
                 initialize_params,
                 INITIALIZE_TIMEOUT,
             )
             .await;
-        self.expect_success(request::Initialize::METHOD, initialize)?;
+        self.expect_success(
+            gen_lsp_types::InitializeRequest::METHOD.as_str(),
+            initialize,
+        )?;
         let initialize_latency = started_at.elapsed();
         tracing::info!(
             server = self.kind.display_name(),
@@ -134,7 +137,7 @@ impl RunningServer {
         // the later query requests about server behavior rather than file-watcher timing.
         self.client
             .notify(
-                notification::Initialized::METHOD,
+                gen_lsp_types::InitializedNotification::METHOD.as_str(),
                 lsp_params(InitializedParams {}, "initialized notification")?,
             )
             .await
@@ -224,12 +227,16 @@ impl RunningServer {
     pub(super) async fn shutdown(mut self) -> anyhow::Result<()> {
         let shutdown = self
             .client
-            .request(request::Shutdown::METHOD, Value::Null, SHUTDOWN_TIMEOUT)
+            .request(
+                gen_lsp_types::ShutdownRequest::METHOD.as_str(),
+                Value::Null,
+                SHUTDOWN_TIMEOUT,
+            )
             .await;
-        self.expect_success(request::Shutdown::METHOD, shutdown)?;
+        self.expect_success(gen_lsp_types::ShutdownRequest::METHOD.as_str(), shutdown)?;
         self.client
             .notify(
-                notification::Exit::METHOD,
+                gen_lsp_types::ExitNotification::METHOD.as_str(),
                 lsp_params((), "exit notification")?,
             )
             .await
@@ -306,16 +313,24 @@ impl RunningServer {
 
         #[allow(deprecated)]
         let params = InitializeParams {
-            process_id: Some(std::process::id()),
+            process_id: Some(
+                i32::try_from(std::process::id())
+                    .context("process ID exceeds LSP integer range")?,
+            ),
             root_path: None,
             root_uri: Some(root_uri.clone()),
             initialization_options: Some(self.kind.initialization_options()),
             capabilities,
             trace: None,
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: root_uri,
-                name: root_name.to_string(),
-            }]),
+            workspace_folders_initialize_params: WorkspaceFoldersInitializeParams {
+                workspace_folders: Some(
+                    vec![WorkspaceFolder {
+                        uri: root_uri,
+                        name: root_name.to_string(),
+                    }]
+                    .into(),
+                ),
+            },
             client_info: None,
             locale: None,
             work_done_progress_params: WorkDoneProgressParams::default(),
@@ -342,10 +357,10 @@ impl RunningServer {
         // That makes the query vector deterministic for custom fixture paths as well as defaults.
         self.client
             .notify(
-                notification::DidOpenTextDocument::METHOD,
+                gen_lsp_types::DidOpenTextDocumentNotification::METHOD.as_str(),
                 lsp_params(
                     DidOpenTextDocumentParams {
-                        text_document: TextDocumentItem::new(uri, "rust".to_string(), 1, text),
+                        text_document: TextDocumentItem::new(uri, LanguageKind::Rust, 1, text),
                     },
                     "didOpen params",
                 )?,
@@ -371,15 +386,16 @@ impl RunningServer {
         let uri = file_uri(&path)?;
         self.client
             .notify(
-                notification::DidChangeTextDocument::METHOD,
+                gen_lsp_types::DidChangeTextDocumentNotification::METHOD.as_str(),
                 lsp_params(
                     DidChangeTextDocumentParams {
-                        text_document: VersionedTextDocumentIdentifier { uri, version: 2 },
-                        content_changes: vec![TextDocumentContentChangeEvent {
-                            range: None,
-                            range_length: None,
-                            text,
-                        }],
+                        text_document: VersionedTextDocumentIdentifier {
+                            text_document_identifier: TextDocumentIdentifier { uri },
+                            version: 2,
+                        },
+                        content_changes: vec![
+                            TextDocumentContentChangeWholeDocument { text }.into(),
+                        ],
                     },
                     "didChange params",
                 )?,

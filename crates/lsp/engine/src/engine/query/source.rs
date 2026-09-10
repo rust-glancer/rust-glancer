@@ -26,7 +26,7 @@ impl QueryRunner<'_> {
     pub(super) fn crate_offsets(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
-        position: ls_types::Position,
+        position: gen_lsp_types::Position,
     ) -> anyhow::Result<Vec<(FileContext, CrateRef, u32)>> {
         let mut crates = Vec::new();
 
@@ -106,7 +106,7 @@ impl QueryRunner<'_> {
     fn offset_for_context(
         snapshot: ProjectSnapshot<'_>,
         context: &FileContext,
-        position: ls_types::Position,
+        position: gen_lsp_types::Position,
     ) -> anyhow::Result<Option<u32>> {
         let Some(line_index) = snapshot
             .file_line_index(context.package, context.file)

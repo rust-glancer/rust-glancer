@@ -402,7 +402,7 @@ mod tests {
             document.target().clone(),
             OpenDocumentsRevision::new(13),
             vec![document],
-            ls_types::Position::new(0, 3),
+            gen_lsp_types::Position::new(0, 3),
         );
         let memory_control: Arc<dyn MemoryControl> = Arc::new(());
         let mut project = test_project(Arc::clone(&memory_control));

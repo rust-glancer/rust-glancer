@@ -1,4 +1,4 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
@@ -9,7 +9,7 @@ use crate::methods::DocumentMethodContext;
 pub(crate) async fn prepare_rename(
     ctx: DocumentMethodContext,
     params: TextDocumentPositionParams,
-) -> Result<Option<PrepareRenameResponse>> {
+) -> Result<Option<PrepareRenameResult>> {
     let position = params.position;
     let input = ctx.global_position(position)?;
     tracing::trace!("prepare rename request received");
@@ -34,7 +34,7 @@ pub(crate) async fn prepare_rename(
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        rg.position = ?params.text_document_position.position,
+        rg.position = ?params.text_document_position_params.position,
         rg.new_name = %params.new_name
     )
 )]
@@ -42,7 +42,7 @@ pub(crate) async fn rename(
     ctx: DocumentMethodContext,
     params: RenameParams,
 ) -> Result<Option<WorkspaceEdit>> {
-    let position = params.text_document_position.position;
+    let position = params.text_document_position_params.position;
     let input = ctx.global_position(position)?;
     let new_name = params.new_name;
     tracing::trace!("rename request received");

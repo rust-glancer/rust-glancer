@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use ls_types::Diagnostic;
+use gen_lsp_types::Diagnostic;
 use rg_lsp_proto::ServiceNotification;
 use rg_std::NormalizedPathBuf;
 
@@ -91,7 +91,7 @@ impl FileDiagnostics {
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
-    use ls_types::{Diagnostic, Position, Range};
+    use gen_lsp_types::{Diagnostic, Position, Range};
     use rg_std::NormalizedPathBuf;
     use test_fixture::synthetic_test_path;
 
@@ -136,7 +136,7 @@ mod tests {
             code: None,
             code_description: None,
             source: None,
-            message: message.to_string(),
+            message: message.to_string().into(),
             related_information: None,
             tags: None,
             data: None,

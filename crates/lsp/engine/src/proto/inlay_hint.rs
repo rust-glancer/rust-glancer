@@ -1,4 +1,4 @@
-use ls_types::{InlayHint, InlayHintKind, InlayHintLabel};
+use gen_lsp_types::{InlayHint, InlayHintKind, Label};
 use rg_analysis::{InlayHint as AnalysisInlayHint, InlayHintKind as AnalysisInlayHintKind};
 
 use crate::proto::position;
@@ -9,14 +9,14 @@ pub(crate) fn inlay_hint_with_line_index(
     hint: AnalysisInlayHint,
 ) -> InlayHint {
     let kind = match hint.kind {
-        AnalysisInlayHintKind::Type => Some(InlayHintKind::TYPE),
-        AnalysisInlayHintKind::Parameter => Some(InlayHintKind::PARAMETER),
+        AnalysisInlayHintKind::Type => Some(InlayHintKind::Type),
+        AnalysisInlayHintKind::Parameter => Some(InlayHintKind::Parameter),
         AnalysisInlayHintKind::Text => None,
     };
 
     InlayHint {
         position: position::position(line_index, hint.text_offset()),
-        label: InlayHintLabel::String(hint.label),
+        label: Label::String(hint.label),
         kind,
         text_edits: None,
         tooltip: None,

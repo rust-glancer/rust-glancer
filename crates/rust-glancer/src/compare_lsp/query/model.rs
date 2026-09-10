@@ -151,8 +151,8 @@ impl SourcePosition {
         self.character
     }
 
-    pub(crate) fn to_lsp(self) -> ls_types::Position {
-        ls_types::Position::new(self.line, self.character)
+    pub(crate) fn to_lsp(self) -> gen_lsp_types::Position {
+        gen_lsp_types::Position::new(self.line, self.character)
     }
 
     #[cfg(test)]
@@ -179,20 +179,20 @@ pub(crate) enum QueryKind {
 
 impl QueryKind {
     pub(crate) fn lsp_method(self) -> &'static str {
-        use ls_types::{request, request::Request as _};
+        use gen_lsp_types::Request as _;
 
         match self {
-            Self::References { .. } => request::References::METHOD,
-            Self::GotoDefinition => request::GotoDefinition::METHOD,
-            Self::TypeDefinition => request::GotoTypeDefinition::METHOD,
-            Self::Implementation => request::GotoImplementation::METHOD,
-            Self::PrepareRename => request::PrepareRenameRequest::METHOD,
-            Self::Rename => request::Rename::METHOD,
-            Self::DocumentHighlight => request::DocumentHighlightRequest::METHOD,
-            Self::DocumentSymbol => request::DocumentSymbolRequest::METHOD,
-            Self::WorkspaceSymbol => request::WorkspaceSymbolRequest::METHOD,
-            Self::InlayHint => request::InlayHintRequest::METHOD,
-            Self::Hover => request::HoverRequest::METHOD,
+            Self::References { .. } => gen_lsp_types::ReferencesRequest::METHOD.as_str(),
+            Self::GotoDefinition => gen_lsp_types::DefinitionRequest::METHOD.as_str(),
+            Self::TypeDefinition => gen_lsp_types::TypeDefinitionRequest::METHOD.as_str(),
+            Self::Implementation => gen_lsp_types::ImplementationRequest::METHOD.as_str(),
+            Self::PrepareRename => gen_lsp_types::PrepareRenameRequest::METHOD.as_str(),
+            Self::Rename => gen_lsp_types::RenameRequest::METHOD.as_str(),
+            Self::DocumentHighlight => gen_lsp_types::DocumentHighlightRequest::METHOD.as_str(),
+            Self::DocumentSymbol => gen_lsp_types::DocumentSymbolRequest::METHOD.as_str(),
+            Self::WorkspaceSymbol => gen_lsp_types::WorkspaceSymbolRequest::METHOD.as_str(),
+            Self::InlayHint => gen_lsp_types::InlayHintRequest::METHOD.as_str(),
+            Self::Hover => gen_lsp_types::HoverRequest::METHOD.as_str(),
         }
     }
 

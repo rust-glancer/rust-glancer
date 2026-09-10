@@ -7,7 +7,7 @@ pub struct CompletionClientCapabilities {
 }
 
 impl CompletionClientCapabilities {
-    pub fn from_lsp_client_capabilities(capabilities: &ls_types::ClientCapabilities) -> Self {
+    pub fn from_lsp_client_capabilities(capabilities: &gen_lsp_types::ClientCapabilities) -> Self {
         let snippet_support = capabilities
             .text_document
             .as_ref()

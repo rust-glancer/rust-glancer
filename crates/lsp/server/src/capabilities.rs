@@ -1,32 +1,30 @@
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::gen_lsp_types::*;
 
 pub(crate) fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
         position_encoding: Some(PositionEncodingKind::UTF16),
-        text_document_sync: Some(TextDocumentSyncCapability::Options(
-            TextDocumentSyncOptions {
-                open_close: Some(true),
-                change: Some(TextDocumentSyncKind::INCREMENTAL),
-                save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                    include_text: Some(true),
-                })),
-                ..Default::default()
-            },
-        )),
-        definition_provider: Some(OneOf::Left(true)),
-        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
-        implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
-        references_provider: Some(OneOf::Left(true)),
-        rename_provider: Some(OneOf::Right(RenameOptions {
+        text_document_sync: Some(TextDocumentSync::Options(TextDocumentSyncOptions {
+            open_close: Some(true),
+            change: Some(TextDocumentSyncKind::Incremental),
+            save: Some(Save::SaveOptions(SaveOptions {
+                include_text: Some(true),
+            })),
+            ..Default::default()
+        })),
+        definition_provider: Some(true.into()),
+        type_definition_provider: Some(true.into()),
+        implementation_provider: Some(true.into()),
+        references_provider: Some(true.into()),
+        rename_provider: Some(RenameProvider::RenameOptions(RenameOptions {
             prepare_provider: Some(true),
             work_done_progress_options: WorkDoneProgressOptions::default(),
         })),
-        document_highlight_provider: Some(OneOf::Left(true)),
-        hover_provider: Some(HoverProviderCapability::Simple(true)),
-        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+        document_highlight_provider: Some(true.into()),
+        hover_provider: Some(true.into()),
+        code_action_provider: Some(CodeActionProvider::CodeActionOptions(CodeActionOptions {
             code_action_kinds: Some(vec![
-                CodeActionKind::QUICKFIX,
-                CodeActionKind::REFACTOR_REWRITE,
+                CodeActionKind::QuickFix,
+                CodeActionKind::RefactorRewrite,
             ]),
             resolve_provider: Some(false),
             ..Default::default()
@@ -36,35 +34,33 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
             ..Default::default()
         }),
-        document_formatting_provider: Some(OneOf::Left(true)),
-        document_symbol_provider: Some(OneOf::Left(true)),
-        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
-        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+        document_formatting_provider: Some(true.into()),
+        document_symbol_provider: Some(true.into()),
+        folding_range_provider: Some(true.into()),
+        semantic_tokens_provider: Some(SemanticTokensProvider::SemanticTokensOptions(
             SemanticTokensOptions {
                 legend: rg_lsp_proto::semantic_tokens_legend(),
-                full: Some(SemanticTokensFullOptions::Bool(true)),
-                range: Some(true),
+                full: Some(Full::Bool(true)),
+                range: Some(true.into()),
                 ..Default::default()
             },
         )),
         // The VS Code extension sends this request directly, so keep the internal command out of
         // the editor command registry.
         execute_command_provider: None,
-        inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
-            InlayHintOptions {
-                resolve_provider: Some(false),
-                ..Default::default()
-            },
-        ))),
-        workspace_symbol_provider: Some(OneOf::Left(true)),
-        workspace: Some(WorkspaceServerCapabilities {
+        inlay_hint_provider: Some(InlayHintProvider::InlayHintOptions(InlayHintOptions {
+            resolve_provider: Some(false),
+            ..Default::default()
+        })),
+        workspace_symbol_provider: Some(true.into()),
+        workspace: Some(WorkspaceOptions {
             workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                 supported: Some(true),
                 // TODO: Decide if we want to support live workspace-folder updates instead of
                 // letting the extension restart the server when the VS Code window shape changes.
-                change_notifications: Some(OneOf::Left(false)),
+                change_notifications: Some(false.into()),
             }),
-            file_operations: None,
+            ..Default::default()
         }),
         ..Default::default()
     }
@@ -72,9 +68,9 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 
 #[cfg(test)]
 mod tests {
-    use tower_lsp_server::ls_types::{
-        CodeActionKind, CodeActionProviderCapability, OneOf, SemanticTokensFullOptions,
-        SemanticTokensServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+    use tower_lsp_server::gen_lsp_types::{
+        CodeActionKind, CodeActionProvider, Full, RenameProvider, SemanticTokensProvider,
+        TextDocumentSync, TextDocumentSyncKind,
     };
 
     use super::server_capabilities;
@@ -97,23 +93,23 @@ mod tests {
         assert!(capabilities.document_formatting_provider.is_some());
         assert!(capabilities.document_highlight_provider.is_some());
         assert!(capabilities.folding_range_provider.is_some());
-        let Some(SemanticTokensServerCapabilities::SemanticTokensOptions(tokens)) =
+        let Some(SemanticTokensProvider::SemanticTokensOptions(tokens)) =
             capabilities.semantic_tokens_provider
         else {
             panic!("semantic tokens should advertise the engine legend");
         };
         assert_eq!(tokens.legend, rg_lsp_proto::semantic_tokens_legend());
-        assert_eq!(tokens.full, Some(SemanticTokensFullOptions::Bool(true)));
-        assert_eq!(tokens.range, Some(true));
+        assert_eq!(tokens.full, Some(Full::Bool(true)));
+        assert_eq!(tokens.range, Some(true.into()));
 
-        let Some(CodeActionProviderCapability::Options(code_actions)) =
+        let Some(CodeActionProvider::CodeActionOptions(code_actions)) =
             capabilities.code_action_provider.as_ref()
         else {
             panic!("code action capability should use explicit options");
         };
         assert_eq!(
             code_actions.code_action_kinds.as_deref(),
-            Some(&[CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR_REWRITE,][..])
+            Some(&[CodeActionKind::QuickFix, CodeActionKind::RefactorRewrite,][..])
         );
         assert_eq!(code_actions.resolve_provider, Some(false));
 
@@ -126,18 +122,17 @@ mod tests {
             Some(&[".".to_string(), ":".to_string()][..])
         );
 
-        let Some(OneOf::Right(rename)) = capabilities.rename_provider.as_ref() else {
+        let Some(RenameProvider::RenameOptions(rename)) = capabilities.rename_provider.as_ref()
+        else {
             panic!("rename capability should use explicit options");
         };
         assert_eq!(rename.prepare_provider, Some(true));
 
-        let Some(TextDocumentSyncCapability::Options(sync)) =
-            capabilities.text_document_sync.as_ref()
-        else {
+        let Some(TextDocumentSync::Options(sync)) = capabilities.text_document_sync.as_ref() else {
             panic!("text document sync should use explicit options");
         };
         assert_eq!(sync.open_close, Some(true));
-        assert_eq!(sync.change, Some(TextDocumentSyncKind::INCREMENTAL));
+        assert_eq!(sync.change, Some(TextDocumentSyncKind::Incremental));
     }
 
     #[test]

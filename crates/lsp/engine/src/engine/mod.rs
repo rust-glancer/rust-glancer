@@ -287,7 +287,7 @@ pub struct Ready;
             .expect("next queued request can run")
             .expect("saved project remains queryable");
         assert_eq!(result.value().len(), 1);
-        assert_eq!(result.value()[0].name, "Ready");
+        assert_eq!(result.value()[0].base_symbol_information.name, "Ready");
         assert!(
             memory.purges.load(Ordering::SeqCst) > purges_before,
             "abandoned request finishes cleanup before the next command"

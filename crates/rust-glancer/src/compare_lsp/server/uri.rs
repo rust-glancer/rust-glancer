@@ -8,7 +8,7 @@ use std::path::Path;
 use anyhow::Context as _;
 
 /// Convert a local path into the `file://` URI shape expected by LSP payloads.
-pub(crate) fn file_uri(path: &Path) -> anyhow::Result<ls_types::Uri> {
+pub(crate) fn file_uri(path: &Path) -> anyhow::Result<gen_lsp_types::Uri> {
     let path = path
         .canonicalize()
         .with_context(|| format!("Canonicalizing path {} for LSP URI failed", path.display()))?;

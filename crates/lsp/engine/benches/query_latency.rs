@@ -7,7 +7,7 @@ use std::{
 };
 
 use divan::{Bencher, black_box};
-use ls_types::{CompletionItem, Hover, InlayHint, Location, Position, Range};
+use gen_lsp_types::{CompletionItem, Hover, InlayHint, Location, Position, Range};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
     AnalysisConfig, CompletionClientCapabilities, DocumentRevision, EditorDocumentSnapshot,

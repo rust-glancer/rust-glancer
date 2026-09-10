@@ -29,7 +29,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
         Ok(self
             .current_navigation_query(input, CurrentNavigationQuery::Definition, cancellation)
             .context("navigate to definition")?)
@@ -39,7 +39,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
         Ok(self
             .current_navigation_query(input, CurrentNavigationQuery::TypeDefinition, cancellation)
             .context("navigate to type definition")?)
@@ -49,7 +49,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
         self.saved_implementation_query(input, cancellation)
     }
 
@@ -59,7 +59,7 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         query: CurrentNavigationQuery,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Vec<ls_types::Location>> {
+    ) -> anyhow::Result<Vec<gen_lsp_types::Location>> {
         let (target, _, documents, position) = input.into_parts();
         let document = documents
             .iter()
@@ -147,7 +147,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
         if let Some(path) = self
             .save_required_for_global_operation(&input, cancellation)
             .context("check implementation source safety")?
@@ -419,7 +419,7 @@ struct CapturedOpenNavigationSource {
 }
 
 pub(crate) enum CapturedTargetLocation {
-    Ready(ls_types::Location),
+    Ready(gen_lsp_types::Location),
     Unsafe,
     Unavailable,
 }

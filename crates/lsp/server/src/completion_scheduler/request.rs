@@ -14,7 +14,7 @@ use std::{
 };
 
 use rg_lsp_proto::{DocumentPositionSnapshot, QueryError, QueryValue};
-use tower_lsp_server::ls_types::{CompletionItem, Position};
+use tower_lsp_server::gen_lsp_types::{CompletionItem, Position};
 
 use super::{
     attempt::{AttemptKey, AttemptWaiter},

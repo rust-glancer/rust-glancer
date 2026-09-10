@@ -1,6 +1,6 @@
 use tower_lsp_server::{
+    gen_lsp_types::{Range, SemanticTokens},
     jsonrpc::Result,
-    ls_types::{Range, SemanticTokens},
 };
 
 use crate::methods::DocumentMethodContext;

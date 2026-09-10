@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use anyhow::Context as _;
-use ls_types::{Hover, HoverContents, Location, MarkupContent, MarkupKind};
+use gen_lsp_types::{Contents, Hover, Location, MarkupContent, MarkupKind};
 use rg_analysis::{DocumentationLink, HoverInfo, NavigationTarget};
 use rg_parse::LineIndex;
 
@@ -25,7 +25,7 @@ pub(crate) fn hover(
         return Ok(None);
     };
     Ok(Some(Hover {
-        contents: HoverContents::Markup(MarkupContent {
+        contents: Contents::MarkupContent(MarkupContent {
             kind: MarkupKind::Markdown,
             value,
         }),

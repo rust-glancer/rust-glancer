@@ -1,6 +1,6 @@
-use ls_types::{
-    DocumentSymbol as LspDocumentSymbol, Location, OneOf, SymbolKind as LspSymbolKind,
-    WorkspaceSymbol as LspWorkspaceSymbol,
+use gen_lsp_types::{
+    BaseSymbolInformation, DocumentSymbol as LspDocumentSymbol, Location,
+    SymbolKind as LspSymbolKind, WorkspaceSymbol as LspWorkspaceSymbol,
 };
 use rg_analysis::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
 use rg_lsp_proto::path_to_file_uri;
@@ -48,29 +48,31 @@ pub(crate) fn workspace_symbol(
     )?;
 
     Ok(Some(LspWorkspaceSymbol {
-        name: symbol.name,
-        kind: symbol_kind(symbol.kind),
-        tags: None,
-        container_name: symbol.container_name,
-        location: OneOf::Left(Location { uri, range }),
+        base_symbol_information: BaseSymbolInformation {
+            name: symbol.name,
+            kind: symbol_kind(symbol.kind),
+            tags: None,
+            container_name: symbol.container_name,
+        },
+        location: Location { uri, range }.into(),
         data: None,
     }))
 }
 
 pub(crate) fn symbol_kind(kind: SymbolKind) -> LspSymbolKind {
     match kind {
-        SymbolKind::Const | SymbolKind::Static => LspSymbolKind::CONSTANT,
-        SymbolKind::Enum => LspSymbolKind::ENUM,
-        SymbolKind::EnumVariant => LspSymbolKind::ENUM_MEMBER,
-        SymbolKind::Field => LspSymbolKind::FIELD,
-        SymbolKind::Function => LspSymbolKind::FUNCTION,
-        SymbolKind::Impl => LspSymbolKind::OBJECT,
-        SymbolKind::Macro => LspSymbolKind::FUNCTION,
-        SymbolKind::Method => LspSymbolKind::METHOD,
-        SymbolKind::Module => LspSymbolKind::MODULE,
-        SymbolKind::Struct | SymbolKind::Union => LspSymbolKind::STRUCT,
-        SymbolKind::Trait => LspSymbolKind::INTERFACE,
-        SymbolKind::TypeAlias => LspSymbolKind::CLASS,
-        SymbolKind::Variable => LspSymbolKind::VARIABLE,
+        SymbolKind::Const | SymbolKind::Static => LspSymbolKind::Constant,
+        SymbolKind::Enum => LspSymbolKind::Enum,
+        SymbolKind::EnumVariant => LspSymbolKind::EnumMember,
+        SymbolKind::Field => LspSymbolKind::Field,
+        SymbolKind::Function => LspSymbolKind::Function,
+        SymbolKind::Impl => LspSymbolKind::Object,
+        SymbolKind::Macro => LspSymbolKind::Function,
+        SymbolKind::Method => LspSymbolKind::Method,
+        SymbolKind::Module => LspSymbolKind::Module,
+        SymbolKind::Struct | SymbolKind::Union => LspSymbolKind::Struct,
+        SymbolKind::Trait => LspSymbolKind::Interface,
+        SymbolKind::TypeAlias => LspSymbolKind::Class,
+        SymbolKind::Variable => LspSymbolKind::Variable,
     }
 }

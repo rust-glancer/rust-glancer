@@ -1,4 +1,4 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::{commands, engine_client::EngineClient, methods::internal_error};
 
@@ -9,7 +9,7 @@ use crate::{commands, engine_client::EngineClient, methods::internal_error};
 pub(crate) async fn execute_command(
     engine_client: EngineClient,
     params: ExecuteCommandParams,
-) -> Result<Option<LSPAny>> {
+) -> Result<Option<LspAny>> {
     let command = params.command;
 
     match command.as_str() {

@@ -34,7 +34,7 @@ use std::{
 };
 
 use tokio::sync::watch;
-use tower_lsp_server::ls_types::{Position, TextDocumentContentChangeEvent};
+use tower_lsp_server::gen_lsp_types::{Position, TextDocumentContentChangeEvent};
 
 use rg_lsp_proto::{
     DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,

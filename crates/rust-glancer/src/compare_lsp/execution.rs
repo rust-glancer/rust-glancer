@@ -10,12 +10,11 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ls_types::{
-    DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    InlayHintParams, PartialResultParams, Position, Range, ReferenceContext, ReferenceParams,
-    RenameParams, TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
-    WorkspaceSymbolParams,
-    request::{GotoImplementationParams, GotoTypeDefinitionParams},
+use gen_lsp_types::{
+    DefinitionParams, DocumentHighlightParams, DocumentSymbolParams, HoverParams,
+    ImplementationParams, InlayHintParams, PartialResultParams, Position, Range, ReferenceContext,
+    ReferenceParams, RenameParams, TextDocumentIdentifier, TextDocumentPositionParams,
+    TypeDefinitionParams, WorkDoneProgressParams, WorkspaceSymbolParams,
 };
 use serde_json::Value;
 
@@ -138,7 +137,7 @@ pub(crate) async fn run(
 
     for (query_index, query_case) in fixture.query_cases().iter().enumerate() {
         // Convert compact fixture entries into typed LSP request payloads at the last boundary.
-        // The stored vector stays easy to audit while serde/ls_types still own protocol shape.
+        // The stored vector stays easy to audit while serde/gen_lsp_types still own protocol shape.
         let request = QueryRequest::from_case(fixture, query_case)?;
         tracing::info!(
             query_index = query_index + 1,
@@ -205,7 +204,7 @@ impl QueryRequest {
                     position,
                 },
             ) => serde_json::to_value(ReferenceParams {
-                text_document_position: Self::text_document_position(
+                text_document_position_params: Self::text_document_position(
                     fixture_root,
                     query_case.label(),
                     source_path,
@@ -223,7 +222,7 @@ impl QueryRequest {
                     source_path,
                     position,
                 },
-            ) => serde_json::to_value(GotoDefinitionParams {
+            ) => serde_json::to_value(DefinitionParams {
                 text_document_position_params: Self::text_document_position(
                     fixture_root,
                     query_case.label(),
@@ -239,7 +238,7 @@ impl QueryRequest {
                     source_path,
                     position,
                 },
-            ) => serde_json::to_value(GotoTypeDefinitionParams {
+            ) => serde_json::to_value(TypeDefinitionParams {
                 text_document_position_params: Self::text_document_position(
                     fixture_root,
                     query_case.label(),
@@ -255,7 +254,7 @@ impl QueryRequest {
                     source_path,
                     position,
                 },
-            ) => serde_json::to_value(GotoImplementationParams {
+            ) => serde_json::to_value(ImplementationParams {
                 text_document_position_params: Self::text_document_position(
                     fixture_root,
                     query_case.label(),
@@ -285,7 +284,7 @@ impl QueryRequest {
                     new_name,
                 },
             ) => serde_json::to_value(RenameParams {
-                text_document_position: Self::text_document_position(
+                text_document_position_params: Self::text_document_position(
                     fixture_root,
                     query_case.label(),
                     source_path,

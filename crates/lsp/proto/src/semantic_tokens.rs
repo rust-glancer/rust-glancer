@@ -1,36 +1,42 @@
 //! The server advertises the same token vocabulary that the engine uses for encoding.
 
-use ls_types::{SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
+use gen_lsp_types::{SemanticTokenModifiers, SemanticTokenTypes, SemanticTokensLegend};
 
-pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenType] = &[
-    SemanticTokenType::NAMESPACE,
-    SemanticTokenType::TYPE,
-    SemanticTokenType::STRUCT,
-    SemanticTokenType::ENUM,
-    SemanticTokenType::INTERFACE,
-    SemanticTokenType::FUNCTION,
-    SemanticTokenType::METHOD,
-    SemanticTokenType::MACRO,
-    SemanticTokenType::PROPERTY,
-    SemanticTokenType::ENUM_MEMBER,
-    SemanticTokenType::VARIABLE,
-    SemanticTokenType::PARAMETER,
-    SemanticTokenType::TYPE_PARAMETER,
-    SemanticTokenType::KEYWORD,
-    SemanticTokenType::STRING,
-    SemanticTokenType::NUMBER,
-    SemanticTokenType::OPERATOR,
-    SemanticTokenType::COMMENT,
+pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenTypes] = &[
+    SemanticTokenTypes::Namespace,
+    SemanticTokenTypes::Type,
+    SemanticTokenTypes::Struct,
+    SemanticTokenTypes::Enum,
+    SemanticTokenTypes::Interface,
+    SemanticTokenTypes::Function,
+    SemanticTokenTypes::Method,
+    SemanticTokenTypes::Macro,
+    SemanticTokenTypes::Property,
+    SemanticTokenTypes::EnumMember,
+    SemanticTokenTypes::Variable,
+    SemanticTokenTypes::Parameter,
+    SemanticTokenTypes::TypeParameter,
+    SemanticTokenTypes::Keyword,
+    SemanticTokenTypes::String,
+    SemanticTokenTypes::Number,
+    SemanticTokenTypes::Operator,
+    SemanticTokenTypes::Comment,
 ];
 
-pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifier] = &[
-    SemanticTokenModifier::DOCUMENTATION,
-    SemanticTokenModifier::READONLY,
+pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifiers] = &[
+    SemanticTokenModifiers::Documentation,
+    SemanticTokenModifiers::Readonly,
 ];
 
 pub fn semantic_tokens_legend() -> SemanticTokensLegend {
     SemanticTokensLegend {
-        token_types: SEMANTIC_TOKEN_TYPES.to_vec(),
-        token_modifiers: SEMANTIC_TOKEN_MODIFIERS.to_vec(),
+        token_types: SEMANTIC_TOKEN_TYPES
+            .iter()
+            .map(|kind| kind.as_str().to_owned())
+            .collect(),
+        token_modifiers: SEMANTIC_TOKEN_MODIFIERS
+            .iter()
+            .map(|modifier| modifier.as_str().to_owned())
+            .collect(),
     }
 }

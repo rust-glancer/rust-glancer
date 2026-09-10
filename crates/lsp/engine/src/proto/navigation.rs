@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
-use ls_types::{Location, Range};
+use gen_lsp_types::{Location, Range};
 use rg_analysis::NavigationTarget;
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;

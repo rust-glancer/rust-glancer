@@ -1,4 +1,4 @@
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::section;
@@ -16,10 +16,10 @@ pub enum PackageResidencyPolicy {
 }
 
 impl PackageResidencyPolicy {
-    pub(super) fn from_initialization_options(options: Option<&LSPAny>) -> Self {
+    pub(super) fn from_initialization_options(options: Option<&LspAny>) -> Self {
         section(options, "cache")
             .and_then(|cache| cache.get("packageResidency"))
-            .and_then(LSPAny::as_str)
+            .and_then(LspAny::as_str)
             .and_then(Self::from_config_name)
             .unwrap_or_default()
     }

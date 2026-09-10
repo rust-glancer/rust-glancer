@@ -1,4 +1,4 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
@@ -27,5 +27,5 @@ pub(crate) async fn document_symbol(
         "document symbol request answered"
     );
 
-    Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    Ok(Some(DocumentSymbolResponse::DocumentSymbolList(symbols)))
 }

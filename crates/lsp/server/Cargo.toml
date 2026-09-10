@@ -16,13 +16,13 @@ ignore.workspace = true
 notify-debouncer-full.workspace = true
 rg_lsp_proto.workspace = true
 rg_std.workspace = true
+serde_json.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
 tokio = { workspace = true, features = ["fs", "io-std", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
 tower.workspace = true
-tower-lsp-server.workspace = true
+tower-lsp-server = { workspace = true, features = ["url-url"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
-serde_json.workspace = true
 test_fixture.workspace = true

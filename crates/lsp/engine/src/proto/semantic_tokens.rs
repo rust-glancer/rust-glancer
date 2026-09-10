@@ -2,7 +2,9 @@
 //! The output uses UTF-16 columns and positions relative to the preceding token, so source spans
 //! must be ordered and split into lines before their positions can be encoded.
 
-use ls_types::{Position, SemanticToken, SemanticTokenModifier, SemanticTokenType, SemanticTokens};
+use gen_lsp_types::{
+    Position, SemanticToken, SemanticTokenModifiers, SemanticTokenTypes, SemanticTokens,
+};
 use rg_analysis::{Highlight, HighlightKind, SymbolKind};
 use rg_lsp_proto::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES};
 use rg_parse::LineIndex;
@@ -86,27 +88,27 @@ impl<'a> SemanticTokensEncoder<'a> {
     fn classification(highlight: Highlight) -> (u32, u32) {
         let token_type = match highlight.kind {
             HighlightKind::Symbol(kind) => match kind {
-                SymbolKind::Module => SemanticTokenType::NAMESPACE,
-                SymbolKind::Struct | SymbolKind::Union => SemanticTokenType::STRUCT,
-                SymbolKind::Enum => SemanticTokenType::ENUM,
-                SymbolKind::Trait => SemanticTokenType::INTERFACE,
-                SymbolKind::TypeAlias | SymbolKind::Impl => SemanticTokenType::TYPE,
-                SymbolKind::Function => SemanticTokenType::FUNCTION,
-                SymbolKind::Method => SemanticTokenType::METHOD,
-                SymbolKind::Macro => SemanticTokenType::MACRO,
-                SymbolKind::Field => SemanticTokenType::PROPERTY,
-                SymbolKind::EnumVariant => SemanticTokenType::ENUM_MEMBER,
+                SymbolKind::Module => SemanticTokenTypes::Namespace,
+                SymbolKind::Struct | SymbolKind::Union => SemanticTokenTypes::Struct,
+                SymbolKind::Enum => SemanticTokenTypes::Enum,
+                SymbolKind::Trait => SemanticTokenTypes::Interface,
+                SymbolKind::TypeAlias | SymbolKind::Impl => SemanticTokenTypes::Type,
+                SymbolKind::Function => SemanticTokenTypes::Function,
+                SymbolKind::Method => SemanticTokenTypes::Method,
+                SymbolKind::Macro => SemanticTokenTypes::Macro,
+                SymbolKind::Field => SemanticTokenTypes::Property,
+                SymbolKind::EnumVariant => SemanticTokenTypes::EnumMember,
                 SymbolKind::Variable | SymbolKind::Const | SymbolKind::Static => {
-                    SemanticTokenType::VARIABLE
+                    SemanticTokenTypes::Variable
                 }
             },
-            HighlightKind::Keyword => SemanticTokenType::KEYWORD,
-            HighlightKind::String => SemanticTokenType::STRING,
-            HighlightKind::Number => SemanticTokenType::NUMBER,
-            HighlightKind::Operator => SemanticTokenType::OPERATOR,
-            HighlightKind::Comment => SemanticTokenType::COMMENT,
-            HighlightKind::Parameter => SemanticTokenType::PARAMETER,
-            HighlightKind::TypeParameter => SemanticTokenType::TYPE_PARAMETER,
+            HighlightKind::Keyword => SemanticTokenTypes::Keyword,
+            HighlightKind::String => SemanticTokenTypes::String,
+            HighlightKind::Number => SemanticTokenTypes::Number,
+            HighlightKind::Operator => SemanticTokenTypes::Operator,
+            HighlightKind::Comment => SemanticTokenTypes::Comment,
+            HighlightKind::Parameter => SemanticTokenTypes::Parameter,
+            HighlightKind::TypeParameter => SemanticTokenTypes::TypeParameter,
         };
         let token_type = SEMANTIC_TOKEN_TYPES
             .iter()
@@ -114,8 +116,8 @@ impl<'a> SemanticTokensEncoder<'a> {
             .expect("highlight type is in the shared legend") as u32;
         let mut modifiers = 0;
         for (index, modifier) in SEMANTIC_TOKEN_MODIFIERS.iter().enumerate() {
-            if (*modifier == SemanticTokenModifier::DOCUMENTATION && highlight.documentation)
-                || (*modifier == SemanticTokenModifier::READONLY
+            if (*modifier == SemanticTokenModifiers::Documentation && highlight.documentation)
+                || (*modifier == SemanticTokenModifiers::Readonly
                     && matches!(highlight.kind, HighlightKind::Symbol(SymbolKind::Const)))
             {
                 modifiers |= 1 << index;

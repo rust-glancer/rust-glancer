@@ -1,4 +1,4 @@
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::section;
@@ -12,7 +12,7 @@ pub enum SysrootDiscovery {
 }
 
 impl SysrootDiscovery {
-    pub(super) fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub(super) fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(value) = section(options, "sysroot").and_then(|sysroot| sysroot.get("discovery"))
         else {
             return Ok(Self::default());

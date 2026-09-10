@@ -10,10 +10,10 @@ use std::{
 };
 
 use expect_test::Expect;
-use ls_types::{
-    CodeAction, CompletionItem, CompletionTextEdit, DocumentChanges, DocumentHighlight,
-    DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind, Hover, HoverContents,
-    InlayHint, InlayHintKind, InlayHintLabel, Location, Position, Range, TextEdit, WorkspaceEdit,
+use gen_lsp_types::{
+    CodeAction, CompletionItem, CompletionItemTextEdit, Contents, DocumentChange,
+    DocumentHighlight, DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind,
+    Hover, InlayHint, InlayHintKind, Label, Location, Position, Range, TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
@@ -734,13 +734,13 @@ impl LspEngineFixture {
                 let document = self.document_snapshot(path.clone());
                 let current_text = document.text().to_string();
                 let input = document.with_range(Range::new(position, position));
-                let lsp_context = ls_types::CodeActionContext {
+                let lsp_context = gen_lsp_types::CodeActionContext {
                     diagnostics: Vec::new(),
                     only: only.clone().map(|kind| vec![kind]),
                     trigger_kind: Some(if *automatic {
-                        ls_types::CodeActionTriggerKind::AUTOMATIC
+                        gen_lsp_types::CodeActionTriggerKind::Automatic
                     } else {
-                        ls_types::CodeActionTriggerKind::INVOKED
+                        gen_lsp_types::CodeActionTriggerKind::Invoked
                     }),
                 };
                 let outcome = self
@@ -923,7 +923,7 @@ impl LspEngineFixture {
 
         writeln!(rendered, "- markdown:").expect("snapshot should be writable");
         match &hover.contents {
-            HoverContents::Markup(markup) => {
+            Contents::MarkupContent(markup) => {
                 // Open-document paths and Cargo's saved paths can differ through symlinks.
                 let root = self.fixture.path("");
                 let canonical_root = root.canonicalize().expect("fixture root should exist");
@@ -934,10 +934,10 @@ impl LspEngineFixture {
                 }
                 Self::write_indented(rendered, &markdown, "  ");
             }
-            HoverContents::Scalar(marked) => {
+            Contents::MarkedString(marked) => {
                 Self::write_indented(rendered, &format!("{marked:?}"), "  ")
             }
-            HoverContents::Array(marked) => {
+            Contents::MarkedStringList(marked) => {
                 for value in marked {
                     Self::write_indented(rendered, &format!("{value:?}"), "  ");
                 }
@@ -953,9 +953,9 @@ impl LspEngineFixture {
 
         for highlight in highlights {
             let kind = match highlight.kind {
-                Some(DocumentHighlightKind::READ) => "read",
-                Some(DocumentHighlightKind::WRITE) => "write",
-                Some(DocumentHighlightKind::TEXT) | None => "text",
+                Some(DocumentHighlightKind::Read) => "read",
+                Some(DocumentHighlightKind::Write) => "write",
+                Some(DocumentHighlightKind::Text) | None => "text",
                 Some(_) => "unknown",
             };
             writeln!(rendered, "- {kind} {}", Self::render_range(highlight.range))
@@ -971,14 +971,14 @@ impl LspEngineFixture {
 
         for hint in hints {
             let label = match &hint.label {
-                InlayHintLabel::String(label) => label.clone(),
-                InlayHintLabel::LabelParts(parts) => {
+                Label::String(label) => label.clone(),
+                Label::InlayHintLabelPartList(parts) => {
                     parts.iter().map(|part| part.value.as_str()).collect()
                 }
             };
             let kind = match hint.kind {
-                Some(InlayHintKind::TYPE) => "type",
-                Some(InlayHintKind::PARAMETER) => "parameter",
+                Some(InlayHintKind::Type) => "type",
+                Some(InlayHintKind::Parameter) => "parameter",
                 Some(_) | None => "text",
             };
             writeln!(
@@ -1051,7 +1051,7 @@ impl LspEngineFixture {
             let kind = action
                 .kind
                 .as_ref()
-                .map_or("<none>", ls_types::CodeActionKind::as_str);
+                .map_or("<none>", gen_lsp_types::CodeActionKind::as_str);
             writeln!(rendered, "- {kind} {}", action.title).expect("snapshot should be writable");
             writeln!(
                 rendered,
@@ -1066,19 +1066,26 @@ impl LspEngineFixture {
                 writeln!(rendered, "  edit: none").expect("snapshot should be writable");
                 continue;
             };
-            let Some(DocumentChanges::Edits(documents)) = edit.document_changes.as_ref() else {
+            let Some(documents) = edit.document_changes.as_ref() else {
                 panic!("code action should contain only versioned document edits");
             };
             assert_eq!(documents.len(), 1, "code action should edit one document");
-            let document = &documents[0];
+            let DocumentChange::TextDocumentEdit(document) = &documents[0] else {
+                panic!("code action should contain a versioned document edit");
+            };
             assert_eq!(
-                document.text_document.uri.to_file_path().as_deref(),
-                Some(path)
+                document
+                    .text_document
+                    .text_document_identifier
+                    .uri
+                    .to_file_path()
+                    .as_deref(),
+                Ok(path)
             );
             writeln!(
                 rendered,
                 "  document: {} version {}",
-                self.render_uri_path(&document.text_document.uri),
+                self.render_uri_path(&document.text_document.text_document_identifier.uri),
                 document
                     .text_document
                     .version
@@ -1089,8 +1096,11 @@ impl LspEngineFixture {
             let mut source_edits = Vec::new();
             for edit in &document.edits {
                 let edit = match edit {
-                    ls_types::OneOf::Left(edit) => edit,
-                    ls_types::OneOf::Right(edit) => &edit.text_edit,
+                    gen_lsp_types::Edit::TextEdit(edit) => edit,
+                    gen_lsp_types::Edit::AnnotatedTextEdit(edit) => &edit.text_edit,
+                    gen_lsp_types::Edit::SnippetTextEdit(_) => {
+                        panic!("code actions should contain plain text edits")
+                    }
                 };
                 writeln!(
                     rendered,
@@ -1155,10 +1165,10 @@ impl LspEngineFixture {
 
         for completion in completions {
             match completion.text_edit.as_ref() {
-                Some(CompletionTextEdit::Edit(edit)) => {
+                Some(CompletionItemTextEdit::TextEdit(edit)) => {
                     assert_range(edit.range, &completion.label);
                 }
-                Some(CompletionTextEdit::InsertAndReplace(edit)) => {
+                Some(CompletionItemTextEdit::InsertReplaceEdit(edit)) => {
                     assert_range(edit.insert, &completion.label);
                     assert_range(edit.replace, &completion.label);
                 }
@@ -1174,10 +1184,10 @@ impl LspEngineFixture {
         &self,
         rendered: &mut String,
         path: &Path,
-        edit: &CompletionTextEdit,
+        edit: &CompletionItemTextEdit,
     ) {
         match edit {
-            CompletionTextEdit::Edit(edit) => {
+            CompletionItemTextEdit::TextEdit(edit) => {
                 writeln!(
                     rendered,
                     "  edit: {}:{} -> {}",
@@ -1187,7 +1197,7 @@ impl LspEngineFixture {
                 )
                 .expect("snapshot should be writable");
             }
-            CompletionTextEdit::InsertAndReplace(edit) => {
+            CompletionItemTextEdit::InsertReplaceEdit(edit) => {
                 writeln!(
                     rendered,
                     "  insert: {}:{} -> {}",
@@ -1325,10 +1335,10 @@ impl LspEngineFixture {
         }
     }
 
-    fn render_uri_path(&self, uri: &ls_types::Uri) -> String {
+    fn render_uri_path(&self, uri: &gen_lsp_types::Uri) -> String {
         uri.to_file_path()
             .map(|path| self.render_path(path.as_ref()))
-            .unwrap_or_else(|| uri.as_str().to_string())
+            .unwrap_or_else(|()| uri.as_str().to_string())
     }
 
     fn render_path(&self, path: &Path) -> String {
@@ -1423,7 +1433,7 @@ pub(super) enum LspQuery {
     CodeAction {
         title: &'static str,
         marker: &'static str,
-        only: Option<ls_types::CodeActionKind>,
+        only: Option<gen_lsp_types::CodeActionKind>,
         automatic: bool,
     },
     DocumentSymbol {
@@ -1492,7 +1502,7 @@ impl LspQuery {
     pub(super) fn code_action_only(
         title: &'static str,
         marker: &'static str,
-        only: ls_types::CodeActionKind,
+        only: gen_lsp_types::CodeActionKind,
     ) -> Self {
         Self::CodeAction {
             title,

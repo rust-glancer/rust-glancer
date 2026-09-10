@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use ls_types::{DocumentHighlight, DocumentHighlightKind, Location};
+use gen_lsp_types::{DocumentHighlight, DocumentHighlightKind, Location};
 use rg_analysis::ReferenceLocation;
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
@@ -36,7 +36,7 @@ pub(crate) fn document_highlight_for_current_document(
     DocumentHighlight {
         range: position::range(line_index, span),
         // Read/write classification is independent from source freshness and remains deferred.
-        kind: Some(DocumentHighlightKind::READ),
+        kind: Some(DocumentHighlightKind::Read),
     }
 }
 
@@ -45,7 +45,7 @@ fn range_for_file(
     package_slot: PackageSlot,
     file_id: FileId,
     span: Span,
-) -> anyhow::Result<ls_types::Range> {
+) -> anyhow::Result<gen_lsp_types::Range> {
     let line_index = snapshot
         .file_line_index(package_slot, file_id)?
         .context("while attempting to find file for LSP range conversion")?;
