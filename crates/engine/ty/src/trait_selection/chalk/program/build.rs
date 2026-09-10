@@ -21,7 +21,7 @@ use super::super::lower::{
     ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
 };
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
-use crate::ItemPathQuery;
+use crate::lookup::ItemPathQuery;
 use crate::trait_selection::TraitSelectionSession;
 
 const INTER: RgChalkInterner = RgChalkInterner;

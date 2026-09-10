@@ -21,7 +21,7 @@ use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
-use rg_ty::TraitSelectionSession;
+use rg_ty::trait_selection::TraitSelectionSession;
 
 use crate::store::current::{CurrentImplData, CurrentImplRole, SelectedImpl};
 use crate::{BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData};

@@ -13,10 +13,9 @@ use rg_ir_model::{
 use rg_item_tree::{FunctionQualifiers, ParamKind, SelfParamKind};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext};
 
-use crate::{
-    Clause, ItemPathQuery, OpaqueTy, Substitution, TraitRefLowering, Ty, TypeLoweringAnchor,
-    TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
-};
+use crate::lookup::ItemPathQuery;
+use crate::lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver};
+use crate::{Clause, OpaqueTy, Substitution, TraitRefLowering, Ty};
 
 /// One function's parameters, return, qualifiers, and predicates under an owner-scoped binder.
 ///

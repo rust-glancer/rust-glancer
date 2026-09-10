@@ -27,7 +27,7 @@ use rg_parse::{CurrentSource, DeclarationAssociationIndex};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
-use rg_ty::TraitSelectionSession;
+use rg_ty::trait_selection::TraitSelectionSession;
 
 use crate::{
     BodyOwner, CrateBodiesCoverage, CurrentBody,

@@ -11,8 +11,9 @@ use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_ty::trait_selection::TraitProof;
 use rg_ty::{
-    Clause, GenericArg, Substitution, TraitProof, Ty,
+    Clause, GenericArg, Substitution, Ty,
     inference::{InferenceSubstitution, InferenceTable},
 };
 

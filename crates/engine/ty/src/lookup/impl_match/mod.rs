@@ -13,9 +13,10 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
 use rg_semantic_ir::ItemStoreSource;
 
+use crate::lowering::{ImplHeader, TypePathResolver};
 use crate::{
-    ConstValue, GenericArg, ImplHeader, ItemPathQuery, Lifetime, Substitution, Ty, TyContext,
-    TypePathResolver, trait_selection::CachedImplSelfMatch,
+    ConstValue, GenericArg, Lifetime, Substitution, Ty, TyContext, lookup::ItemPathQuery,
+    trait_selection::CachedImplSelfMatch,
 };
 
 /// Matcher for canonical impl headers stored in semantic item stores.

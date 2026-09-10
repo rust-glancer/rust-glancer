@@ -28,14 +28,14 @@ use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use super::super::{
-    TraitCandidate, TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+    TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+    candidate::TraitCandidate,
     chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
 };
 use crate::inference::{InferVarKind, InferenceTable};
-use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, GenericArg, ItemPathQuery, OpaqueTy, PrimitiveTy,
-    SemanticSignatureQuery, Ty, TyContext,
-};
+use crate::lookup::ItemPathQuery;
+use crate::lowering::SemanticSignatureQuery;
+use crate::{AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext};
 
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,

@@ -9,9 +9,9 @@ use rg_item_tree::{FunctionQualifiers, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{
-    CallableSignature, GenericArg, Substitution, TraitSelection, Ty, inference::InferenceTable,
-};
+use rg_ty::lowering::CallableSignature;
+use rg_ty::trait_selection::TraitSelection;
+use rg_ty::{GenericArg, Substitution, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 use crate::{

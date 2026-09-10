@@ -19,10 +19,7 @@
 use std::{
     collections::HashMap,
     fmt,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use rg_def_map::DefMapSource;
@@ -36,12 +33,13 @@ use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
 use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
 use super::declaration_cache::{OpaqueBounds, TraitSelectionDeclarationCache};
 use super::matcher::TraitSelfHead;
+use super::work::{BODY_TRAIT_WORK_LIMIT, TraitWorkKind, TraitWorkLimit, TraitWorkTracker};
 use super::{AssocProjectionResult, TraitGoal, TraitSelection};
 use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::signature::impl_header_with as lower_impl_header;
-use crate::{
-    CallableSignature, Clause, ItemPathQuery, SemanticSignatureQuery, Ty, TypePathResolver,
-};
+use crate::lookup::ItemPathQuery;
+use crate::lowering::impl_header_with as lower_impl_header;
+use crate::lowering::{CallableSignature, SemanticSignatureQuery, TypePathResolver};
+use crate::{Clause, Ty};
 
 /// Cross-body part of a cached selection.
 ///
@@ -90,7 +88,7 @@ type ExactCandidateApplicabilities =
 /// inference-table solutions.
 #[derive(Clone)]
 pub(crate) struct CachedImplSelfMatch {
-    pub(crate) header: Arc<crate::ImplHeader>,
+    pub(crate) header: Arc<crate::lowering::ImplHeader>,
     pub(crate) subst: crate::Substitution,
     pub(crate) applicability: TraitApplicability,
 }
@@ -103,138 +101,6 @@ type ImplSelfMatches = Mutex<HashMap<Ty, HashMap<ImplRef, Option<CachedImplSelfM
 /// surrounding lookup has selected `DisplayLike`, it must conservatively inspect every visible
 /// `DisplayLike` impl. This cache makes later fixed-point rounds reuse that already-charged list.
 type BroadTraitImpls = Mutex<HashMap<TraitDefRef, UniqueVec<TraitImplRef>>>;
-
-// One body can legitimately ask many cheap questions, while a pathological body must not turn
-// thousands of individually bounded operations into unbounded aggregate work. This allowance is
-// deliberately much larger than one settled Chalk goal and is shared by every clone of the
-// body-owned session.
-const BODY_TRAIT_WORK_LIMIT: usize = 65_536;
-
-/// Deterministic work charged to one body-owned trait-selection session.
-///
-/// These are accounting labels, not stages of trait proof. For example, opening a broad trait lane
-/// charges `BroadCandidateSet` once for its declaration count, then checking each retained header
-/// charges `CandidateProbe` as that work actually happens.
-#[derive(Clone, Copy)]
-pub(super) enum TraitWorkKind {
-    /// Declarations admitted when the receiver has no stable outer head.
-    BroadCandidateSet,
-    /// One impl header compared or semantically proved as a candidate.
-    CandidateProbe,
-    /// One declaration added to the growing Chalk program.
-    ProgramDefinition,
-    /// One alias or associated-type normalization step.
-    NormalizationStep,
-    /// One bounded unit of Chalk solver work.
-    SolverQuantum,
-}
-
-impl TraitWorkKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::BroadCandidateSet => "body_work.broad_candidate_set",
-            Self::CandidateProbe => "body_work.candidate_probe",
-            Self::ProgramDefinition => "body_work.program_definition",
-            Self::NormalizationStep => "body_work.normalization_step",
-            Self::SolverQuantum => "body_work.solver_quantum",
-        }
-    }
-}
-
-/// The boundary that made a best-effort trait query stop.
-///
-/// `Aggregate` means the body spent its shared allowance across otherwise bounded operations.
-/// `NormalizationDepth` means one recursive alias/projection chain reached its own depth limit.
-#[derive(Clone, Copy)]
-pub(super) enum TraitWorkLimit {
-    Aggregate(TraitWorkKind),
-    NormalizationDepth,
-}
-
-impl TraitWorkLimit {
-    fn label(self) -> &'static str {
-        match self {
-            Self::Aggregate(kind) => kind.label(),
-            Self::NormalizationDepth => "normalization_depth",
-        }
-    }
-}
-
-/// Work and reporting state shared by every clone of one inference scope.
-///
-/// Body resolution recreates adapters and revisits expressions, so a per-call limit would merely
-/// reset on every retry. This tracker makes exhaustion sticky for the complete body operation and
-/// records whether its single fail-soft warning has already been emitted.
-struct TraitWorkTracker {
-    body: Option<BodyRef>,
-    limit: Option<usize>,
-    remaining: AtomicUsize,
-    exhausted: AtomicBool,
-    reported: AtomicBool,
-}
-
-impl TraitWorkTracker {
-    fn unbounded() -> Self {
-        Self {
-            body: None,
-            limit: None,
-            remaining: AtomicUsize::new(usize::MAX),
-            exhausted: AtomicBool::new(false),
-            reported: AtomicBool::new(false),
-        }
-    }
-
-    fn for_body(body: BodyRef, limit: usize) -> Self {
-        Self {
-            body: Some(body),
-            limit: Some(limit),
-            remaining: AtomicUsize::new(limit),
-            exhausted: AtomicBool::new(false),
-            reported: AtomicBool::new(false),
-        }
-    }
-
-    /// Reserve work before starting an operation so concurrent session clones cannot overspend.
-    fn consume(&self, amount: usize) -> bool {
-        if self.limit.is_none() {
-            return true;
-        }
-        if self.exhausted.load(Ordering::Relaxed) {
-            return false;
-        }
-        if amount == 0 {
-            return true;
-        }
-
-        let mut remaining = self.remaining.load(Ordering::Relaxed);
-        loop {
-            if remaining < amount {
-                // Once one operation cannot fit, this body has crossed its aggregate fail-soft
-                // boundary. Later fixed-point retries must not rebuild the same candidate set only
-                // to rediscover that boundary.
-                self.exhausted.store(true, Ordering::Relaxed);
-                return false;
-            }
-            match self.remaining.compare_exchange_weak(
-                remaining,
-                remaining - amount,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return true,
-                Err(observed) => remaining = observed,
-            }
-        }
-    }
-
-    fn is_exhausted(&self) -> bool {
-        self.exhausted.load(Ordering::Relaxed)
-    }
-
-    fn mark_reported(&self) -> bool {
-        !self.reported.swap(true, Ordering::Relaxed)
-    }
-}
 
 /// Crate-semantic solver state shared by one use-site session and its inference scopes.
 ///
@@ -249,7 +115,7 @@ struct TraitSelectionShared {
     solver: ChalkTraitSolver,
     /// Body-origin headers cannot enter the snapshot declaration cache because lexical views may
     /// differ between requests. Keep them within the session that owns their body source.
-    body_impl_headers: Mutex<HashMap<ImplRef, Option<Arc<crate::ImplHeader>>>>,
+    body_impl_headers: Mutex<HashMap<ImplRef, Option<Arc<crate::lowering::ImplHeader>>>>,
     /// Unique whole-goal selections whose inputs contain no body-owned identity.
     strict_selections: Mutex<HashMap<TraitGoal, ExpectedUnique<CachedTraitSelection>>>,
     /// Proof classifications for an already-selected impl and stable instantiated goal.
@@ -290,7 +156,7 @@ struct TraitSelectionInferenceScope {
     chalk: ChalkInferenceCache,
     /// Front the snapshot-wide declaration table for headers repeatedly used by one inference
     /// scope. This avoids contending on the large shared identity map during fixed-point retries.
-    impl_headers: Mutex<HashMap<ImplRef, Option<Arc<crate::ImplHeader>>>>,
+    impl_headers: Mutex<HashMap<ImplRef, Option<Arc<crate::lowering::ImplHeader>>>>,
     /// Repeated fixed-point rounds often compare the same raw receiver with the same conservative
     /// fallback impls. Retain both positive and negative matches against canonical headers.
     impl_self_matches: ImplSelfMatches,
@@ -535,7 +401,7 @@ impl TraitSelectionSession {
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         impl_ref: ImplRef,
-    ) -> Result<Option<Arc<crate::ImplHeader>>, I::Error>
+    ) -> Result<Option<Arc<crate::lowering::ImplHeader>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,
@@ -632,7 +498,11 @@ impl TraitSelectionSession {
     }
 
     /// Publish a body header without letting a later conservative miss erase a successful load.
-    fn remember_body_impl_header(&self, impl_ref: ImplRef, header: Option<Arc<crate::ImplHeader>>) {
+    fn remember_body_impl_header(
+        &self,
+        impl_ref: ImplRef,
+        header: Option<Arc<crate::lowering::ImplHeader>>,
+    ) {
         let mut headers = self
             .shared
             .body_impl_headers
@@ -655,7 +525,7 @@ impl TraitSelectionSession {
         &self,
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_ref: TraitDefRef,
-    ) -> Result<Option<Arc<crate::signature::TraitHeader>>, I::Error>
+    ) -> Result<Option<Arc<crate::lowering::TraitHeader>>, I::Error>
     where
         D: DefMapSource<Error = I::Error>,
         I: ItemStoreSource<'query>,

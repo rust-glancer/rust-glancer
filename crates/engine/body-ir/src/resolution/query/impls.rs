@@ -14,7 +14,8 @@ use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::{ReceiverFunctionCandidate, ReceiverImplMatches, Ty, inference::InferenceTable};
+use rg_ty::lookup::{ReceiverFunctionCandidate, ReceiverImplMatches};
+use rg_ty::{Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -93,8 +94,8 @@ impl BodyReceiverImplMatches {
 ///
 /// This query owns the boundary between two sources of declarations: request-local body overlays
 /// and persisted project indexes. It chooses a trait surface, applies Rust's lexical trait scope,
-/// gathers impl candidates from both sources, and gives the result to `rg_ty::ImplMatcher` for
-/// exact header matching.
+/// gathers impl candidates from both sources, and gives the result to
+/// `rg_ty::lookup::ImplMatcher` for exact header matching.
 pub(crate) struct BodyImplQuery<'context, 'query, D, I> {
     context: &'context BodyResolutionContext<'query, D, I>,
 }

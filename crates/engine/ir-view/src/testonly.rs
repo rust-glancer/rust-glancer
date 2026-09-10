@@ -10,9 +10,8 @@ use rg_semantic_ir::{
     GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery, SemanticIrDb,
     testonly::SemanticIrFixture,
 };
-use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty,
-};
+use rg_ty::lowering::SemanticSignatureQuery;
+use rg_ty::{AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty};
 
 use crate::{IndexedViewDb, ty::IndexedType};
 

@@ -11,7 +11,9 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::ItemStoreQuery;
 use rg_std::UniqueVec;
-use rg_ty::{ImplementationQuery, ReferencePeelingCandidates, Ty, TyContext};
+use rg_ty::autoderef::ReferencePeelingCandidates;
+use rg_ty::lookup::ImplementationQuery;
+use rg_ty::{Ty, TyContext};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView, ty::IndexedType};
 

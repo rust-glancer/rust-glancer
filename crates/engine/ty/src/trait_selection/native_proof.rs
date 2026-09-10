@@ -13,7 +13,7 @@ use rg_std::ExpectedUnique;
 
 use super::{
     TraitGoal, TraitProof, TraitSelectionQuery, candidate::TraitCandidate, matcher::TraitSelfHead,
-    session::TraitWorkKind,
+    work::TraitWorkKind,
 };
 use crate::inference::InferenceTable;
 use crate::{Clause, GenericArg, TraitApplication, Ty};

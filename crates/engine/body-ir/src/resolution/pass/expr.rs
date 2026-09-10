@@ -11,9 +11,8 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, OperationError};
-use rg_ty::{
-    AdtTy, AutoderefMode, ExpectedTyExt, GenericArgs, PrimitiveTy, Substitution, Ty, ty_for_literal,
-};
+use rg_ty::autoderef::AutoderefMode;
+use rg_ty::{AdtTy, ExpectedTyExt, GenericArgs, PrimitiveTy, Substitution, Ty, ty_for_literal};
 
 use crate::{
     BodyPath, ExprUnaryOp,

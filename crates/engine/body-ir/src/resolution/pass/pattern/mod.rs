@@ -9,7 +9,8 @@ use rg_ir_model::{ExprId, ItemOwner, ScopeId, StmtId, TraitDefRef};
 use rg_item_tree::{LangItem, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{GenericArgs, TraitGoal, Ty};
+use rg_ty::trait_selection::TraitGoal;
+use rg_ty::{GenericArgs, Ty};
 
 use crate::ir::{ExprKind, StmtKind};
 use crate::resolution::{

@@ -4,12 +4,15 @@
 //! references or trait-backed `Deref`. Contexts that only want `&T` transparency use
 //! `ReferencePeelingCandidates`, keeping trait deref out of pattern and type-definition queries.
 
+mod deref;
+
 use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
 use rg_semantic_ir::ItemStoreSource;
 
-use crate::{Mutability, Ty, TyContext, deref::DerefResolver};
+use self::deref::DerefResolver;
+use crate::{Mutability, Ty, TyContext};
 use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;

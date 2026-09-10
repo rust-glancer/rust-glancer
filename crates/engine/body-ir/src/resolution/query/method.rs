@@ -21,9 +21,9 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 use rg_text::Name;
-use rg_ty::{
-    AutoderefMode, MemberMethodCandidateRef, MemberMethodOrigin, Ty, inference::InferenceTable,
-};
+use rg_ty::autoderef::AutoderefMode;
+use rg_ty::lookup::{MemberMethodCandidateRef, MemberMethodOrigin};
+use rg_ty::{Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 

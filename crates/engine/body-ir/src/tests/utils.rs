@@ -18,9 +18,8 @@ use rg_ir_model::{
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
-use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, SemanticSignatureQuery, TraitRefLowering, Ty,
-};
+use rg_ty::lowering::SemanticSignatureQuery;
+use rg_ty::{AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);

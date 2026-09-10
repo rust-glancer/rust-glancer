@@ -20,7 +20,7 @@ use rg_item_tree::{Documentation, FieldList, ParamItem, ParamKind};
 use rg_semantic_ir::{
     EnumVariantData, FieldData, FunctionData, ItemStoreQuery, TypePathResolution,
 };
-use rg_ty::MemberMethodOrigin as TyMemberMethodOrigin;
+use rg_ty::lookup::MemberMethodOrigin as TyMemberMethodOrigin;
 
 use crate::{
     IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView, ty::IndexedType,

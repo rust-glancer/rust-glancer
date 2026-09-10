@@ -18,7 +18,9 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::{ExpectedAdtTyExt, ReferencePeelingCandidates, TraitSelectionSession, Ty};
+use rg_ty::autoderef::ReferencePeelingCandidates;
+use rg_ty::trait_selection::TraitSelectionSession;
+use rg_ty::{ExpectedAdtTyExt, Ty};
 
 use crate::{
     BodyPath,

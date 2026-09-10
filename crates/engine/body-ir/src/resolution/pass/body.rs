@@ -11,7 +11,8 @@ use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::OperationError;
-use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};
+use rg_ty::trait_selection::TraitSelectionSession;
+use rg_ty::{ExpectedAdtTyExt, Ty};
 
 use crate::{
     BodyData, BodyFacts,
@@ -376,7 +377,8 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
         .expect("fixture lookup builds");
         for cancel in [true, false] {
             let cancellation = CancellationToken::new();
-            let session = rg_ty::TraitSelectionSession::new(target).with_cancellation(cancellation);
+            let session = rg_ty::trait_selection::TraitSelectionSession::new(target)
+                .with_cancellation(cancellation);
             CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
             let result = super::BodyResolutionPass::new(
                 &def_map,

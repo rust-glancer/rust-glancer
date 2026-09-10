@@ -19,7 +19,7 @@ use rg_semantic_ir::{
 };
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
-use rg_ty::{TraitSelectionDeclarationCache, TraitSelectionSession};
+use rg_ty::trait_selection::{TraitSelectionDeclarationCache, TraitSelectionSession};
 
 use crate::{
     BodyFacts, BodyLocalItems, BodyOwner, CrateBodies, CurrentBody,
