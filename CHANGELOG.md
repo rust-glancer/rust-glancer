@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1](https://github.com/rust-glancer/rust-glancer/compare/v0.2.0...v0.2.1) (2026-09-10)
+
+
+### Features
+
+* Implement folding ([#211](https://github.com/rust-glancer/rust-glancer/issues/211)) ([8aed80e](https://github.com/rust-glancer/rust-glancer/commit/8aed80e34f2d0cf0585436f74e68a77f317b6217))
+* Support rust syntax and rustdoc links in doccomments and hovers ([#214](https://github.com/rust-glancer/rust-glancer/issues/214)) ([e9aa584](https://github.com/rust-glancer/rust-glancer/commit/e9aa584bb93e51bb2da364b50be2e2d764830c2d))
+
+
+### Bug Fixes
+
+* Fallback on rootUri if no workspace in initial ([#207](https://github.com/rust-glancer/rust-glancer/issues/207)) ([63e67a0](https://github.com/rust-glancer/rust-glancer/commit/63e67a07becf7310ebe8dea7ba9b1d105f9ed4ae))
+* Tech debt management ([#213](https://github.com/rust-glancer/rust-glancer/issues/213)) ([c81f62d](https://github.com/rust-glancer/rust-glancer/commit/c81f62d04188e67b5c97976723208b1ad6dadb8c))
+
 ## [0.2.0](https://github.com/rust-glancer/rust-glancer/compare/v0.1.1...v0.2.0) (2026-08-31)
 
 
