@@ -15,7 +15,7 @@ cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["debug", "display"] }
 dissimilar.workspace = true
 futures.workspace = true
-ls_types.workspace = true
+gen-lsp-types = { workspace = true, features = ["url"] }
 rg_analysis.workspace = true
 rg_def_map.workspace = true
 rg_ir_model.workspace = true

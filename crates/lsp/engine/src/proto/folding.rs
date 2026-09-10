@@ -1,6 +1,6 @@
 //! Conversion from syntax folds to LSP folding ranges.
 
-use ls_types::{FoldingRange, FoldingRangeKind};
+use gen_lsp_types::{FoldingRange, FoldingRangeKind};
 use rg_analysis::{Fold, FoldKind};
 use rg_parse::LineIndex;
 
@@ -65,7 +65,7 @@ pub(crate) fn folding_range(
 
 #[cfg(test)]
 mod tests {
-    use ls_types::FoldingRangeKind;
+    use gen_lsp_types::FoldingRangeKind;
     use rg_analysis::{Fold, FoldKind};
     use rg_ir_model::{Span, TextSpan};
     use rg_parse::LineIndex;

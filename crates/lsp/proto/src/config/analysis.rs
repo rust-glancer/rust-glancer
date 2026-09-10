@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -20,7 +20,7 @@ pub struct AnalysisConfig {
 }
 
 impl AnalysisConfig {
-    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         Ok(Self {
             package_residency_policy: PackageResidencyPolicy::from_initialization_options(options),
             cargo_metadata_config: CargoMetadataConfig::from_initialization_options(options)

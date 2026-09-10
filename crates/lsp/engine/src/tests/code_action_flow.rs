@@ -68,7 +68,7 @@ async fn dirty_qualified_path_root_uses_the_type_namespace() {
             &[LspQuery::code_action_only(
                 "import qualified path root",
                 "action",
-                ls_types::CodeActionKind::QUICKFIX,
+                gen_lsp_types::CodeActionKind::QuickFix,
             )],
             expect![[r#"
                 import qualified path root
@@ -144,7 +144,7 @@ impl Service for Worker {$action$
             &[LspQuery::code_action_only(
                 "implement dirty trait members",
                 "action",
-                ls_types::CodeActionKind::QUICKFIX,
+                gen_lsp_types::CodeActionKind::QuickFix,
             )],
             expect![[r#"
                 implement dirty trait members
@@ -224,7 +224,7 @@ impl<T> Service<T> for Worker<T> {$action$
                 LspQuery::code_action_only(
                     "implement new dirty trait impl",
                     "action",
-                    ls_types::CodeActionKind::QUICKFIX,
+                    gen_lsp_types::CodeActionKind::QuickFix,
                 ),
             ],
             expect![[r#"
@@ -302,12 +302,12 @@ async fn qualified_rewrite_uses_utf16_ranges_and_respects_request_context() {
                 LspQuery::code_action_only(
                     "qualified rewrite",
                     "action",
-                    ls_types::CodeActionKind::REFACTOR_REWRITE,
+                    gen_lsp_types::CodeActionKind::RefactorRewrite,
                 ),
                 LspQuery::code_action_only(
                     "quick fixes only",
                     "action",
-                    ls_types::CodeActionKind::QUICKFIX,
+                    gen_lsp_types::CodeActionKind::QuickFix,
                 ),
                 LspQuery::automatic_code_action("automatic discovery", "action"),
             ],

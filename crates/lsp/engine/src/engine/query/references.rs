@@ -101,7 +101,7 @@ impl QueryRunner<'_> {
     fn reference_search_plans_for_position(
         &mut self,
         path: &Path,
-        position: ls_types::Position,
+        position: gen_lsp_types::Position,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Vec<ReferenceSearchPlan>> {
         let project = self
@@ -139,7 +139,7 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         include_declaration: bool,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::Location>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
         if let Some(path) = self
             .save_required_for_global_operation(&input, cancellation)
             .context("check references source safety")?
@@ -214,7 +214,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<ls_types::PrepareRenameResponse>, QueryRunError> {
+    ) -> Result<Option<gen_lsp_types::PrepareRenameResult>, QueryRunError> {
         if let Some(path) = self
             .save_required_for_global_operation(&input, cancellation)
             .context("check prepare-rename source safety")?
@@ -286,7 +286,7 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         new_name: String,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<ls_types::WorkspaceEdit>, QueryRunError> {
+    ) -> Result<Option<gen_lsp_types::WorkspaceEdit>, QueryRunError> {
         if let Some(path) = self
             .save_required_for_global_operation(&input, cancellation)
             .context("check rename source safety")?
@@ -374,7 +374,7 @@ impl QueryRunner<'_> {
         &mut self,
         input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::DocumentHighlight>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::DocumentHighlight>, QueryRunError> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();

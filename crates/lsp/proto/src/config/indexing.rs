@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::section;
@@ -13,7 +13,7 @@ const DEFAULT_PACKAGE_BATCH_SIZE: usize = 512;
 pub struct PackageBatchSize(NonZeroUsize);
 
 impl PackageBatchSize {
-    pub(super) fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub(super) fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(value) =
             section(options, "indexing").and_then(|indexing| indexing.get("packageBatchSize"))
         else {
@@ -57,7 +57,7 @@ pub enum IndexingPerformancePreference {
 }
 
 impl IndexingPerformancePreference {
-    pub(super) fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub(super) fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(value) =
             section(options, "indexing").and_then(|indexing| indexing.get("performancePreference"))
         else {

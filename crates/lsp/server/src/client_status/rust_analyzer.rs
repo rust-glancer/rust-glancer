@@ -7,7 +7,10 @@
 
 use tower_lsp_server::{
     Client as LspClient,
-    ls_types::{ClientCapabilities, LSPAny, LSPObject, notification::Notification},
+    gen_lsp_types::{
+        ClientCapabilities, LspAny, LspNotificationMethod, LspObject, MessageDirection,
+        Notification,
+    },
 };
 
 const SERVER_STATUS_CAPABILITY: &str = "serverStatusNotification";
@@ -31,23 +34,25 @@ pub(super) async fn publish(lsp_client: &LspClient, status: &StatusSnapshot) {
 struct ServerStatus;
 
 impl Notification for ServerStatus {
-    type Params = LSPAny;
+    type Params = LspAny;
 
-    const METHOD: &'static str = SERVER_STATUS_METHOD;
+    const METHOD: LspNotificationMethod<'static> =
+        LspNotificationMethod::Custom(SERVER_STATUS_METHOD);
+    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
 }
 
 impl ServerStatus {
-    fn params(status: &StatusSnapshot) -> LSPAny {
-        let mut params = LSPObject::new();
+    fn params(status: &StatusSnapshot) -> LspAny {
+        let mut params = LspObject::new();
         params.insert(
             "health".to_string(),
-            LSPAny::String(status.health.as_str().to_string()),
+            LspAny::String(status.health.as_str().to_string()),
         );
-        params.insert("quiescent".to_string(), LSPAny::Bool(status.quiescent));
+        params.insert("quiescent".to_string(), LspAny::Bool(status.quiescent));
         if let Some(message) = &status.message {
-            params.insert("message".to_string(), LSPAny::String(message.clone()));
+            params.insert("message".to_string(), LspAny::String(message.clone()));
         }
-        LSPAny::Object(params)
+        LspAny::Object(params)
     }
 }
 

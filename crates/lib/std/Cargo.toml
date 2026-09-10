@@ -10,7 +10,7 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
-ls_types.workspace = true
+gen-lsp-types = { workspace = true, features = ["url"] }
 rg_std_derive.workspace = true
 wincode.workspace = true
 

@@ -1,4 +1,4 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::{engine_client::EngineClient, methods::query_response};
 
@@ -28,5 +28,5 @@ pub(crate) async fn symbol(
         "workspace symbol request answered"
     );
 
-    Ok(Some(WorkspaceSymbolResponse::Nested(symbols)))
+    Ok(Some(WorkspaceSymbolResponse::WorkspaceSymbolList(symbols)))
 }

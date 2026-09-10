@@ -5,7 +5,7 @@ mod tests;
 
 use rg_lsp_proto::EngineConfig;
 use rg_std::NormalizedPathBuf;
-use tower_lsp_server::ls_types::LSPAny;
+use tower_lsp_server::gen_lsp_types::LspAny;
 
 use self::cargo_overrides::CargoConfigOverrides;
 
@@ -22,7 +22,7 @@ pub(crate) struct ServerConfig {
 
 impl ServerConfig {
     pub(crate) fn from_initialization_options(
-        options: Option<&LSPAny>,
+        options: Option<&LspAny>,
         workspace_folders: &[NormalizedPathBuf],
     ) -> anyhow::Result<Self> {
         Ok(Self {

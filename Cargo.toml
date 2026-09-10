@@ -77,12 +77,12 @@ drop_bomb = "0.1.5"
 either = "1.15.0"
 expect-test = "1.5.1"
 futures = "0.3.32"
+gen-lsp-types = "0.11"
 ignore = "0.4.26"
 itertools = "0.14.0"
 # The arena-free allocator wrapper uses a numeric mimalloc v3 option that the Rust bindings do not
 # expose. Keep both layers pinned so that option cannot silently address a different enum member.
 libmimalloc-sys = { version = "=0.1.49", default-features = false }
-ls_types = { package = "ls-types", version = "0.0.6" }
 memchr = "2.8.0"
 mimalloc = { version = "=0.1.52", default-features = false }
 notify-debouncer-full = "0.7.0"
@@ -107,7 +107,9 @@ text-size = "1.1.0"
 thiserror = "2.0.18"
 tokio = "1.52.3"
 tower = "0.5.2"
-tower-lsp-server = "0.23"
+# TODO: Switch back to tower-lsp-community/tower-lsp-server once PR #84 is merged.
+# https://github.com/tower-lsp-community/tower-lsp-server/pull/84
+tower-lsp-server = { git = "https://github.com/popzxc/tower-lsp-server", rev = "ca176971b3031757e12896accdc1fe7edb2015ae" }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 tikv-jemallocator = "0.6.1"

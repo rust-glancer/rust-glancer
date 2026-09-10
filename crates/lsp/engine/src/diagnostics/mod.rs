@@ -14,7 +14,7 @@ use std::{
     time::Duration,
 };
 
-use ls_types::ProgressToken;
+use gen_lsp_types::ProgressToken;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use rg_std::NormalizedPathBuf;
 use tokio::{sync::Mutex, task::JoinHandle};

@@ -8,7 +8,7 @@
 
 use std::{fmt, sync::Arc};
 
-use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
+use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangeEvent};
 
 /// The complete text and position mapping produced by one `didChange` notification.
 ///
@@ -35,15 +35,19 @@ impl AppliedDocumentChanges {
         let mut position_edits = current_text.map(|_| Vec::new());
 
         for (change_index, change) in changes.iter().enumerate() {
-            let Some(range) = change.range else {
-                // A full replacement repairs an unavailable document, but it cannot generally
-                // explain where a position from the missing or replaced value moved.
-                if text.as_deref() != Some(change.text.as_str()) {
-                    position_edits = None;
+            let change = match change {
+                TextDocumentContentChangeEvent::TextDocumentContentChangePartial(change) => change,
+                TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(change) => {
+                    // A full replacement repairs an unavailable document, but it cannot generally
+                    // explain where a position from the missing or replaced value moved.
+                    if text.as_deref() != Some(change.text.as_str()) {
+                        position_edits = None;
+                    }
+                    text = Some(change.text.clone());
+                    continue;
                 }
-                text = Some(change.text.clone());
-                continue;
             };
+            let range = change.range;
 
             let Some(text) = text.as_mut() else {
                 return Err(DocumentChangeError::new(
@@ -258,7 +262,7 @@ impl fmt::Display for DocumentChangeError {
 
 #[cfg(test)]
 mod tests {
-    use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
+    use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangeEvent};
 
     use super::AppliedDocumentChanges;
 
@@ -355,21 +359,18 @@ mod tests {
         end: (u32, u32),
         text: &str,
     ) -> TextDocumentContentChangeEvent {
-        TextDocumentContentChangeEvent {
-            range: Some(Range::new(
-                Position::new(start.0, start.1),
-                Position::new(end.0, end.1),
-            )),
-            range_length: None,
+        tower_lsp_server::gen_lsp_types::TextDocumentContentChangePartial {
+            range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
             text: text.to_string(),
+            ..Default::default()
         }
+        .into()
     }
 
     fn full(text: &str) -> TextDocumentContentChangeEvent {
-        TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
+        tower_lsp_server::gen_lsp_types::TextDocumentContentChangeWholeDocument {
             text: text.to_string(),
         }
+        .into()
     }
 }

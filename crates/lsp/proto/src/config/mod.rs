@@ -6,7 +6,7 @@ mod diagnostics;
 mod indexing;
 mod sysroot;
 
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 pub use self::{
@@ -27,7 +27,7 @@ pub struct EngineConfig {
 }
 
 impl EngineConfig {
-    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         Ok(Self {
             analysis: AnalysisConfig::from_initialization_options(options)?,
             diagnostics: DiagnosticsConfig::from_initialization_options(options)?,
@@ -35,11 +35,14 @@ impl EngineConfig {
     }
 }
 
-fn section<'a>(options: Option<&'a LSPAny>, key: &'static str) -> Option<&'a ls_types::LSPObject> {
+fn section<'a>(
+    options: Option<&'a LspAny>,
+    key: &'static str,
+) -> Option<&'a gen_lsp_types::LspObject> {
     options
-        .and_then(LSPAny::as_object)
+        .and_then(LspAny::as_object)
         .and_then(|options| options.get(key))
-        .and_then(LSPAny::as_object)
+        .and_then(LspAny::as_object)
 }
 
 #[cfg(test)]

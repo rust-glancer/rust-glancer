@@ -25,14 +25,14 @@ use tokio::{
 };
 use tower_lsp_server::{
     LanguageServer, LspService, Server,
-    jsonrpc::Result as LspResult,
-    ls_types::{
-        CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse,
-        CompletionTextEdit, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
+    gen_lsp_types::{
+        CompletionItem, CompletionItemKind, CompletionItemTextEdit, CompletionParams,
+        CompletionResponse, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
         DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InitializeParams, InitializeResult,
         InitializedParams, InlayHint, Location, Position, Range, TextEdit, Uri, WorkspaceEdit,
         WorkspaceSymbol,
     },
+    jsonrpc::Result as LspResult,
 };
 
 use super::completion;
@@ -62,7 +62,7 @@ async fn did_change_retries_completion_at_rebased_position() {
     second_attempt.complete();
 
     let response = lsp.expect_completion(request).await;
-    let CompletionResponse::List(response) = response else {
+    let CompletionResponse::CompletionList(response) = response else {
         panic!("completion response should be a list");
     };
     assert!(!response.is_incomplete);
@@ -70,9 +70,9 @@ async fn did_change_retries_completion_at_rebased_position() {
         panic!("completion response should contain one item");
     };
     assert_eq!(item.label, "RwLock");
-    assert_eq!(item.kind, Some(CompletionItemKind::STRUCT));
+    assert_eq!(item.kind, Some(CompletionItemKind::Struct));
 
-    let Some(CompletionTextEdit::Edit(primary_edit)) = &item.text_edit else {
+    let Some(CompletionItemTextEdit::TextEdit(primary_edit)) = &item.text_edit else {
         panic!("completion item should replace the identifier at the moved cursor");
     };
     assert_eq!(
@@ -124,7 +124,7 @@ async fn sibling_change_does_not_cancel_or_invalidate_completion() {
     attempt.complete();
 
     let response = lsp.expect_completion(request).await;
-    let CompletionResponse::List(response) = response else {
+    let CompletionResponse::CompletionList(response) = response else {
         panic!("completion response should be a list");
     };
     assert_eq!(response.items[0].label, "RwLock");
@@ -617,8 +617,8 @@ impl EngineService for GatedCompletionEngine {
         Ok(QueryValue::new(
             vec![CompletionItem {
                 label: "RwLock".to_string(),
-                kind: Some(CompletionItemKind::STRUCT),
-                text_edit: Some(CompletionTextEdit::Edit(TextEdit::new(
+                kind: Some(CompletionItemKind::Struct),
+                text_edit: Some(CompletionItemTextEdit::TextEdit(TextEdit::new(
                     Range::new(Position::new(0, 5), input.position()),
                     "RwLock".to_string(),
                 ))),
@@ -706,7 +706,7 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<tower_lsp_server::ls_types::PrepareRenameResponse>>, QueryError>
+    ) -> Result<QueryValue<Option<tower_lsp_server::gen_lsp_types::PrepareRenameResult>>, QueryError>
     {
         panic!("test engine only supports completion")
     }
@@ -741,7 +741,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: DocumentRangeSnapshot,
         _: CodeActionRequestContext,
-    ) -> Result<QueryValue<Vec<tower_lsp_server::ls_types::CodeAction>>, QueryError> {
+    ) -> Result<QueryValue<Vec<tower_lsp_server::gen_lsp_types::CodeAction>>, QueryError> {
         panic!("test engine only supports completion")
     }
 
@@ -774,8 +774,8 @@ impl EngineService for GatedCompletionEngine {
         self,
         _: context::Context,
         _: EditorDocumentSnapshot,
-        _: Option<tower_lsp_server::ls_types::Range>,
-    ) -> Result<QueryValue<tower_lsp_server::ls_types::SemanticTokens>, QueryError> {
+        _: Option<tower_lsp_server::gen_lsp_types::Range>,
+    ) -> Result<QueryValue<tower_lsp_server::gen_lsp_types::SemanticTokens>, QueryError> {
         panic!("test engine only supports completion")
     }
 

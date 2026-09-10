@@ -28,7 +28,7 @@ use std::{
 
 use rg_lsp_proto::{DeferredIndexingOutcome, IndexingProgress};
 use tokio::sync::Mutex;
-use tower_lsp_server::{Client as LspClient, ls_types::ClientCapabilities};
+use tower_lsp_server::{Client as LspClient, gen_lsp_types::ClientCapabilities};
 
 pub(crate) use self::rust_glancer::{ActiveWorkspaceState, ActiveWorkspaceStatus};
 
@@ -421,10 +421,10 @@ mod tests {
     use tower::{Service as _, ServiceExt as _};
     use tower_lsp_server::{
         LanguageServer, LspService,
-        jsonrpc::{Request, Response, Result},
-        ls_types::{
+        gen_lsp_types::{
             ClientCapabilities, InitializeParams, InitializeResult, WindowClientCapabilities,
         },
+        jsonrpc::{Request, Response, Result},
     };
 
     use super::*;
@@ -1115,6 +1115,87 @@ mod tests {
             Some(&WorkspaceLifecycle::Unavailable(Arc::from("engine exited")))
         );
         assert!(state.deferred_indexing.is_empty());
+    }
+
+    #[tokio::test]
+    async fn engine_progress_preserves_begin_and_end_payloads() {
+        let (mut service, mut socket) = LspService::new(|client| TestBackend {
+            client_status: ClientStatusPublisher::new(client, ClientStatusCapabilities::default()),
+        });
+        service
+            .ready()
+            .await
+            .expect("LSP service should become ready")
+            .call(
+                Request::build("initialize")
+                    .id(1)
+                    .params(serde_json::json!({
+                        "capabilities": {}
+                    }))
+                    .finish(),
+            )
+            .await
+            .expect("initialize should reach the service")
+            .expect("initialize should return a response");
+
+        let client = &service.inner().client_status.lsp_client;
+        let token =
+            tower_lsp_server::gen_lsp_types::ProgressToken::String("cargo/check".to_string());
+        let publish = async {
+            work_done_progress::begin_engine_progress(
+                client,
+                token.clone(),
+                "Cargo check".to_string(),
+                Some("Checking workspace".to_string()),
+            )
+            .await;
+            work_done_progress::end_engine_progress(client, token, Some("Finished".to_string()))
+                .await;
+        };
+        let observe = async {
+            let create = socket
+                .next()
+                .await
+                .expect("progress should request a token");
+            assert_eq!(create.method(), "window/workDoneProgress/create");
+            assert_eq!(
+                create.params(),
+                Some(&serde_json::json!({"token": "cargo/check"}))
+            );
+            socket
+                .send(Response::from_ok(
+                    create
+                        .id()
+                        .cloned()
+                        .expect("token creation should have an ID"),
+                    serde_json::Value::Null,
+                ))
+                .await
+                .expect("client should acknowledge token creation");
+
+            for value in [
+                serde_json::json!({
+                    "kind": "begin", "title": "Cargo check", "cancellable": false,
+                    "message": "Checking workspace"
+                }),
+                serde_json::json!({"kind": "end", "message": "Finished"}),
+            ] {
+                let notification = socket.next().await.expect("progress should send an update");
+                assert_eq!(notification.method(), "$/progress");
+                assert_eq!(
+                    notification.params(),
+                    Some(&serde_json::json!({
+                        "token": "cargo/check", "value": value
+                    }))
+                );
+            }
+        };
+        // The bounded client socket must be drained while progress is being published.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(publish, observe);
+        })
+        .await
+        .expect("progress exchange should complete");
     }
 
     #[derive(Debug)]

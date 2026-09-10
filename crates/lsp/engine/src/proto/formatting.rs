@@ -5,7 +5,7 @@
 
 use anyhow::Context as _;
 use dissimilar::Chunk;
-use ls_types::{Position, Range, TextEdit};
+use gen_lsp_types::{Position, Range, TextEdit};
 use rg_parse::LineIndex;
 
 use crate::proto::text_edit;

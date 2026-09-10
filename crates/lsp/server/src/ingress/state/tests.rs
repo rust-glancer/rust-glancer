@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use rg_lsp_proto::EngineServiceClient;
 use tarpc::client::Config as TarpcClientConfig;
-use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
+use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangeEvent};
 
 use crate::{
     engine_client::EngineClient,
@@ -568,20 +568,17 @@ fn forward_transformations_drop_with_the_oldest_capture() {
 }
 
 fn incremental(start: (u32, u32), end: (u32, u32), text: &str) -> TextDocumentContentChangeEvent {
-    TextDocumentContentChangeEvent {
-        range: Some(Range::new(
-            Position::new(start.0, start.1),
-            Position::new(end.0, end.1),
-        )),
-        range_length: None,
+    tower_lsp_server::gen_lsp_types::TextDocumentContentChangePartial {
+        range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
         text: text.to_string(),
+        ..Default::default()
     }
+    .into()
 }
 
 fn full(text: &str) -> TextDocumentContentChangeEvent {
-    TextDocumentContentChangeEvent {
-        range: None,
-        range_length: None,
+    tower_lsp_server::gen_lsp_types::TextDocumentContentChangeWholeDocument {
         text: text.to_string(),
     }
+    .into()
 }

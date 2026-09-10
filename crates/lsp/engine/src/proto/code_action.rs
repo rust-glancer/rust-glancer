@@ -5,9 +5,10 @@
 //! and document version, so an editor cannot apply the action to a different buffer revision.
 
 use anyhow::Context as _;
-use ls_types::{
-    CodeAction as LspCodeAction, CodeActionKind as LspCodeActionKind, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, WorkspaceEdit,
+use gen_lsp_types::{
+    CodeAction as LspCodeAction, CodeActionKind as LspCodeActionKind, DocumentChange, Edit,
+    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextDocumentIdentifier,
+    WorkspaceEdit,
 };
 use rg_analysis::{CodeAction, CodeActionKind};
 use rg_lsp_proto::path_to_file_uri;
@@ -33,7 +34,7 @@ pub(crate) fn code_action(
         .edits
         .into_iter()
         .map(|edit| {
-            OneOf::Left(text_edit::new(
+            Edit::TextEdit(text_edit::new(
                 line_index,
                 position::range(line_index, edit.replace),
                 edit.new_text,
@@ -42,7 +43,7 @@ pub(crate) fn code_action(
         .collect();
     let document_edit = TextDocumentEdit {
         text_document: OptionalVersionedTextDocumentIdentifier {
-            uri,
+            text_document_identifier: TextDocumentIdentifier { uri },
             version: document_version,
         },
         edits,
@@ -50,25 +51,26 @@ pub(crate) fn code_action(
     Ok(LspCodeAction {
         title: action.title,
         kind: Some(match action.kind {
-            CodeActionKind::QuickFix => LspCodeActionKind::QUICKFIX,
-            CodeActionKind::RefactorRewrite => LspCodeActionKind::REFACTOR_REWRITE,
+            CodeActionKind::QuickFix => LspCodeActionKind::QuickFix,
+            CodeActionKind::RefactorRewrite => LspCodeActionKind::RefactorRewrite,
         }),
         diagnostics: None,
         edit: Some(WorkspaceEdit {
             changes: None,
-            document_changes: Some(DocumentChanges::Edits(vec![document_edit])),
+            document_changes: Some(vec![DocumentChange::TextDocumentEdit(document_edit)]),
             change_annotations: None,
         }),
         command: None,
         is_preferred: action.is_preferred.then_some(true),
         disabled: None,
         data: None,
+        tags: None,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{DocumentChanges, OneOf};
+    use gen_lsp_types::{DocumentChange, Edit};
     use rg_analysis::{CodeAction, CodeActionEdit, CodeActionKind};
     use rg_ir_model::{Span, TextSpan};
     use rg_parse::LineIndex;
@@ -101,13 +103,13 @@ mod tests {
         let Some(workspace_edit) = action.edit else {
             panic!("code action should contain a workspace edit");
         };
-        let Some(DocumentChanges::Edits(document_edits)) = workspace_edit.document_changes else {
+        let Some(document_edits) = workspace_edit.document_changes else {
             panic!("workspace edit should contain versioned document edits");
         };
-        let [document_edit] = document_edits.as_slice() else {
+        let [DocumentChange::TextDocumentEdit(document_edit)] = document_edits.as_slice() else {
             panic!("workspace edit should contain one document edit");
         };
-        let [OneOf::Left(edit)] = document_edit.edits.as_slice() else {
+        let [Edit::TextEdit(edit)] = document_edit.edits.as_slice() else {
             panic!("document edit should contain one plain text edit");
         };
 

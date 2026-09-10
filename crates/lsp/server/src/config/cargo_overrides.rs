@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, path::PathBuf};
 use anyhow::Context as _;
 use rg_lsp_proto::{CargoMetadataConfig, CargoMetadataTarget};
 use rg_std::NormalizedPathBuf;
-use tower_lsp_server::ls_types::{LSPAny, LSPObject};
+use tower_lsp_server::gen_lsp_types::{LspAny, LspObject};
 
 /// Path-indexed Cargo metadata overrides for workspace engine startup.
 ///
@@ -17,13 +17,13 @@ pub(super) struct CargoConfigOverrides {
 
 impl CargoConfigOverrides {
     pub(super) fn from_initialization_options(
-        options: Option<&LSPAny>,
+        options: Option<&LspAny>,
         workspace_folders: &[NormalizedPathBuf],
     ) -> anyhow::Result<Self> {
         let Some(overrides) = options
-            .and_then(LSPAny::as_object)
+            .and_then(LspAny::as_object)
             .and_then(|options| options.get("cargo"))
-            .and_then(LSPAny::as_object)
+            .and_then(LspAny::as_object)
             .and_then(|cargo| cargo.get("overrides"))
         else {
             return Ok(Self::default());
@@ -40,7 +40,7 @@ impl CargoConfigOverrides {
             })?;
             let path = item
                 .get("path")
-                .and_then(LSPAny::as_str)
+                .and_then(LspAny::as_str)
                 .map(str::trim)
                 .filter(|path| !path.is_empty())
                 .ok_or_else(|| {
@@ -82,7 +82,7 @@ pub(super) struct CargoConfigOverride {
 }
 
 impl CargoConfigOverride {
-    fn parse(item: &LSPObject, idx: usize) -> anyhow::Result<CargoConfigOverride> {
+    fn parse(item: &LspObject, idx: usize) -> anyhow::Result<CargoConfigOverride> {
         Ok(Self {
             target: Self::parse_target(item, idx)?,
             all_features: Self::parse_bool(item, idx, "allFeatures")?,
@@ -91,7 +91,7 @@ impl CargoConfigOverride {
         })
     }
 
-    fn parse_target(item: &LSPObject, idx: usize) -> anyhow::Result<Option<CargoMetadataTarget>> {
+    fn parse_target(item: &LspObject, idx: usize) -> anyhow::Result<Option<CargoMetadataTarget>> {
         let Some(value) = item.get("target") else {
             return Ok(None);
         };
@@ -110,7 +110,7 @@ impl CargoConfigOverride {
         }
     }
 
-    fn parse_bool(item: &LSPObject, idx: usize, key: &'static str) -> anyhow::Result<Option<bool>> {
+    fn parse_bool(item: &LspObject, idx: usize, key: &'static str) -> anyhow::Result<Option<bool>> {
         let Some(value) = item.get(key) else {
             return Ok(None);
         };
@@ -119,7 +119,7 @@ impl CargoConfigOverride {
         })
     }
 
-    fn parse_features(item: &LSPObject, idx: usize) -> anyhow::Result<Option<Vec<String>>> {
+    fn parse_features(item: &LspObject, idx: usize) -> anyhow::Result<Option<Vec<String>>> {
         let Some(value) = item.get("features") else {
             return Ok(None);
         };

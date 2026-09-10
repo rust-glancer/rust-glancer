@@ -17,9 +17,9 @@ use std::{
 use rg_lsp_proto::{IndexingProgress, IndexingStage};
 use tower_lsp_server::{
     Client as LspClient, NotCancellable, OngoingProgress, Unbounded,
-    ls_types::{
-        ClientCapabilities, NumberOrString, ProgressParams, ProgressParamsValue, WorkDoneProgress,
-        WorkDoneProgressBegin, WorkDoneProgressEnd, notification::Progress,
+    gen_lsp_types::{
+        ClientCapabilities, ProgressNotification, ProgressParams, ProgressToken,
+        WorkDoneProgressBegin, WorkDoneProgressEnd,
     },
 };
 
@@ -56,7 +56,7 @@ impl WorkspaceProgressState {
             progress.finish_with_message("Superseded").await;
         }
 
-        let token = NumberOrString::String(format!(
+        let token = ProgressToken::String(format!(
             "{INDEXING_PROGRESS_TOKEN_PREFIX}/{}",
             self.next_sequence
         ));
@@ -96,7 +96,7 @@ type WorkspaceProgress = OngoingProgress<Unbounded, NotCancellable>;
 /// Begin an engine-owned progress operation whose token already crossed the process boundary.
 pub(crate) async fn begin_engine_progress(
     lsp_client: &LspClient,
-    token: NumberOrString,
+    token: ProgressToken,
     title: String,
     message: Option<String>,
 ) {
@@ -109,29 +109,29 @@ pub(crate) async fn begin_engine_progress(
     }
 
     lsp_client
-        .send_notification::<Progress>(ProgressParams {
+        .send_notification::<ProgressNotification>(ProgressParams {
             token,
-            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(WorkDoneProgressBegin {
+            value: serde_json::to_value(WorkDoneProgressBegin {
                 title,
                 cancellable: Some(false),
                 message,
                 percentage: None,
-            })),
+            })
+            .expect("work-done progress should serialize"),
         })
         .await;
 }
 
 pub(crate) async fn end_engine_progress(
     lsp_client: &LspClient,
-    token: NumberOrString,
+    token: ProgressToken,
     message: Option<String>,
 ) {
     lsp_client
-        .send_notification::<Progress>(ProgressParams {
+        .send_notification::<ProgressNotification>(ProgressParams {
             token,
-            value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(WorkDoneProgressEnd {
-                message,
-            })),
+            value: serde_json::to_value(WorkDoneProgressEnd { message })
+                .expect("work-done progress should serialize"),
         })
         .await;
 }

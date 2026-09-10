@@ -1,4 +1,4 @@
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::section;
@@ -13,7 +13,7 @@ pub struct AnalysisCfgConfig {
 }
 
 impl AnalysisCfgConfig {
-    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(cfg) = section(options, "cfg") else {
             return Ok(Self::default());
         };
@@ -33,7 +33,7 @@ impl AnalysisCfgConfig {
         Ok(Self { test, atoms })
     }
 
-    fn parse_atoms(value: &LSPAny) -> anyhow::Result<Vec<String>> {
+    fn parse_atoms(value: &LspAny) -> anyhow::Result<Vec<String>> {
         let atoms = value
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("rust-glancer cfg.atoms must be an array"))?;

@@ -180,7 +180,7 @@ impl SymbolAggregate {
 
 #[cfg(test)]
 mod tests {
-    use ls_types::SymbolKind;
+    use gen_lsp_types::SymbolKind;
 
     use crate::compare_lsp::normalization::{
         NormalizedRange, NormalizedSymbol, NormalizedSymbolSet,
@@ -191,8 +191,8 @@ mod tests {
     #[test]
     fn accepts_method_as_a_more_specific_function_classification() {
         let range = NormalizedRange::test_new(8, 11, 8, 15);
-        let rust_glancer = symbols(vec![symbol(SymbolKind::METHOD, range)]);
-        let rust_analyzer = symbols(vec![symbol(SymbolKind::FUNCTION, range)]);
+        let rust_glancer = symbols(vec![symbol(SymbolKind::Method, range)]);
+        let rust_analyzer = symbols(vec![symbol(SymbolKind::Function, range)]);
 
         let comparison = SymbolComparison::new(&rust_glancer, &rust_analyzer);
         let metrics = comparison.metrics().set;
@@ -206,8 +206,8 @@ mod tests {
     #[test]
     fn rejects_function_when_the_reference_knows_it_is_a_method() {
         let range = NormalizedRange::test_new(8, 11, 8, 15);
-        let rust_glancer = symbols(vec![symbol(SymbolKind::FUNCTION, range)]);
-        let rust_analyzer = symbols(vec![symbol(SymbolKind::METHOD, range)]);
+        let rust_glancer = symbols(vec![symbol(SymbolKind::Function, range)]);
+        let rust_analyzer = symbols(vec![symbol(SymbolKind::Method, range)]);
 
         let comparison = SymbolComparison::new(&rust_glancer, &rust_analyzer);
         let metrics = comparison.metrics().set;
@@ -222,8 +222,8 @@ mod tests {
     fn keeps_broader_rust_glancer_symbol_ranges_as_divergences() {
         let focused = NormalizedRange::test_new(8, 5, 8, 15);
         let whole_impl = NormalizedRange::test_new(8, 0, 14, 1);
-        let rust_glancer = symbols(vec![symbol(SymbolKind::OBJECT, whole_impl)]);
-        let rust_analyzer = symbols(vec![symbol(SymbolKind::OBJECT, focused)]);
+        let rust_glancer = symbols(vec![symbol(SymbolKind::Object, whole_impl)]);
+        let rust_analyzer = symbols(vec![symbol(SymbolKind::Object, focused)]);
 
         let comparison = SymbolComparison::new(&rust_glancer, &rust_analyzer);
         let metrics = comparison.metrics().set;
@@ -237,8 +237,8 @@ mod tests {
     #[test]
     fn keeps_unrelated_lossy_type_kinds_as_divergences() {
         let range = NormalizedRange::test_new(8, 5, 8, 14);
-        let rust_glancer = symbols(vec![symbol(SymbolKind::CLASS, range)]);
-        let rust_analyzer = symbols(vec![symbol(SymbolKind::TYPE_PARAMETER, range)]);
+        let rust_glancer = symbols(vec![symbol(SymbolKind::Class, range)]);
+        let rust_analyzer = symbols(vec![symbol(SymbolKind::TypeParameter, range)]);
 
         let comparison = SymbolComparison::new(&rust_glancer, &rust_analyzer);
         let metrics = comparison.metrics().set;
