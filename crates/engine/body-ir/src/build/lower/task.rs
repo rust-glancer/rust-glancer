@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, ast};
+use rg_syntax::{AstNode as _, SyntaxKind, ast};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
@@ -187,27 +187,36 @@ impl<'a> BodyTaskLowering<'a> {
         syntax: &rg_syntax::SourceFile,
     ) -> anyhow::Result<()> {
         // Tasks are span-based so both top-level Semantic IR items and body-local items can use
-        // the same lowering path. Build small file-local lookup maps once and reuse them below.
+        // the same lowering path. Build all three file-local lookup maps in one walk so we do not
+        // revisit every body expression for each item kind.
         let mut functions_by_span = HashMap::new();
-        for function in syntax.syntax().descendants().filter_map(ast::Fn::cast) {
-            rg_std::check_cancel!(self.cancellation, "body lowering task");
-            let range = function.syntax().text_range();
-            functions_by_span.insert((u32::from(range.start()), u32::from(range.end())), function);
-        }
         let mut consts_by_span = HashMap::new();
-        for konst in syntax.syntax().descendants().filter_map(ast::Const::cast) {
-            rg_std::check_cancel!(self.cancellation, "body lowering task");
-            let range = konst.syntax().text_range();
-            consts_by_span.insert((u32::from(range.start()), u32::from(range.end())), konst);
-        }
         let mut statics_by_span = HashMap::new();
-        for static_item in syntax.syntax().descendants().filter_map(ast::Static::cast) {
-            rg_std::check_cancel!(self.cancellation, "body lowering task");
-            let range = static_item.syntax().text_range();
-            statics_by_span.insert(
-                (u32::from(range.start()), u32::from(range.end())),
-                static_item,
-            );
+        for node in syntax.syntax().descendants() {
+            match node.kind() {
+                SyntaxKind::FN => {
+                    let range = node.text_range();
+                    let function = ast::Fn::cast(node).expect("FN node should cast to a function");
+                    functions_by_span
+                        .insert((u32::from(range.start()), u32::from(range.end())), function);
+                }
+                SyntaxKind::CONST => {
+                    let range = node.text_range();
+                    let konst = ast::Const::cast(node).expect("CONST node should cast to a const");
+                    consts_by_span
+                        .insert((u32::from(range.start()), u32::from(range.end())), konst);
+                }
+                SyntaxKind::STATIC => {
+                    let range = node.text_range();
+                    let static_item =
+                        ast::Static::cast(node).expect("STATIC node should cast to a static");
+                    statics_by_span.insert(
+                        (u32::from(range.start()), u32::from(range.end())),
+                        static_item,
+                    );
+                }
+                _ => {}
+            }
         }
 
         for task in tasks {
