@@ -16,7 +16,7 @@ mod query_response;
 
 use std::path::PathBuf;
 
-use tower_lsp_server::ls_types::*;
+use tower_lsp_server::gen_lsp_types::*;
 
 use crate::{capabilities, engine_client::EngineClient};
 
@@ -39,7 +39,6 @@ pub(crate) fn initialize() -> InitializeResult {
             name: "rust-glancer".to_string(),
             version: Some(SERVER_VERSION.to_string()),
         }),
-        offset_encoding: None,
     }
 }
 

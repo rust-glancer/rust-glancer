@@ -3,7 +3,7 @@
 //! Analysis and formatter integrations may produce LF text even for a CRLF document. Every edit
 //! passes through this boundary so feature code does not need its own newline policy.
 
-use ls_types::{Range, TextEdit};
+use gen_lsp_types::{Range, TextEdit};
 use rg_parse::LineIndex;
 
 pub(crate) fn new(line_index: &LineIndex, range: Range, new_text: String) -> TextEdit {
@@ -15,7 +15,7 @@ pub(crate) fn new(line_index: &LineIndex, range: Range, new_text: String) -> Tex
 
 #[cfg(test)]
 mod tests {
-    use ls_types::Range;
+    use gen_lsp_types::Range;
     use rg_parse::LineIndex;
 
     use super::new;

@@ -1,4 +1,4 @@
-use ls_types::LSPAny;
+use gen_lsp_types::LspAny;
 use serde::{Deserialize, Serialize};
 
 use super::section;
@@ -70,7 +70,7 @@ impl CargoMetadataConfig {
         &self.features
     }
 
-    pub(super) fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+    pub(super) fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         let Some(cargo) = section(options, "cargo") else {
             return Ok(Self::default());
         };

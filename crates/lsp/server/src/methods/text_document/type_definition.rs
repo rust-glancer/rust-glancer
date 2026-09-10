@@ -1,7 +1,4 @@
-use tower_lsp_server::{
-    jsonrpc::Result,
-    ls_types::{request::*, *},
-};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
@@ -13,8 +10,8 @@ use crate::methods::DocumentMethodContext;
 )]
 pub(crate) async fn type_definition(
     ctx: DocumentMethodContext,
-    params: GotoTypeDefinitionParams,
-) -> Result<Option<GotoTypeDefinitionResponse>> {
+    params: TypeDefinitionParams,
+) -> Result<Option<TypeDefinitionResponse>> {
     let position = params.text_document_position_params.position;
     let input = ctx.global_position(position)?;
     tracing::trace!("type definition request received");
@@ -35,5 +32,7 @@ pub(crate) async fn type_definition(
         "type definition request answered"
     );
 
-    Ok(Some(GotoDefinitionResponse::Array(locations)))
+    Ok(Some(TypeDefinitionResponse::Definition(
+        Definition::LocationList(locations),
+    )))
 }

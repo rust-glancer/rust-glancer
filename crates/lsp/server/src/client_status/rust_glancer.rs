@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tower_lsp_server::{
     Client as LspClient,
-    ls_types::{LSPAny, LSPObject, notification::Notification},
+    gen_lsp_types::{LspAny, LspNotificationMethod, LspObject, MessageDirection, Notification},
 };
 
 use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
@@ -48,26 +48,28 @@ pub(super) async fn deferred_indexing_finished(
 struct ActiveWorkspaceChanged;
 
 impl Notification for ActiveWorkspaceChanged {
-    type Params = LSPAny;
+    type Params = LspAny;
 
-    const METHOD: &'static str = ACTIVE_WORKSPACE_CHANGED_METHOD;
+    const METHOD: LspNotificationMethod<'static> =
+        LspNotificationMethod::Custom(ACTIVE_WORKSPACE_CHANGED_METHOD);
+    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
 }
 
 impl ActiveWorkspaceChanged {
-    fn params(status: &ActiveWorkspaceStatus) -> LSPAny {
-        let mut params = LSPObject::new();
+    fn params(status: &ActiveWorkspaceStatus) -> LspAny {
+        let mut params = LspObject::new();
         params.insert(
             "root".to_string(),
-            LSPAny::String(editor_path_display(&status.root)),
+            LspAny::String(editor_path_display(&status.root)),
         );
         params.insert(
             "state".to_string(),
-            LSPAny::String(status.state.as_str().to_string()),
+            LspAny::String(status.state.as_str().to_string()),
         );
         if let Some(message) = &status.message {
-            params.insert("message".to_string(), LSPAny::String(message.clone()));
+            params.insert("message".to_string(), LspAny::String(message.clone()));
         }
-        LSPAny::Object(params)
+        LspAny::Object(params)
     }
 }
 
@@ -78,14 +80,16 @@ impl ActiveWorkspaceChanged {
 struct DeferredIndexingStarted;
 
 impl Notification for DeferredIndexingStarted {
-    type Params = LSPAny;
+    type Params = LspAny;
 
-    const METHOD: &'static str = DEFERRED_INDEXING_STARTED_METHOD;
+    const METHOD: LspNotificationMethod<'static> =
+        LspNotificationMethod::Custom(DEFERRED_INDEXING_STARTED_METHOD);
+    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
 }
 
 impl DeferredIndexingStarted {
-    fn params(root: &Path) -> LSPAny {
-        LSPAny::Object(deferred_indexing_params(root))
+    fn params(root: &Path) -> LspAny {
+        LspAny::Object(deferred_indexing_params(root))
     }
 }
 
@@ -93,35 +97,37 @@ impl DeferredIndexingStarted {
 struct DeferredIndexingFinished;
 
 impl Notification for DeferredIndexingFinished {
-    type Params = LSPAny;
+    type Params = LspAny;
 
-    const METHOD: &'static str = DEFERRED_INDEXING_FINISHED_METHOD;
+    const METHOD: LspNotificationMethod<'static> =
+        LspNotificationMethod::Custom(DEFERRED_INDEXING_FINISHED_METHOD);
+    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
 }
 
 impl DeferredIndexingFinished {
-    fn params(root: &Path, outcome: &DeferredIndexingOutcome) -> LSPAny {
+    fn params(root: &Path, outcome: &DeferredIndexingOutcome) -> LspAny {
         let mut params = deferred_indexing_params(root);
         match outcome {
             DeferredIndexingOutcome::Succeeded => {
                 params.insert(
                     "outcome".to_string(),
-                    LSPAny::String("succeeded".to_string()),
+                    LspAny::String("succeeded".to_string()),
                 );
             }
             DeferredIndexingOutcome::Failed { message } => {
-                params.insert("outcome".to_string(), LSPAny::String("failed".to_string()));
-                params.insert("message".to_string(), LSPAny::String(message.clone()));
+                params.insert("outcome".to_string(), LspAny::String("failed".to_string()));
+                params.insert("message".to_string(), LspAny::String(message.clone()));
             }
         }
-        LSPAny::Object(params)
+        LspAny::Object(params)
     }
 }
 
-fn deferred_indexing_params(root: &Path) -> LSPObject {
-    let mut params = LSPObject::new();
+fn deferred_indexing_params(root: &Path) -> LspObject {
+    let mut params = LspObject::new();
     params.insert(
         "root".to_string(),
-        LSPAny::String(editor_path_display(root)),
+        LspAny::String(editor_path_display(root)),
     );
     params
 }

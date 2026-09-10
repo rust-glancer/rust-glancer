@@ -11,7 +11,7 @@
 //! replaces the whole logical request, including any attempt it is running.
 
 use rg_lsp_proto::QueryError;
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::{
     completion_scheduler::CompletionAttemptOutcome,
@@ -21,7 +21,7 @@ use crate::{
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        rg.position = ?params.text_document_position.position,
+        rg.position = ?params.text_document_position_params.position,
     )
 )]
 pub(crate) async fn completion(
@@ -29,7 +29,7 @@ pub(crate) async fn completion(
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
     let request = ctx.request.clone();
-    let mut position = params.text_document_position.position;
+    let mut position = params.text_document_position_params.position;
     tracing::trace!("completion request received");
 
     // One loop owns every retry for this client request. When the target document advances,
@@ -135,9 +135,10 @@ pub(crate) async fn completion(
 /// same result is incomplete makes clients immediately request the identical position again,
 /// duplicating semantic work and competing with the presentation queries triggered by the edit.
 fn complete_response(items: Vec<CompletionItem>) -> CompletionResponse {
-    CompletionResponse::List(CompletionList {
+    CompletionResponse::CompletionList(CompletionList {
         is_incomplete: false,
         items,
+        ..Default::default()
     })
 }
 

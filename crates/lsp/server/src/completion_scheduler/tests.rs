@@ -5,7 +5,7 @@ use std::{
 
 use rg_lsp_proto::{EngineError, QueryError, QueryScope, QueryValue};
 use tokio::sync::{mpsc, oneshot};
-use tower_lsp_server::ls_types::{Position, Range, TextDocumentContentChangeEvent};
+use tower_lsp_server::gen_lsp_types::{Position, Range};
 
 use super::{
     CompletionAttemptOutcome, CompletionRequest, CompletionScheduler,
@@ -378,14 +378,14 @@ fn change(editor: &EditorStateHandle, path: &Path, character: u32, text: &str) {
             .change(
                 path,
                 Some(2),
-                &[TextDocumentContentChangeEvent {
-                    range: Some(Range::new(
+                &[tower_lsp_server::gen_lsp_types::TextDocumentContentChangePartial {
+                    range: Range::new(
                         Position::new(0, character),
                         Position::new(0, character),
-                    )),
-                    range_length: None,
+                    ),
                     text: text.to_string(),
-                }],
+            ..Default::default()
+        }.into()],
             )
             .expect("incremental change should apply")
     );

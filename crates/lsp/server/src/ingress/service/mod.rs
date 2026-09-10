@@ -18,11 +18,11 @@ use std::{
 use futures::future::BoxFuture;
 use tower::Service;
 use tower_lsp_server::{
-    jsonrpc::{FromParams, Request},
-    ls_types::{
+    gen_lsp_types::{
         CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
         DidOpenTextDocumentParams, DidSaveTextDocumentParams, Uri,
     },
+    jsonrpc::{FromParams, Request},
 };
 
 use crate::{
@@ -112,7 +112,9 @@ impl<S> EditorIngress<S> {
                 let Some(params) = request_params::<DidChangeTextDocumentParams>(request) else {
                     return IngressCall::Other;
                 };
-                let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
+                let Some(path) =
+                    methods::uri_to_path(&params.text_document.text_document_identifier.uri)
+                else {
                     return IngressCall::Other;
                 };
                 let client_version = Some(params.text_document.version);
@@ -187,14 +189,14 @@ impl<S> EditorIngress<S> {
                     return IngressCall::Other;
                 };
                 let Some(path) =
-                    methods::uri_to_path(&params.text_document_position.text_document.uri)
+                    methods::uri_to_path(&params.text_document_position_params.text_document.uri)
                 else {
                     return IngressCall::Other;
                 };
                 let document = self.editor.document(Some(path));
                 let completion = document.as_ref().ok().map(|captured| {
                     self.completion_scheduler
-                        .capture_request(captured, params.text_document_position.position)
+                        .capture_request(captured, params.text_document_position_params.position)
                 });
                 IngressCall::Document {
                     document: Mutex::new(Some(document)),

@@ -1,4 +1,4 @@
-use ls_types::NumberOrString;
+use gen_lsp_types::ProgressToken;
 use rg_lsp_proto::ServiceNotification;
 
 use crate::service::ServiceNotificationsSink;
@@ -9,18 +9,18 @@ use crate::service::ServiceNotificationsSink;
 #[derive(Clone, Debug)]
 pub(super) struct DiagnosticsProgress {
     notifications: ServiceNotificationsSink,
-    token: NumberOrString,
+    token: ProgressToken,
 }
 
 impl DiagnosticsProgress {
-    pub(super) fn new(notifications: ServiceNotificationsSink, token: NumberOrString) -> Self {
+    pub(super) fn new(notifications: ServiceNotificationsSink, token: ProgressToken) -> Self {
         Self {
             notifications,
             token,
         }
     }
 
-    pub(super) fn token(&self) -> &NumberOrString {
+    pub(super) fn token(&self) -> &ProgressToken {
         &self.token
     }
 

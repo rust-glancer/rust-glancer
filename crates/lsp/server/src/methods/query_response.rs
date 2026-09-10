@@ -146,7 +146,7 @@ mod tests {
     use std::path::PathBuf;
 
     use rg_lsp_proto::{QueryError, QueryScope, QueryValue};
-    use tower_lsp_server::{jsonrpc::ErrorCode, ls_types::TextDocumentContentChangeEvent};
+    use tower_lsp_server::{gen_lsp_types::TextDocumentContentChangeEvent, jsonrpc::ErrorCode};
 
     use super::{
         internal_error, into_lsp_error, validate_global_operation, validate_target_document,
@@ -280,10 +280,9 @@ mod tests {
     }
 
     fn full_change(text: &str) -> TextDocumentContentChangeEvent {
-        TextDocumentContentChangeEvent {
-            range: None,
-            range_length: None,
+        tower_lsp_server::gen_lsp_types::TextDocumentContentChangeWholeDocument {
             text: text.to_string(),
         }
+        .into()
     }
 }

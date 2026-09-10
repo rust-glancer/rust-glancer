@@ -13,9 +13,9 @@ impl QueryRunner<'_> {
     pub(crate) fn semantic_tokens(
         &mut self,
         document: EditorDocumentSnapshot,
-        range: Option<ls_types::Range>,
+        range: Option<gen_lsp_types::Range>,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<ls_types::SemanticTokens, QueryRunError> {
+    ) -> Result<gen_lsp_types::SemanticTokens, QueryRunError> {
         let snapshot = self
             .project
             .saved_snapshot()
@@ -31,7 +31,7 @@ impl QueryRunner<'_> {
             })
             .collect::<Vec<_>>();
         if targets.is_empty() {
-            return Ok(ls_types::SemanticTokens::default());
+            return Ok(gen_lsp_types::SemanticTokens::default());
         }
         let source = snapshot
             .prepare_document_source(&targets, document.text(), &cancellation.token())
@@ -41,15 +41,15 @@ impl QueryRunner<'_> {
             let Some(start) =
                 line_index.offset_from_utf16_position(position::parse_position(range.start))
             else {
-                return Ok(ls_types::SemanticTokens::default());
+                return Ok(gen_lsp_types::SemanticTokens::default());
             };
             let Some(end) =
                 line_index.offset_from_utf16_position(position::parse_position(range.end))
             else {
-                return Ok(ls_types::SemanticTokens::default());
+                return Ok(gen_lsp_types::SemanticTokens::default());
             };
             if start >= end {
-                return Ok(ls_types::SemanticTokens::default());
+                return Ok(gen_lsp_types::SemanticTokens::default());
             }
             Some(TextSpan { start, end })
         } else {

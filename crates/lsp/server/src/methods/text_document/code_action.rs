@@ -5,7 +5,7 @@
 //! editor revision overtook it before publication.
 
 use rg_lsp_proto::{CodeActionClientCapabilities, CodeActionRequestContext};
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
@@ -17,7 +17,7 @@ pub(crate) async fn code_action(
     ctx: DocumentMethodContext,
     params: CodeActionParams,
     client_capabilities: CodeActionClientCapabilities,
-) -> Result<Option<CodeActionResponse>> {
+) -> Result<Option<Vec<CodeActionResponse>>> {
     // Returning no actions is safer than degrading a version-bound edit to a stale plain edit or
     // command that the client could apply to another document revision.
     if !client_capabilities.supports_eager_actions() {
@@ -49,7 +49,7 @@ pub(crate) async fn code_action(
     Ok(Some(
         actions
             .into_iter()
-            .map(CodeActionOrCommand::CodeAction)
+            .map(CodeActionResponse::CodeAction)
             .collect(),
     ))
 }

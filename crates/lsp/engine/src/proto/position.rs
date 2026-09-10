@@ -1,4 +1,4 @@
-use ls_types::{Position, Range};
+use gen_lsp_types::{Position, Range};
 use rg_ir_model::Span;
 use rg_parse::{LineIndex, Position as ParsePosition};
 

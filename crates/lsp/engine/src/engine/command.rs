@@ -46,73 +46,73 @@ pub(crate) enum EngineCommand {
     },
     GotoDefinition {
         input: GlobalPositionSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::Location>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::Location>>,
     },
     GotoTypeDefinition {
         input: GlobalPositionSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::Location>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::Location>>,
     },
     GotoImplementation {
         input: GlobalPositionSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::Location>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::Location>>,
     },
     References {
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-        respond_to: QueryResponder<Vec<ls_types::Location>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::Location>>,
     },
     PrepareRename {
         input: GlobalPositionSnapshot,
-        respond_to: QueryResponder<Option<ls_types::PrepareRenameResponse>>,
+        respond_to: QueryResponder<Option<gen_lsp_types::PrepareRenameResult>>,
     },
     Rename {
         input: GlobalPositionSnapshot,
         new_name: String,
-        respond_to: QueryResponder<Option<ls_types::WorkspaceEdit>>,
+        respond_to: QueryResponder<Option<gen_lsp_types::WorkspaceEdit>>,
     },
     DocumentHighlight {
         input: DocumentPositionSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::DocumentHighlight>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::DocumentHighlight>>,
     },
     Hover {
         input: GlobalPositionSnapshot,
-        respond_to: QueryResponder<Option<ls_types::Hover>>,
+        respond_to: QueryResponder<Option<gen_lsp_types::Hover>>,
     },
     CodeAction {
         input: DocumentRangeSnapshot,
         request_context: CodeActionRequestContext,
-        respond_to: QueryResponder<Vec<ls_types::CodeAction>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::CodeAction>>,
     },
     Completion {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-        respond_to: QueryResponder<Vec<ls_types::CompletionItem>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::CompletionItem>>,
     },
     Formatting {
         snapshot: EditorDocumentSnapshot,
-        respond_to: QueryResponder<Option<Vec<ls_types::TextEdit>>>,
+        respond_to: QueryResponder<Option<Vec<gen_lsp_types::TextEdit>>>,
     },
     DocumentSymbol {
         snapshot: EditorDocumentSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::DocumentSymbol>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::DocumentSymbol>>,
     },
     FoldingRange {
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-        respond_to: QueryResponder<Vec<ls_types::FoldingRange>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::FoldingRange>>,
     },
     SemanticTokens {
         snapshot: EditorDocumentSnapshot,
-        range: Option<ls_types::Range>,
-        respond_to: QueryResponder<ls_types::SemanticTokens>,
+        range: Option<gen_lsp_types::Range>,
+        respond_to: QueryResponder<gen_lsp_types::SemanticTokens>,
     },
     InlayHint {
         input: DocumentRangeSnapshot,
-        respond_to: QueryResponder<Vec<ls_types::InlayHint>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::InlayHint>>,
     },
     WorkspaceSymbol {
         query: String,
-        respond_to: QueryResponder<Vec<ls_types::WorkspaceSymbol>>,
+        respond_to: QueryResponder<Vec<gen_lsp_types::WorkspaceSymbol>>,
     },
     ReindexWorkspace {
         respond_to: EngineResponder<()>,

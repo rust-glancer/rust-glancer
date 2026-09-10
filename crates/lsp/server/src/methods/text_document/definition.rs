@@ -1,4 +1,4 @@
-use tower_lsp_server::{jsonrpc::Result, ls_types::*};
+use tower_lsp_server::{gen_lsp_types::*, jsonrpc::Result};
 
 use crate::methods::DocumentMethodContext;
 
@@ -10,8 +10,8 @@ use crate::methods::DocumentMethodContext;
 )]
 pub(crate) async fn definition(
     ctx: DocumentMethodContext,
-    params: GotoDefinitionParams,
-) -> Result<Option<GotoDefinitionResponse>> {
+    params: DefinitionParams,
+) -> Result<Option<DefinitionResponse>> {
     let position = params.text_document_position_params.position;
     let input = ctx.global_position(position)?;
     tracing::trace!("definition request received");
@@ -30,5 +30,7 @@ pub(crate) async fn definition(
         "definition request answered"
     );
 
-    Ok(Some(GotoDefinitionResponse::Array(locations)))
+    Ok(Some(DefinitionResponse::Definition(
+        Definition::LocationList(locations),
+    )))
 }

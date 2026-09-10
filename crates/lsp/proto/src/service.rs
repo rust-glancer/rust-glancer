@@ -41,73 +41,73 @@ pub trait EngineService {
 
     async fn goto_definition(
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError>;
 
     async fn goto_type_definition(
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError>;
 
     async fn goto_implementation(
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError>;
 
     async fn references(
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError>;
 
     async fn prepare_rename(
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<ls_types::PrepareRenameResponse>>, QueryError>;
+    ) -> Result<QueryValue<Option<gen_lsp_types::PrepareRenameResult>>, QueryError>;
 
     async fn rename(
         input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> Result<QueryValue<Option<ls_types::WorkspaceEdit>>, QueryError>;
+    ) -> Result<QueryValue<Option<gen_lsp_types::WorkspaceEdit>>, QueryError>;
 
     async fn document_highlight(
         input: DocumentPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentHighlight>>, QueryError>;
 
     async fn hover(
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError>;
+    ) -> Result<QueryValue<Option<gen_lsp_types::Hover>>, QueryError>;
 
     async fn code_action(
         input: DocumentRangeSnapshot,
         request_context: CodeActionRequestContext,
-    ) -> Result<QueryValue<Vec<ls_types::CodeAction>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::CodeAction>>, QueryError>;
 
     async fn completion(
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<ls_types::CompletionItem>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::CompletionItem>>, QueryError>;
 
     async fn formatting(
         snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Option<Vec<ls_types::TextEdit>>>, QueryError>;
+    ) -> Result<QueryValue<Option<Vec<gen_lsp_types::TextEdit>>>, QueryError>;
 
     async fn document_symbol(
         snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::DocumentSymbol>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentSymbol>>, QueryError>;
 
     async fn folding_range(
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-    ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::FoldingRange>>, QueryError>;
 
     async fn semantic_tokens(
         snapshot: EditorDocumentSnapshot,
-        range: Option<ls_types::Range>,
-    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError>;
+        range: Option<gen_lsp_types::Range>,
+    ) -> Result<QueryValue<gen_lsp_types::SemanticTokens>, QueryError>;
 
     async fn inlay_hint(
         input: DocumentRangeSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::InlayHint>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::InlayHint>>, QueryError>;
 
     async fn workspace_symbol(
         query: String,
-    ) -> Result<QueryValue<Vec<ls_types::WorkspaceSymbol>>, QueryError>;
+    ) -> Result<QueryValue<Vec<gen_lsp_types::WorkspaceSymbol>>, QueryError>;
 
     async fn reindex_workspace() -> EngineResult<()>;
 

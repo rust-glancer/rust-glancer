@@ -8,9 +8,8 @@ use cargo_metadata::{
     Message,
     diagnostic::{Diagnostic as CargoDiagnostic, DiagnosticLevel, DiagnosticSpan},
 };
-use ls_types::{
-    Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
-    Position, Range,
+use gen_lsp_types::{
+    Code, Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, Position, Range,
 };
 use rg_lsp_proto::path_to_file_uri;
 use rg_std::{NormalizedPathBuf, UniqueVec};
@@ -133,10 +132,10 @@ impl<'a> CargoDiagnosticMapper<'a> {
                     .diagnostic
                     .code
                     .as_ref()
-                    .map(|code| NumberOrString::String(code.code.clone())),
+                    .map(|code| Code::String(code.code.clone())),
                 code_description: None,
                 source: Some(self.source.to_string()),
-                message: self.diagnostic.message.clone(),
+                message: self.diagnostic.message.clone().into(),
                 related_information,
                 tags: None,
                 data: None,
@@ -234,12 +233,12 @@ impl<'a> CargoDiagnosticMapper<'a> {
 
     fn severity(level: DiagnosticLevel) -> Option<DiagnosticSeverity> {
         match level {
-            DiagnosticLevel::Ice | DiagnosticLevel::Error => Some(DiagnosticSeverity::ERROR),
-            DiagnosticLevel::Warning => Some(DiagnosticSeverity::WARNING),
+            DiagnosticLevel::Ice | DiagnosticLevel::Error => Some(DiagnosticSeverity::Error),
+            DiagnosticLevel::Warning => Some(DiagnosticSeverity::Warning),
             DiagnosticLevel::Note | DiagnosticLevel::FailureNote => {
-                Some(DiagnosticSeverity::INFORMATION)
+                Some(DiagnosticSeverity::Information)
             }
-            DiagnosticLevel::Help => Some(DiagnosticSeverity::HINT),
+            DiagnosticLevel::Help => Some(DiagnosticSeverity::Hint),
             _ => None,
         }
     }
@@ -344,7 +343,7 @@ mod tests {
             .next()
             .expect("source should receive diagnostics");
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].message, "unused variable");
+        assert_eq!(published[0].message, "unused variable".to_string().into());
     }
 
     #[test]

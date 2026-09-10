@@ -180,7 +180,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoDefinition { input, respond_to })
             .await
@@ -190,7 +190,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoTypeDefinition { input, respond_to })
             .await
@@ -200,7 +200,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::GotoImplementation { input, respond_to })
             .await
@@ -211,7 +211,7 @@ impl EngineService for Service {
         _: context::Context,
         input: GlobalPositionSnapshot,
         include_declaration: bool,
-    ) -> Result<QueryValue<Vec<ls_types::Location>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::Location>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::References {
                 input,
@@ -225,7 +225,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<ls_types::PrepareRenameResponse>>, QueryError> {
+    ) -> Result<QueryValue<Option<gen_lsp_types::PrepareRenameResult>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::PrepareRename { input, respond_to })
             .await
@@ -236,7 +236,7 @@ impl EngineService for Service {
         _: context::Context,
         input: GlobalPositionSnapshot,
         new_name: String,
-    ) -> Result<QueryValue<Option<ls_types::WorkspaceEdit>>, QueryError> {
+    ) -> Result<QueryValue<Option<gen_lsp_types::WorkspaceEdit>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Rename {
                 input,
@@ -250,7 +250,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentPositionSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::DocumentHighlight>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentHighlight>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::DocumentHighlight { input, respond_to })
             .await
@@ -260,7 +260,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<ls_types::Hover>>, QueryError> {
+    ) -> Result<QueryValue<Option<gen_lsp_types::Hover>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Hover { input, respond_to })
             .await
@@ -271,7 +271,7 @@ impl EngineService for Service {
         _: context::Context,
         input: DocumentRangeSnapshot,
         request_context: rg_lsp_proto::CodeActionRequestContext,
-    ) -> Result<QueryValue<Vec<ls_types::CodeAction>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::CodeAction>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::CodeAction {
                 input,
@@ -286,7 +286,7 @@ impl EngineService for Service {
         _: context::Context,
         input: DocumentPositionSnapshot,
         client_capabilities: rg_lsp_proto::CompletionClientCapabilities,
-    ) -> Result<QueryValue<Vec<ls_types::CompletionItem>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::CompletionItem>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Completion {
                 input,
@@ -300,7 +300,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Option<Vec<ls_types::TextEdit>>>, QueryError> {
+    ) -> Result<QueryValue<Option<Vec<gen_lsp_types::TextEdit>>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::Formatting {
                 snapshot,
@@ -313,7 +313,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::DocumentSymbol>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::DocumentSymbol>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::DocumentSymbol {
                 snapshot,
@@ -327,7 +327,7 @@ impl EngineService for Service {
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-    ) -> Result<QueryValue<Vec<ls_types::FoldingRange>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::FoldingRange>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::FoldingRange {
                 snapshot,
@@ -341,8 +341,8 @@ impl EngineService for Service {
         self,
         _: context::Context,
         snapshot: EditorDocumentSnapshot,
-        range: Option<ls_types::Range>,
-    ) -> Result<QueryValue<ls_types::SemanticTokens>, QueryError> {
+        range: Option<gen_lsp_types::Range>,
+    ) -> Result<QueryValue<gen_lsp_types::SemanticTokens>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::SemanticTokens {
                 snapshot,
@@ -356,7 +356,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         input: DocumentRangeSnapshot,
-    ) -> Result<QueryValue<Vec<ls_types::InlayHint>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::InlayHint>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::InlayHint { input, respond_to })
             .await
@@ -366,7 +366,7 @@ impl EngineService for Service {
         self,
         _: context::Context,
         query: String,
-    ) -> Result<QueryValue<Vec<ls_types::WorkspaceSymbol>>, QueryError> {
+    ) -> Result<QueryValue<Vec<gen_lsp_types::WorkspaceSymbol>>, QueryError> {
         self.engine
             .query(|respond_to| EngineCommand::WorkspaceSymbol { query, respond_to })
             .await

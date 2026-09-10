@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use ls_types::{PrepareRenameResponse, TextEdit, Uri, WorkspaceEdit};
+use gen_lsp_types::{PrepareRenamePlaceholder, PrepareRenameResult, TextEdit, Uri, WorkspaceEdit};
 use rg_analysis::{RenameEdit, RenameTarget};
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_lsp_proto::path_to_file_uri;
@@ -13,11 +13,13 @@ pub(crate) fn prepare_rename(
     snapshot: ProjectSnapshot<'_>,
     package: PackageSlot,
     target: RenameTarget,
-) -> anyhow::Result<PrepareRenameResponse> {
-    Ok(PrepareRenameResponse::RangeWithPlaceholder {
-        range: range_for_file(snapshot, package, target.file_id, target.span)?,
-        placeholder: target.placeholder,
-    })
+) -> anyhow::Result<PrepareRenameResult> {
+    Ok(PrepareRenameResult::PrepareRenamePlaceholder(
+        PrepareRenamePlaceholder {
+            range: range_for_file(snapshot, package, target.file_id, target.span)?,
+            placeholder: target.placeholder,
+        },
+    ))
 }
 
 pub(crate) fn workspace_edit(
@@ -60,7 +62,10 @@ pub(crate) fn workspace_edit(
         }
     }
 
-    Ok(WorkspaceEdit::new(changes))
+    Ok(WorkspaceEdit {
+        changes: Some(changes),
+        ..Default::default()
+    })
 }
 
 fn range_for_file(
@@ -68,7 +73,7 @@ fn range_for_file(
     package_slot: PackageSlot,
     file_id: FileId,
     span: Span,
-) -> anyhow::Result<ls_types::Range> {
+) -> anyhow::Result<gen_lsp_types::Range> {
     let line_index = snapshot
         .file_line_index(package_slot, file_id)?
         .context("while attempting to find file for rename range conversion")?;

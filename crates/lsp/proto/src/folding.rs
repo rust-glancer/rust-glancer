@@ -8,7 +8,7 @@ pub struct FoldingClientCapabilities {
 }
 
 impl FoldingClientCapabilities {
-    pub fn from_lsp_client_capabilities(capabilities: &ls_types::ClientCapabilities) -> Self {
+    pub fn from_lsp_client_capabilities(capabilities: &gen_lsp_types::ClientCapabilities) -> Self {
         let line_folding_only = capabilities
             .text_document
             .as_ref()
@@ -22,7 +22,7 @@ impl FoldingClientCapabilities {
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{
+    use gen_lsp_types::{
         ClientCapabilities, FoldingRangeClientCapabilities as LspFoldingRangeClientCapabilities,
         TextDocumentClientCapabilities,
     };

@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tower_lsp_server::ls_types::Position;
+use tower_lsp_server::gen_lsp_types::Position;
 
 use crate::ingress::CapturedDocument;
 

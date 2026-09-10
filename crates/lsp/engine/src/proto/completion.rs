@@ -1,5 +1,5 @@
-use ls_types::{
-    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionTextEdit, Documentation,
+use gen_lsp_types::{
+    CompletionItem as LspCompletionItem, CompletionItemKind, CompletionItemTextEdit, Documentation,
     InsertTextFormat, MarkupContent, MarkupKind,
 };
 use rg_analysis::{
@@ -42,33 +42,33 @@ pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> L
 
 fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
-        CompletionKind::Attribute => CompletionItemKind::PROPERTY,
-        CompletionKind::Const => CompletionItemKind::CONSTANT,
-        CompletionKind::Enum => CompletionItemKind::ENUM,
-        CompletionKind::EnumVariant => CompletionItemKind::ENUM_MEMBER,
-        CompletionKind::Field => CompletionItemKind::FIELD,
-        CompletionKind::Function => CompletionItemKind::FUNCTION,
-        CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::METHOD,
-        CompletionKind::Keyword => CompletionItemKind::KEYWORD,
-        CompletionKind::Label | CompletionKind::Lifetime => CompletionItemKind::REFERENCE,
-        CompletionKind::Macro => CompletionItemKind::FUNCTION,
-        CompletionKind::Module => CompletionItemKind::MODULE,
-        CompletionKind::PrimitiveType => CompletionItemKind::KEYWORD,
-        CompletionKind::Postfix => CompletionItemKind::SNIPPET,
-        CompletionKind::Static => CompletionItemKind::VARIABLE,
-        CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
-        CompletionKind::Trait => CompletionItemKind::INTERFACE,
-        CompletionKind::TypeAlias => CompletionItemKind::CLASS,
-        CompletionKind::TypeParameter => CompletionItemKind::TYPE_PARAMETER,
-        CompletionKind::Variable => CompletionItemKind::VARIABLE,
-        CompletionKind::Value => CompletionItemKind::VALUE,
+        CompletionKind::Attribute => CompletionItemKind::Property,
+        CompletionKind::Const => CompletionItemKind::Constant,
+        CompletionKind::Enum => CompletionItemKind::Enum,
+        CompletionKind::EnumVariant => CompletionItemKind::EnumMember,
+        CompletionKind::Field => CompletionItemKind::Field,
+        CompletionKind::Function => CompletionItemKind::Function,
+        CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::Method,
+        CompletionKind::Keyword => CompletionItemKind::Keyword,
+        CompletionKind::Label | CompletionKind::Lifetime => CompletionItemKind::Reference,
+        CompletionKind::Macro => CompletionItemKind::Function,
+        CompletionKind::Module => CompletionItemKind::Module,
+        CompletionKind::PrimitiveType => CompletionItemKind::Keyword,
+        CompletionKind::Postfix => CompletionItemKind::Snippet,
+        CompletionKind::Static => CompletionItemKind::Variable,
+        CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::Struct,
+        CompletionKind::Trait => CompletionItemKind::Interface,
+        CompletionKind::TypeAlias => CompletionItemKind::Class,
+        CompletionKind::TypeParameter => CompletionItemKind::TypeParameter,
+        CompletionKind::Variable => CompletionItemKind::Variable,
+        CompletionKind::Value => CompletionItemKind::Value,
     }
 }
 
 fn completion_insert_text_format(insert_text: &CompletionInsertText) -> Option<InsertTextFormat> {
     match insert_text {
         CompletionInsertText::Plain | CompletionInsertText::Text(_) => None,
-        CompletionInsertText::Snippet(_) => Some(InsertTextFormat::SNIPPET),
+        CompletionInsertText::Snippet(_) => Some(InsertTextFormat::Snippet),
     }
 }
 
@@ -98,14 +98,14 @@ fn completion_text_edit(
     insert_text: CompletionInsertText,
     edit: Option<CompletionEdit>,
     line_index: &LineIndex,
-) -> Option<CompletionTextEdit> {
+) -> Option<CompletionItemTextEdit> {
     edit.map(|edit| {
         let new_text = match insert_text {
             CompletionInsertText::Plain => label.to_string(),
             CompletionInsertText::Text(text) => text,
             CompletionInsertText::Snippet(snippet) => snippet,
         };
-        CompletionTextEdit::Edit(text_edit::new(
+        CompletionItemTextEdit::TextEdit(text_edit::new(
             line_index,
             position::range(line_index, edit.replace),
             new_text,
@@ -115,8 +115,8 @@ fn completion_text_edit(
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{
-        CompletionItemKind, CompletionTextEdit, Documentation, InsertTextFormat, MarkupContent,
+    use gen_lsp_types::{
+        CompletionItemKind, CompletionItemTextEdit, Documentation, InsertTextFormat, MarkupContent,
         MarkupKind,
     };
     use rg_analysis::{
@@ -151,7 +151,7 @@ mod tests {
             &LineIndex::new("user.na"),
         );
 
-        assert_eq!(completion.kind, Some(CompletionItemKind::METHOD));
+        assert_eq!(completion.kind, Some(CompletionItemKind::Method));
         assert_eq!(
             completion.detail.as_deref(),
             Some("fn name(&self) (maybe applicable)")
@@ -168,7 +168,7 @@ mod tests {
         assert_eq!(completion.insert_text_format, None);
         assert_eq!(completion.additional_text_edits, None);
 
-        let Some(CompletionTextEdit::Edit(edit)) = completion.text_edit else {
+        let Some(CompletionItemTextEdit::TextEdit(edit)) = completion.text_edit else {
             panic!("completion should use a replacement text edit");
         };
         assert_eq!(edit.new_text, "name");
@@ -210,9 +210,9 @@ mod tests {
 
         assert_eq!(
             completion.insert_text_format,
-            Some(InsertTextFormat::SNIPPET)
+            Some(InsertTextFormat::Snippet)
         );
-        let Some(CompletionTextEdit::Edit(edit)) = completion.text_edit else {
+        let Some(CompletionItemTextEdit::TextEdit(edit)) = completion.text_edit else {
             panic!("snippet completion should use a replacement text edit");
         };
         assert_eq!(edit.new_text, "HashMap::<${1:K}, ${2:V}>$0\r\n");

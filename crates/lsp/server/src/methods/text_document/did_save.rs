@@ -1,6 +1,6 @@
 use tower_lsp_server::{
     Client as LspClient,
-    ls_types::{DidSaveTextDocumentParams, MessageType},
+    gen_lsp_types::{DidSaveTextDocumentParams, MessageType},
 };
 
 use crate::{
@@ -61,7 +61,7 @@ pub(crate) async fn did_save(
                 error = %format!("{error:#}"),
                 "editor save failed"
             );
-            lsp_client.log_message(MessageType::ERROR, message).await;
+            lsp_client.log_message(MessageType::Error, message).await;
             return;
         }
     };

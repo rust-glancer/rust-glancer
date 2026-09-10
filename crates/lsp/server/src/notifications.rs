@@ -10,7 +10,7 @@ use rg_lsp_proto::{
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::context;
-use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
+use tower_lsp_server::{Client as LspClient, gen_lsp_types::MessageType};
 
 use crate::{
     client_status::{ClientStatusPublisher, work_done_progress},
@@ -158,9 +158,9 @@ async fn publish_service_notification(
 
 fn message_type(level: ServiceLogLevel) -> MessageType {
     match level {
-        ServiceLogLevel::Error => MessageType::ERROR,
-        ServiceLogLevel::Warning => MessageType::WARNING,
-        ServiceLogLevel::Info => MessageType::INFO,
-        ServiceLogLevel::Log => MessageType::LOG,
+        ServiceLogLevel::Error => MessageType::Error,
+        ServiceLogLevel::Warning => MessageType::Warning,
+        ServiceLogLevel::Info => MessageType::Info,
+        ServiceLogLevel::Log => MessageType::Log,
     }
 }

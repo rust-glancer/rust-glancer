@@ -13,7 +13,7 @@ pub struct ClientCapabilities {
 }
 
 impl ClientCapabilities {
-    pub fn from_lsp_client_capabilities(capabilities: &ls_types::ClientCapabilities) -> Self {
+    pub fn from_lsp_client_capabilities(capabilities: &gen_lsp_types::ClientCapabilities) -> Self {
         Self {
             code_action: CodeActionClientCapabilities::from_lsp_client_capabilities(capabilities),
             completion: CompletionClientCapabilities::from_lsp_client_capabilities(capabilities),
@@ -28,7 +28,7 @@ mod tests {
 
     #[test]
     fn extracts_engine_client_capabilities_through_the_aggregate() {
-        let capabilities: ls_types::ClientCapabilities =
+        let capabilities: gen_lsp_types::ClientCapabilities =
             serde_json::from_value(serde_json::json!({
                 "workspace": {
                     "workspaceEdit": { "documentChanges": true }
@@ -58,7 +58,7 @@ mod tests {
         assert!(actual.completion.snippet_support);
 
         let defaults = ClientCapabilities::from_lsp_client_capabilities(
-            &ls_types::ClientCapabilities::default(),
+            &gen_lsp_types::ClientCapabilities::default(),
         );
         assert!(!defaults.code_action.supports_eager_actions());
         assert!(!defaults.completion.snippet_support);

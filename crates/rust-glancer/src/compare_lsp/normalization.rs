@@ -11,11 +11,11 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ls_types::{
-    AnnotatedTextEdit, DocumentChangeOperation, DocumentChanges, DocumentHighlight, DocumentSymbol,
-    DocumentSymbolResponse, InlayHint, InlayHintKind, InlayHintLabel, Location, LocationLink,
-    OneOf, PrepareRenameResponse, Range, ResourceOp, SymbolInformation, SymbolKind, TextEdit, Uri,
-    WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolResponse,
+use gen_lsp_types::{
+    DocumentChange, DocumentHighlight, DocumentSymbol, DocumentSymbolResponse, Edit, InlayHint,
+    InlayHintKind, Label, Location, LocationLink, PrepareRenameDefaultBehavior,
+    PrepareRenamePlaceholder, PrepareRenameResult, Range, SymbolInformation, SymbolKind, TextEdit,
+    Uri, WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolLocation, WorkspaceSymbolResponse,
 };
 use rg_std::NormalizedPathBuf;
 use serde_json::Value;
@@ -256,20 +256,23 @@ impl NormalizedPrepareRenameSet {
         }
 
         let response =
-            serde_json::from_value::<PrepareRenameResponse>(raw.clone()).map_err(|_| {
+            serde_json::from_value::<PrepareRenameResult>(raw.clone()).map_err(|_| {
                 format!(
                     "unsupported prepare-rename response shape {}",
                     json_shape(raw)
                 )
             })?;
         let target = match response {
-            PrepareRenameResponse::Range(range) => Some(NormalizedPrepareRenameTarget {
+            PrepareRenameResult::Range(range) => Some(NormalizedPrepareRenameTarget {
                 range: Some(NormalizedRange::from_lsp(range)),
                 default_behavior: false,
                 placeholder: None,
                 placeholder_matches_source: true,
             }),
-            PrepareRenameResponse::RangeWithPlaceholder { range, placeholder } => {
+            PrepareRenameResult::PrepareRenamePlaceholder(PrepareRenamePlaceholder {
+                range,
+                placeholder,
+            }) => {
                 let range = NormalizedRange::from_lsp(range);
                 let selected_text = range.source_text_for_query(fixture_root, query_target)?;
 
@@ -280,13 +283,14 @@ impl NormalizedPrepareRenameSet {
                     placeholder: Some(placeholder),
                 })
             }
-            PrepareRenameResponse::DefaultBehavior { default_behavior } => default_behavior
-                .then_some(NormalizedPrepareRenameTarget {
-                    range: None,
-                    default_behavior: true,
-                    placeholder: None,
-                    placeholder_matches_source: true,
-                }),
+            PrepareRenameResult::PrepareRenameDefaultBehavior(PrepareRenameDefaultBehavior {
+                default_behavior,
+            }) => default_behavior.then_some(NormalizedPrepareRenameTarget {
+                range: None,
+                default_behavior: true,
+                placeholder: None,
+                placeholder_matches_source: true,
+            }),
         };
 
         Ok(Self {
@@ -342,53 +346,52 @@ impl NormalizedTextEditSet {
 
     fn push_document_changes(
         fixture_root: &NormalizedPathBuf,
-        document_changes: DocumentChanges,
+        document_changes: Vec<DocumentChange>,
         edits: &mut BTreeSet<NormalizedTextEdit>,
         unmapped: &mut Vec<UnmappedLocation>,
     ) {
-        match document_changes {
-            DocumentChanges::Edits(document_edits) => {
-                for document_edit in document_edits {
-                    let uri = document_edit.text_document.uri;
+        for change in document_changes {
+            match change {
+                DocumentChange::TextDocumentEdit(document_edit) => {
+                    let uri = document_edit.text_document.text_document_identifier.uri;
                     for edit in document_edit.edits {
-                        Self::push_one_of_text_edit(fixture_root, &uri, edit, edits, unmapped);
+                        Self::push_document_edit(fixture_root, &uri, edit, edits, unmapped);
                     }
                 }
-            }
-            DocumentChanges::Operations(operations) => {
-                for operation in operations {
-                    match operation {
-                        DocumentChangeOperation::Edit(document_edit) => {
-                            let uri = document_edit.text_document.uri;
-                            for edit in document_edit.edits {
-                                Self::push_one_of_text_edit(
-                                    fixture_root,
-                                    &uri,
-                                    edit,
-                                    edits,
-                                    unmapped,
-                                );
-                            }
-                        }
-                        DocumentChangeOperation::Op(resource_op) => {
-                            unmapped.push(Self::resource_operation_location(resource_op));
-                        }
-                    }
-                }
+                DocumentChange::CreateFile(file) => unmapped.push(UnmappedLocation {
+                    uri: file.uri.as_str().to_string(),
+                    reason: "rename returned a create-file operation".to_string(),
+                }),
+                DocumentChange::RenameFile(file) => unmapped.push(UnmappedLocation {
+                    uri: format!("{} -> {}", file.old_uri.as_str(), file.new_uri.as_str()),
+                    reason: "rename returned a rename-file operation".to_string(),
+                }),
+                DocumentChange::DeleteFile(file) => unmapped.push(UnmappedLocation {
+                    uri: file.uri.as_str().to_string(),
+                    reason: "rename returned a delete-file operation".to_string(),
+                }),
             }
         }
     }
 
-    fn push_one_of_text_edit(
+    fn push_document_edit(
         fixture_root: &NormalizedPathBuf,
         uri: &Uri,
-        edit: OneOf<TextEdit, AnnotatedTextEdit>,
+        edit: Edit,
         edits: &mut BTreeSet<NormalizedTextEdit>,
         unmapped: &mut Vec<UnmappedLocation>,
     ) {
         let edit = match edit {
-            OneOf::Left(edit) => edit,
-            OneOf::Right(edit) => edit.text_edit,
+            Edit::TextEdit(edit) => edit,
+            Edit::AnnotatedTextEdit(edit) => edit.text_edit,
+            Edit::SnippetTextEdit(_) => {
+                // The comparison client does not advertise snippet edit support.
+                unmapped.push(UnmappedLocation {
+                    uri: uri.as_str().to_string(),
+                    reason: "rename returned a snippet edit".to_string(),
+                });
+                return;
+            }
         };
         Self::push_text_edit(fixture_root, uri, edit, edits, unmapped);
     }
@@ -405,23 +408,6 @@ impl NormalizedTextEditSet {
                 edits.insert(edit);
             }
             Err(location) => unmapped.push(location),
-        }
-    }
-
-    fn resource_operation_location(resource_op: ResourceOp) -> UnmappedLocation {
-        match resource_op {
-            ResourceOp::Create(file) => UnmappedLocation {
-                uri: file.uri.as_str().to_string(),
-                reason: "rename returned a create-file operation".to_string(),
-            },
-            ResourceOp::Rename(file) => UnmappedLocation {
-                uri: format!("{} -> {}", file.old_uri.as_str(), file.new_uri.as_str()),
-                reason: "rename returned a rename-file operation".to_string(),
-            },
-            ResourceOp::Delete(file) => UnmappedLocation {
-                uri: file.uri.as_str().to_string(),
-                reason: "rename returned a delete-file operation".to_string(),
-            },
         }
     }
 
@@ -528,12 +514,12 @@ impl NormalizedSymbolSet {
         let mut unmapped = Vec::new();
 
         match response {
-            DocumentSymbolResponse::Nested(document_symbols) => {
+            DocumentSymbolResponse::DocumentSymbolList(document_symbols) => {
                 for symbol in document_symbols {
                     NormalizedSymbol::push_document_symbol(symbol, &mut symbols);
                 }
             }
-            DocumentSymbolResponse::Flat(symbol_infos) => {
+            DocumentSymbolResponse::SymbolInformationList(symbol_infos) => {
                 for symbol in symbol_infos {
                     match NormalizedSymbol::from_document_symbol_information(fixture_root, symbol) {
                         Ok(symbol) => {
@@ -570,7 +556,7 @@ impl NormalizedSymbolSet {
         let mut unmapped = Vec::new();
 
         match response {
-            WorkspaceSymbolResponse::Nested(workspace_symbols) => {
+            WorkspaceSymbolResponse::WorkspaceSymbolList(workspace_symbols) => {
                 for symbol in workspace_symbols {
                     match NormalizedSymbol::from_workspace_symbol(fixture_root, symbol) {
                         Ok(symbol) => {
@@ -580,7 +566,7 @@ impl NormalizedSymbolSet {
                     }
                 }
             }
-            WorkspaceSymbolResponse::Flat(symbol_infos) => {
+            WorkspaceSymbolResponse::SymbolInformationList(symbol_infos) => {
                 for symbol in symbol_infos {
                     match NormalizedSymbol::from_symbol_information(fixture_root, symbol) {
                         Ok(symbol) => {
@@ -897,8 +883,8 @@ impl NormalizedSymbol {
         self.name == reference.name
             && self.path == reference.path
             && self.range == reference.range
-            && self.kind == symbol_kind_code(SymbolKind::METHOD)
-            && reference.kind == symbol_kind_code(SymbolKind::FUNCTION)
+            && self.kind == symbol_kind_code(SymbolKind::Method)
+            && reference.kind == symbol_kind_code(SymbolKind::Function)
     }
 
     fn push_document_symbol(symbol: DocumentSymbol, symbols: &mut BTreeSet<Self>) {
@@ -924,8 +910,8 @@ impl NormalizedSymbol {
             ProtocolLocation::Location(symbol.location),
         )?;
         Ok(Self {
-            name: symbol.name,
-            kind: symbol_kind_code(symbol.kind),
+            name: symbol.base_symbol_information.name,
+            kind: symbol_kind_code(symbol.base_symbol_information.kind),
             path: Some(location.path),
             range: Some(location.range),
         })
@@ -940,8 +926,8 @@ impl NormalizedSymbol {
             ProtocolLocation::Location(symbol.location),
         )?;
         Ok(Self {
-            name: symbol.name,
-            kind: symbol_kind_code(symbol.kind),
+            name: symbol.base_symbol_information.name,
+            kind: symbol_kind_code(symbol.base_symbol_information.kind),
             path: None,
             range: Some(location.range),
         })
@@ -952,22 +938,22 @@ impl NormalizedSymbol {
         symbol: WorkspaceSymbol,
     ) -> Result<Self, UnmappedLocation> {
         let (path, range) = match symbol.location {
-            OneOf::Left(location) => {
+            WorkspaceSymbolLocation::Location(location) => {
                 let location = NormalizedLocation::from_protocol(
                     fixture_root,
                     ProtocolLocation::Location(location),
                 )?;
                 (Some(location.path), Some(location.range))
             }
-            OneOf::Right(location) => (
+            WorkspaceSymbolLocation::LocationUriOnly(location) => (
                 Some(fixture_relative_file_uri(fixture_root, &location.uri)?),
                 None,
             ),
         };
 
         Ok(Self {
-            name: symbol.name,
-            kind: symbol_kind_code(symbol.kind),
+            name: symbol.base_symbol_information.name,
+            kind: symbol_kind_code(symbol.base_symbol_information.kind),
             path,
             range,
         })
@@ -1168,10 +1154,10 @@ fn inlay_hint_kind_code(kind: InlayHintKind) -> i64 {
         .expect("InlayHintKind should serialize as an integer")
 }
 
-fn inlay_hint_label(label: InlayHintLabel) -> String {
+fn inlay_hint_label(label: Label) -> String {
     match label {
-        InlayHintLabel::String(label) => label,
-        InlayHintLabel::LabelParts(parts) => parts.into_iter().map(|part| part.value).collect(),
+        Label::String(label) => label,
+        Label::InlayHintLabelPartList(parts) => parts.into_iter().map(|part| part.value).collect(),
     }
 }
 

@@ -15,7 +15,7 @@ pub struct CodeActionClientCapabilities {
 
 impl CodeActionClientCapabilities {
     /// Read the features that gate eager edits or optional action metadata.
-    pub fn from_lsp_client_capabilities(capabilities: &ls_types::ClientCapabilities) -> Self {
+    pub fn from_lsp_client_capabilities(capabilities: &gen_lsp_types::ClientCapabilities) -> Self {
         let code_action = capabilities
             .text_document
             .as_ref()
@@ -52,7 +52,7 @@ pub struct CodeActionRequestKinds {
 
 impl CodeActionRequestKinds {
     /// Translate LSP's hierarchical `only` filter into the action families implemented here.
-    pub fn from_lsp(only: Option<&[ls_types::CodeActionKind]>) -> Self {
+    pub fn from_lsp(only: Option<&[gen_lsp_types::CodeActionKind]>) -> Self {
         let Some(only) = only else {
             return Self {
                 quick_fix: true,
@@ -60,10 +60,10 @@ impl CodeActionRequestKinds {
             };
         };
         Self {
-            quick_fix: Self::requested(only, ls_types::CodeActionKind::QUICKFIX.as_str()),
+            quick_fix: Self::requested(only, gen_lsp_types::CodeActionKind::QuickFix.as_str()),
             refactor_rewrite: Self::requested(
                 only,
-                ls_types::CodeActionKind::REFACTOR_REWRITE.as_str(),
+                gen_lsp_types::CodeActionKind::RefactorRewrite.as_str(),
             ),
         }
     }
@@ -71,7 +71,7 @@ impl CodeActionRequestKinds {
     /// Check a hierarchical action kind such as `refactor.rewrite` against requested parents.
     ///
     /// Requesting `refactor` includes `refactor.rewrite`, while requesting `source` does not.
-    fn requested(only: &[ls_types::CodeActionKind], candidate: &str) -> bool {
+    fn requested(only: &[gen_lsp_types::CodeActionKind], candidate: &str) -> bool {
         only.iter().any(|requested| {
             let requested = requested.as_str();
             requested.is_empty()
@@ -115,12 +115,12 @@ pub struct CodeActionRequestContext {
 
 impl CodeActionRequestContext {
     /// Keep the kind filter and trigger, which are the only context fields used by providers.
-    pub fn from_lsp(context: &ls_types::CodeActionContext) -> Self {
+    pub fn from_lsp(context: &gen_lsp_types::CodeActionContext) -> Self {
         let trigger = match context.trigger_kind {
-            Some(trigger) if trigger == ls_types::CodeActionTriggerKind::INVOKED => {
+            Some(gen_lsp_types::CodeActionTriggerKind::Invoked) => {
                 CodeActionRequestTrigger::Invoked
             }
-            Some(trigger) if trigger == ls_types::CodeActionTriggerKind::AUTOMATIC => {
+            Some(gen_lsp_types::CodeActionTriggerKind::Automatic) => {
                 CodeActionRequestTrigger::Automatic
             }
             Some(_) | None => CodeActionRequestTrigger::Unspecified,
@@ -142,18 +142,18 @@ impl CodeActionRequestContext {
 
 #[cfg(test)]
 mod tests {
-    use ls_types::{CodeActionContext, CodeActionKind, CodeActionTriggerKind};
+    use gen_lsp_types::{CodeActionContext, CodeActionKind, CodeActionTriggerKind};
 
     use super::{CodeActionRequestContext, CodeActionRequestKinds, CodeActionRequestTrigger};
 
     #[test]
     fn parent_kinds_include_supported_descendants() {
-        let refactor = [CodeActionKind::REFACTOR];
+        let refactor = [CodeActionKind::Refactor];
         let kinds = CodeActionRequestKinds::from_lsp(Some(&refactor));
         assert!(!kinds.quick_fix());
         assert!(kinds.refactor_rewrite());
 
-        let quick_fix = [CodeActionKind::QUICKFIX];
+        let quick_fix = [CodeActionKind::QuickFix];
         let kinds = CodeActionRequestKinds::from_lsp(Some(&quick_fix));
         assert!(kinds.quick_fix());
         assert!(!kinds.refactor_rewrite());
@@ -163,8 +163,8 @@ mod tests {
     fn request_context_preserves_trigger_and_unsupported_kind_filters() {
         let context = CodeActionContext {
             diagnostics: Vec::new(),
-            only: Some(vec![CodeActionKind::SOURCE]),
-            trigger_kind: Some(CodeActionTriggerKind::AUTOMATIC),
+            only: Some(vec![CodeActionKind::Source]),
+            trigger_kind: Some(CodeActionTriggerKind::Automatic),
         };
 
         let context = CodeActionRequestContext::from_lsp(&context);

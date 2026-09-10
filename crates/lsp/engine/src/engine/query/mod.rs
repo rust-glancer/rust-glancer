@@ -66,8 +66,8 @@ struct DocumentTarget {
 
 /// Editor coordinates used to choose the current bodies needed by one query.
 enum DocumentSelection {
-    Position(ls_types::Position),
-    Range(ls_types::Range),
+    Position(gen_lsp_types::Position),
+    Range(gen_lsp_types::Range),
 }
 
 impl DocumentSelection {
@@ -419,7 +419,7 @@ impl<'a> QueryRunner<'a> {
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::CompletionItem>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::CompletionItem>, QueryRunError> {
         let document = input.document();
         let position = input.position();
         let path = document.source_path().to_path_buf();
@@ -525,7 +525,7 @@ impl<'a> QueryRunner<'a> {
         input: DocumentRangeSnapshot,
         request_context: CodeActionRequestContext,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::CodeAction>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::CodeAction>, QueryRunError> {
         let (document, range) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
@@ -619,7 +619,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<ls_types::Hover>, QueryRunError> {
+    ) -> Result<Option<gen_lsp_types::Hover>, QueryRunError> {
         let (target, _, documents, position) = input.into_parts();
         let document = documents
             .iter()
@@ -696,7 +696,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn document_symbol(
         &mut self,
         document: EditorDocumentSnapshot,
-    ) -> Result<Vec<ls_types::DocumentSymbol>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::DocumentSymbol>, QueryRunError> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let snapshot = self
@@ -727,7 +727,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         document: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-    ) -> Result<Vec<ls_types::FoldingRange>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::FoldingRange>, QueryRunError> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let snapshot = self
@@ -767,7 +767,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn formatting(
         &mut self,
         document: EditorDocumentSnapshot,
-    ) -> Result<Option<Vec<ls_types::TextEdit>>, QueryRunError> {
+    ) -> Result<Option<Vec<gen_lsp_types::TextEdit>>, QueryRunError> {
         let path = document.source_path().to_path_buf();
         let text = document.text();
         let started = Instant::now();
@@ -800,7 +800,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         input: DocumentRangeSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::InlayHint>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::InlayHint>, QueryRunError> {
         let (document, range) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
@@ -856,7 +856,7 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         query: &str,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<ls_types::WorkspaceSymbol>, QueryRunError> {
+    ) -> Result<Vec<gen_lsp_types::WorkspaceSymbol>, QueryRunError> {
         let started = Instant::now();
         let lsp_symbols = self
             .project
