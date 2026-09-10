@@ -5,7 +5,6 @@
 //! Mechanical body lowering and local-item collection remain shared with saved indexing.
 
 mod body;
-pub(crate) mod declaration;
 mod saved_identity;
 mod syntax_owner;
 mod types;
@@ -26,8 +25,9 @@ use rg_ty::trait_selection::TraitSelectionSession;
 use crate::store::current::{CurrentImplData, CurrentImplRole, SelectedImpl};
 use crate::{BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData};
 
-use self::{body::CurrentBodyBuilder, declaration::CurrentDeclarationBuilder};
+use self::body::CurrentBodyBuilder;
 use super::local_items::LocalItemSource;
+use super::lower::CurrentDeclarationBuilder;
 
 pub use self::types::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,

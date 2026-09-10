@@ -12,7 +12,7 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_ty::trait_selection::TraitGoal;
 use rg_ty::{GenericArgs, Ty};
 
-use crate::ir::{ExprKind, StmtKind};
+use crate::body::{ExprKind, StmtKind};
 use crate::resolution::{
     BodyResolutionContext,
     infer::{BodyInferenceCtx, BodyPatternInference},

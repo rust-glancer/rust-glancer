@@ -4,7 +4,7 @@ use rg_arena::Arena;
 use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
-use crate::ir::{
+use crate::body::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
     FunctionParamData, PatData, ScopeData, StmtData,
 };

@@ -15,16 +15,18 @@ use rg_ty::lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolv
 use rg_ty::trait_selection::{TraitSelectionQuery, TraitSelectionSession};
 use rg_ty::{Ty, TyContext};
 
-use crate::{BodyData, BodyView, ir::BodyQueryView};
+use crate::{BodyData, BodyView, body::BodyQueryView};
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-    BodyImplQuery, BodyLocalItemCache, BodyLocalItemQuery, BodyMethodCache, BodyMethodQuery,
-    BodyTraitLookupCache, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
+    BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeContextQuery,
     BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
 };
 
-use super::BodyQuerySource;
+use super::{
+    cache::{BodyLocalItemCache, BodyMethodCache, BodyResolutionCaches, BodyTraitLookupCache},
+    source::BodyQuerySource,
+};
 
 type BodySemanticSignatureQuery<'context, 'query, D, I> = SemanticSignatureQuery<
     'query,
@@ -39,24 +41,6 @@ type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
     BodyQuerySource<'query, D, I>,
     &'context BodyResolutionContext<'query, D, I>,
 >;
-
-/// Request-local semantic caches shared by every short-lived context for one body.
-///
-/// Fixed-point resolution repeatedly creates contexts over newer inference snapshots. The facts
-/// below do not change with those snapshots, so all contexts for the body share one handle:
-///
-/// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
-/// - `body_local_items` indexes active-overlay and body-local declarations once;
-/// - `methods` remembers receiver/name combinations with no extension method.
-///
-/// Receiver-specific positive proofs stay in the inference-owned trait-selection scope instead.
-/// A new body receives a new cache group, so none of these body identities escape their request.
-#[derive(Clone, Default)]
-pub(crate) struct BodyResolutionCaches {
-    traits: BodyTraitLookupCache,
-    body_local_items: BodyLocalItemCache,
-    methods: BodyMethodCache,
-}
 
 /// Read-only provider bundle shared by body semantic queries.
 ///
@@ -251,10 +235,6 @@ where
 
     pub(crate) fn type_contexts(&self) -> BodyTypeContextQuery<'a, D, I> {
         BodyTypeContextQuery::new(self.clone())
-    }
-
-    pub(crate) fn type_aliases(&self) -> BodyTypeAliasQuery<'a, D, I> {
-        BodyTypeAliasQuery::new(self.clone())
     }
 
     pub(crate) fn generics(&self) -> BodyGenericsQuery<'a, D, I> {

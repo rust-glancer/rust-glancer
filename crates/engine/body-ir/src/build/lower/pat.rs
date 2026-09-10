@@ -9,7 +9,7 @@ use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span}
 use rg_item_tree::TypeRef;
 use rg_text::Name;
 
-use crate::ir::{
+use crate::body::{
     BindingData, BindingKind, BodyPath, BodyPathSegment, BodyPathSegmentKind, LiteralKind, PatData,
     PatKind, RecordPatField,
 };

@@ -19,7 +19,7 @@ use rg_ty::{AdtTy, ExpectedTyExt, Substitution, Ty, inference::InferenceTable};
 use super::{BodyCallableCandidate, BodyReceiverImplMatches, traits::BodyQualifiedTraitSelection};
 
 use crate::{
-    BodyAssociatedPathPrefix, BodyPath, ir::resolved::BodyResolution,
+    BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,
 };
 

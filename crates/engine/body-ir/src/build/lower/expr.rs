@@ -12,7 +12,7 @@ use rg_syntax::{
 use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span};
 use rg_item_tree::{FromAst as _, GenericArg};
 
-use crate::ir::{
+use crate::body::{
     BindingData, BindingKind, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,
     RecordExprField, RecordExprSpread,
 };

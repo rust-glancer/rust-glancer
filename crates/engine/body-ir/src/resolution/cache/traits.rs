@@ -73,7 +73,7 @@ struct CachedTraitSurfaces {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum BodyTraitSurface<'name> {
+pub(crate) enum BodyTraitSurface<'name> {
     /// Traits declaring any associated item, used by broad associated-item lookup.
     AssociatedItems,
     /// Traits declaring at least one function, used by method completion.
@@ -110,7 +110,7 @@ impl CachedTraitSurfaces {
 
 impl BodyTraitLookupCache {
     /// Return one cached scope, publishing only a complete successful collection.
-    pub(super) fn scope_or_try_init<E>(
+    pub(crate) fn scope_or_try_init<E>(
         &self,
         scope: ScopeId,
         collect: impl FnOnce() -> Result<HashSet<TraitDefRef>, E>,
@@ -149,7 +149,7 @@ impl BodyTraitLookupCache {
     /// `value.run()` can be revisited by many fixed-point rounds. Its declaring-trait union and
     /// lexical intersection are stable for the immutable body, even while receiver inference is
     /// still changing. Named maps accept borrowed strings on hits and allocate a `Name` only once.
-    pub(super) fn surface_or_try_init<E>(
+    pub(crate) fn surface_or_try_init<E>(
         &self,
         scope: ScopeId,
         surface: BodyTraitSurface<'_>,
@@ -195,7 +195,7 @@ impl BodyTraitLookupCache {
     }
 
     /// Record a named method surface that contained no lexically visible trait.
-    pub(super) fn record_empty_extension_probe(&self) {
+    pub(crate) fn record_empty_extension_probe(&self) {
         self.shared
             .empty_extension_probes
             .fetch_add(1, Ordering::Relaxed);

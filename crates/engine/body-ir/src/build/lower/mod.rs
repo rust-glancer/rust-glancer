@@ -12,6 +12,7 @@ use std::{
 mod body;
 mod builder;
 mod crate_lowering;
+mod declaration;
 mod expr;
 mod macro_expansion;
 mod pat;
@@ -35,9 +36,9 @@ use crate::CrateBodiesCoverage;
 
 pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
+pub(super) use self::declaration::{CurrentDeclarationBuilder, CurrentRootItems};
 pub(super) use self::macro_expansion::BodyMacroExpansion;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
-pub(super) use super::current::declaration::CurrentRootItems;
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,

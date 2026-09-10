@@ -15,7 +15,7 @@ use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
 use rg_parse::CurrentSource;
 use rg_text::NameInterner;
 
-use crate::build::current::declaration::CurrentRootItems;
+use super::CurrentRootItems;
 
 use crate::BodyOwner;
 

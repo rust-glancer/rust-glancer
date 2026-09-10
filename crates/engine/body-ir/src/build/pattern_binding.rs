@@ -24,8 +24,8 @@ use rg_ty::{ExpectedAdtTyExt, Ty};
 
 use crate::{
     BodyPath,
-    ir::resolved::BodyResolution,
-    ir::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind},
+    body::facts::BodyResolution,
+    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind},
 };
 
 use crate::resolution::BodyResolutionContext;

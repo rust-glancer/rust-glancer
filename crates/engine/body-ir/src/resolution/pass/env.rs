@@ -5,7 +5,7 @@ use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_ty::trait_selection::TraitSelectionSession;
 
 use crate::{
-    ir::BodyQueryView,
+    body::BodyQueryView,
     resolution::{BodyResolutionCaches, BodyResolutionContext},
 };
 

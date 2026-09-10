@@ -16,8 +16,8 @@ use rg_ty::{ExpectedAdtTyExt, Ty};
 
 use crate::{
     BodyData, BodyFacts,
-    ir::resolved::BodyResolution,
-    ir::{BindingKind, ExprWrapperKind},
+    body::facts::BodyResolution,
+    body::{BindingKind, ExprWrapperKind},
 };
 
 use crate::resolution::{
@@ -123,7 +123,7 @@ where
             .body
             .exprs()
             .iter()
-            .any(|expr| matches!(&expr.kind, crate::ir::ExprKind::MethodCall { .. }));
+            .any(|expr| matches!(&expr.kind, crate::body::ExprKind::MethodCall { .. }));
 
         // Seed syntax-directed expression facts before annotations introduce inference holes.
         // Method declarations are deferred until call inference has had a chance to retain a

@@ -19,7 +19,7 @@ use rg_ty::{Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 
-use super::{body_items::BodyLocalInherentItemNames, trait_cache::BodyTraitSurface};
+use crate::resolution::cache::{BodyLocalInherentItemNames, BodyTraitSurface};
 
 /// Selects which declaration families still need matching for one receiver probe.
 ///

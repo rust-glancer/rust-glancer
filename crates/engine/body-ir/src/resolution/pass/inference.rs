@@ -15,9 +15,8 @@ use rg_std::OperationError;
 use rg_ty::{AdtTy, Substitution, Ty};
 
 use crate::{
-    ir::{
-        ExprAssignOp, ExprKind, ExprWrapperKind, RecordExprField, StmtKind,
-        resolved::BodyResolution,
+    body::{
+        ExprAssignOp, ExprKind, ExprWrapperKind, RecordExprField, StmtKind, facts::BodyResolution,
     },
     resolution::infer::{
         BodyCallInference, BodyInferenceSnapshot, BodyMemberInference, BodyPatternInference,

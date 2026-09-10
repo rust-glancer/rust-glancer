@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::ir::resolved::BodyResolution;
+use crate::body::facts::BodyResolution;
 use crate::{
     BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
     ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
@@ -270,7 +270,7 @@ impl CrateBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &crate::ir::BodySourceItem, dump: &mut String) {
+    fn render_source_item(&self, id: usize, item: &crate::body::BodySourceItem, dump: &mut String) {
         let source_item = item.item();
         let name = source_item.name.as_deref().unwrap_or("<unnamed>");
         let provenance = if item.source().is_written() {

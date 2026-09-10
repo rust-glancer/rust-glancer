@@ -5,7 +5,7 @@ use rg_ir_model::FunctionRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 
-use crate::{ir::BodyOwner, resolution::BodyResolutionContext};
+use crate::{body::BodyOwner, resolution::BodyResolutionContext};
 
 /// Finds the module/impl context used for type resolution.
 pub(crate) struct BodyTypeContextQuery<'query, D, I> {

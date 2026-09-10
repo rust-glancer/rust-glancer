@@ -137,7 +137,7 @@ where
         receiver: Option<ExprId>,
     ) -> Result<Option<CallInferenceTransfer>, PackageStoreError> {
         let receiver = receiver.or_else(|| match self.context.body().expr_unchecked(call).kind {
-            crate::ir::ExprKind::MethodCall { receiver, .. } => receiver,
+            crate::body::ExprKind::MethodCall { receiver, .. } => receiver,
             _ => None,
         });
         let state = if let Some(state) = inference.call_inference(call) {

@@ -6,8 +6,8 @@
 //! - a qualified path, such as `<Widget as Render<Color>>::Output`, resolves the written trait
 //!   application and keeps only impls whose receiver and trait arguments match it.
 //!
-//! The stable scope and declaration-surface cache lives in the sibling `trait_cache` module. This
-//! file owns the semantic collection and qualified-path matching that fill or consume those facts.
+//! Lexical scopes and declaration surfaces are cached for one body. This query collects those
+//! facts and matches qualified paths against them.
 
 use std::{collections::HashSet, sync::Arc};
 

@@ -14,7 +14,7 @@ use rg_item_tree::{
 };
 use rg_text::Name;
 
-use crate::ir::{
+use crate::body::{
     BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, FunctionParamData, StmtData,
     StmtKind,
 };
@@ -706,7 +706,7 @@ impl BodyLowering<'_> {
         name_span: Option<Span>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        source: crate::ir::BodySource,
+        source: crate::body::BodySource,
     ) -> ItemNode {
         ItemNode::source(
             kind,

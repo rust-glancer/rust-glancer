@@ -10,7 +10,7 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::OperationError;
 use rg_ty::Ty;
 
-use crate::{ir::ExprKind, resolution::BodyResolutionContext};
+use crate::{body::ExprKind, resolution::BodyResolutionContext};
 
 use super::BodyInferenceCtx;
 

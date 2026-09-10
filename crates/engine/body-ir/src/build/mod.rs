@@ -9,6 +9,7 @@ mod local_items;
 mod lower;
 mod materialization;
 mod pattern_binding;
+mod policy;
 mod query_source;
 mod resolve;
 mod state;
@@ -25,7 +26,9 @@ use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrFile, CrateBodies, PackageBodies};
+use crate::{CrateBodies, PackageBodies};
+
+pub use self::policy::{BodyIrBuildPolicy, BodyIrFile};
 
 use self::materialization::BodyIrMaterializationPlan;
 

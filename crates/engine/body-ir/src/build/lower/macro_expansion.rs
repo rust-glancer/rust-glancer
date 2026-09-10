@@ -15,7 +15,7 @@ use rg_def_map::{
 use rg_ir_model::ModuleRef;
 use rg_syntax::ast;
 
-use crate::ir::BodySource;
+use crate::body::BodySource;
 
 const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 

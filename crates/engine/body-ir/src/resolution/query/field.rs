@@ -9,7 +9,7 @@ use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::autoderef::{AutoderefMode, ReferencePeelingCandidates};
 use rg_ty::{AdtTy, Ty};
 
-use crate::{BodyPath, ir::resolved::BodyResolution, resolution::BodyResolutionContext};
+use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// One field projection at the selected receiver-adjustment depth.
 ///

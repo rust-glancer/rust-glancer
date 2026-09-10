@@ -11,7 +11,7 @@ use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
 use super::CurrentSourceSelection;
-use super::declaration::CurrentDeclarationBuilder;
+use crate::build::lower::CurrentDeclarationBuilder;
 
 /// A function, const, or static that has a body in the editor's syntax tree.
 ///

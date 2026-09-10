@@ -10,12 +10,10 @@ use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
-use crate::build::current::declaration::CurrentDeclarationBuilder;
-
-use crate::ir::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
+use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::{
-    CurrentRootItems,
+    CurrentDeclarationBuilder, CurrentRootItems,
     builder::{BodyBuilder, LoweredBodyData},
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,

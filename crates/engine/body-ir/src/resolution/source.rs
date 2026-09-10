@@ -6,7 +6,7 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use crate::{BodyData, BodyView, ir::BodyQueryView};
+use crate::{BodyData, BodyView, body::BodyQueryView};
 
 /// Body state available to one query context.
 ///

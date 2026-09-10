@@ -7,7 +7,7 @@ use rg_ir_model::{
 };
 use rg_ty::{GenericArgs, Ty};
 
-use super::body::{BodyData, ExprKind};
+use super::{BodyData, ExprKind};
 
 /// Persisted semantic sidecar for one frozen [`BodyData`].
 ///

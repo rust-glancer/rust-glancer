@@ -5,11 +5,9 @@ use rg_ir_model::{
 use rg_item_tree::{ItemNode, ItemTreeId};
 
 use super::{
-    body::{
-        BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
-        FunctionParamData, PatData, ScopeData, StmtData,
-    },
-    resolved::{BindingFacts, BodyFacts, BodyResolution, CallFacts, ExprFacts},
+    BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
+    FunctionParamData, PatData, ScopeData, StmtData,
+    facts::{BindingFacts, BodyFacts, BodyResolution, CallFacts, ExprFacts},
 };
 
 /// Source of semantic facts exposed to crate-private body queries.
