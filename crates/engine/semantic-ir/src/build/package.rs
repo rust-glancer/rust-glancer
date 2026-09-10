@@ -1,4 +1,4 @@
-//! Lowers resolved module items into the semantic signature graph.
+//! Builds semantic packages from resolved crate declarations.
 //!
 //! The def-map owns name-resolution identity, while the item tree owns syntax-shaped declarations.
 //! This pass joins those two views into stable semantic items that later query layers can use
@@ -6,21 +6,21 @@
 
 use anyhow::Context as _;
 
-use crate::ItemStore;
+use crate::{ItemStore, SemanticPackage};
 use rg_def_map::{
     DefMapDb, DefMapReadTxn, GeneratedItemStore, GeneratedItemStores, ItemSource, ItemSourceKind,
 };
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 
-use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
+use super::{ItemStoreLowerer, ItemStoreSourceReader};
 
 pub(super) fn build_package(
     item_tree: &ItemTreeDb,
     def_map: &DefMapDb,
     generated_items: &GeneratedItemStores,
     package: PackageSlot,
-) -> anyhow::Result<PackageIr> {
+) -> anyhow::Result<SemanticPackage> {
     let def_map_package = def_map
         .resident_package(package)
         .with_context(|| format!("while attempting to fetch def-map package {}", package.0))?;
@@ -52,7 +52,7 @@ pub(super) fn build_package(
         );
     }
 
-    Ok(PackageIr::new(crates))
+    Ok(SemanticPackage::new(crates))
 }
 
 struct CrateLowering<'a, 'db> {

@@ -56,9 +56,9 @@ pub(super) fn impl_header_resolutions_for_packages(
     let item_query = ItemStoreQuery::new(semantic_ir);
 
     for package in packages {
-        let package_ir = semantic_ir.package(*package)?;
+        let semantic_package = semantic_ir.package(*package)?;
 
-        for (crate_idx, _) in package_ir.crates().iter().enumerate() {
+        for (crate_idx, _) in semantic_package.crates().iter().enumerate() {
             let crate_ref = CrateRef {
                 package: *package,
                 crate_id: CrateId(crate_idx),

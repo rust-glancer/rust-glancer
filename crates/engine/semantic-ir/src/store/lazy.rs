@@ -3,7 +3,7 @@
 //! The package manifest supplies the dense crate slots. Each slot then has one cell for declarations
 //! and another for its visibility lookup index: resolving a known item needs only declarations,
 //! while name lookup can request the index independently. Broad callers can still reconstruct a
-//! [`PackageIr`], but doing so fills both cells for every crate.
+//! [`SemanticPackage`], but doing so fills both cells for every crate.
 //!
 //! The cells live only for the read transaction. Dropping the transaction releases a hover's
 //! decoded dependencies instead of making them part of retained project memory.
@@ -14,13 +14,13 @@ use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use super::SemanticIrLoader;
-use crate::{CrateIr, ItemLookupIndex, ItemStore, PackageIr, PackageIrManifest};
+use crate::{ItemLookupIndex, ItemStore, SemanticCrate, SemanticPackage, SemanticPackageManifest};
 
 /// How one package slot participates in a Semantic IR read transaction.
 #[derive(Debug, Clone)]
 pub(super) enum PackageReadEntry<'db> {
     /// The full package is already present in the retained project snapshot.
-    Resident(Arc<PackageIr>),
+    Resident(Arc<SemanticPackage>),
     /// The package is offloaded and its crate parts are read when requested.
     Lazy(LazyPackage<'db>),
     /// The transaction subset deliberately leaves this package inaccessible.
@@ -48,7 +48,7 @@ impl<'db> LazyPackage<'db> {
     pub(super) fn manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<PackageIrManifest, PackageStoreError> {
+    ) -> Result<SemanticPackageManifest, PackageStoreError> {
         Ok(*self.loaded(package)?.manifest)
     }
 
@@ -102,7 +102,10 @@ impl<'db> LazyPackage<'db> {
     ///
     /// Exact query paths should prefer [`Self::items`] or [`Self::lookup_index`]. This package-wide
     /// path deliberately reads both parts of every crate and validates the result as one package.
-    pub(super) fn package(&self, package: PackageSlot) -> Result<&PackageIr, PackageStoreError> {
+    pub(super) fn package(
+        &self,
+        package: PackageSlot,
+    ) -> Result<&SemanticPackage, PackageStoreError> {
         let loaded = self.loaded(package)?;
         if loaded.package.get().is_none() {
             let mut crates = Vec::with_capacity(loaded.items.len());
@@ -125,15 +128,15 @@ impl<'db> LazyPackage<'db> {
                         format!("Semantic IR lookup index for crate {crate_idx} is absent from its manifest"),
                     )
                 })?;
-                crates.push(CrateIr::from_storage_parts(
+                crates.push(SemanticCrate::from_storage_parts(
                     items.clone(),
                     lookup_index.clone(),
                 ));
             }
-            let package_ir = PackageIr::from_storage_parts(*loaded.manifest, crates)
+            let semantic_package = SemanticPackage::from_storage_parts(*loaded.manifest, crates)
                 .map(Arc::new)
                 .map_err(|error| PackageStoreError::stale_package(package, format!("{error:#}")))?;
-            let _ = loaded.package.set(package_ir);
+            let _ = loaded.package.set(semantic_package);
         }
         Ok(loaded
             .package
@@ -158,14 +161,14 @@ impl<'db> LazyPackage<'db> {
 /// The manifest and decoded values shared by exact reads in one transaction.
 #[derive(Debug, Clone)]
 struct LoadedPackage {
-    manifest: Arc<PackageIrManifest>,
+    manifest: Arc<SemanticPackageManifest>,
     items: Vec<OnceLock<Arc<ItemStore>>>,
     lookup_indexes: Vec<OnceLock<Arc<ItemLookupIndex>>>,
-    package: OnceLock<Arc<PackageIr>>,
+    package: OnceLock<Arc<SemanticPackage>>,
 }
 
 impl LoadedPackage {
-    fn new(manifest: Arc<PackageIrManifest>) -> Self {
+    fn new(manifest: Arc<SemanticPackageManifest>) -> Self {
         Self {
             items: (0..manifest.crate_count())
                 .map(|_| OnceLock::new())

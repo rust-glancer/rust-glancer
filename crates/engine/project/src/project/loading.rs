@@ -15,7 +15,7 @@ use rg_def_map::{CrateData, DefMapLoader, LoadDefMap, PackageDefMapsManifest};
 use rg_ir_model::{CrateId, FileId, PackageSlot};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    ItemLookupIndex, ItemStore, LoadSemanticIr, PackageIrManifest, SemanticIrLoader,
+    ItemLookupIndex, ItemStore, LoadSemanticIr, SemanticIrLoader, SemanticPackageManifest,
 };
 
 use crate::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan};
@@ -227,7 +227,7 @@ impl LoadSemanticIr for SemanticIrPackageLoader {
     fn load_manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<Arc<PackageIrManifest>, PackageStoreError> {
+    ) -> Result<Arc<SemanticPackageManifest>, PackageStoreError> {
         self.artifacts
             .reader(package)?
             .read_semantic_ir_manifest()

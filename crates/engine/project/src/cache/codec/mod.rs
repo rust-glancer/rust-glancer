@@ -26,7 +26,7 @@ use anyhow::Context as _;
 use rg_body_ir::PackageBodies;
 use rg_def_map::PackageDefMaps as DefMapPackage;
 use rg_ir_model::{CrateId, FileId};
-use rg_semantic_ir::PackageIr;
+use rg_semantic_ir::SemanticPackage;
 use wincode::{SchemaRead, SchemaWrite};
 
 mod body;
@@ -414,7 +414,7 @@ impl PackageCacheCodec {
     }
 
     fn validate_semantic_ir(
-        semantic_ir: &PackageIr,
+        semantic_ir: &SemanticPackage,
         probe: &PackageCacheProbe,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(

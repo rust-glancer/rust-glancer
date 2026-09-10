@@ -3,14 +3,13 @@
 //! These modules form one ownership boundary: item data and compact signatures are stored here,
 //! local DefMap identities are indexed here, and path resolution stops at semantic item refs here.
 //! Callers that need a `Ty` can project the resulting refs in the type engine without pulling type
-//! machinery into definition lowering.
+//! machinery into item storage or definition-only queries.
 
 mod context;
 mod data;
 mod generics;
 mod lang_item;
 mod lookup_index;
-mod lowering;
 mod query;
 mod signature;
 mod store;
@@ -25,7 +24,6 @@ pub use self::{
     },
     generics::{GenericParamSource, GenericParamView, Generics},
     lookup_index::{ItemLookupIndex, TraitImplSelfHead},
-    lowering::{ItemStoreLowerer, ItemStoreSourceReader},
     query::{
         CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,
         ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStoreQuery,

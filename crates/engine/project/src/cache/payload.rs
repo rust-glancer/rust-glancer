@@ -16,7 +16,7 @@ use rg_body_ir::{
 use rg_def_map::{PackageDefMaps as DefMapPackage, PackageDefMapsManifest};
 use rg_ir_model::CrateId;
 use rg_parse::PackageParseSnapshot;
-use rg_semantic_ir::PackageIr;
+use rg_semantic_ir::SemanticPackage;
 use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -33,7 +33,7 @@ pub(crate) struct PackageCacheWriteInput<'a> {
     pub(crate) header: &'a PackageCacheHeader,
     pub(crate) parse: &'a PackageParseSnapshot,
     pub(crate) def_map: &'a DefMapPackage,
-    pub(crate) semantic_ir: &'a PackageIr,
+    pub(crate) semantic_ir: &'a SemanticPackage,
     pub(crate) body_ir: &'a PackageBodies,
 }
 
@@ -124,7 +124,7 @@ impl<'a> PackageCacheWriteInput<'a> {
         header: &'a PackageCacheHeader,
         parse: &'a PackageParseSnapshot,
         def_map: &'a DefMapPackage,
-        semantic_ir: &'a PackageIr,
+        semantic_ir: &'a SemanticPackage,
         body_ir: &'a PackageBodies,
     ) -> Self {
         Self {

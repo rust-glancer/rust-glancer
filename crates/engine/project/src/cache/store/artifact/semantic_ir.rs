@@ -6,9 +6,9 @@
 use std::time::Instant;
 
 use rg_ir_model::CrateId;
+use rg_semantic_ir::{ItemLookupIndex, ItemStore, SemanticPackageManifest};
 #[cfg(test)]
-use rg_semantic_ir::{CrateIr, PackageIr};
-use rg_semantic_ir::{ItemLookupIndex, ItemStore, PackageIrManifest};
+use rg_semantic_ir::{SemanticCrate, SemanticPackage};
 
 use super::{PackageArtifactReader, PackageCacheReadError};
 use crate::{
@@ -26,7 +26,7 @@ impl PackageArtifactReader {
     /// Returns the compact crate directory without reading any crate payload.
     pub(crate) fn read_semantic_ir_manifest(
         &self,
-    ) -> Result<PackageIrManifest, PackageCacheReadError> {
+    ) -> Result<SemanticPackageManifest, PackageCacheReadError> {
         Ok(*self.semantic_ir_index()?.manifest())
     }
 
@@ -73,18 +73,19 @@ impl PackageArtifactReader {
 
     /// Reconstruct the complete package for broad cache diagnostics and compatibility paths.
     #[cfg(test)]
-    pub(crate) fn read_semantic_ir(&self) -> Result<PackageIr, PackageCacheReadError> {
+    pub(crate) fn read_semantic_ir(&self) -> Result<SemanticPackage, PackageCacheReadError> {
         let manifest = self.read_semantic_ir_manifest()?;
         let crates = (0..manifest.crate_count())
             .map(|crate_idx| {
                 let crate_id = CrateId(crate_idx);
-                Ok(CrateIr::from_storage_parts(
+                Ok(SemanticCrate::from_storage_parts(
                     self.read_semantic_ir_items(crate_id)?,
                     self.read_semantic_ir_lookup_index(crate_id)?,
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        PackageIr::from_storage_parts(manifest, crates).map_err(|error| self.decode_error(error))
+        SemanticPackage::from_storage_parts(manifest, crates)
+            .map_err(|error| self.decode_error(error))
     }
 
     /// Reads and validates the short inner directory for one crate shard.
@@ -96,7 +97,7 @@ impl PackageArtifactReader {
         crate_id: CrateId,
     ) -> Result<
         (
-            PackageIrManifest,
+            SemanticPackageManifest,
             PackageCacheSectionRange,
             SemanticIrCrateCacheIndex,
         ),

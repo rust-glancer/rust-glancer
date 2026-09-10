@@ -1,4 +1,5 @@
 use rg_std::MemorySize;
+
 /// Coarse semantic IR counts used by CLI/status reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct SemanticIrStats {

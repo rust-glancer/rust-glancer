@@ -1,8 +1,13 @@
+//! Builds semantic item stores from DefMap identities and source declarations.
+//!
+//! Crate and body-local declarations use different source stores. The reader lets both use
+//! the same lowering rules.
+
 use std::{collections::HashSet, marker::PhantomData};
 
 use anyhow::Context as _;
 
-use super::{
+use crate::item::{
     ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
     ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
     UnionData,

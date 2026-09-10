@@ -4,7 +4,7 @@ use rg_body_ir::PackageBodies;
 use rg_def_map::PackageDefMaps;
 use rg_ir_model::{CrateId, PackageSlot};
 use rg_parse::PackageParseSnapshot;
-use rg_semantic_ir::PackageIr;
+use rg_semantic_ir::SemanticPackage;
 
 use super::utils::{assert_reader_matches_resident_package, write_resident_package_artifact};
 use crate::cache::codec::{
@@ -42,7 +42,7 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
     );
     let parse = PackageParseSnapshot::empty();
     let def_map = PackageDefMaps::default();
-    let semantic_ir = PackageIr::default();
+    let semantic_ir = SemanticPackage::default();
     let body_ir = PackageBodies::default();
 
     // Exercise the production borrowed input and fragment writer before decoding every container

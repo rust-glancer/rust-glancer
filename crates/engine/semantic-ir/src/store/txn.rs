@@ -6,12 +6,12 @@
 
 use std::sync::Arc;
 
-use crate::{CrateIr, ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource};
+use crate::{ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource, SemanticCrate};
 use rg_ir_model::{CrateRef, DefMapRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use super::{SemanticIrLoader, lazy::PackageReadEntry};
-use crate::PackageIr;
+use crate::SemanticPackage;
 
 /// Read-only Semantic IR access for one query transaction.
 ///
@@ -27,7 +27,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     /// Included packages use a resident value when present and otherwise receive a lazy artifact
     /// view. Excluded slots keep a sentinel so accidental access reports an excluded-slot error.
     pub(crate) fn from_store_entries(
-        packages: impl IntoIterator<Item = (bool, Option<Arc<PackageIr>>)>,
+        packages: impl IntoIterator<Item = (bool, Option<Arc<SemanticPackage>>)>,
         loader: SemanticIrLoader<'db>,
     ) -> Self {
         Self {
@@ -51,10 +51,10 @@ impl<'db> SemanticIrReadTxn<'db> {
     /// Returns the broad package representation, loading both parts of every offloaded crate.
     ///
     /// Prefer [`Self::items`] or [`Self::item_lookup_index`] when the caller names one crate.
-    pub fn package(&self, package: PackageSlot) -> Result<&PackageIr, PackageStoreError> {
+    pub fn package(&self, package: PackageSlot) -> Result<&SemanticPackage, PackageStoreError> {
         match self.entry(package)? {
-            PackageReadEntry::Resident(package_ir) => Ok(package_ir),
-            PackageReadEntry::Lazy(package_ir) => package_ir.package(package),
+            PackageReadEntry::Resident(package) => Ok(package),
+            PackageReadEntry::Lazy(lazy) => lazy.package(package),
             PackageReadEntry::Excluded => unreachable!("excluded entries fail in entry()"),
         }
     }
@@ -121,7 +121,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             let package = PackageSlot(package_idx);
             match entry {
                 PackageReadEntry::Resident(package) => {
-                    stores.extend(package.crates().iter().map(CrateIr::items));
+                    stores.extend(package.crates().iter().map(SemanticCrate::items));
                 }
                 PackageReadEntry::Lazy(lazy) => {
                     for crate_idx in 0..lazy.manifest(package)?.crate_count() {

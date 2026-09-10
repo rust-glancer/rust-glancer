@@ -13,8 +13,8 @@
 use anyhow::Context as _;
 use rg_ir_model::CrateId;
 #[cfg(test)]
-use rg_semantic_ir::CrateIr;
-use rg_semantic_ir::{ItemLookupIndex, ItemStore, PackageIr, PackageIrManifest};
+use rg_semantic_ir::SemanticCrate;
+use rg_semantic_ir::{ItemLookupIndex, ItemStore, SemanticPackage, SemanticPackageManifest};
 use wincode::{SchemaRead, SchemaWrite};
 
 #[cfg(test)]
@@ -31,12 +31,12 @@ const SEMANTIC_IR_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGSEM\0\0\x01";
 pub(crate) const SEMANTIC_IR_CRATE_PREFIX_BYTES: usize = size_of::<u64>() * 2;
 
 /// Validated Semantic IR package directory paired with the physical range of every crate shard.
-pub(crate) type PackageSemanticIrCacheIndex = CrateShardCacheIndex<PackageIrManifest>;
+pub(crate) type PackageSemanticIrCacheIndex = CrateShardCacheIndex<SemanticPackageManifest>;
 
 /// Serialized Semantic IR directory: the logical crate count plus physical crate ranges.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct PackageSemanticIrCacheManifest {
-    semantic_ir: PackageIrManifest,
+    semantic_ir: SemanticPackageManifest,
     crates: Vec<PackageCacheSectionRange>,
 }
 
@@ -63,7 +63,7 @@ impl SemanticIrCrateCacheIndex {
 impl PackageCacheCodec {
     /// Encodes each crate as independently readable declaration and lookup-index payloads.
     pub(super) fn encode_semantic_ir(
-        semantic_ir: &PackageIr,
+        semantic_ir: &SemanticPackage,
     ) -> anyhow::Result<EncodedCrateShards> {
         let logical_manifest = semantic_ir.manifest();
         EncodedCrateShards::encode(
@@ -220,7 +220,7 @@ impl PackageCacheCodec {
     /// Decodes declarations for one valid crate slot.
     pub(crate) fn decode_semantic_ir_items(
         bytes: &[u8],
-        manifest: PackageIrManifest,
+        manifest: SemanticPackageManifest,
         crate_id: CrateId,
     ) -> anyhow::Result<ItemStore> {
         anyhow::ensure!(
@@ -236,7 +236,7 @@ impl PackageCacheCodec {
     /// Decodes the visibility lookup index for one valid crate slot.
     pub(crate) fn decode_semantic_ir_lookup_index(
         bytes: &[u8],
-        manifest: PackageIrManifest,
+        manifest: SemanticPackageManifest,
         crate_id: CrateId,
     ) -> anyhow::Result<ItemLookupIndex> {
         anyhow::ensure!(
@@ -253,7 +253,7 @@ impl PackageCacheCodec {
     pub(crate) fn decode_semantic_ir(
         bytes: &[u8],
         probe: &PackageCacheProbe,
-    ) -> anyhow::Result<PackageIr> {
+    ) -> anyhow::Result<SemanticPackage> {
         let (manifest_bytes, section_len) = Self::semantic_ir_manifest_bytes(bytes)
             .context("read package cache Semantic IR manifest bytes")?;
         let index = Self::decode_semantic_ir_index(manifest_bytes, section_len, probe)
@@ -284,7 +284,7 @@ impl PackageCacheCodec {
                 "Semantic IR lookup index",
             )
             .context("read package cache Semantic IR lookup bytes")?;
-            crates.push(CrateIr::from_storage_parts(
+            crates.push(SemanticCrate::from_storage_parts(
                 Self::decode_semantic_ir_items(items, manifest, crate_id)
                     .with_context(|| format!("decode Semantic IR items for crate {crate_idx}"))?,
                 Self::decode_semantic_ir_lookup_index(lookup_index, manifest, crate_id)
@@ -293,7 +293,7 @@ impl PackageCacheCodec {
                     })?,
             ));
         }
-        PackageIr::from_storage_parts(manifest, crates)
+        SemanticPackage::from_storage_parts(manifest, crates)
     }
 
     #[cfg(test)]
