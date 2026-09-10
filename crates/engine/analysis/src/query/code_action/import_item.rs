@@ -87,14 +87,14 @@ impl<'analysis, 'db, 'source> ImportItemCodeActionProvider<'analysis, 'db, 'sour
                 if lookup_name.is_empty() {
                     return Ok(Vec::new());
                 }
-                (import_context, lookup_name, name_span.text.start)
+                (import_context, lookup_name, name_span.start)
             } else {
                 let Some(site) = CompletionSiteDetector::new(self.analysis)
                     .unqualified_name_for_source(
                         self.query.crate_ref,
                         self.query.file_id,
                         syntax.source(),
-                        name_span.text.end,
+                        name_span.end,
                     )
                     .context("classify unresolved import action name")?
                 else {
@@ -104,17 +104,17 @@ impl<'analysis, 'db, 'source> ImportItemCodeActionProvider<'analysis, 'db, 'sour
                 // Completion's speculative parser strips `r#` from its identifier prefix. Accept that
                 // one source spelling, but require the classified prefix to describe this entire token.
                 let replace = site.replace_span();
-                let Ok(name_start) = usize::try_from(name_span.text.start) else {
+                let Ok(name_start) = usize::try_from(name_span.start) else {
                     return Ok(Vec::new());
                 };
-                let Ok(replace_start) = usize::try_from(replace.text.start) else {
+                let Ok(replace_start) = usize::try_from(replace.start) else {
                     return Ok(Vec::new());
                 };
                 let Some(raw_prefix) = syntax.source().get(name_start..replace_start) else {
                     return Ok(Vec::new());
                 };
-                if replace.text.end != name_span.text.end
-                    || !(replace.text.start == name_span.text.start || raw_prefix == "r#")
+                if replace.end != name_span.end
+                    || !(replace.start == name_span.start || raw_prefix == "r#")
                     || site.member_prefix().is_empty()
                 {
                     return Ok(Vec::new());
@@ -129,7 +129,7 @@ impl<'analysis, 'db, 'source> ImportItemCodeActionProvider<'analysis, 'db, 'sour
                 (
                     import_context,
                     site.member_prefix().to_string(),
-                    replace.text.start,
+                    replace.start,
                 )
             };
 
@@ -150,7 +150,7 @@ impl<'analysis, 'db, 'source> ImportItemCodeActionProvider<'analysis, 'db, 'sour
             .context("read exact import action edition")?;
         let syntax_renderer = SyntaxRenderer::new(edition);
         let planner =
-            ImportEditPlanner::for_source(syntax.source(), syntax.file(), name_span.text.start);
+            ImportEditPlanner::for_source(syntax.source(), syntax.file(), name_span.start);
 
         // 3. Find declarations with this exact name and ask the shared planner whether each path
         // can become a `use` in the module containing the unresolved reference.

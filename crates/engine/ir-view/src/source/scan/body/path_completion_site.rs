@@ -13,7 +13,7 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
-use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span, TextSpan};
+use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 
@@ -256,22 +256,20 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
     /// Returns an empty replacement span when the cursor sits after a trailing `::`.
     fn empty_member_span(&self, source_span: Span, last_segment_span: Span) -> Option<Span> {
-        let has_trailing_separator = source_span.text.end == last_segment_span.text.end + 2;
+        let has_trailing_separator = source_span.end == last_segment_span.end + 2;
         if !has_trailing_separator {
             return None;
         }
 
         let offset_after_last_segment =
-            last_segment_span.text.end <= self.offset && self.offset <= source_span.text.end;
+            last_segment_span.end <= self.offset && self.offset <= source_span.end;
         if !offset_after_last_segment {
             return None;
         }
 
         Some(Span {
-            text: TextSpan {
-                start: self.offset,
-                end: self.offset,
-            },
+            start: self.offset,
+            end: self.offset,
         })
     }
 

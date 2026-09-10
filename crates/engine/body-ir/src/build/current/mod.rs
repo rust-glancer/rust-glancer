@@ -180,7 +180,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                     // At `impl Service for Worker { $0`, the parser can end the impl at `{`.
                     // Whitespace after an unclosed member list still belongs to that impl. Read
                     // the captured syntax here; the completion marker must not enter semantics.
-                    span.text.end <= offset
+                    span.end <= offset
                         && offset as usize <= self.source.text().len()
                         && impl_
                             .assoc_item_list()
@@ -188,7 +188,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         && self
                             .source
                             .text()
-                            .get(span.text.end as usize..)
+                            .get(span.end as usize..)
                             .is_some_and(|tail| tail.chars().all(char::is_whitespace))
                 };
                 if contains_cursor {

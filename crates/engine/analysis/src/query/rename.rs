@@ -242,14 +242,13 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         new_text: &str,
     ) -> anyhow::Result<String> {
         anyhow::ensure!(
-            parent_span.text.start <= child_span.text.start
-                && child_span.text.end <= parent_span.text.end,
+            parent_span.start <= child_span.start && child_span.end <= parent_span.end,
             "rename child span is outside parent span"
         );
 
-        let start = usize::try_from(child_span.text.start - parent_span.text.start)
+        let start = usize::try_from(child_span.start - parent_span.start)
             .context("while attempting to compute rename child span start")?;
-        let end = usize::try_from(child_span.text.end - parent_span.text.start)
+        let end = usize::try_from(child_span.end - parent_span.start)
             .context("while attempting to compute rename child span end")?;
         anyhow::ensure!(
             parent_text.get(start..end).is_some(),
@@ -271,8 +270,8 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                 edit.crate_ref.package.0,
                 edit.crate_ref.crate_id.0,
                 edit.file_id.0,
-                edit.span.text.start,
-                edit.span.text.end,
+                edit.span.start,
+                edit.span.end,
             )
         });
 
@@ -292,9 +291,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                 }
                 anyhow::bail!("rename produced conflicting edits for the same source span");
             }
-            if previous.span.text.start < edit.span.text.end
-                && edit.span.text.start < previous.span.text.end
-            {
+            if previous.span.start < edit.span.end && edit.span.start < previous.span.end {
                 anyhow::bail!("rename produced overlapping source edits");
             }
             normalized.push(edit);

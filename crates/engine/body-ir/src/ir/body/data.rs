@@ -320,7 +320,7 @@ fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<Bind
 mod tests {
     use rg_ir_model::{
         CrateId, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ModuleId, ModuleRef,
-        PackageSlot, Span, TextSpan,
+        PackageSlot, Span,
     };
 
     use crate::{
@@ -330,12 +330,7 @@ mod tests {
     use super::*;
 
     fn source() -> BodySource {
-        BodySource::written(
-            FileId(0),
-            Span {
-                text: TextSpan { start: 0, end: 0 },
-            },
-        )
+        BodySource::written(FileId(0), Span { start: 0, end: 0 })
     }
 
     fn module() -> ModuleRef {

@@ -18,7 +18,7 @@ mod string;
 
 use std::sync::OnceLock;
 
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{
     AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextRange, TextSize,
@@ -71,10 +71,8 @@ impl<'source> CompletionSyntaxContext<'source> {
         let prefix = CompletionPrefix {
             text: source.get(prefix_start..cursor)?,
             span: Span {
-                text: TextSpan {
-                    start: u32::try_from(prefix_start).ok()?,
-                    end: offset,
-                },
+                start: u32::try_from(prefix_start).ok()?,
+                end: offset,
             },
         };
 
@@ -132,7 +130,7 @@ impl<'source> CompletionSyntaxContext<'source> {
 
     pub(super) fn source_text(&self, span: Span) -> Option<&'source str> {
         self.source
-            .get(usize::try_from(span.text.start).ok()?..usize::try_from(span.text.end).ok()?)
+            .get(usize::try_from(span.start).ok()?..usize::try_from(span.end).ok()?)
     }
 
     /// Returns the exact editor buffer represented by original-source spans.
@@ -477,11 +475,11 @@ impl<'source> CompletionSyntaxContext<'source> {
             .right_biased()?;
         let marker_end = prefix_start.checked_add(Self::MARKER.len())?;
         let source_map = CompletionSourceMap {
-            original_prefix: TextSpan {
+            original_prefix: Span {
                 start: u32::try_from(prefix_start).ok()?,
                 end: u32::try_from(cursor).ok()?,
             },
-            speculative_marker: TextSpan {
+            speculative_marker: Span {
                 start: u32::try_from(prefix_start).ok()?,
                 end: u32::try_from(marker_end).ok()?,
             },
@@ -521,8 +519,8 @@ impl<'source> CompletionSyntaxContext<'source> {
 /// Offset translation for replacing the typed prefix with the fixed completion marker.
 #[derive(Debug, Clone, Copy)]
 struct CompletionSourceMap {
-    original_prefix: TextSpan,
-    speculative_marker: TextSpan,
+    original_prefix: Span,
+    speculative_marker: Span,
 }
 
 impl CompletionSourceMap {
@@ -532,14 +530,14 @@ impl CompletionSourceMap {
         let marker = self.speculative_marker;
 
         let mapped = if end <= marker.start {
-            TextSpan { start, end }
+            Span { start, end }
         } else if marker.end <= start {
-            TextSpan {
+            Span {
                 start: self.after_marker_offset(start)?,
                 end: self.after_marker_offset(end)?,
             }
         } else if start <= marker.start && marker.end <= end {
-            TextSpan {
+            Span {
                 start,
                 end: self.after_marker_offset(end)?,
             }
@@ -548,7 +546,7 @@ impl CompletionSourceMap {
             // counterpart. Consumers should decline the edit rather than guess.
             return None;
         };
-        Some(Span { text: mapped })
+        Some(mapped)
     }
 
     fn after_marker_offset(self, offset: u32) -> Option<u32> {
@@ -602,8 +600,8 @@ mod tests {
         let prefix = syntax.prefix();
 
         assert_eq!(prefix.text(), "ma");
-        assert_eq!(prefix.span().text.start, 28);
-        assert_eq!(prefix.span().text.end, 30);
+        assert_eq!(prefix.span().start, 28);
+        assert_eq!(prefix.span().end, 30);
     }
 
     #[test]

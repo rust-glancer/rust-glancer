@@ -2,7 +2,7 @@ use crate::item::{
     ExternCrateItem, ImportAlias, MacroUseAttr, UseImport, UseImportKind, UseItem, UsePath,
     UsePathSegment, UsePathSegmentKind,
 };
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_syntax::{
     AstNode as _, SyntaxKind, algo,
     ast::{self, HasName},
@@ -174,10 +174,7 @@ fn use_path_source_span(path: &ast::Path, use_tree: &ast::UseTree) -> Span {
     let use_tree_range = use_tree.syntax().text_range();
     let colon_range = next_token.text_range();
     if use_tree_range.start() <= colon_range.start() && colon_range.end() <= use_tree_range.end() {
-        span.text = TextSpan {
-            start: span.text.start,
-            end: u32::from(colon_range.end()),
-        };
+        span.end = u32::from(colon_range.end());
     }
     span
 }

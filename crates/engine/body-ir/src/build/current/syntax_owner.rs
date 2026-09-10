@@ -52,7 +52,7 @@ impl SyntaxBodyOwner {
                 .into_iter()
                 .filter(|owner| {
                     let body = owner.body_span();
-                    range.start < body.text.end && body.text.start < range.end
+                    range.start < body.end && body.start < range.end
                 })
                 .collect(),
         })

@@ -44,10 +44,9 @@ impl SyntaxFoldCollector {
         // when both begin at the same offset.
         collector.folds.sort_by(|left, right| {
             left.span
-                .text
                 .start
-                .cmp(&right.span.text.start)
-                .then_with(|| right.span.text.end.cmp(&left.span.text.end))
+                .cmp(&right.span.start)
+                .then_with(|| right.span.end.cmp(&left.span.end))
         });
         collector.folds
     }
@@ -342,14 +341,13 @@ fn demo(
     fn folds(source: &str) -> Vec<(FoldKind, String)> {
         let syntax = SourceFile::parse(source, Edition::Edition2024).tree();
         let mut folds = SyntaxFoldCollector::collect(&syntax);
-        folds.sort_by_key(|fold| fold.span.text.start);
+        folds.sort_by_key(|fold| fold.span.start);
         folds
             .into_iter()
             .map(|fold| {
-                let start = usize::try_from(fold.span.text.start)
-                    .expect("fold start should fit into usize");
-                let end =
-                    usize::try_from(fold.span.text.end).expect("fold end should fit into usize");
+                let start =
+                    usize::try_from(fold.span.start).expect("fold start should fit into usize");
+                let end = usize::try_from(fold.span.end).expect("fold end should fit into usize");
                 (fold.kind, source[start..end].to_string())
             })
             .collect()

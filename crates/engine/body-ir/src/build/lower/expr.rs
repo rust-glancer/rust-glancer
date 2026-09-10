@@ -9,7 +9,7 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span, TextSpan};
+use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span};
 use rg_item_tree::{FromAst as _, GenericArg};
 
 use crate::ir::{
@@ -676,10 +676,8 @@ impl BodyLowering<'_> {
 
         Some(RecordExprSpread {
             source_span: Span {
-                text: TextSpan {
-                    start: u32::from(dotdot_range.start()),
-                    end: source_end,
-                },
+                start: u32::from(dotdot_range.start()),
+                end: source_end,
             },
             expr,
         })

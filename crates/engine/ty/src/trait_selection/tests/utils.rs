@@ -11,8 +11,8 @@ use rg_def_map::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TextSpan, TraitApplicability,
-    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitApplicability, TraitDefRef,
+    TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -352,9 +352,7 @@ fn dummy_source() -> ItemSource {
 }
 
 fn fixture_span() -> Span {
-    Span {
-        text: TextSpan { start: 0, end: 0 },
-    }
+    Span { start: 0, end: 0 }
 }
 
 pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
@@ -483,9 +481,7 @@ pub(super) fn type_alias_data(
     TypeAliasData {
         local_def: None,
         source: dummy_source(),
-        span: Span {
-            text: TextSpan { start: 0, end: 0 },
-        },
+        span: Span { start: 0, end: 0 },
         name_span: None,
         owner,
         name: Name::new(name),

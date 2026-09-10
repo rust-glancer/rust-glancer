@@ -425,7 +425,7 @@ impl fmt::Display for BodyPathSegmentArgs {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_text::Name;
 
     use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};
@@ -560,8 +560,6 @@ mod tests {
     }
 
     fn span() -> Span {
-        Span {
-            text: TextSpan { start: 0, end: 0 },
-        }
+        Span { start: 0, end: 0 }
     }
 }

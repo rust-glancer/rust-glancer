@@ -1,6 +1,6 @@
 use rg_analysis::{CodeActionQuery, CompletionQuery, CompletionSource};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceSelection};
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
@@ -168,7 +168,7 @@ fn current_impl_queries_share_context_across_targets_and_residency() {
                     .code_actions(CodeActionQuery::new(
                         crate_ref,
                         file,
-                        TextSpan {
+                        Span {
                             start: offset,
                             end: offset,
                         },
@@ -227,16 +227,14 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
         .expect("saved transaction should open");
     let db = txn.view_db();
     let impl_span = Span {
-        text: TextSpan {
-            start: current
-                .offset("impl_start")
-                .try_into()
-                .expect("fixture offset fits u32"),
-            end: current
-                .offset("impl_end")
-                .try_into()
-                .expect("fixture offset fits u32"),
-        },
+        start: current
+            .offset("impl_start")
+            .try_into()
+            .expect("fixture offset fits u32"),
+        end: current
+            .offset("impl_end")
+            .try_into()
+            .expect("fixture offset fits u32"),
     };
 
     // A cancelled build never installs partial declarations. The next preparation starts from

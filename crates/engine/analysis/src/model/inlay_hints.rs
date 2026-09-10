@@ -16,8 +16,8 @@ impl InlayHint {
     /// Turns the source span plus before/after preference into the insertion-side offset.
     pub fn text_offset(&self) -> u32 {
         match self.position {
-            InlayHintPosition::Before => self.span.text.start,
-            InlayHintPosition::After => self.span.text.end,
+            InlayHintPosition::Before => self.span.start,
+            InlayHintPosition::After => self.span.end,
         }
     }
 }

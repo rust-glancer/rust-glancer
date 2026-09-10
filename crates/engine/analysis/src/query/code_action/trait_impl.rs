@@ -11,7 +11,7 @@
 //! be visible from the impl module.
 
 use anyhow::Context as _;
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_ir_view::trait_impl::{MissingTraitMember, MissingTraitMemberRef};
 use rg_syntax::{
     AstNode as _,
@@ -204,10 +204,8 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
         let new_text = format!("{separator}{block}\n{closing_indent}");
         Some(CodeActionEdit {
             replace: Span {
-                text: TextSpan {
-                    start: u32::try_from(trailing_start).ok()?,
-                    end: u32::try_from(right_curly_start).ok()?,
-                },
+                start: u32::try_from(trailing_start).ok()?,
+                end: u32::try_from(right_curly_start).ok()?,
             },
             new_text,
         })

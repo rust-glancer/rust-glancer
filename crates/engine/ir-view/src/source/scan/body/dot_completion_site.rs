@@ -11,7 +11,7 @@
 //! user.name($0) not a dot-completion site: the cursor is inside the arguments
 //! ```
 
-use rg_ir_model::{CrateRef, ExprId, FileId, Span, TextSpan};
+use rg_ir_model::{CrateRef, ExprId, FileId, Span};
 use rg_package_store::PackageStoreError;
 
 use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
@@ -115,11 +115,11 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
         // This covers both `user.$0` and `user.na$0`.
         let member_span = Self::member_name_span(expr);
         let completion_end = member_span
-            .map(|span| span.text.end)
-            .unwrap_or(expr.source.span.text.end);
+            .map(|span| span.end)
+            .unwrap_or(expr.source.span.end);
 
-        let offset_matches = receiver_data.source.span.text.end <= dot_span.text.start
-            && dot_span.text.end <= offset
+        let offset_matches = receiver_data.source.span.end <= dot_span.start
+            && dot_span.end <= offset
             && offset <= completion_end;
         if !offset_matches {
             return None;
@@ -129,16 +129,14 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
         // `receiver.`. If the cursor is still between the dot and that token,
         // keep the edit range empty at the cursor so LSP clients can accept it.
         if let Some(member_span) = member_span
-            && member_span.text.start <= offset
+            && member_span.start <= offset
         {
             return Some(member_span);
         }
 
         Some(Span {
-            text: TextSpan {
-                start: offset,
-                end: offset,
-            },
+            start: offset,
+            end: offset,
         })
     }
 

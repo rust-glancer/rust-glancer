@@ -5,7 +5,7 @@
 use std::ops::Range;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span, TextSpan, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
 use rg_ir_view::{
     item::documentation::{DocumentationLinkResolution, DocumentationView},
     source::{
@@ -117,9 +117,9 @@ impl SourceDocumentation {
         let mut spans: Vec<Span> = Vec::new();
         for span in ranges {
             if let Some(last) = spans.last_mut()
-                && last.text.end == span.text.start
+                && last.end == span.start
             {
-                last.text.end = span.text.end;
+                last.end = span.end;
             } else {
                 spans.push(span);
             }
@@ -192,7 +192,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
                 crate_ref,
                 file,
                 &syntax,
-                Some(TextSpan {
+                Some(Span {
                     start: offset,
                     end: offset.saturating_add(1),
                 }),
@@ -291,7 +291,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<SourceDocumentation>> {
         let view = DocumentationSourceView::new(self.0.view_db());
         let mut names = None;
@@ -312,7 +312,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             // needs the more precise check below: its own docs may be outside this range.
             if range.is_some_and(|range| {
                 let span = Span::from_text_range(node.text_range());
-                span.text.start >= range.end || span.text.end <= range.start
+                span.start >= range.end || span.end <= range.start
             }) {
                 continue;
             }

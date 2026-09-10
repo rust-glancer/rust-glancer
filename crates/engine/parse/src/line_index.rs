@@ -142,8 +142,8 @@ impl LineIndex {
     /// Converts a byte span into zero-based line/byte-column coordinates.
     pub fn line_column_span(&self, span: Span) -> LineColumnSpan {
         LineColumnSpan {
-            start: self.position(span.text.start),
-            end: self.position(span.text.end),
+            start: self.position(span.start),
+            end: self.position(span.end),
         }
     }
 

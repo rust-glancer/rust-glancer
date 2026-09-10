@@ -70,7 +70,7 @@ pub(crate) fn code_action(
 mod tests {
     use ls_types::{DocumentChanges, OneOf};
     use rg_analysis::{CodeAction, CodeActionEdit, CodeActionKind};
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_parse::LineIndex;
     use test_fixture::synthetic_test_path;
 
@@ -84,9 +84,7 @@ mod tests {
             kind: CodeActionKind::QuickFix,
             is_preferred: true,
             edits: vec![CodeActionEdit {
-                replace: Span {
-                    text: TextSpan { start: 0, end: 0 },
-                },
+                replace: Span { start: 0, end: 0 },
                 new_text: "use crate::User;\n\n".to_string(),
             }],
         };

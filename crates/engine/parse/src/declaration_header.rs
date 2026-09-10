@@ -385,8 +385,8 @@ impl Foo {
                 .saved_header_span(&cursor)
                 .expect("current header should match saved syntax");
             assert_eq!(
-                &saved[usize::try_from(saved_span.text.start).expect("span should fit usize")
-                    ..usize::try_from(saved_span.text.end).expect("span should fit usize")],
+                &saved[usize::try_from(saved_span.start).expect("span should fit usize")
+                    ..usize::try_from(saved_span.end).expect("span should fit usize")],
                 name,
             );
         }

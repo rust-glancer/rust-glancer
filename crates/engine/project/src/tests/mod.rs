@@ -17,7 +17,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
-use rg_ir_model::{PackageSlot, Span, TextSpan};
+use rg_ir_model::{PackageSlot, Span};
 use rg_source::CapturedSource;
 use rg_std::MemorySize as _;
 
@@ -202,13 +202,7 @@ pub struct Published;
         .expect("published fixture source should be restored");
     let text = project
         .snapshot()
-        .file_text_for_span(
-            PackageSlot(0),
-            file_id,
-            Span {
-                text: TextSpan { start: 0, end: 21 },
-            },
-        )
+        .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
         .expect("published source should load after rejected candidate")
         .expect("published source span should exist");
     assert_eq!(text, "pub struct Published;");
@@ -303,13 +297,7 @@ pub struct Published;
         .expect("published fixture source should be restored");
     let text = project
         .snapshot()
-        .file_text_for_span(
-            PackageSlot(0),
-            file_id,
-            Span {
-                text: TextSpan { start: 0, end: 21 },
-            },
-        )
+        .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
         .expect("published source should load after rejected proposal")
         .expect("published source span should exist");
     assert_eq!(text, "pub struct Published;");

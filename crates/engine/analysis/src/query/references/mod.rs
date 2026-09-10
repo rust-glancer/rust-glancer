@@ -78,8 +78,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 location.crate_ref.package.0,
                 location.crate_ref.crate_id.0,
                 location.file_id.0,
-                location.span.text.start,
-                location.span.text.end,
+                location.span.start,
+                location.span.end,
             )
         });
         locations.dedup();
@@ -191,8 +191,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 symbol.crate_ref().package.0,
                 symbol.crate_ref().crate_id.0,
                 symbol.file_id().0,
-                symbol.span().text.start,
-                symbol.span().text.end,
+                symbol.span().start,
+                symbol.span().end,
             )
         });
         symbols.dedup();

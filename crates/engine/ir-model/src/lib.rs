@@ -41,7 +41,7 @@ pub use self::{
     literal::LiteralKind,
     operator::{ExprBinaryOp, ExprUnaryOp},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
-    span::{Span, TextSpan},
+    span::Span,
 };
 
 // We have a lot of arenas, and each has to have a unique ID.

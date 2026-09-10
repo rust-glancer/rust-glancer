@@ -35,7 +35,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 symbol.crate_ref.package.0,
                 symbol.crate_ref.crate_id.0,
                 symbol.file_id.0,
-                symbol.span.map(|span| span.text.start),
+                symbol.span.map(|span| span.start),
             )
         });
         Ok(symbols)

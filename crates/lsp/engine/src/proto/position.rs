@@ -11,8 +11,8 @@ pub(crate) fn parse_position(position: Position) -> ParsePosition {
 
 pub(crate) fn range(line_index: &LineIndex, span: Span) -> Range {
     Range {
-        start: position(line_index, span.text.start),
-        end: position(line_index, span.text.end),
+        start: position(line_index, span.start),
+        end: position(line_index, span.end),
     }
 }
 

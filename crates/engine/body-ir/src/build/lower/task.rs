@@ -313,7 +313,7 @@ impl<'a> BodyTaskLowering<'a> {
     }
 
     fn span_key(span: Span) -> (u32, u32) {
-        (span.text.start, span.text.end)
+        (span.start, span.end)
     }
 }
 

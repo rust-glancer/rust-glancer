@@ -1,6 +1,6 @@
 //! Item, signature-type, and statement-boundary classification.
 
-use rg_ir_model::{Path, Span, TextSpan};
+use rg_ir_model::{Path, Span};
 use rg_syntax::{
     AstNode as _, SyntaxKind, SyntaxNode, SyntaxToken,
     ast::{self, HasAttrs as _, HasName as _},
@@ -297,7 +297,7 @@ impl CompletionSyntaxContext<'_> {
 
         let prefix_span = self.prefix.span();
         let mut member_kind = None;
-        let mut replace_start = prefix_span.text.start;
+        let mut replace_start = prefix_span.start;
 
         // Use the recovered associated item's own tokens rather than scanning arbitrary previous
         // source words. This prevents a keyword from an earlier complete item from becoming part
@@ -352,18 +352,14 @@ impl CompletionSyntaxContext<'_> {
             owner_start,
             member_kind,
             Span {
-                text: TextSpan {
-                    start: replace_start,
-                    end: prefix_span.text.end,
-                },
+                start: replace_start,
+                end: prefix_span.end,
             },
             match member_kind {
                 Some(_) => Some(
                     self.source_text(Span {
-                        text: TextSpan {
-                            start: replace_start,
-                            end: prefix_span.text.start,
-                        },
+                        start: replace_start,
+                        end: prefix_span.start,
                     })?
                     .to_string(),
                 ),

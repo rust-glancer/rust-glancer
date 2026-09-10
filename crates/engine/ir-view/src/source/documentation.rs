@@ -35,12 +35,12 @@ pub struct DocumentationDeclarationIndex {
 
 impl DocumentationDeclarationIndex {
     fn new(mut declarations: Vec<(Span, DeclarationRef)>) -> Self {
-        declarations.sort_unstable_by_key(|(span, _)| (span.text.start, span.text.end));
+        declarations.sort_unstable_by_key(|(span, _)| (span.start, span.end));
         let mut end = 0;
         let prefix_ends = declarations
             .iter()
             .map(|(span, _)| {
-                end = end.max(span.text.end);
+                end = end.max(span.end);
                 end
             })
             .collect();
@@ -59,7 +59,7 @@ impl DocumentationDeclarationIndex {
         let mut owner = ExpectedUnique::new();
         for (span, declaration) in self.declarations[first..]
             .iter()
-            .take_while(|(span, _)| span.text.start <= offset)
+            .take_while(|(span, _)| span.start <= offset)
         {
             if span.contains(offset) {
                 owner.push(*declaration);

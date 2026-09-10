@@ -123,7 +123,7 @@ mod tests {
         CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
         CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
     };
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_parse::LineIndex;
 
     use super::completion_item;
@@ -142,9 +142,7 @@ mod tests {
                 sort_text: "name|01".to_string(),
                 insert_text: CompletionInsertText::Plain,
                 edit: Some(CompletionEdit {
-                    replace: Span {
-                        text: TextSpan { start: 5, end: 7 },
-                    },
+                    replace: Span { start: 5, end: 7 },
                 }),
                 additional_edits: Vec::new(),
             },
@@ -194,14 +192,10 @@ mod tests {
                     "HashMap::<${1:K}, ${2:V}>$0\n".to_string(),
                 ),
                 edit: Some(CompletionEdit {
-                    replace: Span {
-                        text: TextSpan { start: 0, end: 5 },
-                    },
+                    replace: Span { start: 0, end: 5 },
                 }),
                 additional_edits: vec![CompletionAdditionalEdit {
-                    replace: Span {
-                        text: TextSpan { start: 0, end: 0 },
-                    },
+                    replace: Span { start: 0, end: 0 },
                     new_text: "use std::collections::HashMap;\n".to_string(),
                 }],
             },

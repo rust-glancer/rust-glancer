@@ -14,7 +14,7 @@ use crate::{
 };
 use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
-use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span, TextSpan};
+use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::testonly::ViewFixture;
 use rg_parse::ParseDb;
 use rg_semantic_ir::testonly::SemanticIrFixture;
@@ -780,7 +780,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                         CodeActionQuery::new(
                             target,
                             file_id,
-                            TextSpan {
+                            Span {
                                 start: offset,
                                 end: offset,
                             },
@@ -1093,7 +1093,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 target.crate_ref.package.0,
                 target.crate_ref.crate_id.0,
                 target.file_id.0,
-                target.span.map(|span| span.text.start),
+                target.span.map(|span| span.start),
             )
         });
 
@@ -1160,13 +1160,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
             // Apply from the end so every span remains in the captured source coordinate space.
             let mut edits = action.edits.iter().collect::<Vec<_>>();
-            edits.sort_by_key(|edit| std::cmp::Reverse(edit.replace.text.start));
+            edits.sort_by_key(|edit| std::cmp::Reverse(edit.replace.start));
             let mut result = source.to_string();
             for edit in edits {
                 result.replace_range(
-                    usize::try_from(edit.replace.text.start)
+                    usize::try_from(edit.replace.start)
                         .expect("fixture edit start should fit usize")
-                        ..usize::try_from(edit.replace.text.end)
+                        ..usize::try_from(edit.replace.end)
                             .expect("fixture edit end should fit usize"),
                     &edit.new_text,
                 );
@@ -1207,14 +1207,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .expect("string writes should not fail");
             if let Some(edit) = completion.edit {
                 let span = edit.replace;
-                writeln!(dump, "  replace: {}..{}", span.text.start, span.text.end)
+                writeln!(dump, "  replace: {}..{}", span.start, span.end)
                     .expect("string writes should not fail");
             }
             for edit in &completion.additional_edits {
                 writeln!(
                     dump,
                     "  additional: {}..{} => {:?}",
-                    edit.replace.text.start, edit.replace.text.end, edit.new_text
+                    edit.replace.start, edit.replace.end, edit.new_text
                 )
                 .expect("string writes should not fail");
             }
@@ -1301,7 +1301,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 edit.crate_ref.package.0,
                 edit.crate_ref.crate_id.0,
                 edit.file_id.0,
-                edit.span.text.start,
+                edit.span.start,
             )
         });
 

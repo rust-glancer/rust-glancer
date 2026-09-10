@@ -18,7 +18,7 @@
 //! targets for this action.
 
 use anyhow::Context as _;
-use rg_ir_model::{GenericDefRef, Span, TextSpan, identity::DeclarationRef};
+use rg_ir_model::{GenericDefRef, Span, identity::DeclarationRef};
 use rg_ir_view::{
     SymbolKind,
     display::syntax::SyntaxRenderer,
@@ -94,13 +94,13 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
                 self.query.crate_ref,
                 self.query.file_id,
                 syntax.source(),
-                leaf_span.text.end,
+                leaf_span.end,
             )
             .context("classify qualified path action site")?
         else {
             return Ok(None);
         };
-        if site.replace_span().text.end != leaf_span.text.end {
+        if site.replace_span().end != leaf_span.end {
             return Ok(None);
         }
 
@@ -152,10 +152,8 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
         // previously unused; an existing name for the same declaration needs no second `use`.
         let qualifier_edit = CodeActionEdit {
             replace: Span {
-                text: TextSpan {
-                    start: u32::from(path.syntax().text_range().start()),
-                    end: leaf_span.text.start,
-                },
+                start: u32::from(path.syntax().text_range().start()),
+                end: leaf_span.start,
             },
             new_text: String::new(),
         };
@@ -170,14 +168,14 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
         let mut edits = vec![qualifier_edit];
         if short_name_state == ShortNameState::Free {
             let planner =
-                ImportEditPlanner::for_source(syntax.source(), syntax.file(), leaf_span.text.start);
+                ImportEditPlanner::for_source(syntax.source(), syntax.file(), leaf_span.start);
             match planner.plan(candidate.path(), &rendered_path) {
                 ImportEditPlan::AlreadyImported => {}
                 ImportEditPlan::Edit(edit) => edits.push(edit),
                 ImportEditPlan::Unavailable => return Ok(None),
             }
         }
-        edits.sort_by_key(|edit| (edit.replace.text.start, edit.replace.text.end));
+        edits.sort_by_key(|edit| (edit.replace.start, edit.replace.end));
 
         Ok(Some(CodeAction {
             title: "Replace qualified path with `use`".to_string(),
@@ -224,18 +222,14 @@ impl<'analysis, 'db, 'source> QualifiedPathCodeActionProvider<'analysis, 'db, 's
     fn resolved_target(&self, leaf_span: Span) -> anyhow::Result<Option<DeclarationRef>> {
         let Some(symbol) = self
             .analysis
-            .source_symbol_at_for_query(
-                self.query.crate_ref,
-                self.query.file_id,
-                leaf_span.text.start,
-            )
+            .source_symbol_at_for_query(self.query.crate_ref, self.query.file_id, leaf_span.start)
             .context("find qualified path source symbol")?
         else {
             return Ok(None);
         };
         if symbol.role() != SourceSymbolRole::Reference
             || symbol.surface() != &IndexedSourceSurface::Plain
-            || !symbol.span().touches(leaf_span.text.start)
+            || !symbol.span().touches(leaf_span.start)
         {
             return Ok(None);
         }

@@ -5,7 +5,7 @@ use crate::{
     TypeRef,
 };
 use expect_test::expect;
-use rg_ir_model::TextSpan;
+use rg_ir_model::Span;
 use rg_parse::{LineColumnSpan, LineIndex, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
@@ -879,7 +879,7 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
         .expect("fixture function should be lowered");
 
     assert!(matches!(function.kind, ItemKind::Function(_)));
-    assert_eq!(function.span.text, TextSpan { start: 0, end: 73 });
+    assert_eq!(function.span, Span { start: 0, end: 73 });
 
     let parsed_file = db.parse_db().packages()[0]
         .parsed_file(file_tree.file)

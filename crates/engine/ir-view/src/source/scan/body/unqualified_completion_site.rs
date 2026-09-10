@@ -96,7 +96,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.touches(self.offset)
                 && body_owner_start
-                    .is_none_or(|owner_start| body.source().span.text.start != owner_start)
+                    .is_none_or(|owner_start| body.source().span.start != owner_start)
             {
                 continue;
             }
@@ -175,7 +175,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn binding_cutoff_at(body: BodyView<'_>, offset: u32) -> usize {
         body.bindings()
             .iter()
-            .position(|binding| binding.source.span.text.start >= offset)
+            .position(|binding| binding.source.span.start >= offset)
             .unwrap_or_else(|| body.bindings().len())
     }
 

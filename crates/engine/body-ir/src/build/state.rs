@@ -572,7 +572,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             });
         }
 
-        tasks.sort_by_key(|task| (task.file_id.0, task.span.text.start, task.span.text.end));
+        tasks.sort_by_key(|task| (task.file_id.0, task.span.start, task.span.end));
         Ok(tasks)
     }
 

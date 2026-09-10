@@ -66,8 +66,8 @@ impl CurrentSource {
 
     /// Read a span known to belong to this exact source.
     pub fn text_for_span(&self, span: Span) -> Option<&str> {
-        let start = usize::try_from(span.text.start).ok()?;
-        let end = usize::try_from(span.text.end).ok()?;
+        let start = usize::try_from(span.start).ok()?;
+        let end = usize::try_from(span.end).ok()?;
         self.text.get(start..end)
     }
 
