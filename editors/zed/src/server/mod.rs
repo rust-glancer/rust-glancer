@@ -22,7 +22,7 @@ const SERVER_CACHE_ROOT: &str = "servers";
 
 // An extension build requests one exact server release instead of following "latest". Release
 // automation advances this pin with the extension, so a repeated installation stays reproducible.
-const MANAGED_SERVER_VERSION: &str = "0.2.0"; // x-release-please-version
+const MANAGED_SERVER_VERSION: &str = "0.2.1"; // x-release-please-version
 
 const MANUAL_INSTALLATION_HINT: &str =
     "install rust-glancer manually and configure lsp.rust-glancer.binary.path to use it";
