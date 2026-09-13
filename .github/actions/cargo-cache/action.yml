@@ -24,7 +24,7 @@ runs:
     # every branch can restore, so abandoned PR snapshots do not evict them.
     - name: Cache Cargo artifacts
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
       with:
         path: |
           ~/.cargo/registry/index
@@ -45,7 +45,7 @@ runs:
     # the main-branch action: paths are part of the cache's version identifier.
     - name: Restore Cargo artifacts
       if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-      uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
       with:
         path: |
           ~/.cargo/registry/index
