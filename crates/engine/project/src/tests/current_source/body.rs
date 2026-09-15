@@ -1,6 +1,6 @@
 use rg_analysis::{CompletionItem, CompletionQuery, CompletionSource, SavedSourceRelationship};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable};
-use rg_ir_model::{FileId, TextSpan};
+use rg_ir_model::{FileId, Span};
 use rg_std::CancellationToken;
 use test_fixture::testonly::MarkedText;
 
@@ -1084,7 +1084,7 @@ pub trait CurrentOnly {
 fn unfinished
 "#,
     );
-    let range = TextSpan {
+    let range = Span {
         start: current
             .offset("range_start")
             .try_into()
@@ -1149,7 +1149,7 @@ pub fn inspect() {
     let second = true;
 }
 "#;
-    let range = TextSpan {
+    let range = Span {
         start: 0,
         end: current
             .len()

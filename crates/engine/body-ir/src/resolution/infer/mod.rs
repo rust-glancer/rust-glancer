@@ -6,6 +6,7 @@
 
 mod call;
 mod context;
+mod expr;
 mod facts;
 mod member;
 mod pattern;

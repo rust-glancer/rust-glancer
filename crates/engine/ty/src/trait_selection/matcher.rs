@@ -9,9 +9,8 @@ use rg_semantic_ir::TraitImplSelfHead;
 
 use super::TraitGoal;
 use crate::inference::{InferenceConflict, InferenceSubstitution, InferenceTable};
-use crate::{
-    ClosureTyId, ConstValue, GenericArg, ImplHeader, Lifetime, Mutability, PrimitiveTy, Ty,
-};
+use crate::lowering::ImplHeader;
+use crate::{ClosureTyId, ConstValue, GenericArg, Lifetime, Mutability, PrimitiveTy, Ty};
 
 /// Top-level semantic type fingerprint used to route trait impl discovery and proof.
 ///
@@ -429,9 +428,11 @@ mod tests {
 
     use super::CandidateMatcher;
     use crate::inference::{InferenceSubstitution, InferenceTable};
+    use crate::lowering::ImplHeader;
+    use crate::trait_selection::TraitGoal;
     use crate::{
-        ConstValue, GenericArg, ImplHeader, Lifetime, Mutability, PrimitiveTy, TraitApplication,
-        TraitGoal, TraitRefLowering, Ty,
+        ConstValue, GenericArg, Lifetime, Mutability, PrimitiveTy, TraitApplication,
+        TraitRefLowering, Ty,
     };
 
     #[test]

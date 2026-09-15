@@ -94,7 +94,6 @@ impl ItemSource {
     }
 
     /// Returns a source identity for an associated item in the same underlying item arena.
-    // TODO: Do we need a generic item? This seem to exist for a very specific reason
     pub fn with_item(self, item: ItemTreeId) -> Self {
         let kind = match self.kind {
             ItemSourceKind::ItemTree(source) => ItemSourceKind::ItemTree(ItemTreeRef {

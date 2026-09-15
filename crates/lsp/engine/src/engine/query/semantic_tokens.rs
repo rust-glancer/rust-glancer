@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-use rg_ir_model::TextSpan;
+use rg_ir_model::Span;
 use rg_lsp_proto::EditorDocumentSnapshot;
 use rg_project::DocumentSourceView;
 use rg_std::UniqueVec;
@@ -51,7 +51,7 @@ impl QueryRunner<'_> {
             if start >= end {
                 return Ok(gen_lsp_types::SemanticTokens::default());
             }
-            Some(TextSpan { start, end })
+            Some(Span { start, end })
         } else {
             None
         };

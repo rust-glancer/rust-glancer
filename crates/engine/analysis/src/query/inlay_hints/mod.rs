@@ -3,7 +3,7 @@
 mod closing_brace;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span, TextSpan};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::{
     body::BodyStructureView,
     display::ty_label::TypeRenderer,
@@ -86,7 +86,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let source = InlaySource::new(self.0, crate_ref.package, file_id);
         let mut hints = self.binding_type_hints(crate_ref, file_id, range)?;
@@ -104,7 +104,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
@@ -137,7 +137,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let renderer =
@@ -147,7 +147,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?
         {
             let expr_span = expr.span();
-            if range.is_some_and(|range| !range.touches(expr_span.text.end)) {
+            if range.is_some_and(|range| !range.touches(expr_span.end)) {
                 continue;
             }
             if !self.should_show_method_chain_expr_hint(
@@ -184,7 +184,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.0.view_db());
@@ -206,7 +206,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     continue;
                 };
                 let arg_span = arg.span();
-                if range.is_some_and(|range| !range.touches(arg_span.text.start)) {
+                if range.is_some_and(|range| !range.touches(arg_span.start)) {
                     continue;
                 }
                 let arg_text = source.text_for_span(call.file_id(), arg_span)?;
@@ -256,12 +256,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         parent_dot_span: Span,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<bool> {
-        let expr_end_offset = expr_span.text.end.saturating_sub(1);
+        let expr_end_offset = expr_span.end.saturating_sub(1);
         let expr_end_line = source.line_for_offset(file_id, expr_end_offset)?;
         let Some(expr_end_line) = expr_end_line else {
             return Ok(false);
         };
-        let parent_dot_line = source.line_for_offset(file_id, parent_dot_span.text.start)?;
+        let parent_dot_line = source.line_for_offset(file_id, parent_dot_span.start)?;
         let Some(parent_dot_line) = parent_dot_line else {
             return Ok(false);
         };

@@ -5,11 +5,13 @@
 //! aliases, which are not ordinary entries in either scope graph.
 
 use rg_def_map::{DefMapSource, NamespaceSet};
-use rg_ir_model::{DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId};
+use rg_ir_model::{
+    AssocItemId, DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, TypeAliasRef,
+};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
-use rg_ty::Ty;
+use rg_ty::{AdtTy, Ty};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -46,11 +48,7 @@ where
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
             for ty in prefix_ty.as_adts() {
-                if let Some(alias) = self
-                    .context
-                    .type_aliases()
-                    .associated_alias_for_type(ty, name)?
-                {
+                if let Some(alias) = self.associated_alias_for_type(ty, name)? {
                     aliases.push(alias);
                 }
             }
@@ -159,11 +157,7 @@ where
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = ExpectedUnique::new();
             for ty in prefix_ty.as_adts() {
-                if let Some(alias) = self
-                    .context
-                    .type_aliases()
-                    .associated_alias_for_type(ty, name)?
-                {
+                if let Some(alias) = self.associated_alias_for_type(ty, name)? {
                     aliases.push(alias);
                 }
             }
@@ -217,5 +211,42 @@ where
             }
         }
         Ok(variants.into_option())
+    }
+
+    /// Find an associated type alias with this name for the given type.
+    fn associated_alias_for_type(
+        &self,
+        ty: &AdtTy,
+        name: &str,
+    ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
+        let receiver_ty = Ty::adt(ty.clone());
+        let receiver = self
+            .context
+            .impls()
+            .inherent_matches_for_receiver(&receiver_ty)?;
+        let item_query = self.context.item_query();
+        for impl_match in receiver.matches().inherent() {
+            let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
+                continue;
+            };
+
+            for item in &impl_data.items {
+                let AssocItemId::TypeAlias(id) = item else {
+                    continue;
+                };
+                let alias_ref = TypeAliasRef {
+                    origin: impl_match.impl_ref().origin,
+                    id: *id,
+                };
+                let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
+                    continue;
+                };
+                if alias_data.name == name {
+                    return Ok(Some(alias_ref));
+                }
+            }
+        }
+
+        Ok(None)
     }
 }

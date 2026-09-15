@@ -20,7 +20,7 @@
 //! left untouched. In those cases a separate private `use` is safer than rewriting syntax whose
 //! formatting or visibility may carry intent.
 
-use rg_ir_model::{Path, Span, TextSpan};
+use rg_ir_model::{Path, Span};
 use rg_syntax::{
     AstNode as _, SourceFile, TextRange, TextSize, ast, ast::HasModuleItem as _, ast::HasName as _,
 };
@@ -76,7 +76,7 @@ impl<'syntax, 'source> ImportEditSyntax<'syntax, 'source> {
 
     fn original_offset(&self, offset: u32) -> Option<u32> {
         self.original_span(TextRange::empty(TextSize::from(offset)))
-            .map(|span| span.text.start)
+            .map(|span| span.start)
     }
 }
 
@@ -289,10 +289,8 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
             };
             return Some(CodeActionEdit {
                 replace: Span {
-                    text: TextSpan {
-                        start: insertion,
-                        end: insertion,
-                    },
+                    start: insertion,
+                    end: insertion,
                 },
                 new_text,
             });
@@ -338,9 +336,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
                         .original_offset(u32::from(last_use.syntax().text_range().start()))?,
                 )?;
                 return Some(CodeActionEdit {
-                    replace: Span {
-                        text: TextSpan { start: end, end },
-                    },
+                    replace: Span { start: end, end },
                     new_text: format!("\n{indent}use {rendered_path};"),
                 });
             }
@@ -352,9 +348,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
             .original_offset(u32::from(first_item.syntax().text_range().start()))?;
         let indent = Self::line_indent(self.syntax.source(), start)?;
         Some(CodeActionEdit {
-            replace: Span {
-                text: TextSpan { start, end: start },
-            },
+            replace: Span { start, end: start },
             new_text: format!("use {rendered_path};\n\n{indent}"),
         })
     }
@@ -363,9 +357,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
         let Some(protected) = self.protected_span else {
             return true;
         };
-        let primary = protected.text;
-        let additional = additional.text;
-        primary.end <= additional.start || additional.end <= primary.start
+        protected.end <= additional.start || additional.end <= protected.start
     }
 
     fn is_simple_use_leaf(leaf: &str) -> bool {
@@ -464,7 +456,7 @@ impl<'syntax, 'source> ImportEditPlanner<'syntax, 'source> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{Path, Span, TextSpan};
+    use rg_ir_model::{Path, Span};
 
     use super::{CompletionSyntaxContext, ImportEditPlan, ImportEditPlanner};
     use crate::model::CompletionEdit;
@@ -529,8 +521,8 @@ mod tests {
             let insertion =
                 u32::try_from(existing_import.len()).expect("fixture offset should fit");
             assert_eq!(
-                edit.replace.text,
-                TextSpan {
+                edit.replace,
+                Span {
                     start: insertion,
                     end: insertion,
                 },
@@ -585,7 +577,7 @@ mod tests {
             panic!("a separate import should remain safe");
         };
         assert_eq!(
-            edit.replace.text.start,
+            edit.replace.start,
             u32::try_from(
                 source
                     .find(';')
@@ -612,7 +604,7 @@ mod tests {
         };
         assert_eq!(edit.new_text, "use std::collections::HashMap;\n\n    ");
         assert_eq!(
-            edit.replace.text.start,
+            edit.replace.start,
             u32::try_from(
                 source
                     .find("fn main")
@@ -635,9 +627,7 @@ mod tests {
             let planner = ImportEditPlanner::for_completion(
                 &syntax,
                 CompletionEdit {
-                    replace: Span {
-                        text: TextSpan { start, end },
-                    },
+                    replace: Span { start, end },
                 },
             );
             let ImportEditPlan::Edit(edit) =
@@ -652,9 +642,9 @@ mod tests {
             )
             .expect("fixture offset should fit");
 
-            assert_eq!(edit.replace.text.start, tree_start, "{prefix}");
+            assert_eq!(edit.replace.start, tree_start, "{prefix}");
             assert_eq!(
-                edit.replace.text.end,
+                edit.replace.end,
                 tree_start + u32::try_from("std::collections::BTreeMap".len()).expect("text fits"),
                 "{prefix}"
             );
@@ -668,10 +658,8 @@ mod tests {
     fn primary(start: u32) -> CompletionEdit {
         CompletionEdit {
             replace: Span {
-                text: TextSpan {
-                    start,
-                    end: start + 5,
-                },
+                start,
+                end: start + 5,
             },
         }
     }

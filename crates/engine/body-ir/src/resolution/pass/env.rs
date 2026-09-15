@@ -2,10 +2,10 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::BodyRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::TraitSelectionSession;
+use rg_ty::trait_selection::TraitSelectionSession;
 
 use crate::{
-    ir::BodyQueryView,
+    body::BodyQueryView,
     resolution::{BodyResolutionCaches, BodyResolutionContext},
 };
 

@@ -6,7 +6,7 @@
 //! The cursor must be on a key or in free field-list space. `User { name: val$0 }` is deliberately
 //! rejected so ordinary value completion can handle the field value.
 
-use rg_ir_model::{BodyRef, CrateRef, FieldKey, FileId, ScopeId, Span, TextSpan};
+use rg_ir_model::{BodyRef, CrateRef, FieldKey, FileId, ScopeId, Span};
 use rg_package_store::PackageStoreError;
 
 use rg_body_ir::{
@@ -197,10 +197,8 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         }
 
         Some(Span {
-            text: TextSpan {
-                start: self.offset,
-                end: self.offset,
-            },
+            start: self.offset,
+            end: self.offset,
         })
     }
 }

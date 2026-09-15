@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rg_ir_model::{CrateId, PackageSlot};
 use rg_package_store::PackageStoreError;
 
-use crate::{ItemLookupIndex, ItemStore, PackageIrManifest};
+use crate::{ItemLookupIndex, ItemStore, SemanticPackageManifest};
 
 /// Loads the independently stored parts of an offloaded Semantic IR package.
 ///
@@ -20,7 +20,7 @@ pub trait LoadSemanticIr: std::fmt::Debug + Send + Sync {
     fn load_manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<Arc<PackageIrManifest>, PackageStoreError>;
+    ) -> Result<Arc<SemanticPackageManifest>, PackageStoreError>;
 
     /// Loads declarations for one crate without its visibility lookup index.
     fn load_items(
@@ -55,7 +55,7 @@ impl<'db> SemanticIrLoader<'db> {
     pub(super) fn load_manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<Arc<PackageIrManifest>, PackageStoreError> {
+    ) -> Result<Arc<SemanticPackageManifest>, PackageStoreError> {
         self.loader.load_manifest(package)
     }
 
@@ -109,7 +109,7 @@ impl LoadSemanticIr for ResidentOnlySemanticIrLoader {
     fn load_manifest(
         &self,
         package: PackageSlot,
-    ) -> Result<Arc<PackageIrManifest>, PackageStoreError> {
+    ) -> Result<Arc<SemanticPackageManifest>, PackageStoreError> {
         panic!(
             "{} should not load offloaded package {}",
             self.context, package.0,

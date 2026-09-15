@@ -5,7 +5,7 @@
 mod code_block;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span, TextSpan};
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::item::declaration::DeclarationView;
 use rg_parse::syntax_edition;
 
@@ -29,7 +29,7 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<Highlight>> {
         let source = SourceDocumentationQuery::new(self.0);
         let Some(syntax) = source
@@ -105,20 +105,20 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
                 }
             }
         }
-        highlights.sort_by_key(|highlight| (highlight.span.text.start, highlight.span.text.end));
+        highlights.sort_by_key(|highlight| (highlight.span.start, highlight.span.end));
         highlights.dedup();
         Ok(highlights)
     }
 
-    fn clip(span: Span, range: Option<TextSpan>) -> Option<Span> {
-        let text = if let Some(range) = range {
-            TextSpan {
-                start: span.text.start.max(range.start),
-                end: span.text.end.min(range.end),
+    fn clip(span: Span, range: Option<Span>) -> Option<Span> {
+        let span = if let Some(range) = range {
+            Span {
+                start: span.start.max(range.start),
+                end: span.end.min(range.end),
             }
         } else {
-            span.text
+            span
         };
-        (!text.is_empty()).then_some(Span { text })
+        (!span.is_empty()).then_some(span)
     }
 }

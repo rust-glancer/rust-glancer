@@ -9,7 +9,7 @@ use rg_ir_model::{FileId, PrimitiveTy, Span, UnsignedIntTy};
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_text::Name;
 
-use crate::ir::{
+use crate::body::{
     BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource, LabelData,
     LiteralKind,
 };
@@ -243,7 +243,7 @@ mod tests {
     use rg_ir_model::{FloatTy, PrimitiveTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
-    use crate::ir::LiteralKind;
+    use crate::body::LiteralKind;
 
     use super::BodyLowering;
 

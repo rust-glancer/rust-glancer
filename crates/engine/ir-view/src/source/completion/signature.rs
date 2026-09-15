@@ -1,7 +1,7 @@
 //! Completion sites and request-local recovery inside declaration signatures.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span, TextSpan};
+use rg_ir_model::{CrateRef, FileId, Span};
 
 use super::{
     IndexedAssociatedTypeBindingScope, IndexedAssociatedTypeBindingSite, IndexedQualifiedPathScope,
@@ -213,10 +213,8 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         position: IndexedTypeNamePosition,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         let empty_span = Span {
-            text: TextSpan {
-                start: offset,
-                end: offset,
-            },
+            start: offset,
+            end: offset,
         };
         self.current_signature_syntax_name_site_at(
             crate_ref,
@@ -272,10 +270,8 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         position: IndexedTypeNamePosition,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         let empty_span = Span {
-            text: TextSpan {
-                start: offset,
-                end: offset,
-            },
+            start: offset,
+            end: offset,
         };
         self.signature_syntax_name_site_at(
             crate_ref,

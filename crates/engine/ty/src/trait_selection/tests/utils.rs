@@ -11,8 +11,8 @@ use rg_def_map::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TextSpan, TraitApplicability,
-    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitApplicability, TraitDefRef,
+    TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -28,14 +28,14 @@ use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use super::super::{
-    TraitCandidate, TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+    TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+    candidate::TraitCandidate,
     chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
 };
 use crate::inference::{InferVarKind, InferenceTable};
-use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, GenericArg, ItemPathQuery, OpaqueTy, PrimitiveTy,
-    SemanticSignatureQuery, Ty, TyContext,
-};
+use crate::lookup::ItemPathQuery;
+use crate::lowering::SemanticSignatureQuery;
+use crate::{AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext};
 
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,
@@ -352,9 +352,7 @@ fn dummy_source() -> ItemSource {
 }
 
 fn fixture_span() -> Span {
-    Span {
-        text: TextSpan { start: 0, end: 0 },
-    }
+    Span { start: 0, end: 0 }
 }
 
 pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
@@ -483,9 +481,7 @@ pub(super) fn type_alias_data(
     TypeAliasData {
         local_def: None,
         source: dummy_source(),
-        span: Span {
-            text: TextSpan { start: 0, end: 0 },
-        },
+        span: Span { start: 0, end: 0 },
         name_span: None,
         owner,
         name: Name::new(name),

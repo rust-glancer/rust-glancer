@@ -18,14 +18,14 @@ pub(crate) fn folding_range(
         FoldKind::Comment => Some(FoldingRangeKind::Comment),
         FoldKind::Imports => Some(FoldingRangeKind::Imports),
     };
-    let start = position::position(line_index, fold.span.text.start);
-    let end = position::position(line_index, fold.span.text.end);
+    let start = position::position(line_index, fold.span.start);
+    let end = position::position(line_index, fold.span.end);
 
     if line_folding_only {
         // A line-only client hides the complete end line. Exclude it when source outside this fold
         // would otherwise disappear, as in `} else {` or `);`.
         let end_offset =
-            usize::try_from(fold.span.text.end).expect("fold end offset should fit into usize");
+            usize::try_from(fold.span.end).expect("fold end offset should fit into usize");
         let source_after_fold = text
             .get(end_offset..)
             .expect("fold span should belong to its source text");
@@ -67,7 +67,7 @@ pub(crate) fn folding_range(
 mod tests {
     use gen_lsp_types::FoldingRangeKind;
     use rg_analysis::{Fold, FoldKind};
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_parse::LineIndex;
 
     use super::folding_range;
@@ -79,10 +79,8 @@ mod tests {
         let end = source.find("*/").expect("comment end should exist") + 2;
         let fold = Fold {
             span: Span {
-                text: TextSpan {
-                    start: u32::try_from(start).expect("start should fit into u32"),
-                    end: u32::try_from(end).expect("end should fit into u32"),
-                },
+                start: u32::try_from(start).expect("start should fit into u32"),
+                end: u32::try_from(end).expect("end should fit into u32"),
             },
             kind: FoldKind::Comment,
         };
@@ -104,10 +102,8 @@ mod tests {
         let end = source.find('}').expect("block end should exist") + 1;
         let fold = Fold {
             span: Span {
-                text: TextSpan {
-                    start: u32::try_from(start).expect("start should fit into u32"),
-                    end: u32::try_from(end).expect("end should fit into u32"),
-                },
+                start: u32::try_from(start).expect("start should fit into u32"),
+                end: u32::try_from(end).expect("end should fit into u32"),
             },
             kind: FoldKind::Code,
         };
@@ -127,10 +123,8 @@ mod tests {
         let end = source.find("*/").expect("comment end should exist") + 2;
         let fold = Fold {
             span: Span {
-                text: TextSpan {
-                    start: 0,
-                    end: u32::try_from(end).expect("end should fit into u32"),
-                },
+                start: 0,
+                end: u32::try_from(end).expect("end should fit into u32"),
             },
             kind: FoldKind::Comment,
         };
@@ -152,9 +146,7 @@ mod tests {
 
         for (kind, expected) in cases {
             let fold = Fold {
-                span: Span {
-                    text: TextSpan { start: 0, end: 9 },
-                },
+                span: Span { start: 0, end: 9 },
                 kind,
             };
             let range = folding_range(source, &LineIndex::new(source), false, fold)

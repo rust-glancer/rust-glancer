@@ -250,7 +250,7 @@ impl fmt::Display for ImportPath {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_item_tree::{UsePath, UsePathSegment, UsePathSegmentKind};
     use rg_text::Name;
 
@@ -320,8 +320,6 @@ mod tests {
     }
 
     fn span() -> Span {
-        Span {
-            text: TextSpan { start: 0, end: 0 },
-        }
+        Span { start: 0, end: 0 }
     }
 }

@@ -13,8 +13,9 @@ use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::inference::InferenceTable;
-use crate::trait_selection::{TraitSelectionSession, session::TraitWorkKind};
-use crate::{Clause, ItemPathQuery, TraitRefLowering};
+use crate::lookup::ItemPathQuery;
+use crate::trait_selection::{TraitSelectionSession, work::TraitWorkKind};
+use crate::{Clause, TraitRefLowering};
 
 impl ChalkProgramRoots {
     pub(super) fn is_empty(&self) -> bool {
@@ -53,7 +54,7 @@ impl ChalkProgramRoots {
     pub(super) fn collect_goal<'query, D, I>(
         &mut self,
         item_paths: &ItemPathQuery<'query, D, I>,
-        goal: &crate::TraitGoal,
+        goal: &crate::trait_selection::TraitGoal,
         table: &InferenceTable,
     ) -> Result<(), I::Error>
     where

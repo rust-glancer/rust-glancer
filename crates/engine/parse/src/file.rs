@@ -149,10 +149,10 @@ impl<'a> ParsedFile<'a> {
     /// Returns source text for a byte span from the same snapshot that backs this parsed file.
     pub fn text_for_span(&self, span: Span) -> anyhow::Result<Option<String>> {
         let file_text = self.data.source.text()?;
-        let Ok(start) = usize::try_from(span.text.start) else {
+        let Ok(start) = usize::try_from(span.start) else {
             return Ok(None);
         };
-        let Ok(end) = usize::try_from(span.text.end) else {
+        let Ok(end) = usize::try_from(span.end) else {
             return Ok(None);
         };
 

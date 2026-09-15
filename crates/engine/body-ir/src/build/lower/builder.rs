@@ -4,7 +4,7 @@ use rg_arena::Arena;
 use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
-use crate::ir::{
+use crate::body::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
     FunctionParamData, PatData, ScopeData, StmtData,
 };
@@ -87,7 +87,6 @@ impl BodyBuilder {
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
-        params: Vec<BindingId>,
     ) -> LoweredBodyData {
         let Self {
             source_items,
@@ -111,7 +110,6 @@ impl BodyBuilder {
                 param_scope,
                 root_expr,
                 function_params,
-                params,
                 scopes,
                 bindings,
                 pats,

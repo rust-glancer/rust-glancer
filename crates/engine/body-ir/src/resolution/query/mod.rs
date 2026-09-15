@@ -1,3 +1,8 @@
+//! Body-scoped lookup and signature queries.
+//!
+//! Each query combines lexical body scopes with the declarations and types supplied by its
+//! resolution context. Candidate and result types stay beside the operations that produce them.
+
 mod associated_item;
 mod body_items;
 mod call;
@@ -7,9 +12,7 @@ mod function;
 mod generics;
 mod impls;
 mod method;
-mod trait_cache;
 mod traits;
-mod type_alias;
 mod type_context;
 mod type_path;
 mod type_ref;
@@ -21,16 +24,13 @@ pub use self::{
 
 pub(crate) use self::{
     associated_item::BodyAssociatedItemQuery,
-    body_items::{BodyLocalItemCache, BodyLocalItemQuery},
+    body_items::BodyLocalItemQuery,
     callable::BodyCallableCandidate,
     field::BodyFieldQuery,
     function::BodyFunctionQuery,
     generics::BodyGenericsQuery,
     impls::{BodyImplQuery, BodyReceiverImplMatches},
-    method::BodyMethodCache,
-    trait_cache::BodyTraitLookupCache,
     traits::BodyTraitQuery,
-    type_alias::BodyTypeAliasQuery,
     type_context::BodyTypeContextQuery,
     type_ref::TypeRefResolutionQuery,
 };

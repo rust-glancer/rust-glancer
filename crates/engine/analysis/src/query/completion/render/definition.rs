@@ -133,7 +133,7 @@ impl<'a, 'db, 'source> DefinitionCompletionRenderer<'a, 'db, 'source> {
         let Some(source) = self.query.source_text else {
             return false;
         };
-        let Ok(end) = usize::try_from(edit.replace.text.end) else {
+        let Ok(end) = usize::try_from(edit.replace.end) else {
             return false;
         };
         let Some(after_completion) = source.get(end..) else {

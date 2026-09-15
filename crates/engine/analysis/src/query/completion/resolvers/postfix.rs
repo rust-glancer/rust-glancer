@@ -16,7 +16,7 @@
 //! require the receiver to infer as `bool`.
 
 use anyhow::Context as _;
-use rg_ir_model::{PrimitiveTy, Span, TextSpan};
+use rg_ir_model::{PrimitiveTy, Span};
 
 use crate::{
     Analysis,
@@ -63,25 +63,19 @@ impl<'a, 'db, 'source> PostfixCompletionResolver<'a, 'db, 'source> {
 
         // Body IR and the request-local parse must select the same written receiver. This check is
         // what makes a whole-expression replacement safe in dirty buffers and parser recovery.
-        if receiver_span != site.receiver_span()
-            || receiver_span.text.end > site.replace_span().text.start
-        {
+        if receiver_span != site.receiver_span() || receiver_span.end > site.replace_span().start {
             return Ok(Vec::new());
         }
         let Some(receiver) = syntax.source_text(receiver_span) else {
             return Ok(Vec::new());
         };
         let replace = Span {
-            text: TextSpan {
-                start: receiver_span.text.start,
-                end: site.replace_span().text.end,
-            },
+            start: receiver_span.start,
+            end: site.replace_span().end,
         };
         let between = Span {
-            text: TextSpan {
-                start: receiver_span.text.end,
-                end: site.replace_span().text.start,
-            },
+            start: receiver_span.end,
+            end: site.replace_span().start,
         };
         if !syntax
             .source_text(between)

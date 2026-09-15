@@ -2,7 +2,7 @@ use rg_std::{MemorySize, Shrink};
 use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_text::Name;
 
 use super::MacroUseAttr;
@@ -93,10 +93,8 @@ impl UsePath {
         segments.extend(suffix.segments.clone());
         let source_span = match (self.source_span, suffix.source_span) {
             (Some(left), Some(right)) => Some(Span {
-                text: TextSpan {
-                    start: left.text.start.min(right.text.start),
-                    end: left.text.end.max(right.text.end),
-                },
+                start: left.start.min(right.start),
+                end: left.end.max(right.end),
             }),
             (Some(span), None) | (None, Some(span)) => Some(span),
             (None, None) => None,

@@ -212,7 +212,12 @@ impl<'a> ItemStoreSource<'a> for &'a BodyIrFixture {
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
         Ok((0..self.semantic_ir_db().package_count())
             .filter_map(|index| self.semantic_ir_db().resident_package(PackageSlot(index)))
-            .flat_map(|package| package.crates().iter().map(rg_semantic_ir::CrateIr::items))
+            .flat_map(|package| {
+                package
+                    .crates()
+                    .iter()
+                    .map(rg_semantic_ir::SemanticCrate::items)
+            })
             .collect())
     }
 }

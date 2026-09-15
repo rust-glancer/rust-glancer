@@ -14,8 +14,8 @@ use rg_std::UniqueVec;
 
 use super::matcher::CandidateMatcher;
 use super::{TraitGoal, TraitSelectionSession};
-use crate::ItemPathQuery;
 use crate::inference::{InferenceSubstitution, InferenceTable};
+use crate::lookup::ItemPathQuery;
 
 /// One visible impl whose canonical header is compatible with a trait goal.
 ///

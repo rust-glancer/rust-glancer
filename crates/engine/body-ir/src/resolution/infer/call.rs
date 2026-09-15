@@ -11,8 +11,9 @@ use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_ty::trait_selection::TraitProof;
 use rg_ty::{
-    Clause, GenericArg, Substitution, TraitProof, Ty,
+    Clause, GenericArg, Substitution, Ty,
     inference::{InferenceSubstitution, InferenceTable},
 };
 
@@ -136,7 +137,7 @@ where
         receiver: Option<ExprId>,
     ) -> Result<Option<CallInferenceTransfer>, PackageStoreError> {
         let receiver = receiver.or_else(|| match self.context.body().expr_unchecked(call).kind {
-            crate::ir::ExprKind::MethodCall { receiver, .. } => receiver,
+            crate::body::ExprKind::MethodCall { receiver, .. } => receiver,
             _ => None,
         });
         let state = if let Some(state) = inference.call_inference(call) {

@@ -6,7 +6,8 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
-use rg_ty::{MemberQuery, TyContext};
+use rg_ty::TyContext;
+use rg_ty::lookup::MemberQuery;
 
 use super::{ConstructorShape, MemberEnumVariantField, MemberField, MemberView};
 use crate::{

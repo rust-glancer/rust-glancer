@@ -12,7 +12,7 @@
 //! ```
 
 use rg_def_map::{DefMap, DefMapReadTxn, ImportPath, ModuleOrigin};
-use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span, TextSpan};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span};
 use rg_package_store::PackageStoreError;
 
 use super::NarrowestSourceSite;
@@ -138,10 +138,8 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                         module: rg_ir_model::ModuleId(module_idx),
                     },
                     member_prefix_span: Span {
-                        text: TextSpan {
-                            start: self.offset,
-                            end: self.offset,
-                        },
+                        start: self.offset,
+                        end: self.offset,
                     },
                     member_prefix: String::new(),
                 },
@@ -211,8 +209,8 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         let source_span = path.source_span()?;
         let last_segment_span = path.last_component_span()?;
         let offset_after_last_segment =
-            last_segment_span.text.end <= self.offset && self.offset <= source_span.text.end;
-        if source_span.text.end <= last_segment_span.text.end || !offset_after_last_segment {
+            last_segment_span.end <= self.offset && self.offset <= source_span.end;
+        if source_span.end <= last_segment_span.end || !offset_after_last_segment {
             return None;
         }
 
@@ -221,10 +219,8 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                 module,
                 qualifier: path.semantic().clone(),
                 member_prefix_span: Span {
-                    text: TextSpan {
-                        start: self.offset,
-                        end: self.offset,
-                    },
+                    start: self.offset,
+                    end: self.offset,
                 },
             },
             source_span.len(),

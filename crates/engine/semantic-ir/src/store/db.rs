@@ -6,7 +6,9 @@ use rg_ir_model::{ImplRef, PackageSlot, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
-use crate::{PackageIr, SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, TraitImplSelfHead};
+use crate::{
+    SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, SemanticPackage, TraitImplSelfHead,
+};
 
 /// Semantic item graph for all analyzed packages and semantic crates.
 ///
@@ -15,7 +17,7 @@ use crate::{PackageIr, SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, Tra
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct SemanticIrDb {
-    packages: PackageStore<PackageIr>,
+    packages: PackageStore<SemanticPackage>,
 }
 
 impl SemanticIrDb {
@@ -23,7 +25,7 @@ impl SemanticIrDb {
     ///
     /// This keeps cache-loading code from reaching into the database internals while still letting
     /// it preserve the same resident/offloaded slot layout used by normal package residency.
-    pub fn from_package_store(packages: PackageStore<PackageIr>) -> Self {
+    pub fn from_package_store(packages: PackageStore<SemanticPackage>) -> Self {
         Self { packages }
     }
 
@@ -39,8 +41,8 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for (crate_idx, crate_ir) in package.crates().iter().enumerate() {
-                let items = crate_ir.items();
+            for (crate_idx, semantic_crate) in package.crates().iter().enumerate() {
+                let items = semantic_crate.items();
                 stats.crate_count += 1;
                 stats.struct_count += items.structs().len();
                 stats.union_count += items.unions().len();
@@ -67,7 +69,7 @@ impl SemanticIrDb {
     }
 
     /// Returns one resident package by package slot.
-    pub fn resident_package(&self, package: PackageSlot) -> Option<&PackageIr> {
+    pub fn resident_package(&self, package: PackageSlot) -> Option<&SemanticPackage> {
         self.packages
             .raw_entry(package)
             .and_then(|entry| entry.as_resident())
@@ -128,9 +130,9 @@ impl SemanticIrDbMutator<'_> {
     pub(crate) fn replace_package(
         &mut self,
         package: PackageSlot,
-        package_ir: PackageIr,
+        semantic_package: SemanticPackage,
     ) -> Option<()> {
-        self.db.packages.replace(package, package_ir)
+        self.db.packages.replace(package, semantic_package)
     }
 
     pub(crate) fn set_impl_header_facts(
@@ -145,7 +147,7 @@ impl SemanticIrDbMutator<'_> {
             .set_impl_header_facts(impl_ref.id, resolved_self_ty, resolved_trait_ref)
     }
 
-    fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
+    fn package_mut(&mut self, package: PackageSlot) -> Option<&mut SemanticPackage> {
         self.db.packages.make_mut(package)
     }
 

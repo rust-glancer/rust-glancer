@@ -1,7 +1,8 @@
-//! Builds and rebuilds semantic IR snapshots.
+//! Builds semantic item stores and rebuilds semantic IR package snapshots.
 
 mod impl_headers;
-mod lower;
+mod item_store;
+mod package;
 
 use anyhow::Context as _;
 
@@ -10,6 +11,8 @@ use rg_ir_model::PackageSlot;
 use rg_package_store::PackageSubset;
 
 use crate::{SemanticIrDb, SemanticIrLoader};
+
+pub use self::item_store::{ItemStoreLowerer, ItemStoreSourceReader};
 
 impl SemanticIrDb {
     /// Builds selected Semantic IR packages on top of this snapshot.
@@ -33,7 +36,8 @@ impl SemanticIrDb {
         {
             let mut mutator = next.mutator();
             for package in &packages {
-                let rebuilt = lower::build_package(item_tree, def_map, generated_items, *package)?;
+                let rebuilt =
+                    package::build_package(item_tree, def_map, generated_items, *package)?;
                 mutator
                     .replace_package(*package, rebuilt)
                     .with_context(|| {

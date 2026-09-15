@@ -5,10 +5,8 @@ use rg_ir_model::{GenericDefRef, ScopeId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{
-    GenericArgs, TraitRefLowering, Ty, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
-    inference::InferenceTable,
-};
+use rg_ty::lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery};
+use rg_ty::{GenericArgs, TraitRefLowering, Ty, inference::InferenceTable};
 
 use crate::resolution::BodyResolutionContext;
 

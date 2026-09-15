@@ -18,7 +18,9 @@ use rg_semantic_ir::{
 };
 use rg_std::{CancellationToken, UniqueVec};
 use rg_text::RustEdition;
-use rg_ty::{ItemPathQuery, TraitSelectionSession, TypeLoweringAnchor, TypePathResolver};
+use rg_ty::lookup::ItemPathQuery;
+use rg_ty::lowering::{TypeLoweringAnchor, TypePathResolver};
+use rg_ty::trait_selection::TraitSelectionSession;
 
 /// Read-only database handle used by all indexed-data views.
 ///

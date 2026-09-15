@@ -16,8 +16,9 @@ use std::{
 
 use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef};
 
-use crate::signature::TraitHeader;
-use crate::{CallableSignature, ImplHeader, OpaqueTy, TraitRefLowering, Ty};
+use crate::lowering::TraitHeader;
+use crate::lowering::{CallableSignature, ImplHeader};
+use crate::{OpaqueTy, TraitRefLowering, Ty};
 
 /// Opaque identities declared by one owner together with each identity's lowered bounds.
 pub(super) type OpaqueBounds = Vec<(OpaqueTy, Vec<TraitRefLowering>)>;

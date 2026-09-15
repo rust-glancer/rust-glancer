@@ -38,8 +38,9 @@ use rg_text::Name;
 
 use super::interner::RgChalkInterner;
 use crate::inference::InferenceTable;
+use crate::lookup::ItemPathQuery;
 use crate::trait_selection::{TraitGoal, TraitSelectionSession};
-use crate::{Clause, ItemPathQuery, TraitRefLowering};
+use crate::{Clause, TraitRefLowering};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 // Program extensions are relatively rare; a subsecond threshold still filters ordinary root
@@ -83,13 +84,13 @@ struct ChalkProgramRoots {
 #[derive(Default)]
 struct ChalkProgramScope {
     definitions: ChalkProgramRoots,
-    trait_headers: HashMap<TraitDefRef, Arc<crate::signature::TraitHeader>>,
+    trait_headers: HashMap<TraitDefRef, Arc<crate::lowering::TraitHeader>>,
     impls: Vec<ImplRef>,
     #[cfg(debug_assertions)] // Used to assert uniqueness without expensive `UniqueVec`
     discovered_impls: std::collections::HashSet<ImplRef>,
-    impl_headers: HashMap<ImplRef, Arc<crate::ImplHeader>>,
+    impl_headers: HashMap<ImplRef, Arc<crate::lowering::ImplHeader>>,
     opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
-    function_signatures: HashMap<FunctionRef, Arc<crate::CallableSignature>>,
+    function_signatures: HashMap<FunctionRef, Arc<crate::lowering::CallableSignature>>,
     loaded_opaque_owners: UniqueVec<GenericDefRef>,
 }
 

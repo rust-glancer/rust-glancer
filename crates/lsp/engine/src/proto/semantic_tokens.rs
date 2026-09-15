@@ -40,9 +40,9 @@ impl<'a> SemanticTokensEncoder<'a> {
     /// then shorter ranges at the same start; identical ranges retain their input order. Once
     /// a highlight is accepted, later highlights overlapping it are skipped in full.
     pub(crate) fn encode(mut self, mut highlights: Vec<Highlight>) -> SemanticTokens {
-        highlights.sort_by_key(|highlight| (highlight.span.text.start, highlight.span.text.end));
+        highlights.sort_by_key(|highlight| (highlight.span.start, highlight.span.end));
         for highlight in highlights {
-            let range = highlight.span.text.start as usize..highlight.span.text.end as usize;
+            let range = highlight.span.start as usize..highlight.span.end as usize;
             if range.start < self.end {
                 continue;
             }

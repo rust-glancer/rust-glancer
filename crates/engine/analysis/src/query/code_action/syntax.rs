@@ -1,6 +1,6 @@
 //! Ordinary request-source syntax shared by code-action providers.
 
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_syntax::{AstNode, SourceFile, TextSize, algo::find_node_at_offset, ast};
 
 /// The exact editor text, its ordinary Rust parse, and the requested part of the file.
@@ -15,7 +15,7 @@ pub(super) struct CodeActionSyntax<'source> {
 }
 
 impl<'source> CodeActionSyntax<'source> {
-    pub(super) fn new(source: &'source str, file: SourceFile, range: TextSpan) -> Self {
+    pub(super) fn new(source: &'source str, file: SourceFile, range: Span) -> Self {
         Self {
             source,
             file,
@@ -69,14 +69,12 @@ impl<'source> CodeActionSyntax<'source> {
     /// overlap the node; merely touching its closing edge is not enough.
     pub(super) fn request_applies_to<N: AstNode>(&self, node: &N) -> bool {
         self.selection
-            .applies_to(Span::from_text_range(node.syntax().text_range()).text)
+            .applies_to(Span::from_text_range(node.syntax().text_range()))
     }
 
     /// Check whether the first byte of the request lies in a node or at its closing edge.
     pub(super) fn request_starts_on<N: AstNode>(&self, node: &N) -> bool {
-        Span::from_text_range(node.syntax().text_range())
-            .text
-            .touches(self.selection.start())
+        Span::from_text_range(node.syntax().text_range()).touches(self.selection.start())
     }
 }
 
@@ -121,7 +119,7 @@ impl PathNameSyntax {
 /// a selection must share at least one byte with the token.
 enum RequestSelection {
     Cursor(u32),
-    Range(TextSpan),
+    Range(Span),
 }
 
 impl RequestSelection {
@@ -139,7 +137,7 @@ impl RequestSelection {
         }
     }
 
-    fn applies_to(&self, span: TextSpan) -> bool {
+    fn applies_to(&self, span: Span) -> bool {
         match self {
             Self::Cursor(offset) => span.touches(*offset),
             Self::Range(range) => span.start < range.end && range.start < span.end,
@@ -147,8 +145,8 @@ impl RequestSelection {
     }
 }
 
-impl From<TextSpan> for RequestSelection {
-    fn from(range: TextSpan) -> Self {
+impl From<Span> for RequestSelection {
+    fn from(range: Span) -> Self {
         if range.is_empty() {
             Self::Cursor(range.start)
         } else {

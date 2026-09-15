@@ -11,12 +11,13 @@ use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::OperationError;
-use rg_ty::{ExpectedAdtTyExt, TraitSelectionSession, Ty};
+use rg_ty::trait_selection::TraitSelectionSession;
+use rg_ty::{ExpectedAdtTyExt, Ty};
 
 use crate::{
     BodyData, BodyFacts,
-    ir::resolved::BodyResolution,
-    ir::{BindingKind, ExprWrapperKind},
+    body::facts::BodyResolution,
+    body::{BindingKind, ExprWrapperKind},
 };
 
 use crate::resolution::{
@@ -122,7 +123,7 @@ where
             .body
             .exprs()
             .iter()
-            .any(|expr| matches!(&expr.kind, crate::ir::ExprKind::MethodCall { .. }));
+            .any(|expr| matches!(&expr.kind, crate::body::ExprKind::MethodCall { .. }));
 
         // Seed syntax-directed expression facts before annotations introduce inference holes.
         // Method declarations are deferred until call inference has had a chance to retain a
@@ -376,7 +377,8 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
         .expect("fixture lookup builds");
         for cancel in [true, false] {
             let cancellation = CancellationToken::new();
-            let session = rg_ty::TraitSelectionSession::new(target).with_cancellation(cancellation);
+            let session = rg_ty::trait_selection::TraitSelectionSession::new(target)
+                .with_cancellation(cancellation);
             CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
             let result = super::BodyResolutionPass::new(
                 &def_map,

@@ -6,9 +6,10 @@ use rg_item_tree::{FieldItem, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{AdtTy, AutoderefMode, ReferencePeelingCandidates, Ty};
+use rg_ty::autoderef::{AutoderefMode, ReferencePeelingCandidates};
+use rg_ty::{AdtTy, Ty};
 
-use crate::{BodyPath, ir::resolved::BodyResolution, resolution::BodyResolutionContext};
+use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// One field projection at the selected receiver-adjustment depth.
 ///

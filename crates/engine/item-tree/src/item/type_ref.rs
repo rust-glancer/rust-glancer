@@ -784,7 +784,7 @@ impl TypeFormatter<'static, CanonicalTypeNames> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
     use rg_text::Name;
 
     use super::{TypePath, TypePathAnchor, TypePathSegment, TypeRef};
@@ -881,8 +881,6 @@ mod tests {
     }
 
     fn span() -> Span {
-        Span {
-            text: TextSpan { start: 0, end: 0 },
-        }
+        Span { start: 0, end: 0 }
     }
 }

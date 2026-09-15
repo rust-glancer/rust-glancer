@@ -23,7 +23,7 @@ pub use query::{
 pub use rg_ir_view::SymbolKind;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, PackageSlot, Span, TextSpan};
+use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
@@ -70,9 +70,9 @@ impl AssociatedSavedHeader {
     /// Preserve the cursor's position within an associated header token.
     fn saved_offset_for(&self, current_offset: u32) -> u32 {
         let within_token = current_offset
-            .saturating_sub(self.current.text.start)
+            .saturating_sub(self.current.start)
             .min(self.current.len());
-        self.saved.text.start + within_token.min(self.saved.len())
+        self.saved.start + within_token.min(self.saved.len())
     }
 }
 
@@ -89,7 +89,7 @@ impl<'a> Analysis<'a> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<Highlight>> {
         self.run_query("documentation highlighting", || {
             documentation::DocumentationHighlighter::new(self).highlight(crate_ref, file, range)
@@ -370,7 +370,7 @@ impl<'a> Analysis<'a> {
         let symbols = SourceSymbolIndex::new(self.view_db()).saved_declaration_symbols_at(
             crate_ref,
             file_id,
-            association.saved_span().text.start,
+            association.saved_span().start,
         )?;
         Ok(Self::narrowest_source_symbol(symbols)
             .and_then(|symbol| symbol.for_associated_header(association.current_span())))
@@ -449,7 +449,7 @@ impl<'a> Analysis<'a> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         self.run_query("inlay_hints", || {
             query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)

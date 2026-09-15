@@ -17,7 +17,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     source::{IndexedUnqualifiedNameContext, SourceCompletionView},
@@ -304,10 +304,8 @@ impl<'a, 'db, 'source> SpecializedCompletionResolver<'a, 'db, 'source> {
     ) -> Option<(&'syntax str, CompletionEdit)> {
         let content = syntax.string_content_span()?;
         let typed = Span {
-            text: TextSpan {
-                start: content.text.start,
-                end: syntax.prefix().span().text.end,
-            },
+            start: content.start,
+            end: syntax.prefix().span().end,
         };
         let prefix = syntax.source_text(typed)?;
         if !prefix

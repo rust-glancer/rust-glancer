@@ -591,8 +591,7 @@ fn tt_span_for_range(
         return span;
     }
 
-    let text_range =
-        rg_syntax::TextRange::new(origin_span.text.start.into(), origin_span.text.end.into());
+    let text_range = rg_syntax::TextRange::new(origin_span.start.into(), origin_span.end.into());
     SpanFactory::new(
         u32::try_from(origin_file_id.0).expect("file id should fit macro span storage"),
         syntax_edition(edition),

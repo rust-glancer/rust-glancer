@@ -17,7 +17,7 @@
 //!                         ^^^ binding span; resolve the surrounding `Iterator`
 //! ```
 
-use rg_ir_model::{Path, Span, TextSpan};
+use rg_ir_model::{Path, Span};
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypeRef};
 
 use super::{AssociatedPathQualifier, TypeNamePosition};
@@ -232,8 +232,8 @@ impl TypePathCompletionSite {
         // Generic argument text also extends past the segment name. That suffix must not be
         // mistaken for the synthetic empty segment recovered after a trailing `::`.
         if !last_segment.args.is_empty()
-            || path.source_span.text.end != last_segment.span.text.end + 2
-            || !(last_segment.span.text.end..=path.source_span.text.end).contains(&offset)
+            || path.source_span.end != last_segment.span.end + 2
+            || !(last_segment.span.end..=path.source_span.end).contains(&offset)
         {
             return None;
         }
@@ -242,10 +242,8 @@ impl TypePathCompletionSite {
             module_qualifier: path.as_def_map_path(),
             associated_qualifier: Self::associated_qualifier(path, path.segments.len())?,
             member_prefix_span: Span {
-                text: TextSpan {
-                    start: offset,
-                    end: offset,
-                },
+                start: offset,
+                end: offset,
             },
         })
     }
@@ -288,7 +286,7 @@ impl TypePathCompletionSite {
 pub(super) fn identifier_prefix_at(name: &str, span: Span, offset: u32) -> String {
     // Lowering retains the complete identifier, while completion only replaces what the user has
     // typed before the cursor.
-    let end = offset.saturating_sub(span.text.start).min(span.len());
+    let end = offset.saturating_sub(span.start).min(span.len());
     let mut end = usize::try_from(end).unwrap_or(name.len());
     while !name.is_char_boundary(end) {
         end = end.saturating_sub(1);

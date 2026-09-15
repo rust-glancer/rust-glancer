@@ -1,6 +1,6 @@
 //! Selection and progress for current-source preparation.
 
-use rg_ir_model::TextSpan;
+use rg_ir_model::Span;
 
 /// Why selected current source could not be given a semantic context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
@@ -47,5 +47,5 @@ pub enum CurrentSourceSelection {
     /// Select the nearest body and enclosing impl, including recovery for an unfinished cursor site.
     AtOffset(u32),
     /// Select every body whose source has a strict half-open overlap with the range.
-    IntersectingRange(TextSpan),
+    IntersectingRange(Span),
 }

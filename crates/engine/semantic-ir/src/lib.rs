@@ -9,8 +9,9 @@
 //! ownership.
 
 mod build;
-mod ir;
 mod item;
+mod package;
+mod stats;
 mod store;
 #[doc(hidden)]
 pub mod testonly;
@@ -19,15 +20,17 @@ pub mod testonly;
 mod tests;
 
 pub use self::{
-    ir::{CrateIr, PackageIr, PackageIrManifest, SemanticIrStats},
+    build::{ItemStoreLowerer, ItemStoreSourceReader},
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,
         FunctionData, FunctionSignature, GenericParamSource, GenericParamView, Generics,
         GenericsQuery, ImplData, ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery,
         ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore,
-        ItemStoreBuilder, ItemStoreLowerer, ItemStoreQuery, ItemStoreSource, ItemStoreSourceReader,
-        SelfTypeOwner, SemanticItemView, StaticData, StructData, TraitData, TraitImplSelfHead,
-        TypeAliasData, TypeAliasSignature, TypePathContext, TypePathResolution, UnionData,
+        ItemStoreBuilder, ItemStoreQuery, ItemStoreSource, SelfTypeOwner, SemanticItemView,
+        StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
+        TypePathContext, TypePathResolution, UnionData,
     },
+    package::{SemanticCrate, SemanticPackage, SemanticPackageManifest},
+    stats::SemanticIrStats,
     store::{LoadSemanticIr, SemanticIrDb, SemanticIrLoader, SemanticIrReadTxn},
 };

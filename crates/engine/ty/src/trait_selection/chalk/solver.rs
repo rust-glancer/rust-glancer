@@ -36,10 +36,11 @@ use super::lower::{ChalkLowerer, GenericBinderEnv};
 use super::program::{ChalkProgramState, ProgramAvailability};
 use super::raise;
 use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
+use crate::lookup::ItemPathQuery;
 use crate::trait_selection::{
-    AssocProjectionResult, TraitGoal, TraitSelectionSession, session::TraitWorkKind,
+    AssocProjectionResult, TraitGoal, TraitSelectionSession, work::TraitWorkKind,
 };
-use crate::{Clause, GenericArg, GenericArgs, ItemPathQuery, TraitApplication};
+use crate::{Clause, GenericArg, GenericArgs, TraitApplication};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;

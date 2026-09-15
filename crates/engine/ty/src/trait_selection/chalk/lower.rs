@@ -35,11 +35,12 @@ use rg_semantic_ir::{Generics, TypeAliasData};
 use super::evidence::{ProjectionAliasLowering, SolverVariableEnv};
 use super::interner::{ChalkDefId, RgChalkInterner};
 use crate::inference::{InferVarKind, InferenceTable};
-use crate::signature::TraitHeader;
+use crate::lowering::TraitHeader;
+use crate::lowering::{CallableSignature, ImplHeader};
 use crate::trait_selection::TraitGoal;
 use crate::{
-    AliasTy, CallableSignature, Clause, ConstValue, FloatTy, GenericArg, ImplHeader, Lifetime,
-    PrimitiveTy, SignedIntTy, TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
+    AliasTy, Clause, ConstValue, FloatTy, GenericArg, Lifetime, PrimitiveTy, SignedIntTy,
+    TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
 };
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;

@@ -1,5 +1,9 @@
 //! Analysis project snapshots and the storage used to serve them.
 //!
+//! `indexing` builds saved analysis, `change` applies saved source and workspace changes, and
+//! `query` prepares request views. `storage` owns residency and artifact backing. `ProjectState`
+//! keeps the source generation and phase databases shared by those operations.
+//!
 //! Several mechanisms here avoid repeating work, but they do not share one lifetime or failure
 //! policy. Read them as three layers rather than one general cache:
 //!
@@ -19,12 +23,16 @@
 //! unless callers genuinely need to reason about them on their own. A cache miss must change cost,
 //! never query meaning.
 
-pub(crate) mod cache;
+mod change;
 mod indexing;
 mod memory;
 mod profile;
 mod project;
-mod residency;
+mod query;
+mod selection;
+mod state;
+mod stats;
+mod storage;
 
 use std::sync::OnceLock;
 
@@ -34,21 +42,23 @@ pub use rg_body_ir::{
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
 pub use self::{
-    indexing::{IndexingPerformancePreference, PackageBatchSize},
+    change::{AnalysisChangeSummary, ChangedFile, SavedFileChange},
+    indexing::{
+        AnalysisSurface, BodyPublication, BodyPublicationOutcome, IndexingPerformancePreference,
+        PackageBatchSize, ProjectBuilder, SavedBodyBuildInputs, SavedBodyProducts, SplitIndexing,
+        SplitIndexingMode, SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
+    },
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
-    project::{
-        AnalysisChangeSummary, AnalysisSurface, BodyPublication, BodyPublicationOutcome,
-        ChangedFile, DocumentSourceView, FileContext, MacroExpansionLimitBuildSummary, Project,
-        ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedBodyBuildInputs,
-        SavedBodyProducts, SavedFileChange, SplitIndexing, SplitIndexingMode,
-        SplitIndexingProgress, SplitIndexingStage, StartupCacheLoad,
-    },
-    residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
+    project::Project,
+    query::{DocumentSourceView, FileContext, ProjectSnapshot},
+    state::ProjectGenerationId,
+    stats::{MacroExpansionLimitBuildSummary, ProjectStats},
+    storage::residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };
 
 #[doc(hidden)]
-pub use self::project::bench_support;
+pub use self::indexing::bench_support;
 
 #[cfg(test)]
 pub mod testonly;

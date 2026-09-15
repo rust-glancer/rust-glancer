@@ -2,11 +2,12 @@ use rg_std::{MemorySize, Shrink};
 use text_size::TextRange;
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Span representation in UTF-8 byte offsets from the beginning of the file.
+/// A half-open range of UTF-8 byte offsets from the beginning of the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct Span {
-    pub text: TextSpan,
+    pub start: u32,
+    pub end: u32,
 }
 
 impl Span {
@@ -15,53 +16,16 @@ impl Span {
         let start = u32::from(text_range.start());
         let end = u32::from(text_range.end());
 
-        Self {
-            text: TextSpan { start, end },
-        }
+        Self { start, end }
     }
 
-    /// Returns true when `offset` is inside the half-open text range.
-    pub fn contains(self, offset: u32) -> bool {
-        self.text.contains(offset)
-    }
-
-    /// Returns true when `other` is fully contained in this span.
-    pub fn contains_span(self, other: Span) -> bool {
-        self.text.contains_span(other.text)
-    }
-
-    /// Returns true when `offset` is inside the text range or exactly at its end.
-    pub fn touches(self, offset: u32) -> bool {
-        self.text.touches(offset)
-    }
-
-    /// Returns the byte length of the text range.
-    pub fn len(self) -> u32 {
-        self.text.len()
-    }
-
-    /// Returns true when the text range has no bytes.
-    pub fn is_empty(self) -> bool {
-        self.text.is_empty()
-    }
-}
-
-/// A half-open byte-offset range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[shrink(leaf)]
-pub struct TextSpan {
-    pub start: u32,
-    pub end: u32,
-}
-
-impl TextSpan {
     /// Returns true when `offset` is inside the half-open range: `start <= offset < end`.
     pub fn contains(self, offset: u32) -> bool {
         self.start <= offset && offset < self.end
     }
 
     /// Returns true when `other` is fully contained in this half-open range.
-    pub fn contains_span(self, other: TextSpan) -> bool {
+    pub fn contains_span(self, other: Span) -> bool {
         self.start <= other.start && other.end <= self.end
     }
 
@@ -83,31 +47,19 @@ impl TextSpan {
 
 #[cfg(test)]
 mod tests {
-    use super::TextSpan;
+    use super::Span;
 
     #[test]
     fn distinguishes_half_open_containment_from_cursor_touches() {
         let cases = [
-            (
-                "before start",
-                TextSpan { start: 10, end: 20 },
-                9,
-                false,
-                false,
-            ),
-            ("at start", TextSpan { start: 10, end: 20 }, 10, true, true),
-            ("inside", TextSpan { start: 10, end: 20 }, 15, true, true),
-            ("at end", TextSpan { start: 10, end: 20 }, 20, false, true),
-            (
-                "after end",
-                TextSpan { start: 10, end: 20 },
-                21,
-                false,
-                false,
-            ),
+            ("before start", Span { start: 10, end: 20 }, 9, false, false),
+            ("at start", Span { start: 10, end: 20 }, 10, true, true),
+            ("inside", Span { start: 10, end: 20 }, 15, true, true),
+            ("at end", Span { start: 10, end: 20 }, 20, false, true),
+            ("after end", Span { start: 10, end: 20 }, 21, false, false),
             (
                 "empty at start",
-                TextSpan { start: 10, end: 10 },
+                Span { start: 10, end: 10 },
                 10,
                 false,
                 true,
@@ -122,14 +74,14 @@ mod tests {
 
     #[test]
     fn checks_nested_span_containment() {
-        let parent = TextSpan { start: 10, end: 20 };
+        let parent = Span { start: 10, end: 20 };
         let cases = [
-            ("same", TextSpan { start: 10, end: 20 }, true),
-            ("inside", TextSpan { start: 12, end: 18 }, true),
-            ("empty at start", TextSpan { start: 10, end: 10 }, true),
-            ("empty at end", TextSpan { start: 20, end: 20 }, true),
-            ("overlaps left", TextSpan { start: 9, end: 12 }, false),
-            ("overlaps right", TextSpan { start: 18, end: 21 }, false),
+            ("same", Span { start: 10, end: 20 }, true),
+            ("inside", Span { start: 12, end: 18 }, true),
+            ("empty at start", Span { start: 10, end: 10 }, true),
+            ("empty at end", Span { start: 20, end: 20 }, true),
+            ("overlaps left", Span { start: 9, end: 12 }, false),
+            ("overlaps right", Span { start: 18, end: 21 }, false),
         ];
 
         for (label, child, expected) in cases {
@@ -140,9 +92,9 @@ mod tests {
     #[test]
     fn reports_span_range_shapes() {
         let cases = [
-            ("normal", TextSpan { start: 10, end: 20 }, 10, false),
-            ("empty", TextSpan { start: 10, end: 10 }, 0, true),
-            ("inverted", TextSpan { start: 20, end: 10 }, 0, true),
+            ("normal", Span { start: 10, end: 20 }, 10, false),
+            ("empty", Span { start: 10, end: 10 }, 0, true),
+            ("inverted", Span { start: 20, end: 10 }, 0, true),
         ];
 
         for (label, span, len, is_empty) in cases {

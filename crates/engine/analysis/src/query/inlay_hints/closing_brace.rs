@@ -1,4 +1,4 @@
-use rg_ir_model::{CrateRef, FileId, Span, TextSpan};
+use rg_ir_model::{CrateRef, FileId, Span};
 use rg_ir_view::{
     SymbolKind,
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
@@ -16,7 +16,7 @@ pub(super) fn closing_brace_hints(
     analysis: &Analysis<'_>,
     crate_ref: CrateRef,
     file_id: FileId,
-    range: Option<TextSpan>,
+    range: Option<Span>,
     source: &InlaySource<'_, '_>,
 ) -> anyhow::Result<Vec<InlayHint>> {
     const MIN_LINE_DELTA: u32 = 20;
@@ -34,7 +34,7 @@ pub(super) fn closing_brace_hints(
         if close_line.saturating_sub(open_line) < MIN_LINE_DELTA {
             continue;
         }
-        if range.is_some_and(|range| !range.touches(candidate.close_span.text.end)) {
+        if range.is_some_and(|range| !range.touches(candidate.close_span.end)) {
             continue;
         }
 
@@ -215,12 +215,10 @@ impl ClosingBraceCandidate {
 
         // These hints rely on semantic and Body IR spans preserving the block-like construct
         // extent. For the supported constructs, that extent ends immediately after `}`.
-        let close_start = block_span.text.end.checked_sub(1)?;
+        let close_start = block_span.end.checked_sub(1)?;
         let close_span = Span {
-            text: TextSpan {
-                start: close_start,
-                end: block_span.text.end,
-            },
+            start: close_start,
+            end: block_span.end,
         };
 
         Some(Self {
@@ -232,10 +230,10 @@ impl ClosingBraceCandidate {
     }
 
     fn open_offset(&self) -> u32 {
-        self.block_span.text.start
+        self.block_span.start
     }
 
     fn close_offset(&self) -> u32 {
-        self.close_span.text.start
+        self.close_span.start
     }
 }

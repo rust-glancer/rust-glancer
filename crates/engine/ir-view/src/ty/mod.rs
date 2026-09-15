@@ -13,10 +13,13 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
-use rg_ty::{
-    AdtTy, AliasTy, GenericArg, ItemPathQuery, ReferencePeelingCandidates, SemanticSignatureQuery,
-    Ty, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver as _,
+use rg_ty::autoderef::ReferencePeelingCandidates;
+use rg_ty::lookup::ItemPathQuery;
+use rg_ty::lowering::{
+    SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
+    TypePathResolver as _,
 };
+use rg_ty::{AdtTy, AliasTy, GenericArg, Ty};
 
 use crate::{
     IndexedViewDb,

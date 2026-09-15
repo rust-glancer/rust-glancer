@@ -10,7 +10,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
-use rg_ty::ItemPathQuery;
+use rg_ty::lookup::ItemPathQuery;
 
 use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};
 

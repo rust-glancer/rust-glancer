@@ -12,9 +12,10 @@ use rg_ir_model::{
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
+use super::chalk::ChalkOutcome;
 use super::matcher::TraitSelfHead;
-use super::session::{TraitWorkKind, TraitWorkLimit};
-use super::{ChalkOutcome, TraitGoal, TraitSelection, TraitSelectionQuery};
+use super::work::{TraitWorkKind, TraitWorkLimit};
+use super::{TraitGoal, TraitSelection, TraitSelectionQuery};
 use crate::inference::InferenceTable;
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
@@ -43,7 +44,7 @@ pub struct AssocProjectionResult {
 /// Chalk. The path also tells normalization to preserve solver-shaped projections for the outer
 /// combined goal instead of solving each one independently.
 #[derive(Clone, Copy)]
-pub(super) struct CandidateEvidence<'path> {
+pub(crate) struct CandidateEvidence<'path> {
     active_impls: &'path [ImplRef],
     native_declarations_only: bool,
 }

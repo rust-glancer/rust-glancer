@@ -11,7 +11,7 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{BodyPath, PatKind, RecordPatField},
+    body::{BodyPath, PatKind, RecordPatField},
     resolution::BodyResolutionContext,
 };
 

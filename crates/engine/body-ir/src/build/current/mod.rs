@@ -5,7 +5,6 @@
 //! Mechanical body lowering and local-item collection remain shared with saved indexing.
 
 mod body;
-pub(crate) mod declaration;
 mod saved_identity;
 mod syntax_owner;
 mod types;
@@ -21,13 +20,14 @@ use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
-use rg_ty::TraitSelectionSession;
+use rg_ty::trait_selection::TraitSelectionSession;
 
 use crate::store::current::{CurrentImplData, CurrentImplRole, SelectedImpl};
 use crate::{BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData};
 
-use self::{body::CurrentBodyBuilder, declaration::CurrentDeclarationBuilder};
+use self::body::CurrentBodyBuilder;
 use super::local_items::LocalItemSource;
+use super::lower::CurrentDeclarationBuilder;
 
 pub use self::types::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
@@ -180,7 +180,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                     // At `impl Service for Worker { $0`, the parser can end the impl at `{`.
                     // Whitespace after an unclosed member list still belongs to that impl. Read
                     // the captured syntax here; the completion marker must not enter semantics.
-                    span.text.end <= offset
+                    span.end <= offset
                         && offset as usize <= self.source.text().len()
                         && impl_
                             .assoc_item_list()
@@ -188,7 +188,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         && self
                             .source
                             .text()
-                            .get(span.text.end as usize..)
+                            .get(span.end as usize..)
                             .is_some_and(|tail| tail.chars().all(char::is_whitespace))
                 };
                 if contains_cursor {

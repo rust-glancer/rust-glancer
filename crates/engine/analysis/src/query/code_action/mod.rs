@@ -12,7 +12,7 @@ mod syntax;
 mod trait_impl;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, TextSpan};
+use rg_ir_model::{CrateRef, FileId, Span};
 
 use crate::{Analysis, CodeAction, CodeActionKind};
 
@@ -83,7 +83,7 @@ pub struct CodeActionQuery<'source> {
     /// File inside `crate_ref` that owns the captured source.
     pub file_id: FileId,
     /// Selected UTF-8 range in `source_text`.
-    pub range: TextSpan,
+    pub range: Span,
     /// Exact editor buffer for syntax selection and source edits.
     pub source_text: &'source str,
     /// Action families that survived the client's request filter.
@@ -96,7 +96,7 @@ impl<'source> CodeActionQuery<'source> {
     pub fn new(
         crate_ref: CrateRef,
         file_id: FileId,
-        range: TextSpan,
+        range: Span,
         source_text: &'source str,
     ) -> Self {
         Self {
@@ -242,33 +242,31 @@ impl<'analysis, 'db, 'source> CodeActionResolver<'analysis, 'db, 'source> {
             .map(|edit| edit.replace)
             .collect::<Vec<_>>();
         if spans.iter().any(|span| {
-            let (Ok(start), Ok(end)) = (
-                usize::try_from(span.text.start),
-                usize::try_from(span.text.end),
-            ) else {
+            let (Ok(start), Ok(end)) = (usize::try_from(span.start), usize::try_from(span.end))
+            else {
                 return true;
             };
-            span.text.start > span.text.end
-                || span.text.end > source_len
+            span.start > span.end
+                || span.end > source_len
                 || !source.is_char_boundary(start)
                 || !source.is_char_boundary(end)
         }) {
             return false;
         }
-        spans.sort_by_key(|span| (span.text.start, span.text.end));
+        spans.sort_by_key(|span| (span.start, span.end));
         spans.windows(2).all(|pair| {
             let [left, right] = pair else {
                 return true;
             };
-            left.text.end <= right.text.start
-                && !(left.is_empty() && right.is_empty() && left.text.start == right.text.start)
+            left.end <= right.start
+                && !(left.is_empty() && right.is_empty() && left.start == right.start)
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::{Span, TextSpan};
+    use rg_ir_model::Span;
 
     use crate::{CodeAction, CodeActionEdit, CodeActionKind};
 
@@ -285,9 +283,7 @@ mod tests {
 
     fn edit(start: u32, end: u32) -> CodeActionEdit {
         CodeActionEdit {
-            replace: Span {
-                text: TextSpan { start, end },
-            },
+            replace: Span { start, end },
             new_text: "replacement".to_string(),
         }
     }

@@ -11,7 +11,7 @@ use rg_syntax::{AstNode as _, SourceFile, SyntaxNode, ast};
 use rg_text::Name;
 
 use super::CurrentSourceSelection;
-use super::declaration::CurrentDeclarationBuilder;
+use crate::build::lower::CurrentDeclarationBuilder;
 
 /// A function, const, or static that has a body in the editor's syntax tree.
 ///
@@ -52,7 +52,7 @@ impl SyntaxBodyOwner {
                 .into_iter()
                 .filter(|owner| {
                     let body = owner.body_span();
-                    range.start < body.text.end && body.text.start < range.end
+                    range.start < body.end && body.start < range.end
                 })
                 .collect(),
         })

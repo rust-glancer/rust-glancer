@@ -723,8 +723,8 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         symbols.sort_by_key(|symbol| {
             let declaration = symbol.declaration();
             (
-                declaration.span().text.start,
-                declaration.span().text.end,
+                declaration.span().start,
+                declaration.span().end,
                 declaration.kind(),
                 declaration.name().to_string(),
             )
@@ -733,8 +733,6 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
     /// Return whether one span contains another without being equal.
     fn span_strictly_contains(parent: Span, child: Span) -> bool {
-        parent.text.start <= child.text.start
-            && child.text.end <= parent.text.end
-            && parent.text != child.text
+        parent.start <= child.start && child.end <= parent.end && parent != child
     }
 }

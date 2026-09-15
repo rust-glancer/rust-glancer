@@ -7,7 +7,7 @@
 use rg_ir_model::{ExprBinaryOp, ExprUnaryOp};
 use rg_syntax::ast;
 
-use crate::ir::{
+use crate::body::{
     ClosureCapture, ClosureKind, ExprAssignOp, ExprRangeKind, PatBindingMode, PatRangeKind,
     RecordFieldSyntax,
 };

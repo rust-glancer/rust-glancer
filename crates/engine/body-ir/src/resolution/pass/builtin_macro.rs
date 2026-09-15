@@ -5,7 +5,7 @@
 //! module keeps the synthetic type construction out of the general expression walker.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, Mutability, Span, TextSpan};
+use rg_ir_model::{BuiltinMacroExprKind, ExprId, Mutability, Span};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
@@ -136,10 +136,8 @@ where
         let expr_data = self.context.body().expr_unchecked(expr);
         let source_span = expr_data.source.span;
         Span {
-            text: TextSpan {
-                start: source_span.text.start,
-                end: source_span.text.start,
-            },
+            start: source_span.start,
+            end: source_span.start,
         }
     }
 

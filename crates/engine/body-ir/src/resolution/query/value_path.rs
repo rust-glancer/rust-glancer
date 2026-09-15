@@ -16,7 +16,7 @@ use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Ty};
 
-use crate::ir::resolved::BodyResolution;
+use crate::body::facts::BodyResolution;
 use crate::resolution::BodyResolutionContext;
 
 /// Resolves paths in the value namespace without mutating the body.

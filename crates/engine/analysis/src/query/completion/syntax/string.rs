@@ -1,6 +1,6 @@
 //! String-owned and macro-token completion classifiers.
 
-use rg_ir_model::{Span, TextSpan};
+use rg_ir_model::Span;
 use rg_syntax::{
     AstNode as _, AstToken as _, SyntaxKind,
     ast::{self, IsString as _},
@@ -18,8 +18,8 @@ impl<'source> CompletionSyntaxContext<'source> {
     ) -> Option<CompletionPrefix<'source>> {
         let content = self.string_content_span_impl()?;
         let cursor = usize::try_from(self.offset).ok()?;
-        let content_start = usize::try_from(content.text.start).ok()?;
-        if cursor < content_start || content.text.end < self.offset {
+        let content_start = usize::try_from(content.start).ok()?;
+        if cursor < content_start || content.end < self.offset {
             return None;
         }
         let before_cursor = self.source.get(content_start..cursor)?;
@@ -33,10 +33,8 @@ impl<'source> CompletionSyntaxContext<'source> {
         Some(CompletionPrefix {
             text: self.source.get(start..cursor)?,
             span: Span {
-                text: TextSpan {
-                    start: u32::try_from(start).ok()?,
-                    end: self.offset,
-                },
+                start: u32::try_from(start).ok()?,
+                end: self.offset,
             },
         })
     }
@@ -54,13 +52,11 @@ impl<'source> CompletionSyntaxContext<'source> {
             let start = u32::from(literal.syntax().text_range().start())
                 .checked_add(u32::try_from(open_quote + 1).ok()?)?;
             Span {
-                text: TextSpan {
-                    start,
-                    end: self.offset,
-                },
+                start,
+                end: self.offset,
             }
         };
-        (span.text.start <= self.offset && self.offset <= span.text.end).then_some(span)
+        (span.start <= self.offset && self.offset <= span.end).then_some(span)
     }
 
     /// Select the expression immediately before a field-access completion marker.

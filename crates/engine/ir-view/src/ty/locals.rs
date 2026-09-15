@@ -10,7 +10,7 @@ use rg_body_ir::{BindingKind, ExprKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyBindingRef, BodyRef, CrateRef, DefMapRef, ExprId, FileId, FunctionRef,
-    GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span, TextSpan,
+    GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span,
     identity::DeclarationRef,
 };
 use rg_semantic_ir::ItemStoreQuery;
@@ -446,7 +446,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
-        range: Option<TextSpan>,
+        range: Option<Span>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
         let mut bindings = Vec::new();
         for (_, body) in self
@@ -473,7 +473,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if matches!(ty, Ty::Unknown) {
                     continue;
                 }
-                if range.is_some_and(|range| !range.touches(binding.source.span.text.end)) {
+                if range.is_some_and(|range| !range.touches(binding.source.span.end)) {
                     continue;
                 }
 

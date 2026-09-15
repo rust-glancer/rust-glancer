@@ -25,7 +25,7 @@ use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger, CompletionQuery,
     CompletionSource, InlayHint as AnalysisInlayHint,
 };
-use rg_ir_model::TextSpan;
+use rg_ir_model::Span;
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
     DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot,
@@ -86,7 +86,7 @@ impl DocumentSelection {
                 let end = line_index.offset_from_utf16_position(
                     crate::proto::position::parse_position(range.end),
                 )?;
-                Some(CurrentSourceSelection::IntersectingRange(TextSpan {
+                Some(CurrentSourceSelection::IntersectingRange(Span {
                     start,
                     end,
                 }))
@@ -142,7 +142,7 @@ impl DocumentAnalysis<'_> {
         }
     }
 
-    fn range(&self) -> TextSpan {
+    fn range(&self) -> Span {
         match self.selection {
             CurrentSourceSelection::IntersectingRange(range) => range,
             CurrentSourceSelection::AtOffset(_) => {
@@ -572,7 +572,7 @@ impl<'a> QueryRunner<'a> {
             let query = CodeActionQuery::new(
                 target.crate_ref,
                 target.context.file,
-                TextSpan { start, end },
+                Span { start, end },
                 document.text(),
             )
             .with_kinds(kinds)
