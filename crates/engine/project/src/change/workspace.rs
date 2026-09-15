@@ -1,0 +1,107 @@
+//! Rebuilds the whole analysis project after workspace graph changes.
+//!
+//! When Cargo metadata can change package, target, or dependency slots, partial reuse becomes more
+//! dangerous than useful. This path reloads metadata and rebuilds every non-sysroot package so the
+//! downstream phase databases return to a single consistent snapshot.
+
+use std::{collections::HashSet, sync::Arc};
+
+use anyhow::Context as _;
+
+use rg_workspace::WorkspaceMetadata;
+
+use crate::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
+
+use super::source;
+
+pub(super) fn rebuild_workspace_graph(
+    project: &mut Project,
+    changes: &[SavedFileChange],
+    startup_cache_load: StartupCacheLoad,
+) -> anyhow::Result<AnalysisChangeSummary> {
+    let manifest_path = project
+        .state
+        .workspace()
+        .workspace_root()
+        .join("Cargo.toml");
+    let sysroot = project.state.workspace().sysroot_sources();
+    let workspace_lowering_config = project.state.workspace_lowering_config.clone();
+    let cargo_metadata_config = project.state.cargo_metadata_config.clone();
+    let memory_hooks = Arc::clone(&project.state.memory_hooks);
+    let loaded = cargo_metadata_config
+        .load_metadata_with_target_cfg(&manifest_path)
+        .with_context(|| format!("while attempting to load {}", manifest_path.display()))?;
+    let workspace = WorkspaceMetadata::lower(
+        loaded.metadata,
+        loaded.target_cfg,
+        workspace_lowering_config.clone(),
+    )
+    .context("while attempting to normalize Cargo metadata")?
+    .with_sysroot_sources(sysroot);
+    let body_ir_policy = project.state.body_ir_policy;
+    let split_indexing_mode = project.state.split_indexing_mode;
+    let indexing_preference = project.state.indexing_preference;
+    let package_batch_size = project.state.package_batch_size;
+    let package_residency_policy = project.state.package_residency_policy;
+
+    // Cargo graph edits can add, remove, or reorder packages, targets, and dependencies. Starting
+    // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
+    // reuse state whose internal ids may no longer describe the refreshed metadata graph.
+    project.state = Project::builder(workspace)
+        .workspace_lowering_config(workspace_lowering_config)
+        .cargo_metadata_config(cargo_metadata_config)
+        .body_ir_policy(body_ir_policy)
+        .split_indexing_mode(split_indexing_mode)
+        .indexing_preference(indexing_preference)
+        .package_batch_size(package_batch_size)
+        .package_residency_policy(package_residency_policy)
+        .startup_cache_load(startup_cache_load)
+        .memory_hooks(memory_hooks)
+        .build()
+        .context("while attempting to build refreshed analysis project")?
+        .state;
+
+    // A graph rebuild discovers its file set through Cargo and module traversal, but exact captured
+    // Rust inputs still own their bytes. Reinstall them into the private candidate after discovery.
+    // When traversal observed the same value this is a no-op; when disk advanced, final validation
+    // rejects the candidate instead of acknowledging a project built from newer bytes.
+    let captured_sources = changes
+        .iter()
+        .filter(|change| change.captured_source().is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !captured_sources.is_empty() {
+        source::apply_source_changes(project, captured_sources)
+            .context("while attempting to install captured sources after workspace rebuild")?;
+    }
+
+    let mut changed_files = Vec::new();
+    let mut changed_files_seen = HashSet::new();
+    for change in changes {
+        for file in project.state.file_refs_for_path(change.path()) {
+            let changed_file = ChangedFile {
+                package: file.package,
+                file: file.file,
+            };
+            if changed_files_seen.insert(changed_file) {
+                changed_files.push(changed_file);
+            }
+        }
+    }
+    let mut affected_packages = Vec::new();
+    let mut changed_crates = Vec::new();
+
+    // The rebuilt project has already restored its package residency, so payload-heavy phase
+    // databases may be empty under aggressive offloading. ProjectState keeps the small graph
+    // metadata that change summaries need resident.
+    for package_slot in project.state.non_sysroot_package_slots() {
+        affected_packages.push(package_slot);
+        changed_crates.extend(project.state.crate_refs_for_package(package_slot));
+    }
+
+    Ok(AnalysisChangeSummary {
+        changed_files,
+        affected_packages,
+        changed_crates,
+    })
+}

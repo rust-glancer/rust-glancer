@@ -1,0 +1,187 @@
+//! Rebuilds selected packages inside an existing project snapshot.
+//!
+//! The candidate first resets each selected package to its Cargo roots, then rediscovers ordinary
+//! modules and files exposed by expanded `mod` or `include!` syntax. Its source inventory is sealed
+//! only after that complete file set has converged.
+
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use rg_body_ir::BodyIrBuilder;
+use rg_ir_model::PackageSlot;
+use rg_item_tree::ItemTreeDb;
+use rg_std::Shrink;
+
+use crate::{
+    ProjectMemoryPurgePoint, SplitIndexingMode,
+    selection::PhasePackageSet,
+    state::ProjectState,
+    stats::MacroExpansionLimitBuildSummary,
+    storage::{loaders::PackageReadLoaders, residency::ResidencyApplication},
+};
+
+use super::macro_source_files;
+
+pub(crate) fn rebuild_packages(
+    state: &mut ProjectState,
+    packages: &[PackageSlot],
+) -> anyhow::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    match try_rebuild_packages(state, packages) {
+        Ok(()) => {
+            state
+                .memory_hooks
+                .purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
+            Ok(())
+        }
+        Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
+            super::recovery::recover_from_cache_load_failure(state).with_context(|| {
+                format!(
+                    "while attempting to recover analysis project after package cache load failed during package rebuild: {error}",
+                )
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> anyhow::Result<()> {
+    let packages = PhasePackageSet::from_slice(packages);
+    // Rebuilding one package can resolve names through its dependencies, but unrelated packages
+    // should stay offloaded so save handling does not recreate full-project spikes.
+    let rebuild_subset = packages.visible_dependency_subset(&state.workspace);
+    let package_indices = packages.package_indices();
+
+    // Replace the package file table before discovering modules again. Keeping the old table would
+    // make removed modules permanent members of source validation and cache snapshots even after
+    // the new ItemTree stopped reaching them.
+    Arc::make_mut(&mut state.parse)
+        .reset_packages_from_workspace(&state.workspace, &package_indices)
+        .context("while attempting to reset rebuilt package source roots")?;
+
+    let loaders = PackageReadLoaders::for_package_rebuild(state, packages.as_slice());
+    let old_def_map_txn = state
+        .def_map
+        .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
+
+    let mut item_tree = ItemTreeDb::build_packages(
+        Arc::make_mut(&mut state.parse),
+        &package_indices,
+        &mut state.names,
+    )
+    .context("while attempting to rebuild affected item-tree packages")?;
+
+    // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
+    // declarations, and body lowering reparses only the files it needs.
+    Arc::make_mut(&mut state.parse).evict_syntax_trees();
+    Arc::make_mut(&mut state.parse).shrink_to_fit();
+    state
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
+
+    // Fresh indexing exposes more allocator purge boundaries because it can build the whole
+    // workspace at once. Saved package rebuilds are usually smaller, so avoid adding extra
+    // def-map/body purges to this path.
+    // Keep Parse and ItemTree mutable until macro source-file requests stop adding files. This uses
+    // the same coordinator as fresh construction for both macro-generated modules and generated
+    // includes, while clean dependency packages stay lazy.
+    let memory_hooks = Arc::clone(&state.memory_hooks);
+    // The rebuild must produce every selected package before one coherent cache update can run.
+    // Early-start packages cannot be offloaded until deferred Body IR becomes durable, so compact
+    // those temporary residents as well as packages selected for final resident storage.
+    let copy_compact_packages = state
+        .split_indexing_mode
+        .copy_compact_packages(&state.package_residency, packages.as_slice());
+    let def_map_output = macro_source_files::build_packages(
+        &state.def_map,
+        &old_def_map_txn,
+        &state.workspace,
+        Arc::make_mut(&mut state.parse),
+        &mut item_tree,
+        &packages,
+        &copy_compact_packages,
+        &mut state.names,
+        state.indexing_preference.macro_expansion_preference(),
+        memory_hooks.as_ref(),
+    )
+    .context("while attempting to rebuild affected def-map packages")?;
+    let (def_map, generated_items) = def_map_output.into_parts();
+    drop(old_def_map_txn);
+    // The selected package file tables now contain only sources reachable from this rebuild,
+    // including late macro source files and excluding generated paths that disappeared.
+    state.parse.seal_sources();
+    let macro_expansion_limit_summary =
+        MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());
+    let semantic_ir = state
+        .semantic_ir
+        .build_packages(
+            &item_tree,
+            &def_map,
+            &generated_items,
+            packages.as_slice(),
+            loaders.def_map.clone(),
+            loaders.semantic_ir.clone(),
+            &rebuild_subset,
+        )
+        .context("while attempting to rebuild affected semantic IR packages")?;
+    drop(generated_items);
+
+    let body_builder = BodyIrBuilder::new(
+        &state.parse,
+        &def_map,
+        &semantic_ir,
+        packages.as_slice(),
+        &copy_compact_packages,
+        &mut state.names,
+        loaders.def_map.clone(),
+        loaders.semantic_ir.clone(),
+        &rebuild_subset,
+    )
+    .worker_limit(state.indexing_preference.body_ir_worker_limit());
+    let mut body_ir = state.body_ir.clone();
+    match state.split_indexing_mode {
+        SplitIndexingMode::Full => {
+            let products = body_builder
+                .configured_bodies(state.body_ir_policy)
+                .build()
+                .context("rebuild body products")?;
+            body_ir
+                .replace_built_packages(products)
+                .context("assemble rebuilt body packages")?;
+        }
+        SplitIndexingMode::EarlyStart => {
+            for (package, coverage) in body_builder
+                .prepare_coverage(state.body_ir_policy)
+                .context("prepare rebuilt body coverage")?
+            {
+                body_ir
+                    .replace_package(package, coverage)
+                    .context("initialize rebuilt body directory")?;
+            }
+        }
+    }
+    // Validate every late read and missing-path probe before the candidate replaces retained state.
+    state
+        .parse
+        .validate_saved_sources()
+        .context("while attempting to validate captured project source generation")?;
+    state.parse.evict_saved_source_text();
+
+    // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
+    // that did not survive into retained DBs are no longer treated as live.
+    drop(item_tree);
+
+    state.macro_expansion_limit_summary = macro_expansion_limit_summary;
+    state.def_map = def_map;
+    state.semantic_ir = semantic_ir;
+    state.body_ir = body_ir;
+    Shrink::shrink_to_fit(&mut state.names);
+    ResidencyApplication::restore(state, packages.as_slice())
+        .apply()
+        .context("while attempting to apply package cache residency after package rebuild")?;
+
+    Ok(())
+}
