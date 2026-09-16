@@ -23,5 +23,4 @@ wildcards = "allow"
 [sources]
 allow-git = [
   "https://github.com/rust-lang/rust-analyzer",
-  "https://github.com/popzxc/tower-lsp-server",
 ]
