@@ -107,9 +107,7 @@ text-size = "1.1.0"
 thiserror = "2.0.18"
 tokio = "1.52.3"
 tower = "0.5.2"
-# TODO: Switch back to tower-lsp-community/tower-lsp-server once PR #84 is merged.
-# https://github.com/tower-lsp-community/tower-lsp-server/pull/84
-tower-lsp-server = { git = "https://github.com/popzxc/tower-lsp-server", rev = "ca176971b3031757e12896accdc1fe7edb2015ae" }
+tower-lsp-server = "0.24.0-rc.1"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 tikv-jemallocator = "0.6.1"

@@ -2759,8 +2759,9 @@ checksum = "121c2a6cda46980bb0fcd1647ffaf6cd3fc79a013de288782836f6df9c48780e"
 
 [[package]]
 name = "tower-lsp-server"
-version = "0.23.0"
-source = "git+https://github.com/popzxc/tower-lsp-server?rev=ca176971b3031757e12896accdc1fe7edb2015ae#ca176971b3031757e12896accdc1fe7edb2015ae"
+version = "0.24.0-rc.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb790f0e28814c30529b8fdb708d25d65e3aba5c65ba37d705b416ab14ecc90d"
 dependencies = [
  "bytes",
  "dashmap",
