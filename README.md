@@ -1,4 +1,4 @@
-# rust-glancer
+# Rust Glancer
 
 An experimental LSP implementation that is optimized for low memory usage and
 ~instant editor restarts.
