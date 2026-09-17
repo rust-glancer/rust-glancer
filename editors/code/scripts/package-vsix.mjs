@@ -42,7 +42,7 @@ if (vsCodeTarget === undefined) {
 
 const outPath = options.outPath ?? join(workspaceRoot, "dist", `rust-glancer-${vsCodeTarget}.vsix`);
 const executableName = rustTarget.includes("windows") ? "rust-glancer.exe" : "rust-glancer";
-const builtServer = join(workspaceRoot, "target", rustTarget, "release", executableName);
+const builtServer = join(workspaceRoot, "target", rustTarget, options.profile, executableName);
 const bundledServerDir = join(extensionRoot, "server");
 const bundledServer = join(bundledServerDir, executableName);
 const workspaceLicenses = [
@@ -52,9 +52,13 @@ const workspaceLicenses = [
 const extensionLicense = join(extensionRoot, "LICENSE");
 
 if (!options.skipBuild) {
-  run("cargo", ["build", "--release", "-p", "rust-glancer", "--target", rustTarget], {
-    cwd: workspaceRoot,
-  });
+  run(
+    "cargo",
+    ["build", "--profile", options.profile, "-p", "rust-glancer", "--target", rustTarget],
+    {
+      cwd: workspaceRoot,
+    },
+  );
 }
 
 if (!existsSync(builtServer)) {
@@ -104,6 +108,7 @@ function parseArgs(args) {
   const parsed = {
     outPath: undefined,
     preRelease: false,
+    profile: "release",
     rustTarget: undefined,
     skipBuild: false,
     vsCodeTarget: undefined,
@@ -122,6 +127,12 @@ function parseArgs(args) {
         break;
       case "--pre-release":
         parsed.preRelease = true;
+        break;
+      case "--profile":
+        parsed.profile = readValue(args, ++index, arg);
+        if (!["release", "dist"].includes(parsed.profile)) {
+          fail(`Unsupported Cargo profile: ${parsed.profile}. Expected release or dist.`);
+        }
         break;
       case "--skip-build":
         parsed.skipBuild = true;
@@ -191,7 +202,8 @@ Options:
   --vscode-target <target>  VS Code extension target. Inferred for common Rust targets.
   --out <path>              VSIX output path. Defaults to ../../dist/rust-glancer-<target>.vsix.
   --pre-release            Mark the packaged extension as a pre-release.
-  --skip-build             Reuse an existing target/<triple>/release/rust-glancer binary.
+  --profile <name>         Cargo build profile: release (default) or dist.
+  --skip-build             Reuse an existing target/<triple>/<profile>/rust-glancer binary.
 `);
 }
 

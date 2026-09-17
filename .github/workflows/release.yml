@@ -93,17 +93,19 @@ jobs:
         run: npm ci
         working-directory: editors/code
       - name: Build and check language server
-        run: cargo run --release -p rust-glancer --target "${{ matrix.rust_target }}" -- --help
+        run: cargo run --profile dist -p rust-glancer --target "${{ matrix.rust_target }}" -- --help
       - name: Package standalone language server
         run: >-
           ${{ matrix.python }} .github/scripts/package_server_archive.py
           --target "${{ matrix.rust_target }}"
+          --profile dist
           --version "${{ needs.release_please.outputs.version }}"
       - name: Package VSIX
         run: >-
           npm run package:vsix --
           --skip-build
           --target "${{ matrix.rust_target }}"
+          --profile dist
           --vscode-target "${{ matrix.vscode_target }}"
           --out "../../dist/rust-glancer-${{ needs.release_please.outputs.version }}-${{ matrix.vscode_target }}.vsix"
         working-directory: editors/code
