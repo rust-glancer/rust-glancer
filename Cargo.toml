@@ -151,5 +151,12 @@ rg_std_derive = { path = "crates/lib/std-derive" }
 rg_wincode_utils = { path = "crates/lib/wincode-utils" }
 test_fixture = { path = "crates/lib/test-fixture" }
 
+# Published binaries can take longer to build to optimize across crate boundaries.
+# Keep this separate from `release`, which is also used for local performance work.
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+
 [profile.bench]
 debug = true

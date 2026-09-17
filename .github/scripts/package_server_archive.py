@@ -38,7 +38,7 @@ def main() -> None:
             WORKSPACE_ROOT
             / "target"
             / arguments.target
-            / "release"
+            / arguments.profile
             / executable_name,
             0o755,
         ),
@@ -92,6 +92,12 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--target", required=True, help="Rust target triple")
     parser.add_argument("--version", required=True, help="stable release version")
+    parser.add_argument(
+        "--profile",
+        choices=("release", "dist"),
+        default="release",
+        help="Cargo build profile (default: release)",
+    )
     parser.add_argument(
         "--out",
         type=Path,
