@@ -5,6 +5,103 @@ use expect_test::expect;
 use self::utils::{check_parse_db, check_parse_db_after_module_discovery};
 
 #[test]
+fn reallocated_parse_releases_old_sources_and_preserves_file_lookups() {
+    let fixture = test_fixture::fixture_crate(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "catalog"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod shared;
+
+        //- /src/main.rs
+        mod shared;
+        fn main() {}
+
+        //- /src/shared.rs
+        pub struct Catalog;
+        "#,
+    );
+    let workspace = rg_workspace::WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        rg_workspace::WorkspaceLoweringConfig::default(),
+    )
+    .expect("fixture workspace should build");
+    let mut parse = crate::ParseDb::build(&workspace).expect("fixture parse db should build");
+    {
+        let sources = parse.source_inventory_handle();
+        for package in parse.packages_mut() {
+            package
+                .discover_modules(&sources)
+                .expect("fixture modules should be discovered");
+        }
+    }
+    parse.seal_sources();
+    parse.evict_syntax_trees();
+    parse.offload_line_indexes_for_packages(&[0]);
+    parse.evict_saved_source_text();
+
+    let before = parse.packages()[0]
+        .parsed_files()
+        .map(|file| {
+            let entry = parse
+                .source_inventory()
+                .entry(file.path())
+                .expect("parsed file should belong to the source inventory");
+            (
+                file.file_id(),
+                file.path().to_path_buf(),
+                file.source_revision(),
+                std::sync::Arc::downgrade(&entry),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(before.len(), 3, "both targets should share one module file");
+
+    let reallocated = parse.reallocated();
+    assert!(
+        before
+            .iter()
+            .all(|(_, _, _, entry)| entry.upgrade().is_some()),
+        "readers holding the original parse db should keep their sources alive",
+    );
+    drop(parse);
+
+    for (file_id, path, revision, old_entry) in before {
+        assert!(
+            old_entry.upgrade().is_none(),
+            "reallocated file tables should release the original source entries",
+        );
+        let references = reallocated.file_refs_for_path(&path);
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].file, file_id);
+        let file = reallocated.packages()[0]
+            .parsed_file(file_id)
+            .expect("reallocation should preserve file ids");
+        assert_eq!(file.path(), path);
+        assert_eq!(file.source_revision(), revision);
+        assert!(
+            file.parse_syntax()
+                .expect("source should reparse")
+                .errors()
+                .is_empty()
+        );
+        assert_eq!(
+            file.line_index()
+                .expect("line index should reload")
+                .position(0),
+            crate::Position { line: 0, column: 0 },
+        );
+    }
+    reallocated
+        .validate_saved_sources()
+        .expect("reallocated sources should remain valid");
+}
+
+#[test]
 fn dumps_workspace_packages_targets_and_dependencies() {
     check_parse_db(
         r#"

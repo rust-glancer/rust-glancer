@@ -1790,7 +1790,7 @@ pub fn answer() -> i32 {
         [
             "after deferred body construction",
             "after deferred body publication",
-            "after deferred indexing compaction",
+            "after deferred indexing reallocation",
         ],
         "deferred profiling separates private products from their published residency",
     );

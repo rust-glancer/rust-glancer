@@ -69,6 +69,34 @@ impl SourceInventory {
         }
     }
 
+    /// Make a copy whose source entries and paths have their own allocations.
+    ///
+    /// A regular fork keeps sharing these entries, so dropping the old inventory cannot free them.
+    /// Copying the entries and paths gives the allocator a chance to free pages used during file
+    /// discovery. Captured revisions stay the same, and any loaded text stays shared with readers.
+    pub fn reallocated(&self) -> Self {
+        let entries = self
+            .entries
+            .read()
+            .expect("source inventory lock should not be poisoned")
+            .values()
+            .map(|entry| {
+                let entry = Arc::new(entry.reallocated());
+                (entry.source_path().clone(), entry)
+            })
+            .collect();
+        Self {
+            entries: RwLock::new(entries),
+            existence: RwLock::new(
+                self.existence
+                    .read()
+                    .expect("source existence lock should not be poisoned")
+                    .clone(),
+            ),
+            sealed: RwLock::new(self.is_sealed()),
+        }
+    }
+
     /// Opens a private candidate for source replacement and another discovery pass.
     ///
     /// Existing entries stay in place because unchanged files still belong to the candidate.

@@ -42,14 +42,14 @@ use crate::{
 /// invokes [`DefMapBuildSession::advance`], answers every returned request on this same value, and
 /// advances again until [`DefMapBuildProgress::Complete`] is returned.
 ///
-/// Completion first freezes every selected package. It then copy-compacts the subset supplied when
+/// Completion first freezes every selected package. It then reallocates the subset supplied when
 /// the session starts. Project builds derive that subset from residency, while fixtures pass their
 /// complete package set. Keeping the choice on the session matters because a macro source request
 /// can pause between collection and the final package replacement.
 pub struct DefMapBuildSession {
     baseline: DefMapDb,
     packages: Vec<PackageSlot>,
-    copy_compact_packages: Vec<PackageSlot>,
+    packages_to_reallocate: Vec<PackageSlot>,
     crate_states: FinalizeCrateStates,
     scope_session: FinalizeScopeSession,
     macro_source_file_resolutions: MacroSourceFileResolutions,
@@ -67,12 +67,12 @@ impl DefMapBuildSession {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
-        copy_compact_packages: &[PackageSlot],
+        packages_to_reallocate: &[PackageSlot],
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<Self> {
         let packages = normalized_package_slots(packages);
-        let copy_compact_packages = normalized_package_slots(copy_compact_packages)
+        let packages_to_reallocate = normalized_package_slots(packages_to_reallocate)
             .into_iter()
             .filter(|package| packages.binary_search(package).is_ok())
             .collect();
@@ -127,7 +127,7 @@ impl DefMapBuildSession {
         Ok(Self {
             baseline: baseline.clone(),
             packages,
-            copy_compact_packages,
+            packages_to_reallocate,
             crate_states,
             scope_session: FinalizeScopeSession::new(performance_preference),
             macro_source_file_resolutions: MacroSourceFileResolutions::default(),
@@ -275,7 +275,8 @@ impl DefMapBuildSession {
                     )
                 })?;
         }
-        next.mutator().compact_packages(&self.copy_compact_packages);
+        next.mutator()
+            .reallocate_packages(&self.packages_to_reallocate);
         self.complete = true;
         Ok(DefMapBuildProgress::Complete(DefMapBuildOutput::new(
             next,

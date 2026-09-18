@@ -233,12 +233,12 @@ impl<'a> ResidencyApplication<'a> {
             .context("while attempting to commit package cache artifact update")
     }
 
-    /// Drops compactable project data after package payloads have been offloaded.
+    /// Drop unused names and line indexes after package payloads have been offloaded.
     fn finish_offloading(&mut self, offloaded_packages: &PhasePackageSet) {
         if !offloaded_packages.is_empty() {
             // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
             // immediately so dead weak entries and their Arc control blocks are not carried into
-            // the idle-boundary project compaction.
+            // the project reallocation before going idle.
             Shrink::shrink_to_fit(&mut self.project.names);
 
             // File ids and paths remain resident as the source inventory. Line indexes are larger
@@ -251,14 +251,12 @@ impl<'a> ResidencyApplication<'a> {
 }
 
 impl ProjectState {
-    /// Reallocate the small cache-backed state after indexing allocations have died.
+    /// Reallocate the small amount of metadata left after all analysis payloads are offloaded.
     ///
-    /// Fresh indexing interleaves long-lived project metadata with much larger transient phase
-    /// data. Purging releases wholly unused pages, but pages that contain even one retained value
-    /// stay active. Cloning only after every phase payload is offloaded gives the allocator a
-    /// densely allocated replacement, then dropping the old state makes its fragmented pages
-    /// purgeable.
-    pub(crate) fn compact_if_fully_offloaded(&mut self) -> bool {
+    /// Indexing can leave this metadata on the same allocator pages as larger, temporary data.
+    /// Even after the temporary data is freed, the metadata can keep those pages occupied.
+    /// Copying it before dropping the old state gives the allocator a chance to free those pages.
+    pub(crate) fn reallocate_if_fully_offloaded(&mut self) -> bool {
         let fully_offloaded = (0..self.parse.package_count()).all(|package_idx| {
             let package = PackageSlot(package_idx);
             self.def_map.resident_package(package).is_none()
@@ -269,11 +267,12 @@ impl ProjectState {
             return false;
         }
 
-        let mut compact = self.clone();
-        // The ordinary clone shares parse metadata with body builds. Copy it here as well so the
-        // compacted state can release the old metadata allocations once their last reader leaves.
-        compact.parse = Arc::new((*self.parse).clone());
-        *self = compact;
+        let mut reallocated = self.clone();
+        // A normal clone keeps sharing source entries, paths, and package directories through
+        // their Arc handles. Copy their contents too, so the old allocations can be freed.
+        reallocated.parse = Arc::new(self.parse.reallocated());
+        reallocated.def_map.reallocate_offloaded_metadata();
+        *self = reallocated;
         true
     }
 }

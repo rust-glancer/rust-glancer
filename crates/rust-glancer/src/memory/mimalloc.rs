@@ -105,10 +105,11 @@ pub(super) fn capture_stats() -> Option<AllocatorStats> {
 }
 
 pub(super) fn try_purge() -> bool {
-    // Arena-free mimalloc releases unused OS allocations as its pages become empty. Its forced
-    // collection API only collects the calling thread's heap, and measurements showed no idle-RSS
-    // benefit from invoking it at project checkpoints.
-    false
+    // Reallocating retained metadata can finally empty pages that indexing left fragmented.
+    // Mimalloc can keep their deferred frees and retired pages until more allocator activity.
+    // Collect before the engine waits for work; time spent idle alone does not drain those lists.
+    unsafe { libmimalloc_sys::mi_collect(true) };
+    true
 }
 
 #[cfg(test)]
@@ -130,8 +131,8 @@ mod tests {
     }
 
     #[test]
-    fn explicit_purge_is_unavailable_for_mimalloc() {
-        assert!(!try_purge());
+    fn explicit_purge_collects_mimalloc_pages() {
+        assert!(try_purge());
     }
 
     #[cfg(feature = "mimalloc-stats")]

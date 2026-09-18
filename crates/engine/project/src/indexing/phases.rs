@@ -152,12 +152,12 @@ pub(super) fn build(
     let rebuild_subset = build_plan
         .source_packages
         .visible_dependency_subset(workspace);
-    // Freezing still produces every source-built package, but copy-compaction briefly duplicates a
+    // Freezing still produces every source-built package, but reallocation briefly duplicates a
     // complete payload. Full builds pay that peak only for packages that survive cache application.
-    // Early-start builds also compact offloadable packages because incomplete Body IR prevents
+    // Early-start builds also reallocate offloadable packages because incomplete Body IR prevents
     // those packages from reaching their artifact-backed residency at this boundary.
-    let copy_compact_source_packages = split_indexing_mode
-        .copy_compact_packages(package_residency, build_plan.source_packages.as_slice());
+    let source_packages_to_reallocate = split_indexing_mode
+        .packages_to_reallocate(package_residency, build_plan.source_packages.as_slice());
 
     // ----------------
     // 6. Build def-map
@@ -180,7 +180,7 @@ pub(super) fn build(
         &mut parse,
         &mut item_tree,
         &build_plan.source_packages,
-        &copy_compact_source_packages,
+        &source_packages_to_reallocate,
         &mut names,
         indexing_preference.macro_expansion_preference(),
         memory_hooks,
@@ -294,7 +294,7 @@ pub(super) fn build(
         &def_map,
         &semantic_ir,
         build_plan.source_packages.as_slice(),
-        &copy_compact_source_packages,
+        &source_packages_to_reallocate,
         &mut names,
         loaders.def_map,
         loaders.semantic_ir,
@@ -346,9 +346,9 @@ pub(super) fn build(
         MacroExpansionLimitBuildSummary::capture(&def_map, build_plan.source_packages.as_slice());
     drop(build_plan);
 
-    // --------------------------
-    // 10. Compact retained state
-    // --------------------------
+    // ---------------------------------------------------
+    // 10. Release temporary data and spare capacity
+    // ---------------------------------------------------
     parse.evict_syntax_trees();
     parse.evict_saved_source_text();
     parse.shrink_to_fit();

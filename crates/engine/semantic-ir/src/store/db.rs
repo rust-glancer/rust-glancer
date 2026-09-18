@@ -151,7 +151,8 @@ impl SemanticIrDbMutator<'_> {
         self.db.packages.make_mut(package)
     }
 
-    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
+    /// Remove spare capacity from packages that have no other readers.
+    pub(crate) fn shrink_packages_to_fit(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
                 Shrink::shrink_to_fit(package);

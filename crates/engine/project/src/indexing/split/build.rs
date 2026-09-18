@@ -40,7 +40,7 @@ pub struct SavedBodyBuildInputs {
     crates: UniqueVec<CrateRef>,
     packages: Vec<PackageSlot>,
     subset: PackageSubset,
-    compact_packages: Vec<PackageSlot>,
+    packages_to_reallocate: Vec<PackageSlot>,
     worker_limit: Option<NonZeroUsize>,
 }
 
@@ -115,9 +115,9 @@ impl SavedBodyBuildInputs {
             .collect::<Vec<_>>();
         let packages = PhasePackageSet::from_crates(&selected);
         let subset = packages.visible_dependency_subset(&state.workspace);
-        // File work may leave an offloadable package incomplete, so retain compact crate payloads
-        // there too. Complete background products headed directly to disk do not need the copy.
-        let compact_packages = if files.is_empty() {
+        // File work may leave an offloadable package incomplete and still in memory, so reallocate
+        // its crate payloads too. Complete products headed straight to disk do not need the copy.
+        let packages_to_reallocate = if files.is_empty() {
             state
                 .package_residency
                 .resident_packages(packages.as_slice())
@@ -136,7 +136,7 @@ impl SavedBodyBuildInputs {
             crates,
             packages: packages.as_slice().to_vec(),
             subset,
-            compact_packages,
+            packages_to_reallocate,
             worker_limit: state.indexing_preference.body_ir_worker_limit(),
         }
     }
@@ -201,7 +201,7 @@ impl SavedBodyBuildInputs {
             &self.def_map,
             &self.semantic_ir,
             &self.packages,
-            &self.compact_packages,
+            &self.packages_to_reallocate,
             &mut names,
             self.def_map_loader,
             self.semantic_ir_loader,

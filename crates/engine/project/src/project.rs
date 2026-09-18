@@ -72,13 +72,17 @@ impl Project {
         self.state.stats()
     }
 
-    /// Compact a project whose analysis phase payloads are all cache-backed.
+    /// Copy retained metadata into fresh allocations while the originals are still alive.
+    /// The intent behind this method is to lower the OS memory occupied by the process after
+    /// indexing. Dropping the originals afterward may let the allocator release pages fragmented
+    /// during indexing. How much this helps depends on the allocator, but we have measured lower
+    /// idle memory with `mimalloc`.
     ///
-    /// Returns `false` without cloning when any phase payload is still resident. Hosts should call
-    /// this only at an idle lifecycle boundary, then run their allocator cleanup hook after the
-    /// replaced state has been dropped.
-    pub fn compact_if_fully_offloaded(&mut self) -> bool {
-        self.state.compact_if_fully_offloaded()
+    /// Only do this once all analysis payloads have been offloaded; otherwise return `false`
+    /// without copying anything. Call this before going idle, then run the allocator cleanup hook
+    /// after the old state has been dropped.
+    pub fn reallocate_if_fully_offloaded(&mut self) -> bool {
+        self.state.reallocate_if_fully_offloaded()
     }
 
     /// Iterates bounded macro-expansion-limit diagnostics from resident packages.

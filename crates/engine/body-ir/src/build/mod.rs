@@ -97,7 +97,7 @@ pub struct BodyIrBuilder<'db, 'names> {
     subset: &'db PackageSubset,
     worker_limit: Option<NonZeroUsize>,
     cancellation: rg_std::CancellationToken,
-    copy_compact_packages: Vec<PackageSlot>,
+    packages_to_reallocate: Vec<PackageSlot>,
 }
 
 impl rg_std::Cancelable for BodyIrBuilder<'_, '_> {
@@ -113,7 +113,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         def_map: &'db DefMapDb,
         semantic_ir: &'db SemanticIrDb,
         packages: &'db [PackageSlot],
-        copy_compact_packages: &[PackageSlot],
+        packages_to_reallocate: &[PackageSlot],
         interners: &'names mut PackageNameInterners,
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
@@ -125,7 +125,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             semantic_ir,
             materialization: None,
             packages,
-            copy_compact_packages: normalized_package_slots(copy_compact_packages),
+            packages_to_reallocate: normalized_package_slots(packages_to_reallocate),
             interners,
             def_map_loader,
             semantic_ir_loader,
@@ -295,19 +295,20 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             &semantic_ir,
             priority_packages,
             &|mut batch| {
-                // Copy-compaction is worthwhile for retained payloads; those headed to an artifact
-                // can be encoded and dropped without a second allocation at the build's peak.
+                // Reallocating bodies that stay in memory may let the allocator free pages used
+                // during indexing. Bodies headed straight to a cache artifact can be encoded and
+                // dropped, so they do not need a second copy at the build's peak.
                 if batch.first().is_some_and(|(crate_ref, _)| {
-                    self.copy_compact_packages
+                    self.packages_to_reallocate
                         .binary_search(&crate_ref.package)
                         .is_ok()
                 }) {
                     batch = batch
                         .into_iter()
                         .map(|(crate_ref, bodies)| {
-                            let mut compact = bodies.clone();
-                            Shrink::shrink_to_fit(&mut compact);
-                            (crate_ref, compact)
+                            let mut reallocated = bodies.clone();
+                            Shrink::shrink_to_fit(&mut reallocated);
+                            (crate_ref, reallocated)
                         })
                         .collect();
                 }
