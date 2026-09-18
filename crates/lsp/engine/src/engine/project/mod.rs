@@ -400,15 +400,15 @@ impl ProjectCoordinator {
 
         // A successful finish is the first point where every package has completed its configured
         // residency transition. If that offloaded every analysis payload, reallocate the small
-        // saved state now so the purge can release pages fragmented by the indexing build. The
-        // compaction method stays a no-op for policies that keep any payload resident.
+        // saved state now so the purge has a chance to release pages fragmented during indexing.
+        // Reallocation is skipped for policies that keep any payload resident.
         if terminal.as_ref().is_some_and(|terminal| {
             matches!(
                 &terminal.outcome,
                 rg_lsp_proto::DeferredIndexingOutcome::Succeeded
             )
         }) {
-            self.project.compact_if_fully_offloaded();
+            self.project.reallocate_if_fully_offloaded();
         }
 
         // Completion arrives after every worker has drained and dropped its saved inputs. Purge

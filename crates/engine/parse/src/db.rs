@@ -191,7 +191,7 @@ impl ParseDb {
         }
     }
 
-    /// Compacts saved parse metadata after a project snapshot has finished building.
+    /// Release spare capacity in saved parse metadata after a project snapshot has finished building.
     pub fn shrink_to_fit(&mut self) {
         self.packages.shrink_to_fit();
         self.sources.shrink_to_fit();
@@ -330,6 +330,42 @@ impl ParseDb {
     /// Releases exact saved text while retaining strong source identity for verified reloads.
     pub fn evict_saved_source_text(&self) {
         self.sources.evict_saved_text();
+    }
+
+    /// Reallocate saved source metadata without changing any file ids.
+    ///
+    /// Several packages can use the same source entry. Keep sharing one new copy between them,
+    /// so the old entry and path can be freed once their last reader is done.
+    pub fn reallocated(&self) -> Self {
+        // Copy each source entry once, then reconnect every package that uses it. Ordinary clones
+        // share these entries and their paths, which would keep the old allocations alive.
+        let sources = Arc::new(self.sources.reallocated());
+        let mut packages = self.packages.clone();
+        for package in &mut packages {
+            for file in package.files.parsed_files.iter_mut() {
+                file.source = sources
+                    .entry(file.source.path())
+                    .expect("parsed source must belong to the inventory");
+            }
+            // Map keys must use the new paths too; cloning their Arc handles would keep
+            // the original path allocations alive even after all parsed files had moved.
+            package.files.file_ids_by_path = package
+                .files
+                .file_ids_by_path
+                .iter()
+                .map(|(path, id)| {
+                    let entry = sources
+                        .entry(path.as_path())
+                        .expect("parsed path must belong to the inventory");
+                    (entry.source_path().clone(), *id)
+                })
+                .collect();
+        }
+        Self {
+            workspace_root: self.workspace_root.clone(),
+            sources,
+            packages,
+        }
     }
 }
 

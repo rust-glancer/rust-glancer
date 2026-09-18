@@ -46,6 +46,21 @@ impl SourceEntry {
         }
     }
 
+    /// Copy the metadata while keeping any loaded text shared with readers.
+    pub(crate) fn reallocated(&self) -> Self {
+        Self {
+            descriptor: self.descriptor.reallocated(),
+            // Reallocation targets the metadata left after text eviction. If a reader has loaded
+            // text again, keep that exact buffer shared instead of copying or rereading it.
+            text: Mutex::new(
+                self.text
+                    .lock()
+                    .expect("source backing lock should not be poisoned")
+                    .clone(),
+            ),
+        }
+    }
+
     pub fn path(&self) -> &Path {
         self.descriptor.path()
     }

@@ -59,6 +59,15 @@ impl SourceDescriptor {
         }
     }
 
+    /// Copy the path allocation too; cloning the descriptor would keep sharing it.
+    pub(crate) fn reallocated(&self) -> Self {
+        Self {
+            path: SourcePath::new(self.path().to_path_buf()),
+            revision: self.revision,
+            byte_len: self.byte_len,
+        }
+    }
+
     pub fn path(&self) -> &Path {
         self.path.as_path()
     }

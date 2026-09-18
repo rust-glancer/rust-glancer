@@ -146,14 +146,14 @@ impl<'project> SplitIndexing<'project> {
             project_bytes,
             process_memory,
         );
-        if state.compact_if_fully_offloaded() {
+        if state.reallocate_if_fully_offloaded() {
             state
                 .memory_hooks
                 .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
             let process_memory = sampler.sample_process_memory();
             let project_bytes = sampler.measure_retained(state);
             record_build_checkpoint(
-                "after deferred indexing compaction",
+                "after deferred indexing reallocation",
                 project_bytes,
                 project_bytes,
                 process_memory,

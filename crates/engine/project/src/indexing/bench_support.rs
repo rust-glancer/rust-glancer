@@ -47,7 +47,7 @@ pub fn build_def_map(
     );
 
     // The benchmark returns every built package as resident phase data, so all source packages are
-    // part of the compaction set as well as the build set.
+    // part of the reallocation set as well as the build set.
     macro_source_files::build_packages(
         &baseline,
         &baseline_read,

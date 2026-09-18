@@ -90,11 +90,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
     // The rebuild must produce every selected package before one coherent cache update can run.
-    // Early-start packages cannot be offloaded until deferred Body IR becomes durable, so compact
+    // Early-start packages cannot be offloaded until deferred Body IR becomes durable, so reallocate
     // those temporary residents as well as packages selected for final resident storage.
-    let copy_compact_packages = state
+    let packages_to_reallocate = state
         .split_indexing_mode
-        .copy_compact_packages(&state.package_residency, packages.as_slice());
+        .packages_to_reallocate(&state.package_residency, packages.as_slice());
     let def_map_output = macro_source_files::build_packages(
         &state.def_map,
         &old_def_map_txn,
@@ -102,7 +102,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         Arc::make_mut(&mut state.parse),
         &mut item_tree,
         &packages,
-        &copy_compact_packages,
+        &packages_to_reallocate,
         &mut state.names,
         state.indexing_preference.macro_expansion_preference(),
         memory_hooks.as_ref(),
@@ -134,7 +134,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &def_map,
         &semantic_ir,
         packages.as_slice(),
-        &copy_compact_packages,
+        &packages_to_reallocate,
         &mut state.names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),

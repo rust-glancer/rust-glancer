@@ -5,9 +5,9 @@
 //! artifact and replaced by compact routing metadata. A [`PackageResidencyPlan`] records that
 //! decision in stable Cargo package order.
 //!
-//! Build phases consult the same plan before offloading. A package that remains resident is worth
-//! copy-compacting into dense retained storage; a package headed directly to the cache should avoid
-//! creating a second full payload solely to shrink allocations that will soon be released.
+//! Build phases consult the same plan before offloading. Reallocating a package that stays in
+//! memory may let the allocator free pages used during indexing. A package headed straight to
+//! the cache does not need a second copy of data that will soon be released.
 
 use rg_std::MemorySize;
 use std::collections::HashSet;
@@ -50,7 +50,7 @@ pub enum PackageResidency {
 ///
 /// The plan is computed once from package sources and direct dependency edges. Project build,
 /// rebuild, deferred indexing, and final offloading all read the same decisions so a package is not
-/// compacted as retained data and then immediately discarded by a different policy interpretation.
+/// reallocated to stay in memory and then immediately discarded by a different policy interpretation.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct PackageResidencyPlan {
     pub(crate) policy: PackageResidencyPolicy,
@@ -86,7 +86,7 @@ impl PackageResidencyPlan {
 
     /// Intersect rebuilt packages with the set whose decoded payload will survive cache application.
     ///
-    /// Builders use this result as their copy-compaction set. If `A` is resident and rebuilt
+    /// Builders use this result to choose which packages to reallocate. If `A` is resident and rebuilt
     /// alongside offloadable `B`, the result contains only `A`; `B` can keep spare build capacity
     /// until its artifact is written and its decoded payload is dropped.
     pub(crate) fn resident_packages(&self, rebuilt: &[PackageSlot]) -> Vec<PackageSlot> {

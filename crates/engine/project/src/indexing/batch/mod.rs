@@ -410,9 +410,9 @@ pub(super) fn build(
         .context("while attempting to clean stale package cache generations")?;
     drop(build_plan);
 
-    // --------------------------
-    // 5. Compact retained state
-    // --------------------------
+    // ---------------------------------------------------
+    // 5. Release temporary data and spare capacity
+    // ---------------------------------------------------
     parse.evict_syntax_trees();
     parse.evict_saved_source_text();
     parse.shrink_to_fit();

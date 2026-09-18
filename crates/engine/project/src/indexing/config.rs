@@ -137,14 +137,14 @@ pub enum SplitIndexingMode {
 }
 
 impl SplitIndexingMode {
-    /// Select rebuilt packages whose build-time allocation capacity must be removed before return.
+    /// Select rebuilt packages whose payloads should be reallocated before return.
     ///
     /// A full build can immediately write and offload packages selected by the residency policy,
-    /// so only resident packages need a compact copy. An ordinary early-start build does not yet
+    /// so only resident packages need a fresh copy. An ordinary early-start build does not yet
     /// have durable Body IR and must keep every rebuilt package decoded until deferred finishing.
     /// The selection happens before Body IR can prove that an individual package has no deferred
-    /// bodies, so the early-start case deliberately includes the complete rebuilt set.
-    pub(crate) fn copy_compact_packages(
+    /// bodies, so the early-start case includes the complete rebuilt set.
+    pub(crate) fn packages_to_reallocate(
         self,
         package_residency: &PackageResidencyPlan,
         rebuilt_packages: &[PackageSlot],
@@ -229,7 +229,7 @@ mod tests {
         );
     }
     #[test]
-    fn early_start_compacts_packages_waiting_for_deferred_artifacts() {
+    fn early_start_reallocates_packages_waiting_for_deferred_artifacts() {
         let residency = PackageResidencyPlan {
             policy: PackageResidencyPolicy::WorkspaceResident,
             packages: vec![PackageResidency::Offloadable, PackageResidency::Resident],
@@ -237,12 +237,12 @@ mod tests {
         let rebuilt = [PackageSlot(0), PackageSlot(1)];
 
         assert_eq!(
-            SplitIndexingMode::Full.copy_compact_packages(&residency, &rebuilt),
+            SplitIndexingMode::Full.packages_to_reallocate(&residency, &rebuilt),
             [PackageSlot(1)],
             "a full build can release its offloadable package immediately",
         );
         assert_eq!(
-            SplitIndexingMode::EarlyStart.copy_compact_packages(&residency, &rebuilt),
+            SplitIndexingMode::EarlyStart.packages_to_reallocate(&residency, &rebuilt),
             rebuilt,
             "an early-start build retains the offloadable package until Body IR is durable",
         );

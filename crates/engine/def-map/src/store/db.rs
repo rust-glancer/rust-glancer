@@ -25,9 +25,9 @@ pub struct DefMapDb {
 impl DefMapDb {
     /// Starts replacing selected packages while retaining state across generated-source pauses.
     ///
-    /// `packages` selects what to rebuild. `copy_compact_packages` selects which frozen payloads
+    /// `packages` selects what to rebuild. `packages_to_reallocate` selects which frozen payloads
     /// should be cloned and shrunk for long-term residency; passing `packages` for both arguments
-    /// requests compact retained output for every rebuilt package.
+    /// requests reallocation for every rebuilt package.
     #[allow(clippy::too_many_arguments)]
     pub fn start_package_build(
         &self,
@@ -36,7 +36,7 @@ impl DefMapDb {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
-        copy_compact_packages: &[PackageSlot],
+        packages_to_reallocate: &[PackageSlot],
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<DefMapBuildSession> {
@@ -47,7 +47,7 @@ impl DefMapDb {
             parse,
             item_tree,
             packages,
-            copy_compact_packages,
+            packages_to_reallocate,
             interners,
             performance_preference,
         )
@@ -70,6 +70,27 @@ impl DefMapDb {
 
     pub fn all_offloaded(package_count: usize) -> Self {
         Self::from_offloaded_manifests((0..package_count).map(|_| None).collect())
+    }
+
+    /// Reallocate the small directories kept for offloaded packages.
+    ///
+    /// A normal clone only copies their Arc handles, so it keeps the old allocations alive.
+    /// Copy the directory contents too, giving the allocator a chance to free pages they shared
+    /// with temporary indexing data. Resident package payloads stay shared with their readers.
+    pub fn reallocate_offloaded_metadata(&mut self) {
+        self.packages = PackageStore::from_entries(
+            self.packages
+                .raw_entries()
+                .map(|entry| match entry.as_offloaded() {
+                    Some(manifest) => PackageEntry::offloaded_with(
+                        manifest
+                            .as_ref()
+                            .map(|manifest| Arc::new((**manifest).clone())),
+                    ),
+                    None => entry.clone(),
+                })
+                .collect(),
+        );
     }
 
     pub(crate) fn mutator(&mut self) -> DefMapDbMutator<'_> {
@@ -254,21 +275,23 @@ impl DefMapDbMutator<'_> {
         self.db.packages.replace(package_slot, package)
     }
 
-    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
-        // Build compact package copies before replacing the source packages. This keeps the final
-        // allocations grouped together instead of interleaving each shrink allocation with frees
-        // from the same package, which can leave sparse allocator slabs after large rebuilds.
-        let compacted_packages = packages
+    /// Copy selected package payloads into fresh allocations and remove spare capacity.
+    pub(crate) fn reallocate_packages(&mut self, packages: &[PackageSlot]) {
+        // Build all replacements before dropping any originals. Otherwise, each new copy can
+        // reuse holes left by a previous package and keep the same fragmented pages occupied.
+        // Keeping the originals alive gives the allocator a better chance to place the copies
+        // together and free the old pages afterward.
+        let reallocated_packages = packages
             .iter()
             .filter_map(|package| {
-                let mut compacted = self.db.resident_package(*package)?.clone();
-                Shrink::shrink_to_fit(&mut compacted);
-                Some((*package, compacted))
+                let mut reallocated = self.db.resident_package(*package)?.clone();
+                Shrink::shrink_to_fit(&mut reallocated);
+                Some((*package, reallocated))
             })
             .collect::<Vec<_>>();
 
-        for (package, compacted) in compacted_packages {
-            self.replace_package(package, compacted);
+        for (package, reallocated) in reallocated_packages {
+            self.replace_package(package, reallocated);
         }
     }
 }

@@ -6,6 +6,50 @@ use crate::{CapturedSource, SourceError, SourceInventory, SourceRevision};
 use rg_std::MemorySize as _;
 
 #[test]
+fn reallocated_inventory_preserves_captured_sources() {
+    let dir = tempfile::tempdir().expect("temporary source directory should be created");
+    let path = dir.path().join("lib.rs");
+    let text = "pub struct Catalog;\n";
+    fs::write(&path, text).expect("fixture source should be written");
+
+    for evict_text in [false, true] {
+        let inventory = SourceInventory::new();
+        let original = inventory
+            .capture_saved(&path)
+            .expect("fixture source should be captured");
+        inventory.seal();
+        if evict_text {
+            inventory.evict_saved_text();
+        }
+
+        let reallocated = inventory.reallocated();
+        let replacement = reallocated
+            .entry(original.path())
+            .expect("reallocation should preserve the source inventory");
+        assert!(reallocated.is_sealed());
+        assert_eq!(replacement.descriptor(), original.descriptor());
+        assert!(
+            !std::sync::Arc::ptr_eq(&original, &replacement),
+            "source entry should have a new allocation",
+        );
+        assert!(
+            !std::ptr::eq(original.path(), replacement.path()),
+            "source path should have a new allocation",
+        );
+        assert_eq!(
+            replacement
+                .text()
+                .expect("reallocated source should be readable")
+                .as_ref(),
+            text,
+        );
+        reallocated
+            .validate_saved()
+            .expect("reallocated source should retain its revision proof");
+    }
+}
+
+#[test]
 fn saved_source_memory_disappears_after_eviction() {
     let dir = tempfile::tempdir().expect("temporary source directory should be created");
     let path = dir.path().join("lib.rs");
