@@ -5,11 +5,11 @@
 //!
 //! - Standard LSP work-done progress presents a bounded indexing operation. Zed renders this as
 //!   `Indexing <workspace>`, and other LSP clients can render it without Rust Glancer knowledge.
-//! - Rust Glancer's private notifications preserve the richer VS Code status bar and give
-//!   `compare-lsp` an exact deferred-indexing barrier.
+//! - Rust Glancer's private notifications preserve the richer VS Code status bar.
 //! - Rust-analyzer's `experimental/serverStatus` extension presents persistent process-wide health.
 //!   Zed maps its `health` and `message` fields into the Language Servers menu; Zed does not use its
-//!   `quiescent` field as an indexing indicator.
+//!   `quiescent` field as an indexing indicator. `compare-lsp` waits for healthy quiescence before
+//!   measuring body-sensitive requests.
 //!
 //! `ClientStatusPublisher` is the facade for these projections. Engine orchestration reports
 //! workspace events here and does not construct editor-specific payloads itself. Engine-originated
@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::{DeferredIndexingOutcome, IndexingProgress};
+use rg_lsp_proto::{DeferredIndexingOutcome, IndexingProgress, ProjectInitialization};
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, gen_lsp_types::ClientCapabilities};
 
@@ -93,6 +93,45 @@ impl ClientStatusPublisher {
     pub(crate) async fn workspace_ready(&self, root: &Path) {
         self.finish_workspace_indexing(root, WorkspaceLifecycle::Ready, "Finished")
             .await;
+    }
+
+    /// Merge the engine's startup snapshot before declaring its workspace ready.
+    ///
+    /// The response can overtake background notifications or arrive after the worker has already
+    /// finished. Fill in missing state without replacing a notification for the same generation.
+    /// This keeps quiescence truthful in both orders, including startup with no background work.
+    pub(crate) async fn workspace_initialized(
+        &self,
+        root: &Path,
+        initialization: ProjectInitialization,
+    ) {
+        {
+            let mut state = self.state.lock().await;
+            if matches!(
+                state.workspaces.get(root),
+                Some(WorkspaceLifecycle::Unavailable(_))
+            ) {
+                return;
+            }
+            if state
+                .deferred_indexing
+                .get(root)
+                .is_none_or(|deferred| deferred.generation() < initialization.generation)
+            {
+                let deferred = if initialization.has_deferred_indexing {
+                    DeferredIndexingState::Running {
+                        generation: initialization.generation,
+                        progress: None,
+                    }
+                } else {
+                    DeferredIndexingState::Idle {
+                        generation: initialization.generation,
+                    }
+                };
+                state.deferred_indexing.insert(root.to_path_buf(), deferred);
+            }
+        }
+        self.workspace_ready(root).await;
     }
 
     pub(crate) async fn workspace_failed(&self, root: &Path, error: impl Into<Arc<str>>) {
@@ -209,7 +248,12 @@ impl ClientStatusPublisher {
             if generation_is_active {
                 let progress_message = match &outcome {
                     DeferredIndexingOutcome::Succeeded => {
-                        state.deferred_indexing.remove(root);
+                        // Retain the generation so a later initialization response cannot turn
+                        // completed work back into a running operation.
+                        state.deferred_indexing.insert(
+                            root.to_path_buf(),
+                            DeferredIndexingState::Idle { generation },
+                        );
                         "Finished"
                     }
                     DeferredIndexingOutcome::Failed { message } => {
@@ -310,6 +354,9 @@ struct ClientStatusState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DeferredIndexingState {
+    Idle {
+        generation: u64,
+    },
     Running {
         generation: u64,
         progress: Option<IndexingProgress>,
@@ -323,7 +370,9 @@ enum DeferredIndexingState {
 impl DeferredIndexingState {
     fn generation(&self) -> u64 {
         match self {
-            Self::Running { generation, .. } | Self::Failed { generation, .. } => *generation,
+            Self::Idle { generation }
+            | Self::Running { generation, .. }
+            | Self::Failed { generation, .. } => *generation,
         }
     }
 
@@ -335,7 +384,7 @@ impl DeferredIndexingState {
     fn running_progress(&self) -> Option<Option<IndexingProgress>> {
         match self {
             Self::Running { progress, .. } => Some(*progress),
-            Self::Failed { .. } => None,
+            Self::Idle { .. } | Self::Failed { .. } => None,
         }
     }
 }
@@ -358,7 +407,7 @@ impl ClientStatusState {
             .iter()
             .filter_map(|(root, deferred)| match deferred {
                 DeferredIndexingState::Failed { message, .. } => Some((root, message)),
-                DeferredIndexingState::Running { .. } => None,
+                DeferredIndexingState::Idle { .. } | DeferredIndexingState::Running { .. } => None,
             })
             .collect::<Vec<_>>();
         let health = if !failures.is_empty() && failures.len() == self.workspaces.len() {
@@ -559,7 +608,15 @@ mod tests {
         let root = Path::new("/workspace/project_a");
         let publish = async {
             client_status.workspace_indexing(root).await;
-            client_status.workspace_ready(root).await;
+            client_status
+                .workspace_initialized(
+                    root,
+                    ProjectInitialization {
+                        generation: 1,
+                        has_deferred_indexing: false,
+                    },
+                )
+                .await;
         };
         let observe = async {
             let create = socket
@@ -1092,6 +1149,78 @@ mod tests {
                 "message": "body indexing failed",
             }))
         );
+    }
+
+    #[tokio::test]
+    async fn startup_quiescence_accounts_for_pending_and_completed_work() {
+        // The response and worker notifications travel through separate channels. Neither order
+        // should make clients proceed before completion or wait forever after it.
+        for (worker_finishes_first, expected_quiescence, message) in [
+            (false, false, "pending work should keep the server busy"),
+            (
+                true,
+                true,
+                "initialization should not restart completed work",
+            ),
+        ] {
+            let (service, _socket) = LspService::new(|client| TestBackend {
+                client_status: ClientStatusPublisher::new(
+                    client,
+                    ClientStatusCapabilities::default(),
+                ),
+            });
+            let client_status = &service.inner().client_status;
+            let root = Path::new("/workspace/project");
+            client_status.workspace_indexing(root).await;
+            if worker_finishes_first {
+                client_status.deferred_indexing_started(root, 1).await;
+                client_status
+                    .deferred_indexing_finished(root, 1, DeferredIndexingOutcome::Succeeded)
+                    .await;
+            }
+            client_status
+                .workspace_initialized(
+                    root,
+                    ProjectInitialization {
+                        generation: 1,
+                        has_deferred_indexing: true,
+                    },
+                )
+                .await;
+            assert_eq!(
+                client_status
+                    .state
+                    .lock()
+                    .await
+                    .rust_analyzer_status()
+                    .quiescent,
+                expected_quiescence,
+                "{message}",
+            );
+
+            if !worker_finishes_first {
+                client_status.deferred_indexing_started(root, 1).await;
+                assert!(
+                    !client_status
+                        .state
+                        .lock()
+                        .await
+                        .rust_analyzer_status()
+                        .quiescent
+                );
+                client_status
+                    .deferred_indexing_finished(root, 1, DeferredIndexingOutcome::Succeeded)
+                    .await;
+                assert!(
+                    client_status
+                        .state
+                        .lock()
+                        .await
+                        .rust_analyzer_status()
+                        .quiescent
+                );
+            }
+        }
     }
 
     #[tokio::test]

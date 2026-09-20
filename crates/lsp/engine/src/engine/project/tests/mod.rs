@@ -203,7 +203,7 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
     let recorded = RecordingNotifications::default();
     let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
     let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
-    project
+    let initialization = project
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
@@ -215,9 +215,10 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
         )
         .expect("lower-memory fixture project should initialize");
 
+    assert!(!initialization.has_deferred_indexing);
     assert!(
         recorded.take().is_empty(),
-        "completed package batches should not announce deferred indexing",
+        "completed package batches should not announce deferred work",
     );
     assert!(
         matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
@@ -241,6 +242,58 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
     assert!(
         matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
         "completed workspace reindex should not spawn a deferred worker",
+    );
+}
+
+#[test]
+fn cached_startup_reports_idle_without_deferred_work_events() {
+    let fixture = fixture_crate(
+        r#"
+            //- /Cargo.toml
+            [package]
+            name = "cached_startup_fixture"
+            version = "0.1.0"
+            edition = "2024"
+
+            //- /src/lib.rs
+            pub fn cached_body() -> usize { 1 }
+            "#,
+    );
+    let configuration = ProjectConfiguration::from(AnalysisConfig {
+        package_residency_policy: PackageResidencyPolicy::AllOffloadable,
+        sysroot_discovery: SysrootDiscovery::Disabled,
+        ..AnalysisConfig::default()
+    });
+    let (sender, receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    let initialization = project
+        .initialize(fixture.path(""), configuration.clone())
+        .expect("cold fixture project should initialize");
+    assert!(initialization.has_deferred_indexing);
+
+    // Complete the first run so the next startup can reuse its saved body indexes.
+    let EngineCommand::DeferredIndexingFinished { generation, result } =
+        receive_completion(&mut project, &receiver)
+    else {
+        panic!("cold startup should finish deferred indexing");
+    };
+    project.deferred_indexing_finished(generation, result);
+    drop(project);
+
+    let (sender, _receiver) = mpsc::channel();
+    let memory_control: Arc<dyn MemoryControl> = Arc::new(());
+    let recorded = RecordingNotifications::default();
+    let notifications = ServiceNotificationsSink::from_publisher(recorded.clone());
+    let mut project = ProjectCoordinator::new(sender, memory_control, notifications);
+    let initialization = project
+        .initialize(fixture.path(""), configuration)
+        .expect("cached fixture project should initialize");
+    assert!(!initialization.has_deferred_indexing);
+    assert!(
+        recorded.take().is_empty(),
+        "cached startup should have no deferred work events"
     );
 }
 

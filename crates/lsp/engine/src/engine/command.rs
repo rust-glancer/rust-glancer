@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
     DocumentRangeSnapshot, EditorDocumentSnapshot, FoldingClientCapabilities,
-    GlobalPositionSnapshot, QueryError, QueryValue,
+    GlobalPositionSnapshot, ProjectInitialization, QueryError, QueryValue,
 };
 use rg_project::{SavedBodyProducts, SavedFileChange, SplitIndexingProgress};
 use tokio::sync::oneshot;
@@ -33,7 +33,7 @@ pub(crate) enum EngineCommand {
     Initialize {
         root: PathBuf,
         configuration: ProjectConfiguration,
-        respond_to: EngineResponder<()>,
+        respond_to: EngineResponder<ProjectInitialization>,
     },
     /// Background repair scheduled when a query proves that saved analysis is stale.
     RecoverStaleSource {

@@ -19,7 +19,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{IndexingProgress, IndexingStage, ServiceNotification};
+use rg_lsp_proto::{IndexingProgress, IndexingStage, ProjectInitialization, ServiceNotification};
 use rg_project::{
     AnalysisChangeSummary, AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     ProjectSnapshot, SavedBodyProducts, SavedFileChange, SplitIndexingMode, SplitIndexingProgress,
@@ -98,7 +98,7 @@ impl ProjectCoordinator {
         &mut self,
         root: PathBuf,
         configuration: ProjectConfiguration,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<ProjectInitialization> {
         let started = Instant::now();
         let configured_target = match configuration.cargo_metadata_config.target() {
             CargoMetadataTarget::Auto => "auto",
@@ -223,14 +223,22 @@ impl ProjectCoordinator {
             indexing_preference = configuration.indexing_preference.config_name(),
             "workspace indexing finished"
         );
-        if self
+        let has_deferred_indexing = self
             .deferred_indexing_finish
-            .saved_project_changed(&self.project)
-        {
+            .saved_project_changed(&self.project);
+        if has_deferred_indexing {
             self.send_deferred_indexing_started();
         }
+        // A worker that failed to start must not make startup look fully indexed.
+        anyhow::ensure!(
+            has_deferred_indexing || !self.project.has_unfinished_split_indexing(),
+            "initial deferred indexing could not start",
+        );
 
-        Ok(())
+        Ok(ProjectInitialization {
+            generation: self.project.generation(),
+            has_deferred_indexing,
+        })
     }
 
     /// Rebuild the whole saved workspace and schedule deferred work for the new generation.
