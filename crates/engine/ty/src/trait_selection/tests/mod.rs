@@ -168,7 +168,7 @@ fn possible_impl_origins_include_nested_known_type_owners() {
     )));
     let mut table = InferenceTable::new();
     let nested_slot = table.new_type_var();
-    assert!(table.unify(&nested_slot, &nested_ty));
+    table.unify(&nested_slot, &nested_ty);
 
     let outer_ty = Ty::adt(AdtTy {
         def: TypeDefRef::new_struct(DefMapRef::Crate(outer_crate), StructId(0)),

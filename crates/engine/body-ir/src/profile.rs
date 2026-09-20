@@ -5,8 +5,22 @@ use rg_profile::{ProfileDescriptor, declare_metrics};
 declare_metrics! {
     pub(crate) mod metric {
         scope "body_ir.resolution" {
-            /// Bodies that retained semantic progress until the fixed-point safety limit.
-            counter FIXED_POINT_EXHAUSTIONS = "fixed_point_exhaustions";
+            /// Expressions whose syntax-directed inference rule was evaluated.
+            counter EXPRESSION_VISITS = "expression_visits";
+            /// Pattern nodes whose expected type was projected into bindings.
+            counter PATTERN_VISITS = "pattern_visits";
+            /// Attempts to select or refine a call signature.
+            counter CALL_ATTEMPTS = "call_attempts";
+            /// Attempts to project a field or index from its receiver.
+            counter PROJECTION_ATTEMPTS = "projection_attempts";
+            /// Selected-call predicate conjunctions submitted for inference evidence.
+            counter OBLIGATION_ATTEMPTS = "obligation_attempts";
+            /// Pending operations retried after their live inputs changed.
+            counter DEFERRED_RETRIES = "deferred_retries";
+            /// Expression subtrees stopped at the recursion safety limit.
+            counter RECURSION_EXHAUSTIONS = "recursion_exhaustions";
+            /// Bodies whose pending work reached its safety limit.
+            counter DEFERRED_EXHAUSTIONS = "deferred_exhaustions";
         }
         scope "body_ir.lookup" {
             /// Lexical trait-scope questions served from one body-owned cache.

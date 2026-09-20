@@ -17,11 +17,11 @@ use super::{BodyData, ExprKind};
 /// so one `ExprId` addresses both its structural node and its semantic facts. Calls are kept sparse
 /// because only call expressions can have [`CallFacts`].
 ///
-/// Resolution creates this sidecar only after structural lowering and binding compaction finish.
+/// Inference finalizes its type arenas in place, then moves them into this sidecar.
 /// Readers normally pair it with its body through `BodyView`; it is not another owning body model.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyFacts {
-    pub(crate) bindings: Arena<BindingId, BindingFacts>,
+    pub(crate) bindings: Arena<BindingId, Ty>,
     pub(crate) exprs: Arena<ExprId, ExprFacts>,
     /// Calls are sparse relative to expressions, so selected targets do not need one dense option
     /// slot per expression.
@@ -29,20 +29,18 @@ pub struct BodyFacts {
 }
 
 impl BodyFacts {
-    /// Allocate dense fact sidecars for a finalized structural body.
-    ///
-    /// Resolution fills these slots without changing their identity or cardinality. Structural
-    /// build steps, including ambiguous pattern binding compaction, have already finished.
-    pub(crate) fn for_body(body: &BodyData) -> Self {
+    pub(crate) fn new(
+        bindings: Arena<BindingId, Ty>,
+        exprs: Arena<ExprId, ExprFacts>,
+        calls: Vec<(ExprId, CallFacts)>,
+    ) -> Self {
+        // Inference collects selected calls in expression-id order. Keep that ordering so readers
+        // can find a call by binary search without another index.
+        debug_assert!(calls.windows(2).all(|pair| pair[0].0.0 < pair[1].0.0));
         Self {
-            bindings: Arena::from_vec(
-                body.bindings()
-                    .iter()
-                    .map(|_| BindingFacts::default())
-                    .collect(),
-            ),
-            exprs: Arena::from_vec(body.exprs().iter().map(|_| ExprFacts::default()).collect()),
-            calls: Vec::new(),
+            bindings,
+            exprs,
+            calls,
         }
     }
 
@@ -72,27 +70,6 @@ impl BodyFacts {
         self.bindings.len() == body.bindings().len()
             && self.exprs.len() == body.exprs().len()
             && calls_are_aligned
-    }
-
-    pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
-        self.exprs[expr].ty = ty;
-    }
-
-    pub(crate) fn set_expr_resolution(&mut self, expr: ExprId, resolution: BodyResolution) {
-        self.exprs[expr].resolution = resolution;
-    }
-
-    pub(crate) fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
-        self.bindings[binding].ty = ty;
-    }
-
-    /// Replace sparse call facts in expression-id order.
-    ///
-    /// Inference finalization naturally walks its expression-indexed call slots in that order.
-    /// Preserving it here enables allocation-free lookup by binary search.
-    pub(crate) fn set_calls(&mut self, calls: Vec<(ExprId, CallFacts)>) {
-        debug_assert!(calls.windows(2).all(|pair| pair[0].0.0 < pair[1].0.0));
-        self.calls = calls;
     }
 
     pub(crate) fn call(&self, expr: ExprId) -> Option<&CallFacts> {
@@ -131,7 +108,10 @@ impl CallFacts {
     }
 }
 
-/// Resolved facts derived for one expression during body resolution.
+/// Type and name-resolution facts for one expression.
+///
+/// While owned by inference, the type can still contain live variables. The same facts are moved
+/// into `BodyFacts` after those variables have been resolved or replaced with final fallbacks.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ExprFacts {
     pub(crate) resolution: BodyResolution,
@@ -144,18 +124,6 @@ impl Default for ExprFacts {
             resolution: BodyResolution::Unknown,
             ty: Ty::Unknown,
         }
-    }
-}
-
-/// Resolved facts derived for one local binding during body resolution.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct BindingFacts {
-    pub ty: Ty,
-}
-
-impl Default for BindingFacts {
-    fn default() -> Self {
-        Self { ty: Ty::Unknown }
     }
 }
 

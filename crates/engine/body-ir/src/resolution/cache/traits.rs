@@ -27,9 +27,9 @@ use rg_text::Name;
 
 /// Successful lexical trait sets and filtered declaration surfaces retained for one body.
 ///
-/// Body resolution recreates query contexts while its fixed point refines types. Those contexts
-/// share this cache, so `value.render()` does not repeat either DefMap scope collection or the
-/// declaration-surface intersection on every round. A new body or request receives a new handle.
+/// Body inference reuses its query context as it visits expressions and completes pending work.
+/// Queries share this cache, so calls to `value.render()` reuse DefMap scope collection and
+/// the declaration-surface intersection. A new body or request receives a new handle.
 #[derive(Clone, Default)]
 pub(crate) struct BodyTraitLookupCache {
     shared: Arc<BodyTraitLookupCacheShared>,
@@ -146,9 +146,9 @@ impl BodyTraitLookupCache {
 
     /// Reuse the trait candidates produced by one declaration surface and lexical scope.
     ///
-    /// `value.run()` can be revisited by many fixed-point rounds. Its declaring-trait union and
-    /// lexical intersection are stable for the immutable body, even while receiver inference is
-    /// still changing. Named maps accept borrowed strings on hits and allocate a `Name` only once.
+    /// A deferred lookup of `value.run()` may become ready after its receiver gains evidence. Its
+    /// declaring-trait union and lexical intersection stay stable for the immutable body. Named
+    /// maps accept borrowed strings on hits and allocate a `Name` only once.
     pub(crate) fn surface_or_try_init<E>(
         &self,
         scope: ScopeId,

@@ -62,10 +62,8 @@ where
                 &table,
             )?;
             for function in matcher.function_candidates_for_matches(receiver.matches(), None)? {
-                let Some(function_data) = self
-                    .context
-                    .item_query()
-                    .function_data(function.function())?
+                let function_ref = function.function();
+                let Some(function_data) = self.context.item_query().function_data(function_ref)?
                 else {
                     continue;
                 };
@@ -75,12 +73,12 @@ where
                     continue;
                 }
 
-                let candidate = match function.trait_selection() {
+                let candidate = match function.into_trait_selection() {
                     Some(selection) => MemberMethodCandidateRef::trait_method(
-                        function.function(),
+                        function_ref,
                         selection.applicability,
                     ),
-                    None => MemberMethodCandidateRef::inherent(function.function()),
+                    None => MemberMethodCandidateRef::inherent(function_ref),
                 };
                 Self::push_candidate(&mut candidates, candidate);
             }

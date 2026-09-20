@@ -3,23 +3,24 @@
 //! DefMap owns namespace selection and shadowing. This layer gives ordinary local bindings lexical
 //! priority, then projects selected value definitions into `BodyResolution` and `Ty`. Unit and
 //! tuple struct constructors arrive through the value namespace like functions and constants;
-//! this query does not recover them by falling back to a type-name match.
+//! ordinary value lookup does not recover them by falling back to a type-name match. Record
+//! expressions have a separate entry point because their constructor paths use the type namespace.
 
 use rg_def_map::{DefMapSource, NamespaceSet, ResolvePathResult};
 use rg_ir_model::{
-    BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, FunctionRef, LocalEnumVariantRef,
-    ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef, TypeDefRef,
-    identity::DeclarationRef,
+    BindingId, ConstRef, DefId, DefMapRef, EnumVariantRef, ExprId, FunctionRef, GenericDefRef,
+    LocalEnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, StaticRef,
+    TypeDefRef, identity::DeclarationRef,
 };
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Ty};
+use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Substitution, Ty};
 
-use crate::body::facts::BodyResolution;
 use crate::resolution::BodyResolutionContext;
+use crate::{BodyPath, body::facts::BodyResolution};
 
-/// Resolves paths in the value namespace without mutating the body.
+/// Resolves paths used by expressions without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -80,10 +81,129 @@ where
         self.resolve_path_expr(scope, path, None)
     }
 
+    /// Resolve a body expression's path, including qualified associated items and local bindings.
+    /// A local binding returns its identity with an unknown type; the caller connects that identity
+    /// to its own type state. Item types come from declarations and can be resolved here directly.
+    pub(crate) fn resolve_body_path_expr(
+        &self,
+        expr: ExprId,
+        path: &BodyPath,
+    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        let expr_data = self.context.body().expr_unchecked(expr);
+        // Preserve associated-item syntax such as `<T as Trait>::VALUE` before trying ordinary
+        // lexical lookup, which only understands a DefMap path and its visible local bindings.
+        if let Some(result) = self
+            .context
+            .associated_items()
+            .resolve_body_path(expr_data.scope, path)?
+        {
+            return Ok(result);
+        }
+
+        match path.as_def_map_path() {
+            Some(path) => {
+                self.resolve_path_expr(expr_data.scope, &path, Some(expr_data.visible_bindings))
+            }
+            None => Ok((BodyResolution::Unknown, Ty::Unknown)),
+        }
+    }
+
+    /// Record constructors use type names, independently of ordinary local value bindings.
+    /// For `struct User { name: Name }`, a local `let User = ...` therefore does not hide the
+    /// constructor in `User { name }`.
+    pub(crate) fn resolve_record_expr_path(
+        &self,
+        scope: ScopeId,
+        path: &BodyPath,
+    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        let Some(def_map_path) = path.as_def_map_path() else {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
+        };
+
+        match self
+            .context
+            .type_path_query()
+            .resolve_in_scope(scope, &def_map_path)?
+        {
+            TypePathResolution::SelfType(type_def) => {
+                return Ok((
+                    BodyResolution::Unknown,
+                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
+                ));
+            }
+            TypePathResolution::TypeDef(type_def) => {
+                // Prefer the source local def so navigation stays source-shaped. Body-local
+                // types already have the right identity and need no item-store lookup.
+                let declaration = if type_def.origin == DefMapRef::Body(self.context.body_ref()) {
+                    DeclarationRef::from(type_def)
+                } else {
+                    self.context
+                        .item_query()
+                        .local_def_for_type_def(type_def)?
+                        .map(DeclarationRef::from)
+                        .unwrap_or_else(|| DeclarationRef::from(type_def))
+                };
+                return Ok((
+                    BodyResolution::Declarations([declaration].into_iter().collect()),
+                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
+                ));
+            }
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
+            | TypePathResolution::Unknown => {}
+        }
+
+        // Record enum variants live in the type namespace even though they are not themselves
+        // types. Resolve that identity separately so `Choice::Record { value: 1 }` does not depend
+        // on the bare-value constructor path used by tuple and unit variants.
+        if let Some(variant_ref) = self
+            .context
+            .type_path_query()
+            .resolve_enum_variant_in_scope(scope, &def_map_path)?
+            && let Some(variant) = self.context.item_query().enum_variant_data(variant_ref)?
+        {
+            return Ok((
+                BodyResolution::Declarations(
+                    [DeclarationRef::EnumVariant(variant_ref)]
+                        .into_iter()
+                        .collect(),
+                ),
+                Ty::adt(self.record_nominal_ty(scope, path, variant.owner)?),
+            ));
+        }
+
+        self.resolve_nonlocal_path_expr(scope, &def_map_path)
+    }
+
+    /// Preserve written record arguments, leaving omitted type arguments unknown for inference.
+    fn record_nominal_ty(
+        &self,
+        scope: ScopeId,
+        path: &BodyPath,
+        type_def: TypeDefRef,
+    ) -> Result<AdtTy, PackageStoreError> {
+        let generics = self
+            .context
+            .item_paths()
+            .generics()
+            .generics(GenericDefRef::TypeDef(type_def))?;
+        let args = if let Some(args) = path.last_segment_angle_args() {
+            self.context
+                .type_refs(scope)
+                .resolve_generic_args_for(&generics, args, None)?
+        } else {
+            Substitution::new().args_for(&generics)
+        };
+        Ok(AdtTy {
+            def: type_def,
+            args,
+        })
+    }
+
     /// Resolve a value path from a body scope.
     ///
     /// `visible_bindings` caps which local bindings are visible for local queries.
-    pub(crate) fn resolve_path_expr(
+    fn resolve_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,
@@ -313,12 +433,9 @@ where
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
-                let ty = self
-                    .context
-                    .query_body()
-                    .binding_ty_unchecked(binding)
-                    .clone();
-                Ok(Some((BodyResolution::Binding(binding), ty)))
+                // A local path reports identity only. Its consumer links the binding's live
+                // inference slot; semantic item lookup does not read body-local types.
+                Ok(Some((BodyResolution::Binding(binding), Ty::Unknown)))
             }
             BodyValueName::Candidates(candidates) => {
                 let mut declarations = UniqueVec::new();

@@ -5,7 +5,7 @@
 //! the query and uses these walkers only for reusable child traversal.
 
 use rg_body_ir::{
-    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodyView, PatData, PatKind,
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodyView, PatData,
 };
 use rg_ir_model::{PatId, ScopeId};
 use rg_item_tree::{GenericArg, TypeRef};
@@ -37,46 +37,8 @@ pub(crate) fn walk_pat<'body>(
 
     visit(PatWalkSite { scope, data });
 
-    match &data.kind {
-        PatKind::TupleStruct { fields, .. }
-        | PatKind::Tuple { fields }
-        | PatKind::Or { pats: fields }
-        | PatKind::Slice { fields } => {
-            for field in fields {
-                walk_pat(body, scope, *field, visit);
-            }
-        }
-        PatKind::Record { fields, rest, .. } => {
-            for field in fields {
-                walk_pat(body, scope, field.pat, visit);
-            }
-            if let Some(rest) = rest {
-                walk_pat(body, scope, *rest, visit);
-            }
-        }
-        PatKind::Binding {
-            subpat: Some(subpat),
-            ..
-        }
-        | PatKind::Ref { pat: subpat, .. }
-        | PatKind::Box { pat: subpat } => {
-            walk_pat(body, scope, *subpat, visit);
-        }
-        PatKind::Range { start, end, .. } => {
-            if let Some(start) = start {
-                walk_pat(body, scope, *start, visit);
-            }
-            if let Some(end) = end {
-                walk_pat(body, scope, *end, visit);
-            }
-        }
-        PatKind::Binding { subpat: None, .. }
-        | PatKind::Path { .. }
-        | PatKind::Rest
-        | PatKind::Literal { .. }
-        | PatKind::ConstBlock { .. }
-        | PatKind::Wildcard
-        | PatKind::Unsupported => {}
+    for child in data.kind.child_pats() {
+        walk_pat(body, scope, child, visit);
     }
 }
 

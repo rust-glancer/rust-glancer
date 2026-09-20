@@ -1,9 +1,8 @@
 //! Rust Glancer's private status notifications.
 //!
 //! The VS Code extension uses the active-workspace and deferred-indexing events to render its
-//! detailed status bar. `compare-lsp` also uses deferred-indexing completion as a precise barrier
-//! before measuring body-sensitive requests. These notifications predate the portable progress and
-//! rust-analyzer-compatible health flows, so they remain additive compatibility contracts.
+//! detailed status bar. These notifications predate the portable progress and rust-analyzer-compatible
+//! health flows, so they remain additive compatibility contracts.
 
 use std::path::{Path, PathBuf};
 

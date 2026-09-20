@@ -35,9 +35,7 @@ const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
 const RUST_GLANCER_READY_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
-const RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD: &str =
-    "rust-glancer/deferredIndexingFinished";
-const RUST_ANALYZER_READY_METHOD: &str = "experimental/serverStatus";
+const SERVER_STATUS_METHOD: &str = "experimental/serverStatus";
 
 /// One live LSP server with the client-side transport needed to drive it.
 #[derive(Debug)]
@@ -48,7 +46,7 @@ pub(super) struct RunningServer {
     client: TowerLspTransport,
     stderr: StderrCapture,
     exited: bool,
-    rust_glancer_deferred_indexing_completion: Option<DeferredIndexingCompletion>,
+    rust_glancer_indexing_status: Option<IndexingStatus>,
 }
 
 impl RunningServer {
@@ -97,7 +95,7 @@ impl RunningServer {
             client,
             stderr,
             exited: false,
-            rust_glancer_deferred_indexing_completion: None,
+            rust_glancer_indexing_status: None,
         })
     }
 
@@ -175,8 +173,10 @@ impl RunningServer {
     ///
     /// Rust-glancer reports structural readiness before deferred body indexes finish. That is the
     /// behavior users care about for editor responsiveness, so `ready_ms` stops there. The
-    /// comparison harness then waits for the explicit deferred-indexing notification before firing
-    /// measured body-sensitive queries, and reports that extra wait as `settle_ms`.
+    /// comparison harness then waits for healthy, quiescent server status before firing measured
+    /// body-sensitive queries, and reports that extra wait as `settle_ms`. Unlike a work-finished
+    /// event, this state also covers startup that needs no background indexing. A status received
+    /// before structural readiness is retained below.
     pub(super) async fn settle_after_readiness(&mut self) -> anyhow::Result<Duration> {
         match self.kind {
             ServerKind::RustAnalyzer => {
@@ -187,21 +187,21 @@ impl RunningServer {
                 Ok(Duration::ZERO)
             }
             ServerKind::RustGlancer => {
-                match &self.rust_glancer_deferred_indexing_completion {
-                    Some(DeferredIndexingCompletion::Succeeded) => {
+                match &self.rust_glancer_indexing_status {
+                    Some(IndexingStatus::Idle) => {
                         tracing::info!(
                             server = self.kind.display_name(),
                             "compare-lsp post-ready settle already observed"
                         );
                         return Ok(Duration::ZERO);
                     }
-                    Some(DeferredIndexingCompletion::Failed(message)) => {
+                    Some(IndexingStatus::Failed(message)) => {
                         anyhow::bail!(
-                            "{} deferred indexing failed before post-ready settle: {message}",
+                            "{} indexing failed before post-ready settle: {message}",
                             self.kind.display_name(),
                         );
                     }
-                    None => {}
+                    Some(IndexingStatus::Working) | None => {}
                 }
 
                 tracing::info!(
@@ -209,9 +209,9 @@ impl RunningServer {
                     "waiting for compare-lsp post-ready settle"
                 );
                 let started_at = Instant::now();
-                self.wait_until_deferred_indexing_finished()
+                self.wait_until_indexing_settled()
                     .await
-                    .context("Waiting for rust-glancer deferred indexing after readiness failed")?;
+                    .context("Waiting for rust-glancer quiescence after readiness failed")?;
                 let settle_latency = started_at.elapsed();
                 tracing::info!(
                     server = self.kind.display_name(),
@@ -420,11 +420,11 @@ impl RunningServer {
                         self.stderr_note(),
                     )
                 })?;
-                if let Some(DeferredIndexingCompletion::Failed(message)) =
-                    self.observe_deferred_indexing_finished(&notification)
+                if let Some(IndexingStatus::Failed(message)) =
+                    self.observe_indexing_status(&notification)
                 {
                     anyhow::bail!(
-                        "{} reported deferred-indexing failure while becoming ready: {message}",
+                        "{} reported indexing failure while becoming ready: {message}",
                         self.kind.display_name(),
                     );
                 }
@@ -448,30 +448,29 @@ impl RunningServer {
         })?
     }
 
-    async fn wait_until_deferred_indexing_finished(&mut self) -> anyhow::Result<()> {
+    async fn wait_until_indexing_settled(&mut self) -> anyhow::Result<()> {
         tokio::time::timeout(SETTLE_TIMEOUT, async {
             loop {
                 let notification = self.client.next_notification().await.with_context(|| {
                     format!(
-                        "Waiting for {} deferred indexing notification failed{}",
+                        "Waiting for {} indexing status failed{}",
                         self.kind.display_name(),
                         self.stderr_note(),
                     )
                 })?;
-                if let Some(completion) = self.observe_deferred_indexing_finished(&notification) {
-                    return match completion {
-                        DeferredIndexingCompletion::Succeeded => Ok(()),
-                        DeferredIndexingCompletion::Failed(message) => anyhow::bail!(
-                            "{} reported deferred-indexing failure: {message}",
-                            self.kind.display_name(),
-                        ),
-                    };
+                match self.observe_indexing_status(&notification) {
+                    Some(IndexingStatus::Idle) => return Ok(()),
+                    Some(IndexingStatus::Failed(message)) => anyhow::bail!(
+                        "{} reported indexing failure: {message}",
+                        self.kind.display_name(),
+                    ),
+                    Some(IndexingStatus::Working) | None => {}
                 }
                 if let ReadinessNotification::Failed(message) =
                     self.readiness_notification(&notification)
                 {
                     anyhow::bail!(
-                        "{} reported readiness failure while deferred indexing was settling: {message}",
+                        "{} reported readiness failure while indexing was settling: {message}",
                         self.kind.display_name(),
                     );
                 }
@@ -480,23 +479,23 @@ impl RunningServer {
         .await
         .with_context(|| {
             format!(
-                "Waiting for {} deferred indexing notification timed out{}",
+                "Waiting for {} quiescent indexing status timed out{}",
                 self.kind.display_name(),
                 self.stderr_note(),
             )
         })?
     }
 
-    fn observe_deferred_indexing_finished(
+    fn observe_indexing_status(
         &mut self,
         notification: &ServerNotification,
-    ) -> Option<DeferredIndexingCompletion> {
+    ) -> Option<IndexingStatus> {
         if !matches!(self.kind, ServerKind::RustGlancer) {
             return None;
         }
-        let completion = rust_glancer_deferred_indexing_completion(notification)?;
-        self.rust_glancer_deferred_indexing_completion = Some(completion.clone());
-        Some(completion)
+        let status = rust_glancer_indexing_status(notification)?;
+        self.rust_glancer_indexing_status = Some(status.clone());
+        Some(status)
     }
 
     fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {
@@ -600,41 +599,34 @@ enum ReadinessNotification {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum DeferredIndexingCompletion {
-    Succeeded,
+enum IndexingStatus {
+    Working,
+    Idle,
     Failed(String),
 }
 
-fn rust_glancer_deferred_indexing_completion(
-    notification: &ServerNotification,
-) -> Option<DeferredIndexingCompletion> {
-    if notification.method() != RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD {
+fn rust_glancer_indexing_status(notification: &ServerNotification) -> Option<IndexingStatus> {
+    if notification.method() != SERVER_STATUS_METHOD {
         return None;
     }
 
-    Some(
-        match notification
-            .params()
-            .and_then(|params| params.get("outcome"))
-            .and_then(Value::as_str)
-        {
-            Some("succeeded") => DeferredIndexingCompletion::Succeeded,
-            Some("failed") => DeferredIndexingCompletion::Failed(
-                notification
-                    .params()
-                    .and_then(|params| params.get("message"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("background indexing failed")
-                    .to_string(),
-            ),
-            Some(outcome) => DeferredIndexingCompletion::Failed(format!(
-                "deferred indexing reported unknown outcome `{outcome}`"
-            )),
-            None => DeferredIndexingCompletion::Failed(
-                "deferred indexing finish notification omitted its outcome".to_string(),
-            ),
+    let params = notification.params()?;
+    // A failed background build leaves the server queryable, but reports warning health. It must
+    // not count as successfully settled indexing just because the failed worker is now idle.
+    Some(match params.get("health").and_then(Value::as_str) {
+        Some("ok") => match params.get("quiescent").and_then(Value::as_bool) {
+            Some(true) => IndexingStatus::Idle,
+            Some(false) => IndexingStatus::Working,
+            None => IndexingStatus::Failed("server status omitted quiescence".to_string()),
         },
-    )
+        _ => IndexingStatus::Failed(
+            params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("server did not report healthy indexing")
+                .to_string(),
+        ),
+    })
 }
 
 fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
@@ -659,7 +651,7 @@ fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotific
 }
 
 fn rust_analyzer_readiness(notification: &ServerNotification) -> ReadinessNotification {
-    if notification.method() != RUST_ANALYZER_READY_METHOD {
+    if notification.method() != SERVER_STATUS_METHOD {
         return ReadinessNotification::Ignore;
     }
 
@@ -699,39 +691,6 @@ impl Drop for RunningServer {
                 self.exited = true;
             }
             Err(_error) => {}
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deferred_indexing_completion_preserves_success_and_failure() {
-        let test_cases = [
-            (
-                serde_json::json!({"outcome": "succeeded"}),
-                DeferredIndexingCompletion::Succeeded,
-            ),
-            (
-                serde_json::json!({
-                    "outcome": "failed",
-                    "message": "body indexing failed",
-                }),
-                DeferredIndexingCompletion::Failed("body indexing failed".to_string()),
-            ),
-        ];
-
-        for (params, expected) in test_cases {
-            let notification = ServerNotification::new(
-                RUST_GLANCER_DEFERRED_INDEXING_FINISHED_METHOD.to_string(),
-                Some(params),
-            );
-            assert_eq!(
-                rust_glancer_deferred_indexing_completion(&notification),
-                Some(expected)
-            );
         }
     }
 }

@@ -5,12 +5,9 @@
 //! impl or trait parameter that happens to use the same spelling.
 
 use rg_ir_model::{ConstParamRef, GenericParamRef, LifetimeParamRef, TypeParamRef};
-use rg_semantic_ir::{GenericParamSource, Generics};
+use rg_semantic_ir::Generics;
 
-use super::{
-    UnknownTypeInstantiationBuilder,
-    table::{InferenceConflict, InferenceTable},
-};
+use super::table::{InferenceConflict, InferenceTable};
 use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty};
 
 /// Generic-parameter bindings that may still contain inference variables.
@@ -53,7 +50,7 @@ impl InferenceSubstitution {
             // Turn only those nested holes into trial variables, retain the known structure, and
             // let ordinary unification absorb the new evidence.
             if existing.has_unknown() {
-                let existing = UnknownTypeInstantiationBuilder::new(table).ty_from_ty(&existing);
+                let existing = table.instantiate_nested_unknowns(&existing);
                 table.try_unify(&existing, &ty)?;
                 self.0.push(
                     GenericParamRef::Type(param),
@@ -95,10 +92,6 @@ impl InferenceSubstitution {
         &self.0
     }
 
-    pub fn into_substitution(self) -> Substitution {
-        self.0
-    }
-
     /// Convert live keyed bindings into durable positional generic arguments.
     ///
     /// `params` supplies the declaration's canonical full order, including inherited parameters.
@@ -111,32 +104,6 @@ impl InferenceSubstitution {
     ) -> GenericArgs {
         let args = self.0.args_for_params(params);
         table.finalize_generic_args(&args)
-    }
-
-    /// Finalize durable arguments when the owning inference operation stopped incomplete.
-    pub fn finalize_args_without_numeric_defaults(
-        &self,
-        table: &InferenceTable,
-        params: impl IntoIterator<Item = GenericParamRef>,
-    ) -> GenericArgs {
-        let args = self.0.args_for_params(params);
-        table.finalize_generic_args_without_numeric_defaults(&args)
-    }
-
-    /// Give the function's own type parameters fresh variables, shadowing only by identity.
-    pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &Generics<'_>) {
-        for param in generics.iter_self() {
-            let GenericParamRef::Type(param_ref) = param.param() else {
-                continue;
-            };
-            if matches!(param.source(), GenericParamSource::TraitSelf) {
-                continue;
-            }
-            self.0.push(
-                GenericParamRef::Type(param_ref),
-                GenericArg::Type(Box::new(table.new_type_var())),
-            );
-        }
     }
 
     /// Give impl type parameters that did not occur in its matched header a trial inference slot.

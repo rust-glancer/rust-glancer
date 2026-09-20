@@ -1,10 +1,13 @@
+use std::cell::Cell;
+
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId,
     TypeDefId, TypeDefRef,
 };
-use rg_ty::{AdtTy, ClosureTyId, GenericArg, PrimitiveTy, Ty, UnsignedIntTy};
+use rg_std::CancellationToken;
+use rg_ty::{AdtTy, ClosureTyId, GenericArg, PrimitiveTy, Ty};
 
-use super::context::BodyInferenceCtx;
+use super::unify::InferenceState;
 
 fn type_def(index: usize) -> TypeDefRef {
     TypeDefRef {
@@ -49,15 +52,11 @@ fn default_int_ty() -> Ty {
     Ty::Primitive(PrimitiveTy::DEFAULT_INT)
 }
 
-fn u64_ty() -> Ty {
-    Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
-}
-
 #[test]
 fn stores_closure_types_as_body_local_facts() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
 
-    assert!(context.set_expr_closure_ty(body_ref(), ExprId(0), 0));
+    context.set_expr_closure_ty(body_ref(), ExprId(0), 0);
 
     let Ty::Closure(closure) = context.expr_ty(ExprId(0)) else {
         panic!("closure expression should retain its callable signature");
@@ -70,12 +69,12 @@ fn stores_closure_types_as_body_local_facts() {
 
 #[test]
 fn copies_closure_types_through_binding_reads() {
-    let mut context = BodyInferenceCtx::new(2, 1, 0);
+    let mut context = InferenceState::new(2, 1);
 
     context.set_expr_closure_ty(body_ref(), ExprId(0), 0);
     context.set_binding_infer_ty(BindingId(0), context.expr_ty(ExprId(0)));
 
-    assert!(context.set_expr_from_binding(ExprId(1), BindingId(0)));
+    context.set_expr_from_binding(ExprId(1), BindingId(0));
     let Ty::Closure(closure) = context.expr_ty(ExprId(1)) else {
         panic!("binding reads should preserve closure identity and signature");
     };
@@ -85,7 +84,7 @@ fn copies_closure_types_through_binding_reads() {
 
 #[test]
 fn creates_body_inference_context_with_body_sized_slots() {
-    let mut context = BodyInferenceCtx::new(2, 3, 0);
+    let mut context = InferenceState::new(2, 3);
 
     let var = context.table.new_type_var();
 
@@ -99,47 +98,45 @@ fn creates_body_inference_context_with_body_sized_slots() {
 
 #[test]
 fn stores_expression_type_variables_until_expected_type_evidence_arrives() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
     let var = context.table.new_type_var();
 
     context.set_expr_infer_ty(ExprId(0), var);
     assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Unknown);
 
-    assert!(context.constrain_expr_ty(ExprId(0), &user_ty()));
+    context.constrain_expr_ty(ExprId(0), &user_ty());
     assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
 }
 
 #[test]
 fn expected_type_seeds_an_expression_without_producer_evidence() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
 
-    assert!(context.constrain_expr_ty(ExprId(0), &user_ty()));
+    context.constrain_expr_ty(ExprId(0), &user_ty());
 
     assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
 }
 
 #[test]
 fn repeated_nested_unknown_instantiation_reuses_expression_slots() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
     let return_ty = vec_ty(Ty::Unknown);
 
-    assert!(context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty));
+    context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
     let first_inference_ty = context.expr_ty(ExprId(0));
-    let before = context.progress();
 
-    assert!(!context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty));
+    context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
     assert_eq!(context.expr_ty(ExprId(0)), first_inference_ty);
-    assert!(!context.has_progressed_since(&before));
 }
 
 #[test]
 fn never_expression_does_not_solve_its_expected_type_slot() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
     context.set_expr_infer_ty(ExprId(0), Ty::Never);
     let expected = context.table.new_type_var();
 
-    assert!(!context.constrain_expr_ty(ExprId(0), &expected));
-    assert!(context.table.unify(&expected, &user_ty()));
+    context.constrain_expr_ty(ExprId(0), &expected);
+    context.table.unify(&expected, &user_ty());
 
     assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Never);
     assert_eq!(context.table.finalize(&expected), user_ty());
@@ -147,70 +144,50 @@ fn never_expression_does_not_solve_its_expected_type_slot() {
 
 #[test]
 fn binding_path_equality_carries_early_expected_type_back_to_the_binding() {
-    let mut context = BodyInferenceCtx::new(1, 1, 0);
+    let mut context = InferenceState::new(1, 1);
     context.constrain_expr_ty(ExprId(0), &vec_ty(user_ty()));
 
-    assert!(context.set_expr_from_binding(ExprId(0), BindingId(0)));
+    context.set_expr_from_binding(ExprId(0), BindingId(0));
 
     assert_eq!(context.finalize_binding_ty(BindingId(0)), vec_ty(user_ty()));
 }
 
 #[test]
-fn revisiting_numeric_literals_keeps_their_inference_slots() {
-    let mut context = BodyInferenceCtx::new(2, 0, 0);
-
-    context.set_expr_integer_var(ExprId(0));
-    context.set_expr_float_var(ExprId(1));
-    let integer_slot = context.expr_ty(ExprId(0));
-    let float_slot = context.expr_ty(ExprId(1));
-
-    context.set_expr_integer_var(ExprId(0));
-    context.set_expr_float_var(ExprId(1));
-
-    assert_eq!(context.expr_ty(ExprId(0)), integer_slot);
-    assert_eq!(context.expr_ty(ExprId(1)), float_slot);
-}
-
-#[test]
-fn weaker_expression_evidence_does_not_create_fixed_point_progress() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+fn weaker_expression_evidence_preserves_known_type() {
+    let mut context = InferenceState::new(1, 0);
     context.set_expr_infer_ty(ExprId(0), user_ty());
-    let before = context.progress();
 
     context.set_expr_infer_ty(ExprId(0), Ty::Unknown);
-
-    assert!(!context.has_progressed_since(&before));
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
 }
 
 #[test]
-fn fixed_point_ignores_fresh_ids_for_the_same_inference_shape() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+fn linked_expression_variables_share_later_evidence() {
+    let mut context = InferenceState::new(1, 0);
     let first = context.table.new_type_var();
-    context.set_expr_infer_ty(ExprId(0), first);
-    let before = context.progress();
+    context.set_expr_infer_ty(ExprId(0), first.clone());
 
     let replacement = context.table.new_type_var();
-    context.set_expr_infer_ty(ExprId(0), replacement);
-
-    assert!(!context.has_progressed_since(&before));
+    context.set_expr_infer_ty(ExprId(0), replacement.clone());
+    context.table.unify(&first, &user_ty());
+    assert_eq!(context.table.finalize(&replacement), user_ty());
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
 }
 
 #[test]
 fn weaker_pattern_evidence_does_not_replace_a_settled_binding_fact() {
-    let mut context = BodyInferenceCtx::new(0, 1, 0);
+    let mut context = InferenceState::new(0, 1);
     let settled = Ty::tuple(vec![user_ty(), user_ty()]);
     context.set_binding_infer_ty(BindingId(0), settled.clone());
-    let before = context.progress();
 
     context.set_binding_infer_ty(BindingId(0), Ty::tuple(vec![user_ty(), Ty::Unknown]));
 
-    assert!(!context.has_progressed_since(&before));
     assert_eq!(context.finalize_binding_ty(BindingId(0)), settled);
 }
 
 #[test]
 fn conflicting_evidence_keeps_the_stable_slot_and_finalizes_to_unknown() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
+    let mut context = InferenceState::new(1, 0);
     let slot = context.table.new_type_var();
     context.set_expr_infer_ty(ExprId(0), slot);
 
@@ -222,7 +199,7 @@ fn conflicting_evidence_keeps_the_stable_slot_and_finalizes_to_unknown() {
 
 #[test]
 fn treats_equivalent_variable_aliases_as_stable_body_facts() {
-    let mut context = BodyInferenceCtx::new(1, 1, 0);
+    let mut context = InferenceState::new(1, 1);
     let original = context.table.new_type_var();
     let alias = context.table.new_type_var();
     let unrelated = context.table.new_type_var();
@@ -230,121 +207,103 @@ fn treats_equivalent_variable_aliases_as_stable_body_facts() {
     context.set_binding_infer_ty(BindingId(0), original.clone());
     context.set_expr_infer_ty(ExprId(0), original.clone());
 
-    assert!(context.set_binding_infer_ty(BindingId(0), alias.clone()));
-    assert!(!context.set_binding_infer_ty(BindingId(0), original));
-    assert!(!context.set_expr_from_binding(ExprId(0), BindingId(0)));
+    context.set_binding_infer_ty(BindingId(0), alias.clone());
+    context.set_binding_infer_ty(BindingId(0), original.clone());
+    context.set_expr_from_binding(ExprId(0), BindingId(0));
 
-    assert!(context.set_expr_infer_ty(ExprId(0), unrelated));
-    assert!(!context.set_expr_from_binding(ExprId(0), BindingId(0)));
+    context.set_expr_infer_ty(ExprId(0), unrelated.clone());
+    context.set_expr_from_binding(ExprId(0), BindingId(0));
+
+    context.table.unify(&alias, &user_ty());
+    assert_eq!(context.table.finalize(&original), user_ty());
+    assert_eq!(context.table.finalize(&unrelated), user_ty());
+    assert_eq!(context.finalize_binding_ty(BindingId(0)), user_ty());
+    assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
 }
 
-#[test]
-fn empty_tuple_expression_is_unit_during_inference() {
-    let mut context = BodyInferenceCtx::new(1, 0, 0);
-
-    context.set_expr_tuple_from_fields(ExprId(0), &[]);
-
-    assert_eq!(context.expr_ty(ExprId(0)), Ty::Unit);
-    assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Unit);
+thread_local! {
+    static CANCEL_AFTER_EXPRESSIONS: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
-#[test]
-fn revisiting_array_shapes_reuses_existing_element_slot() {
-    let mut context = BodyInferenceCtx::new(3, 0, 0);
-    let first_element = context.table.new_type_var();
-    let second_element = context.table.new_type_var();
-    context.set_expr_infer_ty(ExprId(0), first_element);
-    context.set_expr_infer_ty(ExprId(1), second_element);
-
-    context.set_expr_array_from_elements(ExprId(2), &[ExprId(0), ExprId(1)], Some("2".into()));
-    let first = context.expr_ty(ExprId(2));
-
-    context.set_expr_array_from_elements(ExprId(2), &[ExprId(0), ExprId(1)], Some("2".into()));
-
-    assert_eq!(context.expr_ty(ExprId(2)), first);
-}
-
-#[test]
-fn revisiting_array_shapes_keeps_new_slot_for_weak_evidence() {
-    let mut context = BodyInferenceCtx::new(2, 0, 0);
-    context.set_expr_ty(ExprId(0), &vec_ty(Ty::Unknown));
-
-    context.set_expr_array_from_elements(ExprId(1), &[ExprId(0)], Some("1".into()));
-
-    assert!(context.expr_ty(ExprId(1)).has_var());
-    assert_eq!(
-        context.finalize_expr_ty(ExprId(1)),
-        Ty::Array {
-            inner: Box::new(vec_ty(Ty::Unknown)),
-            len: rg_ty::ConstValue::Scalar(1),
+pub(super) fn before_expression(cancellation: &CancellationToken) {
+    CANCEL_AFTER_EXPRESSIONS.with(|remaining| {
+        if let Some(count) = remaining.get() {
+            remaining.set(count.checked_sub(1));
+            if count == 0 {
+                cancellation.cancel();
+            }
         }
-    );
+    });
 }
 
 #[test]
-fn revisiting_branch_shapes_reuses_existing_result_slot() {
-    let mut context = BodyInferenceCtx::new(3, 0, 0);
-    let then_ty = context.table.new_type_var();
-    let else_ty = context.table.new_type_var();
-    context.set_expr_infer_ty(ExprId(0), then_ty);
-    context.set_expr_infer_ty(ExprId(1), else_ty);
+fn cancelling_recursive_inference_never_finalizes_partial_body_facts() {
+    let fixture = crate::testonly::BodyIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cancelled_inference"
+version = "0.1.0"
+edition = "2024"
 
-    context.set_expr_if_from_branches(ExprId(2), Some(ExprId(0)), Some(ExprId(1)));
-    let first = context.expr_ty(ExprId(2));
-
-    context.set_expr_if_from_branches(ExprId(2), Some(ExprId(0)), Some(ExprId(1)));
-
-    assert_eq!(context.expr_ty(ExprId(2)), first);
-}
-
-#[test]
-fn revisiting_branch_shapes_does_not_reuse_concrete_fallback_result() {
-    let mut context = BodyInferenceCtx::new(3, 0, 0);
-    context.set_expr_integer_var(ExprId(0));
-    context.set_expr_integer_var(ExprId(1));
-    context.set_expr_ty(ExprId(2), &default_int_ty());
-
-    context.set_expr_if_from_branches(ExprId(2), Some(ExprId(0)), Some(ExprId(1)));
-
-    assert!(context.expr_ty(ExprId(2)).has_var());
-    context.constrain_expr_ty(ExprId(2), &u64_ty());
-
-    assert_eq!(context.finalize_expr_ty(ExprId(0)), u64_ty());
-    assert_eq!(context.finalize_expr_ty(ExprId(1)), u64_ty());
-    assert_eq!(context.finalize_expr_ty(ExprId(2)), u64_ty());
-}
-
-#[test]
-fn revisiting_array_shapes_does_not_reuse_concrete_fallback_element() {
-    let mut context = BodyInferenceCtx::new(3, 0, 0);
-    context.set_expr_integer_var(ExprId(0));
-    context.set_expr_integer_var(ExprId(1));
-    context.set_expr_ty(
-        ExprId(2),
-        &Ty::Array {
-            inner: Box::new(default_int_ty()),
-            len: rg_ty::ConstValue::Scalar(2),
-        },
+//- /src/lib.rs
+pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 }
+"#,
     );
-
-    context.set_expr_array_from_elements(ExprId(2), &[ExprId(0), ExprId(1)], Some("2".into()));
-
-    assert!(context.expr_ty(ExprId(2)).has_var());
-    context.constrain_expr_ty(
-        ExprId(2),
-        &Ty::Array {
-            inner: Box::new(u64_ty()),
-            len: rg_ty::ConstValue::Scalar(2),
-        },
-    );
-
-    assert_eq!(context.finalize_expr_ty(ExprId(0)), u64_ty());
-    assert_eq!(context.finalize_expr_ty(ExprId(1)), u64_ty());
-    assert_eq!(
-        context.finalize_expr_ty(ExprId(2)),
-        Ty::Array {
-            inner: Box::new(u64_ty()),
-            len: rg_ty::ConstValue::Scalar(2),
-        },
-    );
+    let target = CrateRef {
+        package: PackageSlot(0),
+        crate_id: CrateId(0),
+    };
+    let bodies = fixture
+        .body_ir_db()
+        .resident_package(target.package)
+        .expect("fixture package exists")
+        .crate_bodies(target.crate_id)
+        .expect("fixture crate exists");
+    let body = &bodies.bodies()[0];
+    let def_map = fixture
+        .def_map_db()
+        .read_txn(rg_def_map::DefMapLoader::resident_only("inference fixture"));
+    let semantic_ir =
+        fixture
+            .semantic_ir_db()
+            .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
+                "inference fixture",
+            ));
+    let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
+        &rg_semantic_ir::CrateItemQuery::new(&def_map, &semantic_ir, target),
+        &CancellationToken::new(),
+    )
+    .expect("fixture lookup builds");
+    for cancel in [true, false] {
+        let cancellation = CancellationToken::new();
+        let session = rg_ty::trait_selection::TraitSelectionSession::new(target)
+            .with_cancellation(cancellation);
+        CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
+        let result = super::InferenceContext::new(
+            &def_map,
+            &semantic_ir,
+            &lookup,
+            BodyRef {
+                crate_ref: target,
+                body: BodyId(0),
+            },
+            body,
+            &session,
+        )
+        .infer_body();
+        if cancel {
+            let error = result.expect_err("unfinished inference must have no facts");
+            let cancelled = error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<rg_std::Cancelled>())
+                .expect("inference preserves the cancellation cause");
+            assert_eq!(cancelled.checkpoint(), "expression resolution");
+        } else {
+            let facts = result.expect("fresh inference can finish");
+            assert_eq!(facts.exprs.len(), body.exprs().len());
+            assert!(facts.exprs.iter().all(|facts| !facts.ty.has_var()));
+        }
+        assert!(CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.get().is_none()));
+    }
 }

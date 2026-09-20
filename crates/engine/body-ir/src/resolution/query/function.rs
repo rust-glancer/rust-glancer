@@ -5,7 +5,7 @@ use rg_ir_model::FunctionRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{AdtTy, Ty};
+use rg_ty::AdtTy;
 
 use crate::resolution::BodyResolutionContext;
 
@@ -58,26 +58,5 @@ where
         }
 
         Ok(self_tys)
-    }
-
-    /// Return the written `-> T`.
-    ///
-    /// If no arrow was written, return `None` instead of forcing unit here.
-    pub(crate) fn declared_return_ty(
-        &self,
-        function_ref: FunctionRef,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.context.item_query();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
-            return Ok(None);
-        };
-        if function_data.signature.ret_ty().is_none() {
-            return Ok(None);
-        }
-        Ok(self
-            .context
-            .signatures()
-            .function(function_ref)?
-            .map(|signature| signature.ret))
     }
 }

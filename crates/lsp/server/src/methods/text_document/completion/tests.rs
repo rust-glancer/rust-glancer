@@ -639,7 +639,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: PathBuf,
         _: EngineConfig,
-    ) -> EngineResult<()> {
+    ) -> EngineResult<rg_lsp_proto::ProjectInitialization> {
         panic!("test engine only supports completion")
     }
 

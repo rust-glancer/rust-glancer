@@ -84,23 +84,15 @@ impl LspEngineFixture {
 
     async fn initialized_with_engine_config(fixture: &str, config: EngineConfig) -> Self {
         let fixture = Self::new(fixture);
-        fixture
+        let initialization = fixture
             .service
             .clone()
             .initialize(context::current(), fixture.fixture.path(""), config)
             .await
             .expect("fixture LSP engine should initialize");
-        // Bodyless projects and lower-memory package batches can already be complete when the
-        // initialization response arrives. Wait only when the engine announced detached work;
-        // otherwise there will deliberately be no terminal deferred-indexing notification.
-        let deferred_indexing_started =
-            fixture.notifications.snapshot().iter().any(|notification| {
-                matches!(
-                    notification,
-                    ServiceNotification::DeferredIndexingStarted { .. }
-                )
-            });
-        if deferred_indexing_started {
+        // The startup response says whether any worker needs to be awaited. Bodyless projects,
+        // cached projects, and lower-memory builds can already be fully indexed here.
+        if initialization.has_deferred_indexing {
             tokio::time::timeout(
                 Duration::from_secs(5),
                 fixture.notifications.wait_for_deferred_indexing(),

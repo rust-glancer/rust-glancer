@@ -1,4 +1,4 @@
-//! Lookup results shared by the short-lived query contexts for one body.
+//! Lookup results reused by semantic queries for one body.
 
 mod body_items;
 mod method;
@@ -10,10 +10,11 @@ pub(crate) use self::{
     traits::{BodyTraitLookupCache, BodyTraitSurface},
 };
 
-/// Request-local semantic caches shared by every short-lived context for one body.
+/// Request-local semantic caches shared by queries for one body.
 ///
-/// Fixed-point resolution repeatedly creates contexts over newer inference snapshots. The facts
-/// below do not change with those snapshots, so all contexts for the body share one handle:
+/// Inference retains one query context while it traverses the body and completes pending work.
+/// Query objects cloned from that context share these handles. The declaration facts below stay
+/// stable as types gain evidence:
 ///
 /// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
 /// - `body_local_items` indexes active-overlay and body-local declarations once;

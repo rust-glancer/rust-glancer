@@ -74,13 +74,13 @@ impl ReceiverImplMatches {
 }
 
 /// One function declaration together with the impl evidence that exposed it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct ReceiverFunctionCandidate {
     function: FunctionRef,
     source: ReceiverFunctionSource,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 enum ReceiverFunctionSource {
     Inherent { impl_match: InherentImplMatch },
     Trait { selection: TraitSelection },
@@ -98,8 +98,8 @@ impl ReceiverFunctionCandidate {
         }
     }
 
-    pub fn trait_selection(&self) -> Option<&TraitSelection> {
-        match &self.source {
+    pub fn into_trait_selection(self) -> Option<TraitSelection> {
+        match self.source {
             ReceiverFunctionSource::Trait { selection } => Some(selection),
             ReceiverFunctionSource::Inherent { .. } => None,
         }

@@ -14,13 +14,13 @@ use crate::body::facts::BodyResolution;
 /// lowered later against the correct body context. Receiver or type-prefix evidence is kept
 /// separately from function-owned generics. Trait candidates also retain their trial selection so
 /// inference can commit its table only after lookup finds one definite target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedCallTarget {
     function: FunctionRef,
     explicit_args: Vec<ItemGenericArg>,
     site_scope: ScopeId,
     pub(crate) self_source: CallSelfSource,
-    trait_selection: Option<TraitSelection>,
+    pub(crate) trait_selection: Option<TraitSelection>,
 }
 
 /// How `Self` entered a selected call and whether syntax supplied an implicit receiver argument.
@@ -28,7 +28,7 @@ pub(crate) struct ResolvedCallTarget {
 /// `Type::make(value)` contributes a `Self` substitution but its written arguments still begin at
 /// signature parameter zero. `value.method(arg)` contributes the same substitution and consumes
 /// parameter zero as the implicit receiver.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum CallSelfSource {
     None,
     TypePrefix(CallSelf),
@@ -36,7 +36,7 @@ pub(crate) enum CallSelfSource {
 }
 
 /// Concrete `Self` evidence recovered together with its owner-scoped substitution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct CallSelf {
     pub(crate) self_ty: Ty,
     pub(crate) subst: Substitution,
@@ -111,11 +111,6 @@ impl ResolvedCallTarget {
     pub(crate) fn first_written_param_idx(&self) -> usize {
         self.self_source.first_written_param_idx()
     }
-
-    /// Return trait-selection evidence whose table is committed with a definite target.
-    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
-        self.trait_selection.as_ref()
-    }
 }
 
 impl CallSelfSource {
@@ -127,30 +122,10 @@ impl CallSelfSource {
             Self::Receiver(_) => 1,
         }
     }
-
-    /// Start signature projection with receiver-derived substitutions.
-    pub(crate) fn base_subst(&self) -> Substitution {
-        match self {
-            Self::None => Substitution::new(),
-            Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
-                self_context.subst.clone()
-            }
-        }
-    }
-
-    /// Return concrete `Self` when this call was selected through a receiver or type prefix.
-    pub(crate) fn self_ty(&self) -> Option<Ty> {
-        match self {
-            Self::None => None,
-            Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
-                Some(self_context.self_ty.clone())
-            }
-        }
-    }
 }
 
 /// Call targets selected for one call expression.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct ResolvedCallTargets {
     targets: UniqueVec<ResolvedCallTarget>,
 }
@@ -188,16 +163,16 @@ impl ResolvedCallTargets {
     }
 
     /// Return the unique target whose trait predicates were fully proved.
-    pub(crate) fn single_proven(&self) -> Option<ResolvedCallTarget> {
+    pub(crate) fn single_proven(self) -> Option<ResolvedCallTarget> {
         let mut target = ExpectedUnique::new();
-        for candidate in &self.targets {
+        for candidate in self.targets {
             // Ordinary and inherent functions need no trait proof. Trait functions must have a
             // definite selection; `Maybe` remains useful to editor lookup but cannot own call
             // inference or associated projection facts.
             if candidate.trait_selection.as_ref().is_none_or(|selection| {
                 selection.applicability == rg_ir_model::TraitApplicability::Yes
             }) {
-                target.push(candidate.clone());
+                target.push(candidate);
             }
         }
         target.into_option()

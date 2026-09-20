@@ -264,7 +264,7 @@ where
                 // Declaration indexes answer which traits *could* provide this item. Rust's
                 // implicit lookup then asks the independent lexical question: which of those
                 // traits are in method scope at this use site? Both facts are stable for one
-                // immutable body, so fixed-point retries reuse this filtered result.
+                // immutable body, so deferred lookups reuse this filtered result.
                 let traits_in_scope = self
                     .context
                     .traits()

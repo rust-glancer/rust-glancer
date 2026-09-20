@@ -4,7 +4,7 @@ use rg_ir_model::{
     TypeDefRef, UnsignedIntTy,
 };
 
-use super::{InferenceTable, UnknownTypeInstantiationBuilder};
+use super::InferenceTable;
 use crate::{
     AdtTy, AliasTy, Clause, ClosureTyId, GenericArg, GenericArgs, OpaqueTy, PrimitiveTy,
     TraitApplication, Ty,
@@ -83,28 +83,12 @@ fn finalizes_unsolved_variables_to_stable_fallbacks() {
 }
 
 #[test]
-fn incomplete_finalization_does_not_default_numeric_variables() {
-    let mut table = InferenceTable::new();
-    let int_var = table.new_integer_var();
-    let float_var = table.new_float_var();
-
-    assert_eq!(
-        table.finalize_without_numeric_defaults(&int_var),
-        Ty::Unknown
-    );
-    assert_eq!(
-        table.finalize_without_numeric_defaults(&float_var),
-        Ty::Unknown
-    );
-}
-
-#[test]
 fn conflicting_variables_finalize_to_unknown() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(table.unify(&var, &Ty::Primitive(PrimitiveTy::Bool)));
-    assert!(table.unify(&var, &Ty::Primitive(PrimitiveTy::Char)));
+    table.unify(&var, &Ty::Primitive(PrimitiveTy::Bool));
+    table.unify(&var, &Ty::Primitive(PrimitiveTy::Char));
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }
@@ -114,7 +98,7 @@ fn unknown_does_not_solve_variables() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(!table.unify(&var, &Ty::Unknown));
+    table.unify(&var, &Ty::Unknown);
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }
@@ -125,11 +109,11 @@ fn numeric_variables_accept_matching_primitive_evidence() {
     let int_var = table.new_integer_var();
     let float_var = table.new_float_var();
 
-    assert!(table.unify(
+    table.unify(
         &int_var,
-        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
-    ));
-    assert!(table.unify(&float_var, &Ty::Primitive(PrimitiveTy::Float(FloatTy::F32))));
+        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64)),
+    );
+    table.unify(&float_var, &Ty::Primitive(PrimitiveTy::Float(FloatTy::F32)));
 
     assert_eq!(
         table.finalize(&int_var),
@@ -147,11 +131,11 @@ fn numeric_variables_follow_already_solved_type_variables() {
     let type_var = table.new_type_var();
     let int_var = table.new_integer_var();
 
-    assert!(table.unify(
+    table.unify(
         &type_var,
-        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64))
-    ));
-    assert!(table.unify(&int_var, &type_var));
+        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U64)),
+    );
+    table.unify(&int_var, &type_var);
 
     assert_eq!(
         table.finalize(&int_var),
@@ -168,7 +152,7 @@ fn finalizes_solved_variables_inside_nominal_containers() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(&element, &user_ty()));
+    table.unify(&element, &user_ty());
 
     assert_eq!(
         table.finalize(&vec_ty(element)),
@@ -208,9 +192,9 @@ fn finalizes_variables_inside_closure_and_fn_def_types() {
         vec![GenericArg::Type(Box::new(function_arg.clone()))],
     );
 
-    assert!(table.unify(&closure_param, &user_ty()));
-    assert!(table.unify(&closure_return, &project_ty()));
-    assert!(table.unify(&function_arg, &user_ty()));
+    table.unify(&closure_param, &user_ty());
+    table.unify(&closure_return, &project_ty());
+    table.unify(&function_arg, &user_ty());
 
     assert_eq!(
         table.finalize(&closure),
@@ -228,10 +212,10 @@ fn resolves_root_variables_without_replacing_nested_vars() {
     let element = table.new_type_var();
     let nested = table.new_type_var();
 
-    assert!(table.unify(&element, &vec_ty(nested.clone())));
+    table.unify(&element, &vec_ty(nested.clone()));
 
     assert_eq!(table.resolve_root_var(&element), vec_ty(nested.clone()));
-    assert!(table.unify(&nested, &user_ty()));
+    table.unify(&nested, &user_ty());
     assert_eq!(table.resolve_root_var(&element), vec_ty(nested));
     assert_eq!(table.finalize(&element), vec_ty(user_ty()));
 }
@@ -243,10 +227,10 @@ fn existing_var_links_do_not_create_reverse_cycles() {
     let right = table.new_type_var();
     let joined = table.new_type_var();
 
-    assert!(table.unify(&right, &left));
-    assert!(!table.unify(&left, &right));
-    assert!(table.unify(&joined, &left));
-    assert!(!table.unify(&joined, &right));
+    table.unify(&right, &left);
+    table.unify(&left, &right);
+    table.unify(&joined, &left);
+    table.unify(&joined, &right);
 
     assert_eq!(table.resolve_root_var(&right), left);
     assert_eq!(table.resolve_root_var(&joined), left);
@@ -260,15 +244,15 @@ fn indirect_var_links_do_not_create_reverse_cycles() {
     let third = table.new_type_var();
     let fourth = table.new_type_var();
 
-    assert!(table.unify(&first, &second));
-    assert!(table.unify(&second, &third));
-    assert!(!table.unify(&third, &first));
+    table.unify(&first, &second);
+    table.unify(&second, &third);
+    table.unify(&third, &first);
 
     assert_eq!(table.resolve_root_var(&second), first);
     assert_eq!(table.resolve_root_var(&third), first);
 
-    assert!(table.unify(&third, &fourth));
-    assert!(!table.unify(&fourth, &first));
+    table.unify(&third, &fourth);
+    table.unify(&fourth, &first);
     assert_eq!(table.resolve_root_var(&second), first);
     assert_eq!(table.resolve_root_var(&third), first);
     assert_eq!(table.resolve_root_var(&fourth), first);
@@ -284,12 +268,12 @@ fn long_variable_equality_sequence_finalizes_without_recursive_alias_walk() {
     // Equality is symmetric. A long sequence should share one representative instead of storing
     // a directional `?0 -> ?1 -> ?2` chain whose later resolution consumes the thread stack.
     for pair in vars.windows(2) {
-        assert!(table.unify(&pair[0], &pair[1]));
+        table.unify(&pair[0], &pair[1]);
     }
-    assert!(table.unify(
+    table.unify(
         vars.last().expect("the test creates inference variables"),
-        &user_ty()
-    ));
+        &user_ty(),
+    );
 
     assert_eq!(table.finalize(&vars[0]), user_ty());
 }
@@ -301,8 +285,8 @@ fn nested_var_links_do_not_create_indirect_cycles() {
     let element = table.new_type_var();
     let alias = table.new_type_var();
 
-    assert!(table.unify(&container, &vec_ty(element.clone())));
-    assert!(table.unify(&element, &alias));
+    table.unify(&container, &vec_ty(element.clone()));
+    table.unify(&element, &alias);
 
     // `container = Vec<element>` and `element = alias` make `alias = container` recursive,
     // even though the target variable is hidden behind both a type shape and another slot.
@@ -319,13 +303,13 @@ fn recursive_evidence_through_alias_conflicts_the_representative() {
     let representative = table.new_type_var();
     let alias = table.new_type_var();
 
-    assert!(table.unify(&representative, &alias));
+    table.unify(&representative, &alias);
     assert_eq!(table.resolve_root_var(&alias), representative);
 
     // The recursive spelling uses the alias, but both slots describe one equality class. The
     // representative must become conflicting so it cannot accept an unrelated concrete type.
-    assert!(table.unify(&alias, &vec_ty(alias.clone())));
-    assert!(!table.unify(&representative, &user_ty()));
+    table.unify(&alias, &vec_ty(alias.clone()));
+    table.unify(&representative, &user_ty());
     assert_eq!(table.finalize(&representative), Ty::Unknown);
     assert_eq!(table.finalize(&alias), Ty::Unknown);
 }
@@ -340,7 +324,7 @@ fn long_structural_variable_chain_checks_cycles_without_recursing() {
     // Each slot contributes only one structural layer, but following their solutions creates a
     // chain deep enough to consume the thread stack if the occurs check uses recursive calls.
     for pair in vars.windows(2) {
-        assert!(table.unify(&pair[0], &vec_ty(pair[1].clone())));
+        table.unify(&pair[0], &vec_ty(pair[1].clone()));
     }
 
     assert_eq!(
@@ -358,7 +342,7 @@ fn canonicalizes_variable_aliases_before_and_after_solving() {
     let element = table.new_type_var();
     let alias = table.new_type_var();
 
-    assert!(table.unify(&element, &alias));
+    table.unify(&element, &alias);
 
     assert_eq!(table.canonicalize(&alias), element);
     assert_eq!(
@@ -366,7 +350,7 @@ fn canonicalizes_variable_aliases_before_and_after_solving() {
         vec_ty(element.clone())
     );
 
-    assert!(table.unify(&element, &user_ty()));
+    table.unify(&element, &user_ty());
 
     assert_eq!(table.canonicalize(&alias), user_ty());
     assert_eq!(table.canonicalize(&element), user_ty());
@@ -378,7 +362,7 @@ fn canonicalizes_variable_aliases_before_and_after_solving() {
 fn canonicalizes_solved_slots_inside_trait_clauses() {
     let mut table = InferenceTable::new();
     let subject = table.new_type_var();
-    assert!(table.unify(&subject, &user_ty()));
+    table.unify(&subject, &user_ty());
     let trait_ref = TraitDefRef {
         origin: def_map_ref(),
         id: TraitId(0),
@@ -431,19 +415,17 @@ fn later_evidence_refines_unknown_children_inside_solved_slots() {
     let values = table.new_type_var();
     let element = table.new_type_var();
 
-    assert!(table.unify(&values, &vec_ty(Ty::Unknown)));
-    assert!(table.unify(&values, &vec_ty(element.clone())));
-    assert!(table.unify(&element, &user_ty()));
+    table.unify(&values, &vec_ty(Ty::Unknown));
+    table.unify(&values, &vec_ty(element.clone()));
+    table.unify(&element, &user_ty());
 
     assert_eq!(table.finalize(&values), vec_ty(user_ty()));
 }
 
 #[test]
 fn merges_complementary_unknown_children_without_weakening_either_side() {
-    let table = InferenceTable::new();
-
     assert_eq!(
-        table.merge_ty_evidence(
+        InferenceTable::merge_ty_evidence(
             &Ty::tuple(vec![user_ty(), Ty::Unknown]),
             &Ty::tuple(vec![Ty::Unknown, project_ty()]),
         ),
@@ -456,10 +438,10 @@ fn same_opaque_occurrence_infers_through_generic_args() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(
+    table.unify(
         &opaque_ty(0, 0, element.clone()),
-        &opaque_ty(0, 0, user_ty())
-    ));
+        &opaque_ty(0, 0, user_ty()),
+    );
 
     assert_eq!(table.finalize(&element), user_ty());
 }
@@ -469,10 +451,10 @@ fn distinct_opaque_occurrences_do_not_unify_even_under_one_owner() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(!table.unify(
+    table.unify(
         &opaque_ty(0, 0, element.clone()),
-        &opaque_ty(0, 1, user_ty())
-    ));
+        &opaque_ty(0, 1, user_ty()),
+    );
 
     assert_eq!(table.finalize(&element), Ty::Unknown);
 }
@@ -482,7 +464,7 @@ fn unifies_same_definition_nominal_generic_arguments() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();
 
-    assert!(table.unify(&vec_ty(element.clone()), &vec_ty(user_ty())));
+    table.unify(&vec_ty(element.clone()), &vec_ty(user_ty()));
 
     assert_eq!(table.finalize(&element), Ty::adt(AdtTy::bare(type_def(0))));
 }
@@ -490,14 +472,10 @@ fn unifies_same_definition_nominal_generic_arguments() {
 #[test]
 fn instantiates_unknowns_nested_inside_known_shapes() {
     let mut table = InferenceTable::new();
-    let inferred = {
-        let mut builder = UnknownTypeInstantiationBuilder::new(&mut table);
-        let inferred = builder.ty_from_ty(&vec_ty(Ty::Unknown));
-        assert!(builder.used_type_vars());
-        inferred
-    };
+    let inferred = table.instantiate_nested_unknowns(&vec_ty(Ty::Unknown));
+    assert!(inferred.has_var());
 
-    assert!(table.unify(&inferred, &vec_ty(user_ty())));
+    table.unify(&inferred, &vec_ty(user_ty()));
 
     assert_eq!(table.finalize(&inferred), vec_ty(user_ty()));
 }
@@ -505,10 +483,8 @@ fn instantiates_unknowns_nested_inside_known_shapes() {
 #[test]
 fn leaves_root_unknown_uninstantiated() {
     let mut table = InferenceTable::new();
-    let mut builder = UnknownTypeInstantiationBuilder::new(&mut table);
 
-    assert_eq!(builder.ty_from_ty(&Ty::Unknown), Ty::Unknown);
-    assert!(!builder.used_type_vars());
+    assert_eq!(table.instantiate_nested_unknowns(&Ty::Unknown), Ty::Unknown);
 }
 
 #[test]
@@ -516,8 +492,8 @@ fn conflicting_nominal_variables_finalize_to_unknown() {
     let mut table = InferenceTable::new();
     let var = table.new_type_var();
 
-    assert!(table.unify(&var, &user_ty()));
-    assert!(table.unify(&var, &project_ty()));
+    table.unify(&var, &user_ty());
+    table.unify(&var, &project_ty());
 
     assert_eq!(table.finalize(&var), Ty::Unknown);
 }

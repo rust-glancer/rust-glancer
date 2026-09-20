@@ -15,12 +15,12 @@ use crate::resolution::BodyResolutionContext;
 /// Dot methods and static associated functions differ only in whether their declaration has a
 /// `self` parameter. Once that syntax check is made, both must apply receiver bindings, selected
 /// trait arguments, and explicit qualification in the same order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BodyCallableCandidate {
-    function: FunctionRef,
-    receiver_ty: Ty,
-    subst: Substitution,
-    trait_selection: Option<TraitSelection>,
+    pub(crate) function: FunctionRef,
+    pub(crate) receiver_ty: Ty,
+    pub(crate) subst: Substitution,
+    pub(crate) trait_selection: Option<TraitSelection>,
 }
 
 impl BodyCallableCandidate {
@@ -48,7 +48,7 @@ impl BodyCallableCandidate {
                 .inherent_match()
                 .map(|impl_match| impl_match.subst()),
         )?;
-        let trait_selection = candidate.trait_selection().cloned();
+        let trait_selection = candidate.into_trait_selection();
         if let Some(selection) = trait_selection.as_ref() {
             // Keep impl-owned bindings as well as trait-owned arguments. Trait declarations mainly
             // consume the latter, while this also stays correct for fail-soft impl-owned items.
@@ -75,18 +75,5 @@ impl BodyCallableCandidate {
 
     pub(crate) fn function(&self) -> FunctionRef {
         self.function
-    }
-
-    pub(crate) fn receiver_ty(&self) -> &Ty {
-        &self.receiver_ty
-    }
-
-    pub(crate) fn subst(&self) -> &Substitution {
-        &self.subst
-    }
-
-    /// Return the trait proof to commit if call inference uniquely selects this candidate.
-    pub(crate) fn trait_selection(&self) -> Option<&TraitSelection> {
-        self.trait_selection.as_ref()
     }
 }

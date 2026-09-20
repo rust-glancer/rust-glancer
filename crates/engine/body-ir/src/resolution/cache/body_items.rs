@@ -12,10 +12,10 @@ use rg_text::Name;
 
 /// Successful body-local declaration scan shared by one body-resolution pass.
 ///
-/// Body resolution creates short-lived query contexts over progressively stronger inference views.
-/// Every context clones this handle, so the first lookup scans the active body's item stores and
-/// all later lookups reuse the resulting [`BodyLocalItemIndex`]. The index is request-local: it is
-/// neither serialized nor shared with another body.
+/// Queries for the same body share this handle. The first lookup scans the active body's item
+/// stores, and all later lookups reuse the resulting [`BodyLocalItemIndex`], even as inference
+/// learns more about local types. The index is request-local: it is neither serialized nor shared
+/// with another body.
 ///
 /// Only a complete scan enters the `OnceLock`. If loading a package fails, the cache stays empty so
 /// a later query can retry instead of treating a partial declaration set as authoritative.

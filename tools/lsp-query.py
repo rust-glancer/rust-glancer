@@ -31,8 +31,8 @@ PROCESS_EXIT_GRACE_MS = 2_000
 MAX_QUEUED_NOTIFICATIONS = 64
 
 ACTIVE_WORKSPACE_CHANGED = "rust-glancer/activeWorkspaceChanged"
-DEFERRED_INDEXING_FINISHED = "rust-glancer/deferredIndexingFinished"
-TRACKED_NOTIFICATIONS = {ACTIVE_WORKSPACE_CHANGED, DEFERRED_INDEXING_FINISHED}
+SERVER_STATUS = "experimental/serverStatus"
+TRACKED_NOTIFICATIONS = {ACTIVE_WORKSPACE_CHANGED, SERVER_STATUS}
 
 TOOL_ROOT = Path(__file__).resolve().parent.parent
 
@@ -682,6 +682,13 @@ class LspClient:
                         future.set_result(message)
                     return
             if message["method"] in TRACKED_NOTIFICATIONS:
+                if message["method"] == SERVER_STATUS:
+                    # Quiescence is a state snapshot. A newer busy status supersedes any idle
+                    # snapshot that arrived while a query was running.
+                    self.notifications = [
+                        queued for queued in self.notifications
+                        if queued.get("method") != SERVER_STATUS
+                    ]
                 self.notifications.append(message)
                 if len(self.notifications) > MAX_QUEUED_NOTIFICATIONS:
                     self.notifications.pop(0)
@@ -822,18 +829,24 @@ async def wait_until_ready(client: LspClient, timeout_ms: int) -> None:
         fail("workspace indexing failed: {}".format(params.get("message", "no reason reported")))
 
 
-async def wait_until_deferred_indexing_finishes(client: LspClient, timeout_ms: int) -> None:
+async def wait_until_indexing_settled(client: LspClient, timeout_ms: int) -> None:
     notification = await client.wait_for_notification(
-        lambda message: message.get("method") == DEFERRED_INDEXING_FINISHED
+        lambda message: (
+            message.get("method") == SERVER_STATUS
+            and (
+                (message.get("params") or {}).get("health") != "ok"
+                or (message.get("params") or {}).get("quiescent") is True
+            )
+        )
         or (
             message.get("method") == ACTIVE_WORKSPACE_CHANGED
             and (message.get("params") or {}).get("state") == "failed"
         ),
-        "rust-glancer deferred indexing",
+        "rust-glancer quiescent indexing status",
         timeout_ms,
     )
-    if notification.get("method") == ACTIVE_WORKSPACE_CHANGED:
-        params = notification.get("params") or {}
+    params = notification.get("params") or {}
+    if notification.get("method") == ACTIVE_WORKSPACE_CHANGED or params.get("health") != "ok":
         fail("workspace indexing failed: {}".format(params.get("message", "no reason reported")))
 
 
@@ -1021,6 +1034,7 @@ async def run(argv: Sequence[str]) -> None:
                 "rootUri": root.as_uri(),
                 "workspaceFolders": [{"uri": root.as_uri(), "name": root.name}],
                 "capabilities": {
+                    "experimental": {"serverStatusNotification": True},
                     "workspace": {"workspaceEdit": {"documentChanges": True}},
                     "textDocument": {
                         "hover": {"contentFormat": ["markdown", "plaintext"]},
@@ -1069,7 +1083,7 @@ async def run(argv: Sequence[str]) -> None:
         if plan["readinessBarrier"] == "ready":
             await wait_until_ready(client, options.timeout_ms)
         if plan["deferredBarrier"] == "before-queries":
-            await wait_until_deferred_indexing_finishes(client, options.timeout_ms)
+            await wait_until_indexing_settled(client, options.timeout_ms)
 
         for query in plan["queries"]:
             if query["kind"] == "hover":
@@ -1211,7 +1225,7 @@ async def run(argv: Sequence[str]) -> None:
                     }
                 )
         if plan["deferredBarrier"] == "after-queries":
-            await wait_until_deferred_indexing_finishes(client, options.timeout_ms)
+            await wait_until_indexing_settled(client, options.timeout_ms)
     except Exception:
         if not options.show_logs and client.stderr.strip():
             print("lsp-query: server stderr tail:\n{}".format(client.stderr), file=sys.stderr)

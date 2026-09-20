@@ -2,7 +2,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId, identity::DeclarationRef};
-use rg_item_tree::{FieldItem, FieldList};
+use rg_item_tree::FieldList;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -29,11 +29,6 @@ pub(crate) struct DeclaredFieldTarget {
 }
 
 impl DeclaredFieldTarget {
-    /// Return the selected semantic field declaration.
-    pub(crate) fn field(&self) -> FieldRef {
-        self.field
-    }
-
     /// Return the field type if the declaration was available.
     pub(crate) fn ty(&self) -> Option<&Ty> {
         self.ty.as_ref()
@@ -207,19 +202,19 @@ where
         let Some(field_ref) = item_query.field_for_type(owner_ty.def, field)? else {
             return Ok(None);
         };
-        let Some(_) = item_query.field_data(field_ref)? else {
-            return Ok(Some(DeclaredFieldTarget {
-                field: field_ref,
-                ty: None,
-            }));
-        };
-
-        let subst = self.context.generics().subst_for_nominal_ty(owner_ty)?;
+        // A declaration remains useful for navigation even if its type data is unavailable.
+        // Read the type once before asking for substitutions, so missing data stays fail-soft.
         let ty = self
             .context
             .signatures()
             .field_ty(field_ref)?
-            .map(|ty| subst.apply(&ty));
+            .map(|ty| {
+                self.context
+                    .generics()
+                    .subst_for_nominal_ty(owner_ty)
+                    .map(|subst| subst.apply(&ty))
+            })
+            .transpose()?;
 
         Ok(Some(DeclaredFieldTarget {
             field: field_ref,
@@ -245,9 +240,7 @@ where
         let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
             return Ok(None);
         };
-        let Some((field_index, _field)) =
-            Self::variant_field(&variant_data.variant.fields, field_key)
-        else {
+        let Some(field_index) = Self::variant_field(&variant_data.variant.fields, field_key) else {
             return Ok(None);
         };
         let subst = self.context.generics().subst_for_nominal_ty(enum_ty)?;
@@ -267,21 +260,17 @@ where
     }
 
     /// Find a named or tuple field inside a variant declaration.
-    fn variant_field<'field>(
-        fields: &'field FieldList,
-        key: &FieldKey,
-    ) -> Option<(usize, &'field FieldItem)> {
+    fn variant_field(fields: &FieldList, key: &FieldKey) -> Option<usize> {
         match key {
             FieldKey::Named(_) => fields
                 .fields()
                 .iter()
-                .enumerate()
-                .find(|(_, field)| field.key.as_ref() == Some(key)),
+                .position(|field| field.key.as_ref() == Some(key)),
             FieldKey::Tuple(index) => fields
                 .fields()
                 .get(*index)
                 .filter(|field| field.key.as_ref() == Some(key))
-                .map(|field| (*index, field)),
+                .map(|_| *index),
         }
     }
 }

@@ -13,7 +13,7 @@ use anyhow::Context as _;
 use rg_lsp_proto::{
     DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig,
     EngineError, EngineResult, EngineService, FoldingClientCapabilities, GlobalPositionSnapshot,
-    QueryError, QueryValue, SaveProposal, SavedProjectChanges,
+    ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
 };
 use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
@@ -60,7 +60,7 @@ impl EngineService for Service {
         _: context::Context,
         root: PathBuf,
         config: EngineConfig,
-    ) -> EngineResult<()> {
+    ) -> EngineResult<ProjectInitialization> {
         let analysis = config.analysis;
         self.diagnostics
             .configure(root.clone(), config.diagnostics, analysis.clone())

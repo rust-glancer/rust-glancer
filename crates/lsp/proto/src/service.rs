@@ -8,6 +8,8 @@
 
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
     DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineError,
@@ -17,6 +19,18 @@ use crate::{
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
+/// Indexing state when the first queryable project is published.
+///
+/// The initialization response and background notifications travel independently. Returning this
+/// snapshot lets the server publish readiness without assuming that a missing start notification
+/// means there is no background work. The generation keeps an earlier completion authoritative
+/// when its notification arrives before this response.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ProjectInitialization {
+    pub generation: u64,
+    pub has_deferred_indexing: bool,
+}
+
 /// Requests and notifications accepted by one analysis engine.
 ///
 /// The LSP server owns editor protocol concerns; an engine owns project indexing, immutable-input
@@ -24,7 +38,8 @@ pub type EngineResult<T> = Result<T, EngineError>;
 /// domains.
 #[tarpc::service]
 pub trait EngineService {
-    async fn initialize(root: PathBuf, config: EngineConfig) -> EngineResult<()>;
+    async fn initialize(root: PathBuf, config: EngineConfig)
+    -> EngineResult<ProjectInitialization>;
 
     async fn initialized() -> EngineResult<()>;
 

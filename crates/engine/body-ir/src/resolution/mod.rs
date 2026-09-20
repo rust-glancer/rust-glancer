@@ -4,18 +4,16 @@
 //! signatures and trait obligations, and finalizes the resulting types and sparse selections into
 //! the persisted `BodyFacts` sidecar.
 //!
-//! `pass` drives the fixed point, `infer` maintains live type evidence, and `query` answers the
-//! semantic questions each step asks. The context and source adapter keep query inputs coherent;
-//! the body-owned caches survive as the pass creates new views of its evolving facts.
+//! `infer` owns recursive traversal, live type evidence, and pending semantic work. `query` answers
+//! its lookup questions. The context keeps query inputs coherent; body-owned
+//! caches share declaration results across expressions and deferred lookups.
 
 mod cache;
 mod context;
 mod infer;
-mod pass;
 mod query;
-mod source;
 
-pub(crate) use self::{cache::BodyResolutionCaches, pass::BodyResolutionPass};
+pub(crate) use self::infer::InferenceContext;
 
 pub use self::{
     context::BodyResolutionContext,

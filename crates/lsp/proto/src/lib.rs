@@ -43,7 +43,7 @@ pub use self::{
     semantic_tokens::{SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES, semantic_tokens_legend},
     service::{
         EngineResult, EngineService, EngineServiceClient, NotificationsService,
-        NotificationsServiceClient,
+        NotificationsServiceClient, ProjectInitialization,
     },
     snapshot::{
         DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentRevision, EditorDocumentSnapshot,

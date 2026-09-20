@@ -14,7 +14,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{CapturedSourceInput, EngineConfig, SavedProjectChanges};
+use rg_lsp_proto::{CapturedSourceInput, EngineConfig, ProjectInitialization, SavedProjectChanges};
 use rg_std::{NormalizedPathBuf, UniqueVec};
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, gen_lsp_types::MessageType};
@@ -374,7 +374,7 @@ impl EngineRegistry {
     ) -> anyhow::Result<EngineClient> {
         self.client_status.workspace_indexing(&start.root).await;
         let spawned = self.spawn_engine(start.root.clone(), start.config).await;
-        let (engine, exit_monitor) = match spawned {
+        let (engine, exit_monitor, initialization) = match spawned {
             Ok(engine) => engine,
             Err(error) => {
                 self.mark_failed(start.id, start.root, error.to_string())
@@ -402,7 +402,8 @@ impl EngineRegistry {
             return Err(error);
         }
 
-        self.mark_ready(start.id, start.root.clone(), engine).await;
+        self.mark_ready(start.id, start.root.clone(), engine, initialization)
+            .await;
 
         let inner = Arc::downgrade(&self.inner);
         let lsp_client = self.lsp_client.clone();
@@ -458,7 +459,13 @@ impl EngineRegistry {
     }
 
     /// Replaces a starting slot with a ready process and wakes waiters.
-    async fn mark_ready(&self, id: EngineId, root: PathBuf, process: EngineProcess) {
+    async fn mark_ready(
+        &self,
+        id: EngineId,
+        root: PathBuf,
+        process: EngineProcess,
+        initialization: ProjectInitialization,
+    ) {
         let project_status = process.engine_client().project_status_changes();
         let (notify, status) = {
             let mut inner = self.inner.lock().await;
@@ -471,7 +478,9 @@ impl EngineRegistry {
             (notify, status)
         };
         notify.notify_waiters();
-        self.client_status.workspace_ready(&root).await;
+        self.client_status
+            .workspace_initialized(&root, initialization)
+            .await;
         self.client_status.active_workspace_changed(status).await;
         self.spawn_project_status_monitor(id, root, project_status);
     }
@@ -587,7 +596,11 @@ impl EngineRegistry {
         &self,
         root: PathBuf,
         config: EngineConfig,
-    ) -> anyhow::Result<(EngineProcess, EngineProcessExitMonitor)> {
+    ) -> anyhow::Result<(
+        EngineProcess,
+        EngineProcessExitMonitor,
+        ProjectInitialization,
+    )> {
         let (engine, exit_monitor) = EngineProcess::spawn(
             self.lsp_client.clone(),
             self.editor.clone(),
@@ -598,7 +611,7 @@ impl EngineRegistry {
         .await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
-        engine_client
+        let initialization = engine_client
             .call_unconditional(
                 "initialize",
                 move |engine_client, request_context| async move {
@@ -610,7 +623,7 @@ impl EngineRegistry {
             .await?;
 
         tracing::info!(root = %root.display(), "started rust-glancer engine");
-        Ok((engine, exit_monitor))
+        Ok((engine, exit_monitor, initialization))
     }
 
     fn engine_id(root: &Path) -> String {

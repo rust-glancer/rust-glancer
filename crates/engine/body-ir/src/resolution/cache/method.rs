@@ -12,7 +12,7 @@ use rg_ty::Ty;
 /// Extension-trait misses retained for one body's inference lifetime.
 ///
 /// The key is `(lexical scope, canonical receiver type, method name)`. For example, after proving
-/// that scope 7 has no extension method `secret` for `Vec<u8>`, a later fixed-point round can skip
+/// that scope 7 has no extension method `secret` for `Vec<u8>`, a later query can skip
 /// the same trait search. If inference changes `Vec<?T>` into `Vec<u8>`, canonicalization produces a
 /// different key and lookup runs again with the stronger evidence.
 ///

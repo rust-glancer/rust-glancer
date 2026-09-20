@@ -12,7 +12,7 @@ use rg_ty::trait_selection::TraitSelectionSession;
 use crate::build::{
     pattern_binding::PatternBindingMaterializationPass, query_source::BodyBuildQuerySource,
 };
-use crate::resolution::{BodyResolutionContext, BodyResolutionPass};
+use crate::resolution::{BodyResolutionContext, InferenceContext};
 
 use super::{
     BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
@@ -129,7 +129,7 @@ impl CrateBodyBuildState<'_> {
                     &self.body_slots,
                     &self.body_local_items,
                 );
-                let context = BodyResolutionContext::for_structure(
+                let context = BodyResolutionContext::new(
                     &source,
                     &source,
                     body_ref,
@@ -215,9 +215,8 @@ impl CrateBodyBuildState<'_> {
         Ok(())
     }
 
-    // For each body with resolved items, goes through the body content and finalizes the resolution,
-    // e.g. resolves all the bindings and runs a fixed-point loop until no more information can be
-    // extracted.
+    // For each body with resolved items, infer its expressions and patterns recursively, complete
+    // pending semantic operations, and finalize the types and selected declarations.
     fn resolve_bodies(
         &mut self,
         def_map: &DefMapReadTxn<'_>,
@@ -225,7 +224,7 @@ impl CrateBodyBuildState<'_> {
         item_lookup_query: &ItemLookupQuery<'_>,
         trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
-        // Make the body resolution pass aware of body-local items.
+        // Make body inference aware of body-local items.
         let source = BodyBuildQuerySource::new(
             def_map,
             semantic_ir,
@@ -241,7 +240,7 @@ impl CrateBodyBuildState<'_> {
             let body = body.body();
             let body_source = body.source();
             let started = Instant::now();
-            let facts = BodyResolutionPass::new(
+            let facts = InferenceContext::new(
                 &source,
                 &source,
                 item_lookup_query,
@@ -249,7 +248,7 @@ impl CrateBodyBuildState<'_> {
                 body,
                 trait_selection,
             )
-            .resolve()?;
+            .infer_body()?;
             let elapsed = started.elapsed();
             if elapsed >= SLOW_BODY_RESOLUTION {
                 tracing::debug!(

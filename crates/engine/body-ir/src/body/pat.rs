@@ -114,6 +114,38 @@ pub struct RecordPatField {
 }
 
 impl PatKind {
+    /// Direct child patterns in source order. Callers handle const-block expressions separately.
+    pub fn child_pats(&self) -> impl Iterator<Item = PatId> + '_ {
+        // Borrow the existing child lists and keep the few standalone ids inline. Recursive
+        // walkers can then use one iterator without allocating a new list for each pattern.
+        let mut pats: &[PatId] = &[];
+        let mut record_fields: &[RecordPatField] = &[];
+        let mut trailing = [None; 2];
+        match self {
+            Self::Binding { subpat, .. } => pats = subpat.as_slice(),
+            Self::Tuple { fields }
+            | Self::TupleStruct { fields, .. }
+            | Self::Or { pats: fields }
+            | Self::Slice { fields } => pats = fields,
+            Self::Record { fields, rest, .. } => {
+                record_fields = fields;
+                trailing[0] = *rest;
+            }
+            Self::Ref { pat, .. } | Self::Box { pat } => pats = std::slice::from_ref(pat),
+            Self::Range { start, end, .. } => trailing = [*start, *end],
+            Self::Path { .. }
+            | Self::Rest
+            | Self::Literal { .. }
+            | Self::ConstBlock { .. }
+            | Self::Wildcard
+            | Self::Unsupported => {}
+        }
+        pats.iter()
+            .copied()
+            .chain(record_fields.iter().map(|field| field.pat))
+            .chain(trailing.into_iter().flatten())
+    }
+
     /// Returns any path syntactically owned by this pattern node.
     pub fn path(&self) -> Option<&BodyPath> {
         match self {

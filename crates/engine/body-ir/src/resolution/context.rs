@@ -15,7 +15,7 @@ use rg_ty::lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolv
 use rg_ty::trait_selection::{TraitSelectionQuery, TraitSelectionSession};
 use rg_ty::{Ty, TyContext};
 
-use crate::{BodyData, BodyView, body::BodyQueryView};
+use crate::BodyData;
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
@@ -23,36 +23,29 @@ use crate::resolution::query::{
     BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
 };
 
-use super::{
-    cache::{BodyLocalItemCache, BodyMethodCache, BodyResolutionCaches, BodyTraitLookupCache},
-    source::BodyQuerySource,
+use super::cache::{
+    BodyLocalItemCache, BodyMethodCache, BodyResolutionCaches, BodyTraitLookupCache,
 };
 
-type BodySemanticSignatureQuery<'context, 'query, D, I> = SemanticSignatureQuery<
-    'query,
-    BodyQuerySource<'query, D, I>,
-    BodyQuerySource<'query, D, I>,
-    &'context BodyResolutionContext<'query, D, I>,
->;
+type BodySemanticSignatureQuery<'context, 'query, D, I> =
+    SemanticSignatureQuery<'query, D, I, &'context BodyResolutionContext<'query, D, I>>;
 
-type BodyImplMatcher<'context, 'query, D, I> = ImplMatcher<
-    'query,
-    BodyQuerySource<'query, D, I>,
-    BodyQuerySource<'query, D, I>,
-    &'context BodyResolutionContext<'query, D, I>,
->;
+type BodyImplMatcher<'context, 'query, D, I> =
+    ImplMatcher<'query, D, I, &'context BodyResolutionContext<'query, D, I>>;
 
 /// Read-only provider bundle shared by body semantic queries.
 ///
 /// The context keeps DefMap, item-store, item-lookup-query, trait-selection, and active-body routing
-/// coherent while small query objects own the actual operations. A finalized consumer supplies
-/// `BodyView`; indexing can instead supply structural-only data or a crate-private inference
-/// snapshot. Query APIs that need types therefore read through `query_body`, whose source is
-/// explicit at construction time.
+/// coherent while small query objects own the actual operations. Queries borrow immutable body
+/// structure and receive any needed resolutions or live types explicitly. The same context can
+/// therefore stay in place while inference updates its facts and type slots.
 #[derive(Clone)]
 pub struct BodyResolutionContext<'a, D, I> {
-    source: BodyQuerySource<'a, D, I>,
-    ty: TyContext<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>>,
+    def_maps: D,
+    item_stores: I,
+    body_ref: BodyRef,
+    body: &'a BodyData,
+    ty: TyContext<'a, D, I>,
     caches: BodyResolutionCaches,
 }
 
@@ -71,88 +64,39 @@ where
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
-        body: BodyView<'a>,
-        item_lookup_query: &ItemLookupQuery<'a>,
-        trait_selection: TraitSelectionSession,
-    ) -> Self {
-        Self::from_source(
-            BodyQuerySource::new(def_maps, item_stores, body_ref, body),
-            item_lookup_query,
-            trait_selection,
-            BodyResolutionCaches::default(),
-        )
-    }
-
-    /// Build a context for structural queries before semantic facts exist.
-    ///
-    /// Only operations backed by `BodyData` are valid in this phase. Asking the resulting context
-    /// for expression or binding facts is a programming error rather than an unknown result.
-    pub(crate) fn for_structure(
-        def_maps: D,
-        item_stores: I,
-        body_ref: BodyRef,
         body: &'a BodyData,
         item_lookup_query: &ItemLookupQuery<'a>,
         trait_selection: TraitSelectionSession,
     ) -> Self {
-        Self::from_source(
-            BodyQuerySource::for_structure(def_maps, item_stores, body_ref, body),
-            item_lookup_query,
-            trait_selection,
-            BodyResolutionCaches::default(),
-        )
-    }
-
-    /// Build a context over one finalized or inference-time semantic query view.
-    pub(crate) fn for_query(
-        def_maps: D,
-        item_stores: I,
-        body_ref: BodyRef,
-        body: BodyQueryView<'a>,
-        item_lookup_query: &ItemLookupQuery<'a>,
-        trait_selection: TraitSelectionSession,
-        caches: BodyResolutionCaches,
-    ) -> Self {
-        Self::from_source(
-            BodyQuerySource::for_query(def_maps, item_stores, body_ref, body),
-            item_lookup_query,
-            trait_selection,
-            caches,
-        )
-    }
-
-    fn from_source(
-        source: BodyQuerySource<'a, D, I>,
-        item_lookup_query: &ItemLookupQuery<'a>,
-        trait_selection: TraitSelectionSession,
-        caches: BodyResolutionCaches,
-    ) -> Self {
         assert_eq!(
-            source.body_ref().crate_ref,
+            body_ref.crate_ref,
             trait_selection.use_site(),
             "trait-selection session must match the body use-site crate"
         );
         let ty = TyContext::new(
-            source.clone(),
-            source.clone(),
+            def_maps.clone(),
+            item_stores.clone(),
             item_lookup_query.clone(),
             trait_selection,
         );
-        Self { source, ty, caches }
+        Self {
+            def_maps,
+            item_stores,
+            body_ref,
+            body,
+            ty,
+            caches: BodyResolutionCaches::default(),
+        }
     }
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I> {
     pub(crate) fn body_ref(&self) -> BodyRef {
-        self.source.body_ref()
+        self.body_ref
     }
 
     pub(crate) fn body(&self) -> &'a BodyData {
-        self.source.body()
-    }
-
-    pub(crate) fn query_body(&self) -> BodyQueryView<'a> {
-        self.source.query_body()
+        self.body
     }
 
     pub(crate) fn item_lookup_query(&self) -> &ItemLookupQuery<'a> {
@@ -171,9 +115,7 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         &self.caches.methods
     }
 
-    pub(crate) fn ty_context(
-        &self,
-    ) -> TyContext<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>>
+    pub(crate) fn ty_context(&self) -> TyContext<'a, D, I>
     where
         D: Clone,
         I: Clone,
@@ -187,29 +129,26 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'a, D, I>> {
-        DefMapQuery::new(self.source)
+    pub(crate) fn def_map_query(&self) -> DefMapQuery<D> {
+        DefMapQuery::new(self.def_maps)
     }
 
-    pub(crate) fn def_map_source(&self) -> BodyQuerySource<'a, D, I> {
-        self.source
+    pub(crate) fn def_map_source(&self) -> D {
+        self.def_maps
     }
 
-    pub(crate) fn item_query(&self) -> ItemStoreQuery<'a, BodyQuerySource<'a, D, I>> {
-        ItemStoreQuery::new(self.source)
+    pub(crate) fn item_query(&self) -> ItemStoreQuery<'a, I> {
+        ItemStoreQuery::new(self.item_stores)
     }
 
-    pub(crate) fn item_paths(
-        &self,
-    ) -> ItemPathQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
+    pub(crate) fn item_paths(&self) -> ItemPathQuery<'a, D, I> {
         self.ty.item_paths().clone()
     }
 
     pub(crate) fn signatures<'context>(
         &'context self,
     ) -> BodySemanticSignatureQuery<'context, 'a, D, I> {
-        let source = self.source;
-        SemanticSignatureQuery::with_resolver(source, source, self)
+        SemanticSignatureQuery::with_resolver(self.def_maps, self.item_stores, self)
     }
 
     pub fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
@@ -299,16 +238,12 @@ where
         ImplMatcher::with_resolver(self.ty.clone(), self)
     }
 
-    pub(crate) fn autoderef(
-        &self,
-    ) -> Autoderef<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
+    pub(crate) fn autoderef(&self) -> Autoderef<'a, D, I> {
         Autoderef::new(self.ty.clone())
     }
 
     /// Build trait selection in this body's crate-scoped solver session.
-    pub(crate) fn trait_selection(
-        &self,
-    ) -> TraitSelectionQuery<'a, BodyQuerySource<'a, D, I>, BodyQuerySource<'a, D, I>> {
+    pub(crate) fn trait_selection(&self) -> TraitSelectionQuery<'a, D, I> {
         TraitSelectionQuery::new(self.ty.clone())
     }
 }

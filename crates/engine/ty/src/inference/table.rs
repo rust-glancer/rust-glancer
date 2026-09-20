@@ -23,60 +23,10 @@ enum InferVarValue {
     Conflict,
 }
 
-/// Fallback used when a numeric inference slot has no semantic evidence.
-#[derive(Clone, Copy)]
-enum NumericFallback {
-    LanguageDefault,
-    Unknown,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct InferVarSlot {
     kind: InferVarKind,
     value: InferVarValue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UnifyResult {
-    Compatible { changed: bool },
-    Conflict { changed: bool },
-}
-
-impl UnifyResult {
-    fn compatible() -> Self {
-        Self::Compatible { changed: false }
-    }
-
-    fn changed() -> Self {
-        Self::Compatible { changed: true }
-    }
-
-    fn conflict() -> Self {
-        Self::Conflict { changed: false }
-    }
-
-    fn changed_conflict() -> Self {
-        Self::Conflict { changed: true }
-    }
-
-    fn changed_flag(self) -> bool {
-        match self {
-            Self::Compatible { changed } | Self::Conflict { changed } => changed,
-        }
-    }
-
-    fn is_conflict(self) -> bool {
-        matches!(self, Self::Conflict { .. })
-    }
-
-    fn merge(self, other: Self) -> Self {
-        let changed = self.changed_flag() || other.changed_flag();
-        if self.is_conflict() || other.is_conflict() {
-            Self::Conflict { changed }
-        } else {
-            Self::Compatible { changed }
-        }
-    }
 }
 
 /// Tiny constraint table for inference variables.
@@ -137,49 +87,29 @@ impl InferenceTable {
     /// - Conflicts finalize to `Ty::Unknown`.
     /// - Unsolved type vars finalize to `Ty::Unknown`.
     /// - Unsolved numeric vars finalize to the existing defaults: `i32` / `f64`.
-    pub fn unify(&mut self, lhs: &Ty, rhs: &Ty) -> bool {
-        self.unify_ty(lhs, rhs).changed_flag()
+    pub fn unify(&mut self, lhs: &Ty, rhs: &Ty) {
+        let _ = self.unify_ty(lhs, rhs);
     }
 
     /// Constrains two types and reports whether the evidence stayed compatible.
     ///
     /// This is useful for speculative matching: callers can clone the table, try a candidate,
     /// and discard the clone if the candidate would create a conflict.
+    /// Failure does not roll back constraints already applied to this table.
     pub fn try_unify(&mut self, lhs: &Ty, rhs: &Ty) -> Result<(), InferenceConflict> {
-        if self.unify_ty(lhs, rhs).is_conflict() {
-            Err(InferenceConflict)
-        } else {
-            Ok(())
-        }
+        self.unify_ty(lhs, rhs)
     }
 
+    /// Replace all inference variables before publishing a type. Solved slots keep their types,
+    /// unsolved numeric slots use `i32`/`f64`, and other unsolved or conflicting slots become unknown.
+    /// During inference, use root resolution or canonicalization to keep unsolved slots live.
     pub fn finalize(&self, ty: &Ty) -> Ty {
-        TableFinalizer::new(self, NumericFallback::LanguageDefault).fold_ty(ty)
-    }
-
-    /// Finalize inference state that stopped before reaching a fixed point.
-    ///
-    /// Ordinary type variables already become `Unknown`. Numeric variables must do the same here:
-    /// their `i32` / `f64` defaults are language conclusions only after all available constraints
-    /// have propagated.
-    pub fn finalize_without_numeric_defaults(&self, ty: &Ty) -> Ty {
-        TableFinalizer::new(self, NumericFallback::Unknown).fold_ty(ty)
+        TableFinalizer::new(self).fold_ty(ty)
     }
 
     /// Finalize every type-bearing position in a semantic argument list.
     pub(crate) fn finalize_generic_args(&self, args: &GenericArgs) -> GenericArgs {
-        let mut finalizer = TableFinalizer::new(self, NumericFallback::LanguageDefault);
-        args.iter()
-            .map(|arg| finalizer.fold_generic_arg(arg))
-            .collect()
-    }
-
-    /// Finalize durable arguments after an incomplete inference operation.
-    pub(crate) fn finalize_generic_args_without_numeric_defaults(
-        &self,
-        args: &GenericArgs,
-    ) -> GenericArgs {
-        let mut finalizer = TableFinalizer::new(self, NumericFallback::Unknown);
+        let mut finalizer = TableFinalizer::new(self);
         args.iter()
             .map(|arg| finalizer.fold_generic_arg(arg))
             .collect()
@@ -193,6 +123,8 @@ impl InferenceTable {
     /// Return the current canonical form of an inference type.
     /// `?A = ?B` makes `Vec<?A>` compare as `Vec<?B>`;
     /// `?B = User` then makes the same value compare as `Vec<User>`.
+    /// Unsolved variables keep their identity and kind, including numeric variables. This makes
+    /// the result suitable for retry comparisons without applying final numeric defaults.
     pub fn canonicalize(&self, ty: &Ty) -> Ty {
         TableCanonicalizer::new(self).fold_ty(ty)
     }
@@ -201,12 +133,11 @@ impl InferenceTable {
     ///
     /// Body inference can observe the same structural type from several directions. For example,
     /// `(Token, unknown)` arriving after `(Token, Token)` is weaker evidence, while
-    /// `(unknown, Token)` can complete `(Token, unknown)`. Canonicalizing through this table first
-    /// also lets solved variables participate as their established shapes.
-    pub fn merge_ty_evidence(&self, existing: &Ty, evidence: &Ty) -> Ty {
-        let existing = self.canonicalize(existing);
-        let evidence = self.canonicalize(evidence);
-        Self::refine_ty(&existing, &evidence).0
+    /// `(unknown, Token)` can complete `(Token, unknown)`. Keep live variable identities intact:
+    /// replacing a solved slot by its value would disconnect subsequent equality or conflict
+    /// evidence. Callers unify the slots before merging their stored shapes.
+    pub fn merge_ty_evidence(existing: &Ty, evidence: &Ty) -> Ty {
+        Self::refine_ty(existing, evidence).0
     }
 
     /// Return one predicate with every solved type variable expanded from this table.
@@ -294,11 +225,11 @@ impl InferenceTable {
         }
     }
 
-    fn unify_ty(&mut self, lhs: &Ty, rhs: &Ty) -> UnifyResult {
+    fn unify_ty(&mut self, lhs: &Ty, rhs: &Ty) -> Result<(), InferenceConflict> {
         // Unknown is absence of evidence, not a fresh variable. Letting it solve inference vars
         // would make "we do not know" indistinguishable from "we proved this is unknown".
         if matches!(lhs, Ty::Unknown) || matches!(rhs, Ty::Unknown) {
-            return UnifyResult::compatible();
+            return Ok(());
         }
 
         match (lhs, rhs) {
@@ -306,11 +237,11 @@ impl InferenceTable {
             // comparing the surrounding structural shape.
             (Ty::InferVar { kind, id }, _) => self.unify_var(*id, *kind, rhs),
             (_, Ty::InferVar { kind, id }) => self.unify_var(*id, *kind, lhs),
-            _ if !same_ty_shape(lhs, rhs) => UnifyResult::conflict(),
+            _ if !same_ty_shape(lhs, rhs) => Err(InferenceConflict),
             (Ty::Unit, Ty::Unit)
             | (Ty::Never, Ty::Never)
             | (Ty::Primitive(_), Ty::Primitive(_))
-            | (Ty::Param(_), Ty::Param(_)) => UnifyResult::compatible(),
+            | (Ty::Param(_), Ty::Param(_)) => Ok(()),
             (Ty::Tuple(lhs_fields), Ty::Tuple(rhs_fields)) => {
                 self.unify_iter(lhs_fields.iter(), rhs_fields.iter())
             }
@@ -350,33 +281,33 @@ impl InferenceTable {
                 },
             ) => self
                 .unify_iter(lhs_params.iter(), rhs_params.iter())
-                .merge(self.unify_ty(lhs_ret, rhs_ret)),
+                .and(self.unify_ty(lhs_ret, rhs_ret)),
             (Ty::Adt(lhs_ty), Ty::Adt(rhs_ty)) => {
                 // Same-definition nominal types can pass evidence through their generic arguments.
-                let mut result = UnifyResult::compatible();
+                let mut result = Ok(());
                 for (lhs_arg, rhs_arg) in lhs_ty.args.iter().zip(&rhs_ty.args) {
-                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                    result = result.and(self.unify_generic_arg(lhs_arg, rhs_arg));
                 }
                 result
             }
             (Ty::FnDef(lhs), Ty::FnDef(rhs)) => {
-                let mut result = UnifyResult::compatible();
+                let mut result = Ok(());
                 for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
-                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                    result = result.and(self.unify_generic_arg(lhs_arg, rhs_arg));
                 }
                 result
             }
             (Ty::Closure(lhs), Ty::Closure(rhs)) => self
                 .unify_iter(lhs.params.iter(), rhs.params.iter())
-                .merge(self.unify_ty(&lhs.ret, &rhs.ret)),
+                .and(self.unify_ty(&lhs.ret, &rhs.ret)),
             (Ty::Alias(lhs), Ty::Alias(rhs)) => {
-                let mut result = UnifyResult::compatible();
+                let mut result = Ok(());
                 for (lhs_arg, rhs_arg) in lhs.args().iter().zip(rhs.args()) {
-                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                    result = result.and(self.unify_generic_arg(lhs_arg, rhs_arg));
                 }
                 result
             }
-            _ => UnifyResult::conflict(),
+            _ => Err(InferenceConflict),
         }
     }
 
@@ -384,28 +315,33 @@ impl InferenceTable {
         &mut self,
         lhs_items: impl Iterator<Item = &'a Ty>,
         rhs_items: impl Iterator<Item = &'a Ty>,
-    ) -> UnifyResult {
+    ) -> Result<(), InferenceConflict> {
         // Structural unification accumulates all child constraints so one tuple/argument conflict
         // does not hide other successful variable solves in the same shape.
-        let mut result = UnifyResult::compatible();
+        let mut result = Ok(());
         for (lhs, rhs) in lhs_items.zip(rhs_items) {
-            result = result.merge(self.unify_ty(lhs, rhs));
+            result = result.and(self.unify_ty(lhs, rhs));
         }
         result
     }
 
-    fn unify_var(&mut self, id: InferVarId, kind: InferVarKind, evidence: &Ty) -> UnifyResult {
+    fn unify_var(
+        &mut self,
+        id: InferVarId,
+        kind: InferVarKind,
+        evidence: &Ty,
+    ) -> Result<(), InferenceConflict> {
         let Some(slot) = self.slots.get(id.index()) else {
-            return UnifyResult::conflict();
+            return Err(InferenceConflict);
         };
         if slot.kind != kind {
-            return UnifyResult::conflict();
+            return Err(InferenceConflict);
         }
 
         let evidence = self.resolve_root_var(evidence);
 
         if matches!(&evidence, Ty::Unknown) {
-            return UnifyResult::compatible();
+            return Ok(());
         }
 
         // Avoid recursive solutions such as `?T = Vec<?T>`. Solved variables nested inside the
@@ -413,7 +349,7 @@ impl InferenceTable {
         // recursive even though `?T` is not present in the stored `Vec<?B>` syntax.
         if self.ty_contains_var_or_cycle(&evidence, id) {
             let result = if Self::shallow_infer_var(&evidence).is_some_and(|(_, var)| var == id) {
-                UnifyResult::compatible()
+                Ok(())
             } else {
                 // Equality aliases share one representative. Poisoning only the spelling that
                 // happened to occur in recursive evidence would detach it from that class and let
@@ -428,8 +364,8 @@ impl InferenceTable {
             InferVarValue::Unsolved => self.solve_unsolved_var(id, &evidence),
             InferVarValue::Solved(existing) => {
                 let result = self.unify_ty(&existing, &evidence);
-                if result.is_conflict() {
-                    return self.mark_conflict(id).merge(result);
+                if result.is_err() {
+                    return self.mark_conflict(id);
                 }
 
                 // A slot may first learn a weak shape like `Vec<unknown>` and later see the same
@@ -437,12 +373,10 @@ impl InferenceTable {
                 let (refined, refined_changed) = Self::refine_ty(&existing, &evidence);
                 if refined_changed {
                     self.slots[id.index()].value = InferVarValue::Solved(refined);
-                    result.merge(UnifyResult::changed())
-                } else {
-                    result
                 }
+                result
             }
-            InferVarValue::Conflict => UnifyResult::conflict(),
+            InferVarValue::Conflict => Err(InferenceConflict),
         }
     }
 
@@ -575,7 +509,11 @@ impl InferenceTable {
         current_id
     }
 
-    fn solve_unsolved_var(&mut self, id: InferVarId, evidence: &Ty) -> UnifyResult {
+    fn solve_unsolved_var(
+        &mut self,
+        id: InferVarId,
+        evidence: &Ty,
+    ) -> Result<(), InferenceConflict> {
         let kind = self.slots[id.index()].kind;
         // Equality between same-kind variables is symmetric, so keep the oldest slot as the
         // representative. Directional links based on call order build chains such as
@@ -591,7 +529,7 @@ impl InferenceTable {
                 (evidence_id, id)
             };
             if representative == alias {
-                return UnifyResult::compatible();
+                return Ok(());
             }
 
             debug_assert!(matches!(
@@ -604,7 +542,7 @@ impl InferenceTable {
             ));
             self.slots[alias.index()].value =
                 InferVarValue::Solved(Ty::var_for_kind(kind, representative));
-            return UnifyResult::changed();
+            return Ok(());
         }
 
         // Numeric variables may be unified with an ordinary type variable. Link through the type
@@ -622,17 +560,13 @@ impl InferenceTable {
         }
 
         self.slots[id.index()].value = InferVarValue::Solved(evidence.clone());
-        UnifyResult::changed()
+        Ok(())
     }
 
-    fn mark_conflict(&mut self, id: InferVarId) -> UnifyResult {
+    fn mark_conflict(&mut self, id: InferVarId) -> Result<(), InferenceConflict> {
         let slot = &mut self.slots[id.index()];
-        if matches!(slot.value, InferVarValue::Conflict) {
-            return UnifyResult::conflict();
-        }
-
         slot.value = InferVarValue::Conflict;
-        UnifyResult::changed_conflict()
+        Err(InferenceConflict)
     }
 
     fn var_kind_accepts(&self, kind: InferVarKind, evidence: &Ty) -> bool {
@@ -688,16 +622,20 @@ impl InferenceTable {
         }
     }
 
-    fn unify_generic_arg(&mut self, lhs: &GenericArg, rhs: &GenericArg) -> UnifyResult {
+    fn unify_generic_arg(
+        &mut self,
+        lhs: &GenericArg,
+        rhs: &GenericArg,
+    ) -> Result<(), InferenceConflict> {
         match (lhs, rhs) {
             // Type generic args are direct nested type positions.
             (GenericArg::Type(lhs), GenericArg::Type(rhs)) => self.unify_ty(lhs, rhs),
 
             _ => {
                 if lhs == rhs {
-                    UnifyResult::compatible()
+                    Ok(())
                 } else {
-                    UnifyResult::conflict()
+                    Err(InferenceConflict)
                 }
             }
         }
@@ -953,15 +891,13 @@ impl InferenceTyFolder for TableCanonicalizer<'_> {
 struct TableFinalizer<'table> {
     table: &'table InferenceTable,
     active_vars: Vec<InferVarId>,
-    numeric_fallback: NumericFallback,
 }
 
 impl<'table> TableFinalizer<'table> {
-    fn new(table: &'table InferenceTable, numeric_fallback: NumericFallback) -> Self {
+    fn new(table: &'table InferenceTable) -> Self {
         Self {
             table,
             active_vars: Vec::new(),
-            numeric_fallback,
         }
     }
 }
@@ -1002,17 +938,10 @@ impl InferenceTyFolder for TableFinalizer<'_> {
         }
 
         match &slot.value {
-            InferVarValue::Unsolved => match (kind, self.numeric_fallback) {
-                (InferVarKind::Type, _)
-                | (InferVarKind::Integer | InferVarKind::Float, NumericFallback::Unknown) => {
-                    Ty::Unknown
-                }
-                (InferVarKind::Integer, NumericFallback::LanguageDefault) => {
-                    Ty::Primitive(PrimitiveTy::DEFAULT_INT)
-                }
-                (InferVarKind::Float, NumericFallback::LanguageDefault) => {
-                    Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT)
-                }
+            InferVarValue::Unsolved => match kind {
+                InferVarKind::Type => Ty::Unknown,
+                InferVarKind::Integer => Ty::Primitive(PrimitiveTy::DEFAULT_INT),
+                InferVarKind::Float => Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT),
             },
             InferVarValue::Solved(ty) => {
                 self.active_vars.push(id);
