@@ -59,26 +59,29 @@ pub(super) trait InferenceTyFolder {
             }),
             Ty::Adt(ty) => Ty::Adt(self.fold_adt_ty(ty)),
             Ty::Param(param) => Ty::Param(*param),
-            Ty::Alias(alias) => Ty::Alias(match alias {
-                AliasTy::Projection(alias) => AliasTy::Projection(ProjectionTy {
-                    associated_ty: alias.associated_ty,
-                    args: alias
-                        .args
-                        .iter()
-                        .map(|arg| self.fold_generic_arg(arg))
-                        .collect(),
-                }),
-                AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueTy {
-                    opaque: alias.opaque,
-                    args: alias
-                        .args
-                        .iter()
-                        .map(|arg| self.fold_generic_arg(arg))
-                        .collect(),
-                }),
-            }),
+            Ty::Alias(AliasTy::Projection(projection)) => self.fold_projection(projection),
+            Ty::Alias(AliasTy::Opaque(alias)) => Ty::Alias(AliasTy::Opaque(OpaqueTy {
+                opaque: alias.opaque,
+                args: alias
+                    .args
+                    .iter()
+                    .map(|arg| self.fold_generic_arg(arg))
+                    .collect(),
+            })),
             Ty::Unknown => self.fold_unknown(),
         }
+    }
+
+    /// Preserve an associated type unless this traversal is registering its normalization slot.
+    fn fold_projection(&mut self, projection: &ProjectionTy) -> Ty {
+        Ty::Alias(AliasTy::Projection(ProjectionTy {
+            associated_ty: projection.associated_ty,
+            args: projection
+                .args
+                .iter()
+                .map(|arg| self.fold_generic_arg(arg))
+                .collect(),
+        }))
     }
 
     /// Fold an inference variable. The default keeps it as-is.

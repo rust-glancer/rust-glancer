@@ -12,25 +12,15 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
 
-use crate::resolution::BodyResolutionContext;
+use super::InferenceContext;
 
-/// Maps a recognized builtin expression macro to the type Body IR should expose for it.
-pub(super) struct BuiltinMacroExprTypeMapper<'query, D, I> {
-    context: BodyResolutionContext<'query, D, I>,
-}
-
-impl<'query, D, I> BuiltinMacroExprTypeMapper<'query, D, I> {
-    pub(super) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
-        Self { context }
-    }
-}
-
-impl<'query, D, I> BuiltinMacroExprTypeMapper<'query, D, I>
+impl<'query, D, I> InferenceContext<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn ty_for(
+    /// Return the type supplied by a recognized compiler builtin.
+    pub(super) fn builtin_macro_ty(
         &self,
         expr: ExprId,
         kind: BuiltinMacroExprKind,

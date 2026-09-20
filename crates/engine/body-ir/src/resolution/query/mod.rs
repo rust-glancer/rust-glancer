@@ -35,4 +35,4 @@ pub(crate) use self::{
     type_ref::TypeRefResolutionQuery,
 };
 
-pub(crate) use self::call::{BodyCallQuery, CallProjection, ResolvedCallTarget};
+pub(crate) use self::call::{BodyCallQuery, CallSelfSource};

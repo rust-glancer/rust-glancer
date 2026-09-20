@@ -93,7 +93,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 self.db,
                 body_ref,
-                body,
+                body.structure(),
                 &item_lookup_query,
                 trait_selection,
             )
@@ -123,7 +123,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 self.db,
                 body_ref,
-                body,
+                body.structure(),
                 &item_lookup_query,
                 trait_selection,
             )
@@ -151,7 +151,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             self.db,
             body_ref,
-            body,
+            body.structure(),
             &item_lookup_query,
             trait_selection,
         )
@@ -179,7 +179,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             self.db,
             body_ref,
-            body,
+            body.structure(),
             &item_lookup_query,
             trait_selection,
         )
@@ -207,7 +207,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             self.db,
             self.db,
             body_ref,
-            body,
+            body.structure(),
             &item_lookup_query,
             trait_selection,
         )
@@ -236,7 +236,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 self.db,
                 body_ref,
-                body,
+                body.structure(),
                 &item_lookup_query,
                 trait_selection,
             )
@@ -270,7 +270,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 self.db,
                 body_ref,
-                body,
+                body.structure(),
                 &item_lookup_query,
                 trait_selection,
             )
@@ -303,7 +303,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 self.db,
                 self.db,
                 body_ref,
-                body,
+                body.structure(),
                 &item_lookup_query,
                 trait_selection,
             )

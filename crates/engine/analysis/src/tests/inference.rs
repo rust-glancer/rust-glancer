@@ -148,6 +148,10 @@ pub fn use_it() {
     let values: [u64; 2] = [1$type_array_left$, 2$type_array_right$]$type_array$;
     let repeated: [u64; 2] = [1$type_repeat_inner$; 2]$type_repeat$;
     let users: [User; 1] = [missing()$type_array_user$]$type_array_generic$;
+    let unit = ()$type_unit$;
+    let deferred = [missing()$type_late_call$, 1$type_late_integer$]$type_late_array$;
+    let selected = if true { deferred } else { [2, 3] };
+    let _: [u64; 2] = selected;
 }
 "#,
         &[
@@ -161,6 +165,13 @@ pub fn use_it() {
             AnalysisQuery::ty("repeat array expression", "type_repeat"),
             AnalysisQuery::ty("array generic call", "type_array_user"),
             AnalysisQuery::ty("array generic expression", "type_array_generic"),
+            AnalysisQuery::ty("empty tuple expression", "type_unit"),
+            AnalysisQuery::ty("array call with later evidence", "type_late_call"),
+            AnalysisQuery::ty("array integer with later evidence", "type_late_integer"),
+            AnalysisQuery::ty(
+                "array linked through later branch evidence",
+                "type_late_array",
+            ),
         ],
         expect![[r#"
             paren generic call inner
@@ -192,6 +203,18 @@ pub fn use_it() {
 
             array generic expression
             - [nominal struct analysis_shape_expected_type_inference[lib]::crate::User; 1]
+
+            empty tuple expression
+            - ()
+
+            array call with later evidence
+            - u64
+
+            array integer with later evidence
+            - u64
+
+            array linked through later branch evidence
+            - [u64; 2]
         "#]],
     );
 }
@@ -2438,6 +2461,181 @@ pub fn use_it(user: User, error: Error) {
 
             record conflicting generic field result
             - nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<<unknown>>
+        "#]],
+    );
+}
+
+#[test]
+fn late_associated_type_evidence_reaches_destructured_bindings_and_members() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_late_projection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User { pub name: Name }
+pub struct Name;
+pub struct UserSource;
+pub trait Source { type Item; }
+impl Source for UserSource { type Item = User; }
+pub fn missing<T>() -> T {}
+pub fn wrap<S: Source>(source: S) -> (S::Item,) {}
+pub fn require_source(source: UserSource) {}
+impl User { pub fn name(&self) -> Name {} }
+
+pub fn use_it() {
+    let source = missing();
+    let (user,) = wrap(source)$type_wrapped$;
+    let field = user.name$type_field$;
+    let method = user.name()$type_method$;
+    require_source(source);
+    user$type_user$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("associated result", "type_wrapped"),
+            AnalysisQuery::ty("field after pending projection", "type_field"),
+            AnalysisQuery::ty("method after pending projection", "type_method"),
+            AnalysisQuery::ty("destructured binding", "type_user"),
+        ],
+        expect![[r#"
+            associated result
+            - (nominal struct analysis_late_projection[lib]::crate::User,)
+
+            field after pending projection
+            - nominal struct analysis_late_projection[lib]::crate::Name
+
+            method after pending projection
+            - nominal struct analysis_late_projection[lib]::crate::Name
+
+            destructured binding
+            - nominal struct analysis_late_projection[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn coerces_deferred_branch_results() {
+    let ty =
+        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_deferred_never_branches");
+
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_deferred_never_branches"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+impl User {
+    pub fn abort(self) -> ! { loop {} }
+    pub fn value<T>(self) -> T { loop {} }
+}
+pub fn apply<R, F: FnOnce(User) -> R>(f: F) -> R { f(User) }
+pub fn make<T>() -> T { loop {} }
+pub trait Source { type Item; }
+impl Source for User { type Item = !; }
+pub fn project<S: Source>(source: S) -> S::Item { loop {} }
+
+pub fn use_it(flag: bool) {
+    let numeric = apply((|user| if flag {
+        user.abort()$type_numeric_abort$
+    } else {
+        1$type_numeric_value$
+    }))$type_numeric_result$;
+    let generic = apply((|user| if flag {
+        user.abort()
+    } else {
+        make()$type_generic_value$
+    }))$type_generic_result$;
+    let annotated: u64 = apply((|user| if flag {
+        user.abort()$type_annotated_abort$
+    } else {
+        make()$type_annotated_value$
+    }))$type_annotated_result$;
+    let matched = apply((|user| match flag {
+        true => user.abort()$type_match_abort$,
+        false => 1$type_match_value$,
+    }))$type_match_result$;
+    let selected = apply((|user| if flag {
+        1
+    } else {
+        user.value()$type_selected_value$
+    }))$type_selected_result$;
+    let projected = apply((|user| if flag {
+        1
+    } else {
+        project(user)$type_projected_never$
+    }))$type_projected_result$;
+}
+"#,
+        &[
+            ty("deferred diverging branch", "type_numeric_abort"),
+            ty("numeric alternate branch", "type_numeric_value"),
+            ty("numeric call result", "type_numeric_result"),
+            ty("unconstrained generic branch", "type_generic_value"),
+            ty("unconstrained generic call result", "type_generic_result"),
+            ty("annotated diverging branch", "type_annotated_abort"),
+            ty("annotated generic branch", "type_annotated_value"),
+            ty("annotated call result", "type_annotated_result"),
+            ty("deferred diverging match arm", "type_match_abort"),
+            ty("numeric alternate match arm", "type_match_value"),
+            ty("match call result", "type_match_result"),
+            ty("deferred generic branch", "type_selected_value"),
+            ty("deferred generic call result", "type_selected_result"),
+            ty("deferred diverging projection", "type_projected_never"),
+            ty("projected call result", "type_projected_result"),
+        ],
+        expect![[r#"
+            deferred diverging branch
+            - !
+
+            numeric alternate branch
+            - i32
+
+            numeric call result
+            - i32
+
+            unconstrained generic branch
+            - <unknown>
+
+            unconstrained generic call result
+            - <unknown>
+
+            annotated diverging branch
+            - !
+
+            annotated generic branch
+            - u64
+
+            annotated call result
+            - u64
+
+            deferred diverging match arm
+            - !
+
+            numeric alternate match arm
+            - i32
+
+            match call result
+            - i32
+
+            deferred generic branch
+            - i32
+
+            deferred generic call result
+            - i32
+
+            deferred diverging projection
+            - !
+
+            projected call result
+            - i32
         "#]],
     );
 }

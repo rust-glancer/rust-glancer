@@ -70,7 +70,7 @@ where
     }
 
     fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::for_structure(
+        BodyResolutionContext::new(
             self.def_maps,
             self.item_stores,
             self.body_ref,

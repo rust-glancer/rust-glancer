@@ -45,14 +45,15 @@ where
 
     pub(crate) fn resolve_generic_args_for(
         &self,
-        target: GenericDefRef,
+        generics: &rg_semantic_ir::Generics<'_>,
         args: &[ItemGenericArg],
+        inference: Option<&mut InferenceTable>,
     ) -> Result<GenericArgs, PackageStoreError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         let mut session =
             lowering.session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?;
-        session.lower_generic_args_for(target, args)
+        session.lower_generic_args_for(generics, args, inference)
     }
 
     pub(crate) fn resolve_trait_ref(

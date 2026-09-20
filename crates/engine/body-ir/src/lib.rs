@@ -27,14 +27,14 @@ mod tests;
 
 pub use self::{
     body::{
-        BindingData, BindingFacts, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyFacts,
-        BodyMacroCallData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
-        BodyPathSegmentKind, BodySource, BodySourceItem, BodySourceItems, BodyView,
-        BuiltinMacroExprKind, CallFacts, ClosureCapture, ClosureKind, ClosureParamData,
-        ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind, ExprRangeKind,
-        ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
-        PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
-        RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+        BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyFacts, BodyMacroCallData,
+        BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource,
+        BodySourceItem, BodySourceItems, BodyView, BuiltinMacroExprKind, CallFacts, ClosureCapture,
+        ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData,
+        ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, FunctionParamData,
+        LabelData, LiteralKind, MatchArmData, PatBindingMode, PatData, PatKind, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData,
+        StmtKind,
     },
     resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
     store::{

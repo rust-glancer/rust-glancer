@@ -10,7 +10,6 @@ mod table;
 mod traversal;
 mod var;
 
-pub use instantiate::UnknownTypeInstantiationBuilder;
 pub use subst::InferenceSubstitution;
 pub use table::{InferenceConflict, InferenceTable};
 pub use var::{InferVarId, InferVarKind};

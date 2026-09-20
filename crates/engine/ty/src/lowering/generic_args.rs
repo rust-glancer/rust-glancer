@@ -19,12 +19,15 @@ where
     /// Parent arguments come from the active semantic substitution; the target's own arguments
     /// are consumed from syntax and omitted positions receive their normal semantic placeholder or
     /// default. Associated bindings belong to `lower_trait_ref`, not this positional list.
+    ///
+    /// With an inference table, written type placeholders `_` and omitted function types get live
+    /// variables instead. For `make::<Vec<_>>()`, the inner slot can then learn from the call's use.
     pub fn lower_generic_args_for(
         &mut self,
-        target: GenericDefRef,
+        generics: &rg_semantic_ir::Generics<'_>,
         syntax_args: &[ItemGenericArg],
+        inference: Option<&mut InferenceTable>,
     ) -> Result<GenericArgs, D::Error> {
-        let generics = self.query.item_paths.generics().generics(target)?;
         let mut parent_seed = Substitution::new();
         for param in generics.iter().take(generics.parent_len()) {
             if let Some(arg) = self.subst.get(param.param()) {
@@ -32,11 +35,11 @@ where
             }
         }
         self.lower_generic_args(
-            &generics,
+            generics,
             syntax_args,
             &parent_seed,
             ImplTraitMode::Opaque,
-            None,
+            inference,
         )
     }
 
@@ -121,6 +124,19 @@ where
                         .expect("guard requires a plain single-segment path");
                     syntax_index += 1;
                     GenericArg::Const(self.lower_const(Some(name.as_str()))?)
+                }
+                // Function calls infer omitted type parameters from their arguments and result.
+                // Declaration/type lowering still uses defaults and ordinary unknown placeholders.
+                (GenericParamRef::Type(_), _)
+                    if matches!(generics.owner(), GenericDefRef::Function(_))
+                        && inference.is_some() =>
+                {
+                    GenericArg::Type(Box::new(
+                        inference
+                            .as_deref_mut()
+                            .expect("call inference table")
+                            .new_type_var(),
+                    ))
                 }
                 (GenericParamRef::Type(_), _)
                     if matches!(

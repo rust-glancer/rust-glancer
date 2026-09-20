@@ -719,6 +719,6 @@ where
         let Some(selection) = trait_selection else {
             return Ok(ty);
         };
-        Ok(selection.table.finalize_without_numeric_defaults(&ty))
+        Ok(selection.table.finalize(&ty))
     }
 }

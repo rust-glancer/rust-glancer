@@ -13,7 +13,7 @@
 //!
 //! Those declarations cannot be added to the persisted crate index. The first body query scans the
 //! few body item stores that can affect this body and builds a compact overlay index. Later
-//! fixed-point rounds read the same index through [`BodyLocalItemCache`](crate::resolution::cache::BodyLocalItemCache).
+//! queries read the same index through [`BodyLocalItemCache`](crate::resolution::cache::BodyLocalItemCache).
 
 use std::collections::HashSet;
 
@@ -133,7 +133,7 @@ where
         Ok(self.index()?.traits_with_associated_items.as_slice())
     }
 
-    /// Build the request-local overlay once before fixed-point retries start reading it.
+    /// Build the request-local overlay once for queries throughout body inference.
     fn build_index(&self) -> Result<BodyLocalItemIndex, PackageStoreError> {
         let mut index = BodyLocalItemIndex::default();
         for store in self.body_lookup_stores()? {

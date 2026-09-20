@@ -2,8 +2,7 @@
 //!
 //! `BodyData` is the frozen syntax-shaped body owned here. Resolution writes a separate
 //! `BodyFacts` sidecar, and consumers normally read the aligned pair through `BodyView`.
-//! The inference-only projection remains crate-private so partially resolved state does not look
-//! like a finalized body. Mutable build state lives under `build::lower`, outside this read model.
+//! Mutable build state lives under `build::lower`, outside this read model.
 
 mod binding;
 mod data;
@@ -27,7 +26,7 @@ pub use self::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBlockKind, ExprData,
         ExprKind, ExprRangeKind, ExprWrapperKind, MatchArmData, RecordExprField, RecordExprSpread,
     },
-    facts::{BindingFacts, BodyFacts, CallFacts, ExprFacts},
+    facts::{BodyFacts, CallFacts, ExprFacts},
     label::LabelData,
     macro_call::BodyMacroCallData,
     owner::BodyOwner,
@@ -44,5 +43,3 @@ pub use self::{
 };
 
 pub use rg_ir_model::{BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LiteralKind};
-
-pub(crate) use self::view::BodyQueryView;

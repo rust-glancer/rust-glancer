@@ -1,6 +1,9 @@
 //! Function and method call resolution.
+//!
+//! Lookup uses the callee's declaration or a receiver type to find targets and their substitutions.
+//! A trait candidate carries its trial proof with it. The inference caller owns argument traversal
+//! and commits that proof's table only after selecting one definite target.
 
-mod signature;
 mod target;
 
 use rg_def_map::DefMapSource;
@@ -19,10 +22,7 @@ use crate::{
 use self::target::{CallSelf, ResolvedCallTargets};
 use super::BodyCallableCandidate;
 
-pub(crate) use self::{
-    signature::{CallProjection, CallSignature},
-    target::ResolvedCallTarget,
-};
+pub(crate) use self::target::{CallSelfSource, ResolvedCallTarget};
 
 /// Method-call syntax facts needed for method lookup.
 struct MethodCallSite<'a> {
@@ -45,21 +45,11 @@ where
         Self { context }
     }
 
-    /// Return signature projection for a selected call target.
-    pub(crate) fn signature<'call>(
-        &'call self,
-        target: &'call ResolvedCallTarget,
-    ) -> CallSignature<'call, 'query, D, I> {
-        CallSignature {
-            query: self,
-            target,
-        }
-    }
-
-    /// Return the selected target, preferring a live inference receiver for method calls.
-    pub(crate) fn target_with_receiver_ty(
+    /// Select a target using the callee resolution or the live method receiver supplied by inference.
+    pub(crate) fn target(
         &self,
         call: ExprId,
+        callee_resolution: Option<&BodyResolution>,
         receiver_ty: Option<&Ty>,
         table: &InferenceTable,
     ) -> Result<Option<ResolvedCallTarget>, PackageStoreError> {
@@ -68,10 +58,10 @@ where
             ExprKind::Call {
                 callee: Some(callee),
                 ..
-            } => self.function_targets(*callee, table)?,
+            } => self.function_targets(*callee, callee_resolution, table)?,
             ExprKind::Call { callee: None, .. } => return Ok(None),
             ExprKind::MethodCall {
-                receiver: Some(receiver),
+                receiver: Some(_),
                 method_name,
                 generic_args,
                 ..
@@ -81,8 +71,9 @@ where
                     explicit_args: generic_args,
                     scope: expr_data.scope,
                 };
-                let receiver_ty = receiver_ty
-                    .unwrap_or_else(|| self.context.query_body().expr_ty_unchecked(*receiver));
+                let Some(receiver_ty) = receiver_ty else {
+                    return Ok(None);
+                };
                 self.lookup_method_for_ty(site, receiver_ty, table)?
             }
             ExprKind::MethodCall { receiver: None, .. } => return Ok(None),
@@ -93,7 +84,7 @@ where
     }
 
     /// Resolve a method-call expression from a receiver type learned during body inference.
-    pub(crate) fn method_targets_with_receiver_ty(
+    pub(crate) fn method_targets(
         &self,
         call: ExprId,
         receiver_ty: &Ty,
@@ -125,6 +116,7 @@ where
     fn function_targets(
         &self,
         callee: ExprId,
+        callee_resolution: Option<&BodyResolution>,
         table: &InferenceTable,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
@@ -134,9 +126,7 @@ where
             return Ok(associated_targets);
         }
 
-        let BodyResolution::Declarations(declarations) =
-            self.context.query_body().expr_resolution_unchecked(callee)
-        else {
+        let Some(BodyResolution::Declarations(declarations)) = callee_resolution else {
             return Ok(targets);
         };
 
@@ -183,10 +173,10 @@ where
             callee_data.scope,
             Self::explicit_callee_generic_args(callee_data),
             CallSelf {
-                self_ty: candidate.receiver_ty().clone(),
-                subst: candidate.subst().clone(),
+                self_ty: candidate.receiver_ty,
+                subst: candidate.subst,
             },
-            candidate.trait_selection().cloned(),
+            candidate.trait_selection,
         )
     }
 
@@ -210,10 +200,10 @@ where
                 site.scope,
                 site.explicit_args,
                 CallSelf {
-                    self_ty: candidate.receiver_ty().clone(),
-                    subst: candidate.subst().clone(),
+                    self_ty: candidate.receiver_ty,
+                    subst: candidate.subst,
                 },
-                candidate.trait_selection().cloned(),
+                candidate.trait_selection,
             ));
         }
 

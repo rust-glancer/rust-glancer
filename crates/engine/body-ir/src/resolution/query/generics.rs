@@ -1,8 +1,7 @@
 //! Owner-scoped generic substitution helpers for body queries.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, GenericDefRef, ItemOwner, ScopeId, TraitDefRef};
-use rg_item_tree::GenericArg as ItemGenericArg;
+use rg_ir_model::{DefMapRef, GenericDefRef, ItemOwner, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
@@ -116,34 +115,5 @@ where
             .generics()
             .generics(GenericDefRef::Trait(application.def))?;
         Ok(Substitution::from_args(&generics, &application.args))
-    }
-
-    /// Lower a turbofish against the declaration owner's canonical parameter order.
-    pub(crate) fn subst_for_explicit_args(
-        &self,
-        owner: GenericDefRef,
-        args: &[ItemGenericArg],
-        scope: ScopeId,
-    ) -> Result<Substitution, PackageStoreError> {
-        if args.is_empty() {
-            return Ok(Substitution::new());
-        }
-        let args = self
-            .context
-            .type_refs(scope)
-            .resolve_generic_args_for(owner, args)?;
-        let generics = self.context.item_paths().generics().generics(owner)?;
-        let mut subst = Substitution::new();
-
-        // The written turbofish belongs only to this owner. `lower_generic_args_for` returns a
-        // full-arity list so defaults can refer to parent parameters, but those placeholder parent
-        // entries must not overwrite receiver/impl evidence selected by the caller.
-        for (param, arg) in generics
-            .iter_self()
-            .zip(args.iter().skip(generics.parent_len()))
-        {
-            subst.push(param.param(), arg.clone());
-        }
-        Ok(subst)
     }
 }
