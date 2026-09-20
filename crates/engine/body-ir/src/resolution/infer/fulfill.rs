@@ -3,14 +3,14 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, ItemOwner, PatId, TraitDefRef};
+use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, TraitDefRef};
 use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 use rg_ty::{ExpectedTyExt, GenericArgs, Ty, autoderef::AutoderefMode, trait_selection::TraitGoal};
 
-use super::InferenceContext;
+use super::{InferenceContext, InferenceState};
 use crate::{
     ExprUnaryOp,
     body::{ExprKind, PatKind},
@@ -25,14 +25,35 @@ pub(super) struct Deferred {
 }
 
 pub(super) enum DeferredKind {
-    Call { call: ExprId },
-    Member { expr: ExprId },
-    Pattern { pat: PatId, expected: Ty },
-    IteratorItem { iterable: ExprId, item: Ty },
-    TryOutput { expr: ExprId },
-    Operator { expr: ExprId },
-    Coerce { expr: ExprId, expected: Ty },
-    BranchResult { expr: ExprId, branches: Vec<Ty> },
+    Call {
+        call: ExprId,
+    },
+    Member {
+        expr: ExprId,
+    },
+    Pattern {
+        pat: PatId,
+        expected: Ty,
+        default_ref: Option<Mutability>,
+    },
+    IteratorItem {
+        iterable: ExprId,
+        item: Ty,
+    },
+    TryOutput {
+        expr: ExprId,
+    },
+    Operator {
+        expr: ExprId,
+    },
+    Coerce {
+        expr: ExprId,
+        expected: Ty,
+    },
+    BranchResult {
+        expr: ExprId,
+        branches: Vec<Ty>,
+    },
 }
 
 impl<'query, D, I> InferenceContext<'query, D, I>
@@ -53,6 +74,32 @@ where
                 None,
             );
         }
+    }
+
+    /// Publish useful expectations even when a producer could not be resolved. For example,
+    /// `let size = number.try_into().ok()?; Some(size)` can learn `size` from the return type
+    /// despite incomplete conversion lookup. Only do this after semantic work has stopped:
+    /// until then, a pending producer may still turn out to return `!`.
+    /// Consume the context so these fallback equalities cannot feed another lookup attempt.
+    pub(super) fn finish_coercions(mut self) -> InferenceState {
+        for operation in self.deferred {
+            match operation.kind {
+                DeferredKind::Coerce { expr, expected } => {
+                    self.inference.constrain_expr_ty(expr, &expected);
+                }
+                DeferredKind::BranchResult { expr, branches } => {
+                    let result = self.inference.expr_slot(expr);
+                    for branch in branches {
+                        let branch = self.inference.root_resolved_ty(&branch);
+                        if !matches!(branch, Ty::Never) {
+                            self.inference.constrain_infer_tys(&result, &branch);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.inference
     }
 
     fn try_coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty) -> bool {
@@ -324,8 +371,12 @@ where
                 }
                 Ok(self.inference.call_is_complete(*call))
             }
-            DeferredKind::Pattern { pat, expected } => self
-                .try_infer_pat(*pat, expected)
+            DeferredKind::Pattern {
+                pat,
+                expected,
+                default_ref,
+            } => self
+                .try_infer_pat(*pat, expected, *default_ref)
                 .context("project pending pattern"),
             DeferredKind::Member { expr } => {
                 let base = match self.body.expr_unchecked(*expr).kind {

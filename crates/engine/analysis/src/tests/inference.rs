@@ -2239,6 +2239,127 @@ pub fn slice_pattern(user: User) {
 }
 
 #[test]
+fn projects_borrowed_patterns_through_live_type_variables() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_borrowed_patterns");
+
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_borrowed_patterns"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User { pub count: u64 }
+pub struct Account<T> { pub user: T }
+pub struct Holder { pub account: Account<User>, pub optional: Option<User> }
+
+pub fn borrowed(holder: &Holder) {
+    let Account { user } = &&holder.account;
+    user$type_record_binding$;
+    user.count$type_record_field$;
+    if let Some(user) = &holder.optional {
+        user$type_variant_binding$;
+        user.count$type_variant_field$;
+    }
+}
+
+pub fn apply<F: FnOnce(Holder)>(f: F) {}
+pub fn deferred() {
+    apply((|holder| {
+        let Account { user } = &holder.account;
+        user$type_deferred_record_binding$;
+        user.count$type_deferred_record_field$;
+        if let Some(user) = &holder.optional {
+            user$type_deferred_variant_binding$;
+            user.count$type_deferred_variant_field$;
+        }
+    }));
+}
+
+pub fn account<T>() -> Account<T> { loop {} }
+pub fn accept(user: &User) {}
+pub fn inferred_field() {
+    let Account { user } = (&account())$type_generic_initializer$;
+    accept(user);
+    user.count$type_generic_field$;
+}
+
+pub fn borrowed_mut(holder: &mut Holder) {
+    let Account { user } = &mut holder.account;
+    user$type_mutable_binding$;
+    let Account { user } = &&mut holder.account;
+    user$type_shared_binding$;
+}
+"#,
+        &[
+            ty("borrowed record binding", "type_record_binding"),
+            ty("borrowed record field", "type_record_field"),
+            ty("borrowed variant binding", "type_variant_binding"),
+            ty("borrowed variant field", "type_variant_field"),
+            ty(
+                "deferred borrowed record binding",
+                "type_deferred_record_binding",
+            ),
+            ty(
+                "deferred borrowed record field",
+                "type_deferred_record_field",
+            ),
+            ty(
+                "deferred borrowed variant binding",
+                "type_deferred_variant_binding",
+            ),
+            ty(
+                "deferred borrowed variant field",
+                "type_deferred_variant_field",
+            ),
+            ty("inferred borrowed initializer", "type_generic_initializer"),
+            ty("inferred borrowed field", "type_generic_field"),
+            ty("mutable borrowed binding", "type_mutable_binding"),
+            ty("shared borrow of mutable reference", "type_shared_binding"),
+        ],
+        expect![[r#"
+            borrowed record binding
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+
+            borrowed record field
+            - u64
+
+            borrowed variant binding
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+
+            borrowed variant field
+            - u64
+
+            deferred borrowed record binding
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+
+            deferred borrowed record field
+            - u64
+
+            deferred borrowed variant binding
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+
+            deferred borrowed variant field
+            - u64
+
+            inferred borrowed initializer
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::Account<nominal struct analysis_borrowed_patterns[lib]::crate::User>
+
+            inferred borrowed field
+            - u64
+
+            mutable borrowed binding
+            - &mut nominal struct analysis_borrowed_patterns[lib]::crate::User
+
+            shared borrow of mutable reference
+            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn uses_simple_assignments_as_equality_evidence() {
     check_analysis_queries(
         r#"
@@ -2513,6 +2634,52 @@ pub fn use_it() {
 
             destructured binding
             - nominal struct analysis_late_projection[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn retains_late_expectations_for_ambiguous_conversion_results() {
+    let ty =
+        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_conversion_expectation");
+
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_conversion_expectation"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Conversion<T> { pub value: T }
+impl<T> Conversion<T> {
+    pub fn ok(self) -> Option<T> { Option::Some(self.value) }
+}
+
+pub trait Convert<T> {
+    fn convert(self) -> Conversion<T> { loop {} }
+}
+pub trait FromNumber {}
+impl FromNumber for u32 {}
+impl FromNumber for u64 {}
+impl<T: FromNumber> Convert<T> for usize {}
+
+pub fn convert_later(number: usize) -> Option<u32> {
+    let size = number.convert().ok()?$type_initializer$;
+    Option::Some(size$type_read$)
+}
+"#,
+        &[
+            ty("conversion initializer", "type_initializer"),
+            ty("conversion binding read", "type_read"),
+        ],
+        expect![[r#"
+            conversion initializer
+            - u32
+
+            conversion binding read
+            - u32
         "#]],
     );
 }

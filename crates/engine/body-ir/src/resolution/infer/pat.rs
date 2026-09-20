@@ -107,7 +107,8 @@ where
     pub(super) fn infer_pattern(&mut self, pat: PatId, expected: &Ty) -> anyhow::Result<()> {
         self.infer_pattern_exprs(pat)
             .context("infer pattern expressions")?;
-        self.infer_pat(pat, expected).context("infer pattern type")
+        self.infer_pat(pat, expected, None)
+            .context("infer pattern type")
     }
 
     fn infer_pattern_exprs(&mut self, pat: PatId) -> anyhow::Result<()> {
@@ -129,16 +130,18 @@ where
 
     /// Project the available type and queue this node if its structure still needs more evidence.
     /// Recursive pattern work enters here without revisiting pattern-owned expressions.
-    pub(super) fn infer_pat(
+    fn infer_pat(
         &mut self,
         pat: PatId,
         expected_ty: &Ty,
+        default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
-        if !self.try_infer_pat(pat, expected_ty)? {
+        if !self.try_infer_pat(pat, expected_ty, default_ref)? {
             self.defer(
                 DeferredKind::Pattern {
                     pat,
                     expected: expected_ty.clone(),
+                    default_ref,
                 },
                 None,
             );
@@ -149,13 +152,16 @@ where
     /// Link this node's bindings and children to the expected type. Return false when we need its
     /// outer shape first: a simple binding can share `?T` immediately, but `(left, right)` needs
     /// a tuple before we can give each child its field type. Children may queue their own work.
+    /// `default_ref` carries borrows introduced by enclosing patterns, separately from references
+    /// in the matched type: matching `&Some(value)` gives `value: &T` from an `Option<T>` payload.
     pub(super) fn try_infer_pat(
         &mut self,
         pat: PatId,
         expected_ty: &Ty,
+        mut default_ref: Option<Mutability>,
     ) -> Result<bool, PackageStoreError> {
         crate::profile::metric::PATTERN_VISITS.inc();
-        let expected_ty = self.inference.root_resolved_ty(expected_ty);
+        let mut expected_ty = self.inference.root_resolved_ty(expected_ty);
         if matches!(expected_ty, Ty::Unknown) {
             // A raw unknown has no link to future evidence, so retrying it cannot reveal a shape.
             return Ok(true);
@@ -165,6 +171,27 @@ where
         let Some(data) = body.pat(pat) else {
             return Ok(true);
         };
+
+        // Record and variant patterns project through references. Resolve each exposed slot:
+        // `&?T` can already contain a known record, or still need evidence before its fields exist.
+        // Keep the record's generic arguments live so later binding uses can constrain them.
+        // TODO: Support implicit reference matching for tuple and slice patterns too.
+        if matches!(
+            data.kind,
+            PatKind::Record { .. } | PatKind::TupleStruct { .. }
+        ) {
+            while let Ty::Reference {
+                inner, mutability, ..
+            } = expected_ty
+            {
+                // Peeling `&Some(value)` makes `value` a shared borrow. An inner `&mut`
+                // cannot make that borrow mutable again after a shared reference was crossed.
+                if default_ref != Some(Mutability::Shared) {
+                    default_ref = Some(mutability);
+                }
+                expected_ty = self.inference.root_resolved_ty(&inner);
+            }
+        }
 
         if matches!(expected_ty, Ty::InferVar { .. } | Ty::Alias(_))
             && matches!(
@@ -180,36 +207,50 @@ where
         }
         match data.kind {
             PatKind::Binding {
-                binding, subpat, ..
+                binding,
+                subpat,
+                mode,
+                ..
             } => {
                 if let Some(binding) = binding {
-                    self.inference
-                        .set_binding_infer_ty(binding, expected_ty.clone());
+                    // Written binding modifiers take precedence over the inherited borrow mode.
+                    let by_ref = if mode.by_ref {
+                        Some(Mutability::from_mut_token(mode.mutable))
+                    } else if mode.mutable {
+                        None
+                    } else {
+                        default_ref
+                    };
+                    let binding_ty = match by_ref {
+                        Some(mutability) => Ty::reference(mutability, expected_ty.clone()),
+                        None => expected_ty.clone(),
+                    };
+                    self.inference.set_binding_infer_ty(binding, binding_ty);
                 }
                 if let Some(subpat) = subpat {
-                    self.infer_pat(subpat, &expected_ty)?;
+                    self.infer_pat(subpat, &expected_ty, default_ref)?;
                 }
                 Ok(())
             }
             PatKind::TupleStruct {
                 ref path,
                 ref fields,
-            } => self.link_tuple_variant(path.as_ref(), fields, &expected_ty),
+            } => self.link_tuple_variant(path.as_ref(), fields, &expected_ty, default_ref),
             PatKind::Record {
                 ref path,
                 ref fields,
                 ..
-            } => self.link_record_pat(path.as_ref(), fields, &expected_ty),
-            PatKind::Tuple { ref fields } => self.link_tuple_pat(fields, &expected_ty),
-            PatKind::Slice { ref fields } => self.link_slice_pat(fields, &expected_ty),
+            } => self.link_record_pat(path.as_ref(), fields, &expected_ty, default_ref),
+            PatKind::Tuple { ref fields } => self.link_tuple_pat(fields, &expected_ty, default_ref),
+            PatKind::Slice { ref fields } => self.link_slice_pat(fields, &expected_ty, default_ref),
             PatKind::Or { ref pats } => {
                 for pat in pats {
-                    self.infer_pat(*pat, &expected_ty)?;
+                    self.infer_pat(*pat, &expected_ty, default_ref)?;
                 }
                 Ok(())
             }
             PatKind::Ref { mutability, pat } => self.link_ref_pat(pat, mutability, &expected_ty),
-            PatKind::Box { pat } => self.infer_pat(pat, &expected_ty),
+            PatKind::Box { pat } => self.infer_pat(pat, &expected_ty, default_ref),
             PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
@@ -226,6 +267,7 @@ where
         &mut self,
         fields: &[PatId],
         expected_ty: &Ty,
+        default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         let Ty::Tuple(field_tys) = expected_ty else {
             return Ok(());
@@ -235,7 +277,7 @@ where
         }
 
         for (field_pat, field_ty) in fields.iter().zip(field_tys) {
-            self.infer_pat(*field_pat, field_ty)?;
+            self.infer_pat(*field_pat, field_ty, default_ref)?;
         }
         Ok(())
     }
@@ -245,6 +287,7 @@ where
         &mut self,
         fields: &[PatId],
         expected_ty: &Ty,
+        default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         let element_ty = match expected_ty {
             Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
@@ -259,7 +302,7 @@ where
             {
                 continue;
             }
-            self.infer_pat(*field, element_ty)?;
+            self.infer_pat(*field, element_ty, default_ref)?;
         }
         Ok(())
     }
@@ -278,7 +321,7 @@ where
             return Ok(());
         }
 
-        self.infer_pat(pat, inner_ty)
+        self.infer_pat(pat, inner_ty, None)
     }
 
     /// Project tuple-variant payload fields from the expected enum instantiation.
@@ -287,6 +330,7 @@ where
         path: Option<&BodyPath>,
         fields: &[PatId],
         expected_ty: &Ty,
+        default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
@@ -295,7 +339,7 @@ where
                     .fields()
                     .pattern_field_ty(path, expected_ty, &field_key)?
             {
-                self.infer_pat(*field_pat, &field_ty)?;
+                self.infer_pat(*field_pat, &field_ty, default_ref)?;
             }
         }
         Ok(())
@@ -307,6 +351,7 @@ where
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
         expected_ty: &Ty,
+        default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         for field in fields {
             if let Some(field_ty) =
@@ -314,7 +359,7 @@ where
                     .fields()
                     .pattern_field_ty(path, expected_ty, &field.key)?
             {
-                self.infer_pat(field.pat, &field_ty)?;
+                self.infer_pat(field.pat, &field_ty, default_ref)?;
             }
         }
         Ok(())
