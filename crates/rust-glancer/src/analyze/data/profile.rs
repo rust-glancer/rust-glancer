@@ -470,9 +470,7 @@ impl ProfileCheckpointReport {
                 .collect(),
         }
     }
-}
 
-impl ProfileCheckpointReport {
     fn append_values(&self, row: &mut ReportRowBuilder) {
         for value in &self.values {
             row.value(value.key.clone(), value.value.as_report_value());

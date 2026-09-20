@@ -146,17 +146,7 @@ impl TowerLspTransport {
             }),
         }
     }
-}
 
-impl fmt::Debug for TowerLspTransport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("TowerLspTransport")
-            .field("serve_task_finished", &self.serve_task.is_finished())
-            .finish_non_exhaustive()
-    }
-}
-
-impl TowerLspTransport {
     pub(crate) async fn request(
         &mut self,
         method: &str,
@@ -216,6 +206,14 @@ impl TowerLspTransport {
                 Err(anyhow::anyhow!(message))
             }
         }
+    }
+}
+
+impl fmt::Debug for TowerLspTransport {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TowerLspTransport")
+            .field("serve_task_finished", &self.serve_task.is_finished())
+            .finish_non_exhaustive()
     }
 }
 

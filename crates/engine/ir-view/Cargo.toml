@@ -23,3 +23,6 @@ rg_std.workspace = true
 rg_syntax.workspace = true
 rg_text.workspace = true
 rg_ty.workspace = true
+
+[lints]
+workspace = true

@@ -23,3 +23,6 @@ serde = { workspace = true, features = ["derive"] }
 [dev-dependencies]
 test_fixture.workspace = true
 expect-test.workspace = true
+
+[lints]
+workspace = true

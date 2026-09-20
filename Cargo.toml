@@ -59,6 +59,9 @@ homepage = "https://github.com/popzxc/rust-glancer"
 readme = "README.md"
 description = "A Rust workspace for rust-glancer."
 
+[workspace.lints.clippy]
+multiple_inherent_impl = "warn"
+
 [workspace.dependencies]
 anyhow = "1.0.103"
 atomic-write-file = "0.3.0"

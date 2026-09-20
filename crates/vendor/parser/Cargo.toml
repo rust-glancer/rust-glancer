@@ -32,3 +32,6 @@ stdx.workspace = true
 [features]
 default = []
 in-rust-tree = []
+
+[lints]
+workspace = true

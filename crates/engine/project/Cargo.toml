@@ -45,3 +45,6 @@ test_fixture.workspace = true
 [[bench]]
 name = "analysis_pipeline"
 harness = false
+
+[lints]
+workspace = true

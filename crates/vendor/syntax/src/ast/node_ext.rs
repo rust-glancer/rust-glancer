@@ -343,6 +343,13 @@ impl ast::PathSegment {
         };
         Some(res)
     }
+
+    // [#15778](https://github.com/rust-lang/rust-analyzer/issues/15778)
+    pub fn qualifying_trait(&self) -> Option<ast::PathType> {
+        let mut path_types = support::children(self.type_anchor()?.syntax());
+        let first = path_types.next()?;
+        path_types.next().or(Some(first))
+    }
 }
 
 impl ast::Path {
@@ -481,15 +488,6 @@ impl ast::Impl {
         } else {
             None
         }
-    }
-}
-
-// [#15778](https://github.com/rust-lang/rust-analyzer/issues/15778)
-impl ast::PathSegment {
-    pub fn qualifying_trait(&self) -> Option<ast::PathType> {
-        let mut path_types = support::children(self.type_anchor()?.syntax());
-        let first = path_types.next()?;
-        path_types.next().or(Some(first))
     }
 }
 

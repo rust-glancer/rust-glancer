@@ -12,3 +12,6 @@ description.workspace = true
 [dependencies]
 wincode.workspace = true
 rg_std.workspace = true
+
+[lints]
+workspace = true

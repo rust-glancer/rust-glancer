@@ -26,3 +26,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 test_fixture.workspace = true
+
+[lints]
+workspace = true

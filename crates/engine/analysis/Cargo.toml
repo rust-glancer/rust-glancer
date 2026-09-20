@@ -26,3 +26,6 @@ rg_def_map.workspace = true
 rg_semantic_ir.workspace = true
 rg_workspace.workspace = true
 test_fixture.workspace = true
+
+[lints]
+workspace = true
