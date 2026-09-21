@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_keywords_for_each_item_list_context() {
     check_analysis_queries(

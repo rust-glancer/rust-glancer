@@ -12,14 +12,16 @@ mod store;
 #[doc(hidden)]
 pub mod testonly;
 
-pub use self::profile::profile_descriptors;
-pub(crate) use self::store::CurrentBody;
 pub use rg_ir_model::FieldKey;
 
-pub use self::build::{
-    BodyIrBuildPolicy, BodyIrBuildProgress, BodyIrBuildStage, BodyIrBuilder, BodyIrFile,
-    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
-    CurrentSourceSelection, CurrentSourceUnavailable,
+pub(crate) use self::store::CurrentBody;
+pub use self::{
+    build::{
+        BodyIrBuildPolicy, BodyIrBuildProgress, BodyIrBuildStage, BodyIrBuilder, BodyIrFile,
+        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
+        CurrentSourceSelection, CurrentSourceUnavailable,
+    },
+    profile::profile_descriptors,
 };
 
 #[cfg(test)]

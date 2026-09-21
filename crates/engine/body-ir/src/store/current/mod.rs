@@ -10,9 +10,8 @@ use std::collections::HashSet;
 
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ModuleRef, Span};
 
-use crate::{BodyLocalItems, BodySource};
-
 pub(crate) use self::body::CurrentBody;
+use crate::{BodyLocalItems, BodySource};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum CurrentImplRole {

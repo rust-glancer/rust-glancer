@@ -8,9 +8,8 @@ use rg_def_map::DefMapSource as _;
 use rg_ir_model::{CrateRef, FileId, ImplRef, TraitDefRef};
 use rg_package_store::PackageStoreError;
 
-use crate::IndexedViewDb;
-
 use super::NarrowestSourceSite;
+use crate::IndexedViewDb;
 
 /// Resolved trait implementation selected by its enclosing source span.
 ///

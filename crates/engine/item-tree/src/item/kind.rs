@@ -1,3 +1,6 @@
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
+
 use super::{
     decl::{
         ConstItem, EnumItem, ExternBlockItem, FunctionItem, ImplItem, StaticItem, StructItem,
@@ -7,8 +10,6 @@ use super::{
     macro_item::{MacroCallItem, MacroDefinitionItem},
     module::ModuleItem,
 };
-use rg_std::{MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
 
 /// Payload-bearing item kind.
 ///

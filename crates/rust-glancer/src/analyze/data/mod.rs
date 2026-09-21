@@ -9,7 +9,6 @@ use rg_project::Project;
 use serde::Serialize;
 
 pub(crate) use self::stages::AnalysisSetupReport;
-
 use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
 use crate::report::ReportDocument;
 

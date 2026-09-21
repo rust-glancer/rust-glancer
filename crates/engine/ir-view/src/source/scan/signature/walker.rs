@@ -13,8 +13,10 @@ use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate}
 use rg_semantic_ir::{ItemStore, ItemStoreQuery, TypePathContext};
 
 use super::{SignatureSourceCandidate, SignatureTypePathScope, collector::SignatureScanCollector};
-use crate::IndexedViewDb;
-use crate::source::scan::{TypeNamePosition, type_path::walk_type_ref_paths};
+use crate::{
+    IndexedViewDb,
+    source::scan::{TypeNamePosition, type_path::walk_type_ref_paths},
+};
 
 /// Walks every signature-bearing item in one semantic store and sends source facts to `C`.
 ///

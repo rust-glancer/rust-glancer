@@ -29,16 +29,6 @@ pub enum NameNamespace {
     Macros,
 }
 
-/// Namespace selected by source positions that cannot denote a macro.
-///
-/// Keeping this restriction in the type distinguishes body type/value paths from module scopes,
-/// where macro names are a real third possibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ValueOrTypeNamespace {
-    Types,
-    Values,
-}
-
 impl From<ValueOrTypeNamespace> for NameNamespace {
     fn from(namespace: ValueOrTypeNamespace) -> Self {
         match namespace {
@@ -58,12 +48,32 @@ impl From<Namespace> for NameNamespace {
     }
 }
 
+/// Namespace selected by source positions that cannot denote a macro.
+///
+/// Keeping this restriction in the type distinguishes body type/value paths from module scopes,
+/// where macro names are a real third possibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueOrTypeNamespace {
+    Types,
+    Values,
+}
+
 /// Where a visible module-scope name came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameOrigin {
     ModuleScope,
     Prelude,
     ExternRoot,
+}
+
+impl From<VisibleScopeOrigin> for NameOrigin {
+    fn from(origin: VisibleScopeOrigin) -> Self {
+        match origin {
+            VisibleScopeOrigin::ModuleScope => Self::ModuleScope,
+            VisibleScopeOrigin::Prelude => Self::Prelude,
+            VisibleScopeOrigin::ExternRoot => Self::ExternRoot,
+        }
+    }
 }
 
 /// Rust syntax family in which one visible macro definition can be named.
@@ -80,16 +90,6 @@ impl From<MacroDefinitionKind> for MacroKind {
             MacroDefinitionKind::Invocation => Self::Invocation,
             MacroDefinitionKind::Attribute => Self::Attribute,
             MacroDefinitionKind::Derive => Self::Derive,
-        }
-    }
-}
-
-impl From<VisibleScopeOrigin> for NameOrigin {
-    fn from(origin: VisibleScopeOrigin) -> Self {
-        match origin {
-            VisibleScopeOrigin::ModuleScope => Self::ModuleScope,
-            VisibleScopeOrigin::Prelude => Self::Prelude,
-            VisibleScopeOrigin::ExternRoot => Self::ExternRoot,
         }
     }
 }
@@ -181,6 +181,20 @@ pub struct GenericScopeName {
     target: GenericScopeNameTarget,
 }
 
+impl GenericScopeName {
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub fn kind(&self) -> GenericScopeNameKind {
+        self.kind
+    }
+
+    pub fn target(&self) -> GenericScopeNameTarget {
+        self.target
+    }
+}
+
 /// One written lifetime parameter visible from a declaration signature.
 ///
 /// Lifetimes use apostrophe syntax and therefore stay separate from ordinary generic-scope names.
@@ -198,20 +212,6 @@ impl LifetimeScopeName {
     }
 
     pub fn target(&self) -> GenericParamRef {
-        self.target
-    }
-}
-
-impl GenericScopeName {
-    pub fn label(&self) -> &str {
-        &self.label
-    }
-
-    pub fn kind(&self) -> GenericScopeNameKind {
-        self.kind
-    }
-
-    pub fn target(&self) -> GenericScopeNameTarget {
         self.target
     }
 }

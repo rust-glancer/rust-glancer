@@ -9,15 +9,17 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::TraitApplication;
-use rg_ty::lookup::ReceiverImplMatches;
-use rg_ty::lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef};
-use rg_ty::lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery};
-use rg_ty::trait_selection::TraitSelection;
-use rg_ty::{AdtTy, ExpectedTyExt, Substitution, Ty, inference::InferenceTable};
+use rg_ty::{
+    AdtTy, ExpectedTyExt, Substitution, TraitApplication, Ty,
+    inference::InferenceTable,
+    lookup::{
+        AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ReceiverImplMatches,
+    },
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    trait_selection::TraitSelection,
+};
 
 use super::{BodyCallableCandidate, BodyReceiverImplMatches, traits::BodyQualifiedTraitSelection};
-
 use crate::{
     BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,
@@ -28,12 +30,6 @@ use crate::{
 /// Covers enum variants, associated consts, and associated functions.
 pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BodyAssociatedItemCandidate {
-    EnumVariant(EnumVariantRef, Ty),
-    Const(ConstRef, Ty),
 }
 
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
@@ -721,4 +717,10 @@ where
         };
         Ok(selection.table.finalize(&ty))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyAssociatedItemCandidate {
+    EnumVariant(EnumVariantRef, Ty),
+    Const(ConstRef, Ty),
 }

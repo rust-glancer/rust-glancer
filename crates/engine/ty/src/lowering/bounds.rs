@@ -1,15 +1,16 @@
 //! Lower trait bounds and associated equalities into semantic applications and clauses.
 
-use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
-use crate::inference::InferenceTable;
-use crate::{
-    AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TraitRefLowering, Ty,
-};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathResolution};
 use rg_std::UniqueVec;
+
+use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
+use crate::{
+    AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TraitRefLowering, Ty,
+    inference::InferenceTable,
+};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where

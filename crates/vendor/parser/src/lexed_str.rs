@@ -28,11 +28,6 @@ pub struct LexedStr<'a> {
     error: Vec<LexError>,
 }
 
-struct LexError {
-    msg: String,
-    token: u32,
-}
-
 impl<'a> LexedStr<'a> {
     pub fn new(edition: Edition, text: &'a str) -> LexedStr<'a> {
         let _p = tracing::info_span!("LexedStr::new").entered();
@@ -148,6 +143,11 @@ impl<'a> LexedStr<'a> {
         self.kind.push(kind);
         self.start.push(offset as u32);
     }
+}
+
+struct LexError {
+    msg: String,
+    token: u32,
 }
 
 struct Converter<'a> {
@@ -371,7 +371,7 @@ impl<'a> Converter<'a> {
                     let text = &self.res.text[self.offset + 1..][..len - 1];
                     let text = &text[..text.rfind('\'').unwrap()];
                     if let Err(e) = unescape_char(text) {
-                        errors.push(err_to_msg(e, Mode::Char));
+                        errors.push(Self::err_to_msg(e, Mode::Char));
                     }
                 }
                 CHAR
@@ -383,7 +383,7 @@ impl<'a> Converter<'a> {
                     let text = &self.res.text[self.offset + 2..][..len - 2];
                     let text = &text[..text.rfind('\'').unwrap()];
                     if let Err(e) = unescape_byte(text) {
-                        errors.push(err_to_msg(e, Mode::Byte));
+                        errors.push(Self::err_to_msg(e, Mode::Byte));
                     }
                 }
                 BYTE
@@ -396,7 +396,7 @@ impl<'a> Converter<'a> {
                     let text = &text[..text.rfind('"').unwrap()];
                     unescape_str(text, |_, res| {
                         if let Err(e) = res {
-                            errors.push(err_to_msg(e, Mode::Str));
+                            errors.push(Self::err_to_msg(e, Mode::Str));
                         }
                     });
                 }
@@ -410,7 +410,7 @@ impl<'a> Converter<'a> {
                     let text = &text[..text.rfind('"').unwrap()];
                     unescape_byte_str(text, |_, res| {
                         if let Err(e) = res {
-                            errors.push(err_to_msg(e, Mode::ByteStr));
+                            errors.push(Self::err_to_msg(e, Mode::ByteStr));
                         }
                     });
                 }
@@ -424,7 +424,7 @@ impl<'a> Converter<'a> {
                     let text = &text[..text.rfind('"').unwrap()];
                     unescape_c_str(text, |_, res| {
                         if let Err(e) = res {
-                            errors.push(err_to_msg(e, Mode::CStr));
+                            errors.push(Self::err_to_msg(e, Mode::CStr));
                         }
                     });
                 }
@@ -452,43 +452,43 @@ impl<'a> Converter<'a> {
 
         self.push(syntax_kind, len, errors);
     }
-}
 
-fn err_to_msg(error: EscapeError, mode: Mode) -> String {
-    match error {
-        EscapeError::ZeroChars => "empty character literal",
-        EscapeError::MoreThanOneChar => "character literal may only contain one codepoint",
-        EscapeError::LoneSlash => "",
-        EscapeError::InvalidEscape if mode == Mode::Byte || mode == Mode::ByteStr => {
-            "unknown byte escape"
+    fn err_to_msg(error: EscapeError, mode: Mode) -> String {
+        match error {
+            EscapeError::ZeroChars => "empty character literal",
+            EscapeError::MoreThanOneChar => "character literal may only contain one codepoint",
+            EscapeError::LoneSlash => "",
+            EscapeError::InvalidEscape if mode == Mode::Byte || mode == Mode::ByteStr => {
+                "unknown byte escape"
+            }
+            EscapeError::InvalidEscape => "unknown character escape",
+            EscapeError::BareCarriageReturn => "",
+            EscapeError::BareCarriageReturnInRawString => "",
+            EscapeError::EscapeOnlyChar if mode == Mode::Byte => "byte constant must be escaped",
+            EscapeError::EscapeOnlyChar => "character constant must be escaped",
+            EscapeError::TooShortHexEscape => "numeric character escape is too short",
+            EscapeError::InvalidCharInHexEscape => "invalid character in numeric character escape",
+            EscapeError::OutOfRangeHexEscape => "out of range hex escape",
+            EscapeError::NoBraceInUnicodeEscape => "incorrect unicode escape sequence",
+            EscapeError::InvalidCharInUnicodeEscape => "invalid character in unicode escape",
+            EscapeError::EmptyUnicodeEscape => "empty unicode escape",
+            EscapeError::UnclosedUnicodeEscape => "unterminated unicode escape",
+            EscapeError::LeadingUnderscoreUnicodeEscape => "invalid start of unicode escape",
+            EscapeError::OverlongUnicodeEscape => "overlong unicode escape",
+            EscapeError::LoneSurrogateUnicodeEscape => "invalid unicode character escape",
+            EscapeError::OutOfRangeUnicodeEscape => "invalid unicode character escape",
+            EscapeError::UnicodeEscapeInByte => "unicode escape in byte string",
+            EscapeError::NonAsciiCharInByte if mode == Mode::Byte => {
+                "non-ASCII character in byte literal"
+            }
+            EscapeError::NonAsciiCharInByte if mode == Mode::ByteStr => {
+                "non-ASCII character in byte string literal"
+            }
+            EscapeError::NonAsciiCharInByte => "non-ASCII character in raw byte string literal",
+            EscapeError::NulInCStr => "null character in C string literal",
+            EscapeError::UnskippedWhitespaceWarning => "",
+            EscapeError::MultipleSkippedLinesWarning => "",
         }
-        EscapeError::InvalidEscape => "unknown character escape",
-        EscapeError::BareCarriageReturn => "",
-        EscapeError::BareCarriageReturnInRawString => "",
-        EscapeError::EscapeOnlyChar if mode == Mode::Byte => "byte constant must be escaped",
-        EscapeError::EscapeOnlyChar => "character constant must be escaped",
-        EscapeError::TooShortHexEscape => "numeric character escape is too short",
-        EscapeError::InvalidCharInHexEscape => "invalid character in numeric character escape",
-        EscapeError::OutOfRangeHexEscape => "out of range hex escape",
-        EscapeError::NoBraceInUnicodeEscape => "incorrect unicode escape sequence",
-        EscapeError::InvalidCharInUnicodeEscape => "invalid character in unicode escape",
-        EscapeError::EmptyUnicodeEscape => "empty unicode escape",
-        EscapeError::UnclosedUnicodeEscape => "unterminated unicode escape",
-        EscapeError::LeadingUnderscoreUnicodeEscape => "invalid start of unicode escape",
-        EscapeError::OverlongUnicodeEscape => "overlong unicode escape",
-        EscapeError::LoneSurrogateUnicodeEscape => "invalid unicode character escape",
-        EscapeError::OutOfRangeUnicodeEscape => "invalid unicode character escape",
-        EscapeError::UnicodeEscapeInByte => "unicode escape in byte string",
-        EscapeError::NonAsciiCharInByte if mode == Mode::Byte => {
-            "non-ASCII character in byte literal"
-        }
-        EscapeError::NonAsciiCharInByte if mode == Mode::ByteStr => {
-            "non-ASCII character in byte string literal"
-        }
-        EscapeError::NonAsciiCharInByte => "non-ASCII character in raw byte string literal",
-        EscapeError::NulInCStr => "null character in C string literal",
-        EscapeError::UnskippedWhitespaceWarning => "",
-        EscapeError::MultipleSkippedLinesWarning => "",
+        .into()
     }
-    .into()
 }

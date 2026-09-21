@@ -1,8 +1,6 @@
 //! Closure signatures exist before their bodies so callable bounds and pattern bindings share
 //! the same parameter and output slots. Capture analysis is outside this inference layer.
 
-use super::InferenceContext;
-use crate::body::{ClosureParamData, ExprKind};
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, ScopeId};
@@ -10,6 +8,9 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;
+
+use super::InferenceContext;
+use crate::body::{ClosureParamData, ExprKind};
 
 impl<'query, D, I> InferenceContext<'query, D, I>
 where

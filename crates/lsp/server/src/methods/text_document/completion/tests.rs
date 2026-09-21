@@ -592,11 +592,6 @@ impl GatedCompletionEngine {
     }
 }
 
-struct ObservedCompletionAttempt {
-    input: DocumentPositionSnapshot,
-    release: oneshot::Sender<()>,
-}
-
 impl EngineService for GatedCompletionEngine {
     async fn completion(
         self,
@@ -802,4 +797,9 @@ impl EngineService for GatedCompletionEngine {
     async fn shutdown(self, _: context::Context) -> EngineResult<()> {
         panic!("test engine only supports completion")
     }
+}
+
+struct ObservedCompletionAttempt {
+    input: DocumentPositionSnapshot,
+    release: oneshot::Sender<()>,
 }

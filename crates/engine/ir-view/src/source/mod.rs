@@ -14,20 +14,22 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
-pub use completion::{
-    IndexedAssociatedPathQualifier, IndexedAssociatedTypeBindingScope,
-    IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleFileBase,
-    IndexedModuleSourceSite, IndexedPatternCompletionKind, IndexedQualifiedPathContext,
-    IndexedQualifiedPathScope, IndexedQualifiedPathSite, IndexedRecordFieldListSite,
-    IndexedRecordOwner, IndexedSignatureTypeSite, IndexedTraitImplSite, IndexedTypeNamePosition,
-    IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
-    SourceCompletionView,
-};
-pub use documentation::{
-    DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
-    DocumentationSourceView, ModuleDocumentationSource,
-};
-pub use occurrence::{
-    IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,
-    IndexedSourceSurface, IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
+pub use self::{
+    completion::{
+        IndexedAssociatedPathQualifier, IndexedAssociatedTypeBindingScope,
+        IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleFileBase,
+        IndexedModuleSourceSite, IndexedPatternCompletionKind, IndexedQualifiedPathContext,
+        IndexedQualifiedPathScope, IndexedQualifiedPathSite, IndexedRecordFieldListSite,
+        IndexedRecordOwner, IndexedSignatureTypeSite, IndexedTraitImplSite,
+        IndexedTypeNamePosition, IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope,
+        IndexedUnqualifiedNameSite, SourceCompletionView,
+    },
+    documentation::{
+        DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
+        DocumentationSourceView, ModuleDocumentationSource,
+    },
+    occurrence::{
+        IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,
+        IndexedSourceSurface, IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
+    },
 };

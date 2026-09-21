@@ -39,6 +39,98 @@ pub(super) enum TypePathCompletionSite {
     },
 }
 
+impl TypePathCompletionSite {
+    /// Interprets the path segment touched by `offset`.
+    ///
+    /// In `outer::Inn$0`, `outer` is the qualifier and `Inn` is the replacement span. Recovered
+    /// syntax such as `outer::$0` has no final segment, so it receives an empty replacement span
+    /// after the separator instead.
+    pub(super) fn at(path: &TypePath, offset: u32, position: TypeNamePosition) -> Option<Self> {
+        for (idx, segment) in path.segments.iter().enumerate() {
+            if !segment.span.touches(offset) {
+                continue;
+            }
+
+            if idx == 0 {
+                if path.anchor.is_some() {
+                    return Some(Self::Qualified {
+                        module_qualifier: None,
+                        associated_qualifier: Self::associated_qualifier(path, 0)?,
+                        member_prefix_span: segment.span,
+                    });
+                }
+                if path.absolute {
+                    return None;
+                }
+                return Some(Self::Unqualified {
+                    member_prefix_span: segment.span,
+                    member_prefix: identifier_prefix_at(
+                        segment.name.as_str(),
+                        segment.span,
+                        offset,
+                    ),
+                    position,
+                });
+            }
+
+            return Some(Self::Qualified {
+                module_qualifier: path.as_def_map_path_prefix(idx - 1),
+                associated_qualifier: Self::associated_qualifier(path, idx)?,
+                member_prefix_span: segment.span,
+            });
+        }
+
+        let last_segment = path.segments.last()?;
+        // Generic argument text also extends past the segment name. That suffix must not be
+        // mistaken for the synthetic empty segment recovered after a trailing `::`.
+        if !last_segment.args.is_empty()
+            || path.source_span.end != last_segment.span.end + 2
+            || !(last_segment.span.end..=path.source_span.end).contains(&offset)
+        {
+            return None;
+        }
+
+        Some(Self::Qualified {
+            module_qualifier: path.as_def_map_path(),
+            associated_qualifier: Self::associated_qualifier(path, path.segments.len())?,
+            member_prefix_span: Span {
+                start: offset,
+                end: offset,
+            },
+        })
+    }
+
+    /// Builds the type-shaped prefix while preserving anchors and generic arguments.
+    fn associated_qualifier(
+        path: &TypePath,
+        prefix_segment_count: usize,
+    ) -> Option<AssociatedPathQualifier> {
+        if prefix_segment_count == 0 {
+            return match path.anchor.as_ref()? {
+                TypePathAnchor::Type(ty) => {
+                    Some(AssociatedPathQualifier::Type(ty.as_ref().clone()))
+                }
+                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                    Some(AssociatedPathQualifier::QualifiedTrait {
+                        self_ty: self_ty.as_ref().clone(),
+                        trait_ref: trait_ty.as_ref().clone(),
+                    })
+                }
+            };
+        }
+        if prefix_segment_count > path.segments.len() {
+            return None;
+        }
+
+        Some(AssociatedPathQualifier::Type(TypeRef::Path(TypePath {
+            source_span: path.source_span,
+            absolute: path.absolute,
+            anchor: path.anchor.clone(),
+            segments: path.segments[..prefix_segment_count].to_vec(),
+        })))
+    }
+}
+
 /// Scope-free syntax interpretation of an associated type binding within a trait path.
 ///
 /// `Iterator<It$0 = u8>` is not a normal type path segment: the replacement span belongs to the
@@ -184,98 +276,6 @@ impl AssociatedTypeBindingSyntax {
             }
         }
         None
-    }
-}
-
-impl TypePathCompletionSite {
-    /// Interprets the path segment touched by `offset`.
-    ///
-    /// In `outer::Inn$0`, `outer` is the qualifier and `Inn` is the replacement span. Recovered
-    /// syntax such as `outer::$0` has no final segment, so it receives an empty replacement span
-    /// after the separator instead.
-    pub(super) fn at(path: &TypePath, offset: u32, position: TypeNamePosition) -> Option<Self> {
-        for (idx, segment) in path.segments.iter().enumerate() {
-            if !segment.span.touches(offset) {
-                continue;
-            }
-
-            if idx == 0 {
-                if path.anchor.is_some() {
-                    return Some(Self::Qualified {
-                        module_qualifier: None,
-                        associated_qualifier: Self::associated_qualifier(path, 0)?,
-                        member_prefix_span: segment.span,
-                    });
-                }
-                if path.absolute {
-                    return None;
-                }
-                return Some(Self::Unqualified {
-                    member_prefix_span: segment.span,
-                    member_prefix: identifier_prefix_at(
-                        segment.name.as_str(),
-                        segment.span,
-                        offset,
-                    ),
-                    position,
-                });
-            }
-
-            return Some(Self::Qualified {
-                module_qualifier: path.as_def_map_path_prefix(idx - 1),
-                associated_qualifier: Self::associated_qualifier(path, idx)?,
-                member_prefix_span: segment.span,
-            });
-        }
-
-        let last_segment = path.segments.last()?;
-        // Generic argument text also extends past the segment name. That suffix must not be
-        // mistaken for the synthetic empty segment recovered after a trailing `::`.
-        if !last_segment.args.is_empty()
-            || path.source_span.end != last_segment.span.end + 2
-            || !(last_segment.span.end..=path.source_span.end).contains(&offset)
-        {
-            return None;
-        }
-
-        Some(Self::Qualified {
-            module_qualifier: path.as_def_map_path(),
-            associated_qualifier: Self::associated_qualifier(path, path.segments.len())?,
-            member_prefix_span: Span {
-                start: offset,
-                end: offset,
-            },
-        })
-    }
-
-    /// Builds the type-shaped prefix while preserving anchors and generic arguments.
-    fn associated_qualifier(
-        path: &TypePath,
-        prefix_segment_count: usize,
-    ) -> Option<AssociatedPathQualifier> {
-        if prefix_segment_count == 0 {
-            return match path.anchor.as_ref()? {
-                TypePathAnchor::Type(ty) => {
-                    Some(AssociatedPathQualifier::Type(ty.as_ref().clone()))
-                }
-                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
-                    Some(AssociatedPathQualifier::QualifiedTrait {
-                        self_ty: self_ty.as_ref().clone(),
-                        trait_ref: trait_ty.as_ref().clone(),
-                    })
-                }
-            };
-        }
-        if prefix_segment_count > path.segments.len() {
-            return None;
-        }
-
-        Some(AssociatedPathQualifier::Type(TypeRef::Path(TypePath {
-            source_span: path.source_span,
-            absolute: path.absolute,
-            anchor: path.anchor.clone(),
-            segments: path.segments[..prefix_segment_count].to_vec(),
-        })))
     }
 }
 

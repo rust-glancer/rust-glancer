@@ -171,8 +171,10 @@ impl<'a> CfgSelectParser<'a> {
 mod tests {
     use rg_cfg_eval::{CfgEvaluator, CfgOptions};
     use rg_syntax::{AstNode as _, ast};
-    use rg_tt::TopSubtree;
-    use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree};
+    use rg_tt::{
+        TopSubtree,
+        syntax_bridge::{SpanFactory, syntax_node_to_token_tree},
+    };
 
     use crate::Edition;
 

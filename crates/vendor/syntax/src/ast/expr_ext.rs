@@ -2,6 +2,7 @@
 //!
 //! These methods should only do simple, shallow tasks related to the syntax of the node itself.
 
+use super::RangeItem;
 use crate::{
     AstToken,
     SyntaxKind::{self, *},
@@ -13,8 +14,6 @@ use crate::{
         support,
     },
 };
-
-use super::RangeItem;
 
 impl ast::HasAttrs for ast::Expr {}
 

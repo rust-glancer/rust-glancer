@@ -18,13 +18,10 @@ mod type_path;
 mod type_ref;
 mod value_path;
 
-pub use self::{
-    method::BodyMethodQuery, type_path::BodyTypePathQuery, value_path::BodyValuePathQuery,
-};
-
 pub(crate) use self::{
     associated_item::BodyAssociatedItemQuery,
     body_items::BodyLocalItemQuery,
+    call::{BodyCallQuery, CallSelfSource},
     callable::BodyCallableCandidate,
     field::BodyFieldQuery,
     function::BodyFunctionQuery,
@@ -34,5 +31,6 @@ pub(crate) use self::{
     type_context::BodyTypeContextQuery,
     type_ref::TypeRefResolutionQuery,
 };
-
-pub(crate) use self::call::{BodyCallQuery, CallSelfSource};
+pub use self::{
+    method::BodyMethodQuery, type_path::BodyTypePathQuery, value_path::BodyValuePathQuery,
+};

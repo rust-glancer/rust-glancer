@@ -26,14 +26,15 @@
 use std::fmt;
 
 use rg_std::{MemoryRecorder, MemorySize};
-
-use super::symbol::Symbol;
-use crate::span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::tt::{
-    DelimSpan, DelimiterKind, IdentIsRaw, LitKind, Spacing, SubtreeView, TokenTreesReprRef,
-    TokenTreesView, TtIter, dispatch_ref,
+use super::symbol::Symbol;
+use crate::{
+    span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize},
+    tt::{
+        DelimSpan, DelimiterKind, IdentIsRaw, LitKind, Spacing, SubtreeView, TokenTreesReprRef,
+        TokenTreesView, TtIter, dispatch_ref,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
@@ -59,6 +60,10 @@ impl CompressedSpanPart {
             ctx: self.ctx,
         }
     }
+}
+
+impl MemorySize for CompressedSpanPart {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
 pub(crate) trait SpanStorage: Copy {
@@ -89,11 +94,6 @@ impl SpanStorage32 {
     const LEN_BITS: u32 = 8;
     const OFFSET_BITS: u32 = 20;
 }
-
-const _: () = assert!(
-    (SpanStorage32::SPAN_PARTS_BIT + SpanStorage32::LEN_BITS + SpanStorage32::OFFSET_BITS)
-        == u32::BITS
-);
 
 impl SpanStorage for SpanStorage32 {
     #[inline]
@@ -146,6 +146,15 @@ impl fmt::Debug for SpanStorage32 {
     }
 }
 
+impl MemorySize for SpanStorage32 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+const _: () = assert!(
+    (SpanStorage32::SPAN_PARTS_BIT + SpanStorage32::LEN_BITS + SpanStorage32::OFFSET_BITS)
+        == u32::BITS
+);
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub(crate) struct SpanStorage64 {
     offset: u32,
@@ -156,8 +165,6 @@ impl SpanStorage64 {
     const SPAN_PARTS_BIT: u32 = 16;
     const LEN_BITS: u32 = 16;
 }
-
-const _: () = assert!((SpanStorage64::SPAN_PARTS_BIT + SpanStorage64::LEN_BITS) == u32::BITS);
 
 impl SpanStorage for SpanStorage64 {
     #[inline]
@@ -211,6 +218,12 @@ impl From<SpanStorage32> for SpanStorage64 {
         SpanStorage64::new(value.text_range(), value.span_parts_index())
     }
 }
+
+impl MemorySize for SpanStorage64 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+const _: () = assert!((SpanStorage64::SPAN_PARTS_BIT + SpanStorage64::LEN_BITS) == u32::BITS);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub(crate) struct SpanStorage96 {
@@ -272,6 +285,10 @@ impl From<SpanStorage64> for SpanStorage96 {
     fn from(value: SpanStorage64) -> Self {
         SpanStorage96::new(value.text_range(), value.span_parts_index())
     }
+}
+
+impl MemorySize for SpanStorage96 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
 // We don't use structs or enum nesting here to save padding.
@@ -391,11 +408,71 @@ impl<S: SpanStorage> TokenTree<S> {
     }
 }
 
+impl<S: MemorySize> MemorySize for TokenTree<S> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Literal {
+                text_and_suffix,
+                span,
+                kind: _,
+                suffix_len: _,
+            } => {
+                recorder.scope("text_and_suffix", |recorder| {
+                    text_and_suffix.record_memory_children(recorder);
+                });
+                recorder.scope("span", |recorder| span.record_memory_children(recorder));
+            }
+            Self::Punct {
+                char: _,
+                spacing: _,
+                span,
+            } => recorder.scope("span", |recorder| span.record_memory_children(recorder)),
+            Self::Ident {
+                sym,
+                span,
+                is_raw: _,
+            } => {
+                recorder.scope("sym", |recorder| sym.record_memory_children(recorder));
+                recorder.scope("span", |recorder| span.record_memory_children(recorder));
+            }
+            Self::Subtree {
+                len: _,
+                delim_kind: _,
+                open_span,
+                close_span,
+            } => {
+                recorder.scope("open_span", |recorder| {
+                    open_span.record_memory_children(recorder);
+                });
+                recorder.scope("close_span", |recorder| {
+                    close_span.record_memory_children(recorder);
+                });
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub(crate) enum TopSubtreeRepr {
     SpanStorage32(Box<[TokenTree<SpanStorage32>]>),
     SpanStorage64(Box<[TokenTree<SpanStorage64>]>),
     SpanStorage96(Box<[TokenTree<SpanStorage96>]>),
+}
+
+impl MemorySize for TopSubtreeRepr {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::SpanStorage32(items) => recorder.scope("span_storage32", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+            Self::SpanStorage64(items) => recorder.scope("span_storage64", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+            Self::SpanStorage96(items) => recorder.scope("span_storage96", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
@@ -444,82 +521,6 @@ impl TopSubtree {
 
     pub fn top_subtree(&self) -> crate::tt::Subtree {
         self.view().top_subtree()
-    }
-}
-
-impl MemorySize for CompressedSpanPart {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for SpanStorage32 {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for SpanStorage64 {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for SpanStorage96 {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl<S: MemorySize> MemorySize for TokenTree<S> {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Literal {
-                text_and_suffix,
-                span,
-                kind: _,
-                suffix_len: _,
-            } => {
-                recorder.scope("text_and_suffix", |recorder| {
-                    text_and_suffix.record_memory_children(recorder);
-                });
-                recorder.scope("span", |recorder| span.record_memory_children(recorder));
-            }
-            Self::Punct {
-                char: _,
-                spacing: _,
-                span,
-            } => recorder.scope("span", |recorder| span.record_memory_children(recorder)),
-            Self::Ident {
-                sym,
-                span,
-                is_raw: _,
-            } => {
-                recorder.scope("sym", |recorder| sym.record_memory_children(recorder));
-                recorder.scope("span", |recorder| span.record_memory_children(recorder));
-            }
-            Self::Subtree {
-                len: _,
-                delim_kind: _,
-                open_span,
-                close_span,
-            } => {
-                recorder.scope("open_span", |recorder| {
-                    open_span.record_memory_children(recorder);
-                });
-                recorder.scope("close_span", |recorder| {
-                    close_span.record_memory_children(recorder);
-                });
-            }
-        }
-    }
-}
-
-impl MemorySize for TopSubtreeRepr {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::SpanStorage32(items) => recorder.scope("span_storage32", |recorder| {
-                items.record_memory_children(recorder);
-            }),
-            Self::SpanStorage64(items) => recorder.scope("span_storage64", |recorder| {
-                items.record_memory_children(recorder);
-            }),
-            Self::SpanStorage96(items) => recorder.scope("span_storage96", |recorder| {
-                items.record_memory_children(recorder);
-            }),
-        }
     }
 }
 

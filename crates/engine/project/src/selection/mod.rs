@@ -7,4 +7,4 @@
 mod package_set;
 pub(crate) mod subset;
 
-pub(crate) use package_set::PhasePackageSet;
+pub(crate) use self::package_set::PhasePackageSet;

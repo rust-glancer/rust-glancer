@@ -8,7 +8,6 @@
 use std::fmt::Write as _;
 
 use anyhow::Context as _;
-
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
 use rg_item_tree::{
@@ -20,8 +19,7 @@ use rg_semantic_ir::{
     UnionData,
 };
 use rg_text::RustEdition;
-use rg_ty::lowering::CallableSignature;
-use rg_ty::{Substitution, TraitApplication, Ty};
+use rg_ty::{Substitution, TraitApplication, Ty, lowering::CallableSignature};
 
 use crate::{
     IndexedViewDb,

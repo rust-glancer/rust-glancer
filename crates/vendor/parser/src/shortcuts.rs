@@ -113,12 +113,6 @@ struct Builder<'a, 'b> {
     sink: &'b mut dyn FnMut(StrStep<'_>),
 }
 
-enum State {
-    PendingEnter,
-    Normal,
-    PendingExit,
-}
-
 impl Builder<'_, '_> {
     fn token(&mut self, kind: SyntaxKind, n_tokens: u8) {
         match mem::replace(&mut self.state, State::Normal) {
@@ -156,7 +150,7 @@ impl Builder<'_, '_> {
             .take_while(|&it| self.lexed.kind(it).is_trivia())
             .count();
         let leading_trivias = self.pos..self.pos + n_trivias;
-        let n_attached_trivias = n_attached_trivias(
+        let n_attached_trivias = Self::n_attached_trivias(
             kind,
             leading_trivias
                 .rev()
@@ -269,53 +263,59 @@ impl Builder<'_, '_> {
 
         self.pos += 1;
     }
-}
 
-fn n_attached_trivias<'a>(
-    kind: SyntaxKind,
-    trivias: impl Iterator<Item = (SyntaxKind, &'a str)>,
-) -> usize {
-    match kind {
-        CONST | ENUM | FN | IMPL | MACRO_CALL | MACRO_DEF | MACRO_RULES | MODULE | RECORD_FIELD
-        | STATIC | STRUCT | TRAIT | TUPLE_FIELD | TYPE_ALIAS | UNION | USE | VARIANT
-        | EXTERN_CRATE => {
-            let mut res = 0;
-            let mut trivias = trivias.enumerate().peekable();
+    fn n_attached_trivias<'a>(
+        kind: SyntaxKind,
+        trivias: impl Iterator<Item = (SyntaxKind, &'a str)>,
+    ) -> usize {
+        match kind {
+            CONST | ENUM | FN | IMPL | MACRO_CALL | MACRO_DEF | MACRO_RULES | MODULE
+            | RECORD_FIELD | STATIC | STRUCT | TRAIT | TUPLE_FIELD | TYPE_ALIAS | UNION | USE
+            | VARIANT | EXTERN_CRATE => {
+                let mut res = 0;
+                let mut trivias = trivias.enumerate().peekable();
 
-            while let Some((i, (kind, text))) = trivias.next() {
-                match kind {
-                    WHITESPACE if text.contains("\n\n") => {
-                        // we check whether the next token is a doc-comment
-                        // and skip the whitespace in this case
-                        if let Some((COMMENT, peek_text)) = trivias.peek().map(|(_, pair)| pair)
-                            && is_outer(peek_text)
-                        {
-                            continue;
-                        }
-                        break;
-                    }
-                    COMMENT => {
-                        if is_inner(text) {
+                while let Some((i, (kind, text))) = trivias.next() {
+                    match kind {
+                        WHITESPACE if text.contains("\n\n") => {
+                            // we check whether the next token is a doc-comment
+                            // and skip the whitespace in this case
+                            if let Some((COMMENT, peek_text)) = trivias.peek().map(|(_, pair)| pair)
+                                && Self::is_outer(peek_text)
+                            {
+                                continue;
+                            }
                             break;
                         }
-                        res = i + 1;
+                        COMMENT => {
+                            if Self::is_inner(text) {
+                                break;
+                            }
+                            res = i + 1;
+                        }
+                        _ => (),
                     }
-                    _ => (),
                 }
+                res
             }
-            res
+            _ => 0,
         }
-        _ => 0,
+    }
+
+    fn is_outer(text: &str) -> bool {
+        if text.starts_with("////") || text.starts_with("/***") {
+            return false;
+        }
+        text.starts_with("///") || text.starts_with("/**")
+    }
+
+    fn is_inner(text: &str) -> bool {
+        text.starts_with("//!") || text.starts_with("/*!")
     }
 }
 
-fn is_outer(text: &str) -> bool {
-    if text.starts_with("////") || text.starts_with("/***") {
-        return false;
-    }
-    text.starts_with("///") || text.starts_with("/**")
-}
-
-fn is_inner(text: &str) -> bool {
-    text.starts_with("//!") || text.starts_with("/*!")
+enum State {
+    PendingEnter,
+    Normal,
+    PendingExit,
 }

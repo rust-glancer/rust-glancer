@@ -2,7 +2,10 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{Expr, Ident, ItemFn, LitStr, Token, parse::Parse, parse::ParseStream};
+use syn::{
+    Expr, Ident, ItemFn, LitStr, Token,
+    parse::{Parse, ParseStream},
+};
 
 #[derive(Default)]
 struct Arguments {

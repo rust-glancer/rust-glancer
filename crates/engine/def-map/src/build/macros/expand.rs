@@ -6,9 +6,8 @@
 
 use rg_macro_runtime::MacroExpansionRuntime;
 
-use crate::profile::metric;
-
 use super::MacroExpansionAttempt;
+use crate::profile::metric;
 
 /// Executes all pending expansion work and writes the generated syntax back into each attempt.
 pub(crate) fn expand_expansion_attempts(

@@ -13,8 +13,10 @@ use rg_ir_model::{
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemLookupQuery, TypePathResolution};
-use rg_ty::Ty;
-use rg_ty::lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef};
+use rg_ty::{
+    Ty,
+    lookup::{AssociatedItemCandidateRef, ItemPathQuery, MemberMethodCandidateRef},
+};
 
 use crate::IndexedViewDb;
 

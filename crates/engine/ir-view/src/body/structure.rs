@@ -17,6 +17,20 @@ pub struct BodyClosingBraceBlock {
     kind: BodyClosingBraceBlockKind,
 }
 
+impl BodyClosingBraceBlock {
+    pub fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn kind(&self) -> &BodyClosingBraceBlockKind {
+        &self.kind
+    }
+}
+
 /// Kind of body-owned block used by closing-brace hints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyClosingBraceBlockKind {
@@ -34,20 +48,6 @@ pub enum BodyClosingBraceBlockKind {
         pat: Option<Span>,
         iterable: Option<Span>,
     },
-}
-
-impl BodyClosingBraceBlock {
-    pub fn file_id(&self) -> FileId {
-        self.file_id
-    }
-
-    pub fn span(&self) -> Span {
-        self.span
-    }
-
-    pub fn kind(&self) -> &BodyClosingBraceBlockKind {
-        &self.kind
-    }
 }
 
 /// A typed method call that feeds another method segment in a chain.

@@ -5,16 +5,15 @@ use std::{
 
 use rg_cfg_eval::CfgOptions;
 use rg_ir_model::PackageSlot;
-use rg_text::RustEdition;
-
-use crate::{CargoBuildOutputScanStats, SysrootCrate, SysrootSources};
 use rg_std::MemorySize;
+use rg_text::RustEdition;
 
 use super::{
     dependency::PackageDependency,
     package::{Package, PackageId, PackageOrigin, PackageSource},
     target::{CargoTarget, TargetKind},
 };
+use crate::{CargoBuildOutputScanStats, SysrootCrate, SysrootSources};
 
 /// Normalized workspace metadata used by the analysis pipeline.
 ///

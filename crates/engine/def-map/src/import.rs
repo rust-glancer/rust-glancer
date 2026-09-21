@@ -6,12 +6,11 @@
 
 use std::fmt;
 
-use rg_std::{MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{CrateRef, ModuleId, Path, PathRoot, Span};
 use rg_item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegmentKind, UserFacingAttrs};
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ItemSource, scope::Visibility};
 

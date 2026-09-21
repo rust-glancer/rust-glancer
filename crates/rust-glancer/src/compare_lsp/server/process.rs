@@ -25,9 +25,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 
-use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLspTransport};
-
 use super::{ServerReadiness, command::ServerKind, stderr::StderrCapture, uri::file_uri};
+use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLspTransport};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
@@ -136,7 +135,7 @@ impl RunningServer {
         self.client
             .notify(
                 gen_lsp_types::InitializedNotification::METHOD.as_str(),
-                lsp_params(InitializedParams {}, "initialized notification")?,
+                Self::lsp_params(InitializedParams {}, "initialized notification")?,
             )
             .await
             .with_context(|| {
@@ -237,7 +236,7 @@ impl RunningServer {
         self.client
             .notify(
                 gen_lsp_types::ExitNotification::METHOD.as_str(),
-                lsp_params((), "exit notification")?,
+                Self::lsp_params((), "exit notification")?,
             )
             .await
             .with_context(|| {
@@ -336,7 +335,7 @@ impl RunningServer {
             work_done_progress_params: WorkDoneProgressParams::default(),
         };
 
-        lsp_params(params, "initialize params")
+        Self::lsp_params(params, "initialize params")
     }
 
     async fn open_source_file(
@@ -358,7 +357,7 @@ impl RunningServer {
         self.client
             .notify(
                 gen_lsp_types::DidOpenTextDocumentNotification::METHOD.as_str(),
-                lsp_params(
+                Self::lsp_params(
                     DidOpenTextDocumentParams {
                         text_document: TextDocumentItem::new(uri, LanguageKind::Rust, 1, text),
                     },
@@ -387,7 +386,7 @@ impl RunningServer {
         self.client
             .notify(
                 gen_lsp_types::DidChangeTextDocumentNotification::METHOD.as_str(),
-                lsp_params(
+                Self::lsp_params(
                     DidChangeTextDocumentParams {
                         text_document: VersionedTextDocumentIdentifier {
                             text_document_identifier: TextDocumentIdentifier { uri },
@@ -493,15 +492,15 @@ impl RunningServer {
         if !matches!(self.kind, ServerKind::RustGlancer) {
             return None;
         }
-        let status = rust_glancer_indexing_status(notification)?;
+        let status = Self::rust_glancer_indexing_status(notification)?;
         self.rust_glancer_indexing_status = Some(status.clone());
         Some(status)
     }
 
     fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {
         match self.kind {
-            ServerKind::RustGlancer => rust_glancer_readiness(notification),
-            ServerKind::RustAnalyzer => rust_analyzer_readiness(notification),
+            ServerKind::RustGlancer => Self::rust_glancer_readiness(notification),
+            ServerKind::RustAnalyzer => Self::rust_analyzer_readiness(notification),
         }
     }
 
@@ -586,92 +585,79 @@ impl RunningServer {
             format!("\nstderr from `{}`:\n{snippet}", self.command_label)
         }
     }
-}
 
-fn lsp_params(params: impl Serialize, description: &'static str) -> anyhow::Result<Value> {
-    serde_json::to_value(params).with_context(|| format!("Serializing {description} failed"))
-}
-
-enum ReadinessNotification {
-    Ready,
-    Failed(String),
-    Ignore,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum IndexingStatus {
-    Working,
-    Idle,
-    Failed(String),
-}
-
-fn rust_glancer_indexing_status(notification: &ServerNotification) -> Option<IndexingStatus> {
-    if notification.method() != SERVER_STATUS_METHOD {
-        return None;
+    fn lsp_params(params: impl Serialize, description: &'static str) -> anyhow::Result<Value> {
+        serde_json::to_value(params).with_context(|| format!("Serializing {description} failed"))
     }
 
-    let params = notification.params()?;
-    // A failed background build leaves the server queryable, but reports warning health. It must
-    // not count as successfully settled indexing just because the failed worker is now idle.
-    Some(match params.get("health").and_then(Value::as_str) {
-        Some("ok") => match params.get("quiescent").and_then(Value::as_bool) {
-            Some(true) => IndexingStatus::Idle,
-            Some(false) => IndexingStatus::Working,
-            None => IndexingStatus::Failed("server status omitted quiescence".to_string()),
-        },
-        _ => IndexingStatus::Failed(
-            params
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("server did not report healthy indexing")
-                .to_string(),
-        ),
-    })
-}
+    fn rust_glancer_indexing_status(notification: &ServerNotification) -> Option<IndexingStatus> {
+        if notification.method() != SERVER_STATUS_METHOD {
+            return None;
+        }
 
-fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
-    if notification.method() != RUST_GLANCER_READY_METHOD {
-        return ReadinessNotification::Ignore;
+        let params = notification.params()?;
+        // A failed background build leaves the server queryable, but reports warning health. It must
+        // not count as successfully settled indexing just because the failed worker is now idle.
+        Some(match params.get("health").and_then(Value::as_str) {
+            Some("ok") => match params.get("quiescent").and_then(Value::as_bool) {
+                Some(true) => IndexingStatus::Idle,
+                Some(false) => IndexingStatus::Working,
+                None => IndexingStatus::Failed("server status omitted quiescence".to_string()),
+            },
+            _ => IndexingStatus::Failed(
+                params
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("server did not report healthy indexing")
+                    .to_string(),
+            ),
+        })
     }
 
-    let Some(params) = notification.params() else {
-        return ReadinessNotification::Ignore;
-    };
-    match params.get("state").and_then(Value::as_str) {
-        Some("ready") => ReadinessNotification::Ready,
-        Some("failed") => ReadinessNotification::Failed(
-            params
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("workspace failed")
-                .to_string(),
-        ),
-        Some(_) | None => ReadinessNotification::Ignore,
-    }
-}
+    fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
+        if notification.method() != RUST_GLANCER_READY_METHOD {
+            return ReadinessNotification::Ignore;
+        }
 
-fn rust_analyzer_readiness(notification: &ServerNotification) -> ReadinessNotification {
-    if notification.method() != SERVER_STATUS_METHOD {
-        return ReadinessNotification::Ignore;
-    }
-
-    let Some(params) = notification.params() else {
-        return ReadinessNotification::Ignore;
-    };
-    if params.get("health").and_then(Value::as_str) == Some("error") {
-        return ReadinessNotification::Failed(
-            params
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("server reported error status")
-                .to_string(),
-        );
-    }
-    if params.get("quiescent").and_then(Value::as_bool) == Some(true) {
-        return ReadinessNotification::Ready;
+        let Some(params) = notification.params() else {
+            return ReadinessNotification::Ignore;
+        };
+        match params.get("state").and_then(Value::as_str) {
+            Some("ready") => ReadinessNotification::Ready,
+            Some("failed") => ReadinessNotification::Failed(
+                params
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("workspace failed")
+                    .to_string(),
+            ),
+            Some(_) | None => ReadinessNotification::Ignore,
+        }
     }
 
-    ReadinessNotification::Ignore
+    fn rust_analyzer_readiness(notification: &ServerNotification) -> ReadinessNotification {
+        if notification.method() != SERVER_STATUS_METHOD {
+            return ReadinessNotification::Ignore;
+        }
+
+        let Some(params) = notification.params() else {
+            return ReadinessNotification::Ignore;
+        };
+        if params.get("health").and_then(Value::as_str) == Some("error") {
+            return ReadinessNotification::Failed(
+                params
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("server reported error status")
+                    .to_string(),
+            );
+        }
+        if params.get("quiescent").and_then(Value::as_bool) == Some(true) {
+            return ReadinessNotification::Ready;
+        }
+
+        ReadinessNotification::Ignore
+    }
 }
 
 impl Drop for RunningServer {
@@ -693,4 +679,17 @@ impl Drop for RunningServer {
             Err(_error) => {}
         }
     }
+}
+
+enum ReadinessNotification {
+    Ready,
+    Failed(String),
+    Ignore,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum IndexingStatus {
+    Working,
+    Idle,
+    Failed(String),
 }

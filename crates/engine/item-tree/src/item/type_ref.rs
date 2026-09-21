@@ -1,10 +1,9 @@
 use std::fmt;
 
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{Mutability, Path, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Source-backed const-expression syntax retained by the item tree.
 ///
@@ -430,18 +429,6 @@ pub enum TypeBound {
     Unsupported(String),
 }
 
-/// Whether trait-bound syntax requires the trait or relaxes an implicit compiler bound.
-///
-/// `T: Trait` is a required bound. `T: ?Sized` is a relaxed bound: it removes the usual implicit
-/// `Sized` requirement and must not be lowered as a positive `T: Sized` obligation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum TraitBoundModifier {
-    None,
-    Maybe,
-}
-
 impl TypeBound {
     /// Returns the trait type regardless of whether the bound is required or relaxed.
     ///
@@ -509,6 +496,18 @@ impl fmt::Display for TypeBound {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         TypeFormatter::canonical().fmt_type_bound(self, f)
     }
+}
+
+/// Whether trait-bound syntax requires the trait or relaxes an implicit compiler bound.
+///
+/// `T: Trait` is a required bound. `T: ?Sized` is a relaxed bound: it removes the usual implicit
+/// `Sized` requirement and must not be lowered as a positive `T: Sized` obligation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum TraitBoundModifier {
+    None,
+    Maybe,
 }
 
 /// Controls how canonical semantic names are written inside type syntax.

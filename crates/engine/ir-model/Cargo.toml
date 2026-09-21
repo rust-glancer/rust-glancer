@@ -16,3 +16,6 @@ wincode.workspace = true
 rg_arena.workspace = true
 rg_std.workspace = true
 rg_text.workspace = true
+
+[lints]
+workspace = true

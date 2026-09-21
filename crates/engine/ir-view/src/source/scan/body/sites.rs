@@ -16,19 +16,18 @@
 //! fn local<T>(value: T) -> Option<T> { ... }
 //! ```
 
+use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 use rg_ir_model::{BodySource, ExprId, FileId, PatId, ScopeId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeId,
     ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 
-use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
-
-use super::super::{TypeNamePosition, type_path::walk_type_ref_paths};
 use super::walk::{
     PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
     walk_generic_args_type_refs, walk_pat,
 };
+use crate::source::scan::{TypeNamePosition, type_path::walk_type_ref_paths};
 
 /// A source-owned pattern root together with the scope where its bindings live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

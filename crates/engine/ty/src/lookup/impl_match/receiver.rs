@@ -11,11 +11,11 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::lowering::TypePathResolver;
-use crate::trait_selection::TraitSelection;
-use crate::{Clause, Substitution, Ty, inference::InferenceTable};
-
 use super::ImplMatcher;
+use crate::{
+    Clause, Substitution, Ty, inference::InferenceTable, lowering::TypePathResolver,
+    trait_selection::TraitSelection,
+};
 
 /// One inherent impl whose canonical `Self` header matched a receiver.
 ///
@@ -80,12 +80,6 @@ pub struct ReceiverFunctionCandidate {
     source: ReceiverFunctionSource,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum ReceiverFunctionSource {
-    Inherent { impl_match: InherentImplMatch },
-    Trait { selection: TraitSelection },
-}
-
 impl ReceiverFunctionCandidate {
     pub fn function(&self) -> FunctionRef {
         self.function
@@ -104,6 +98,12 @@ impl ReceiverFunctionCandidate {
             ReceiverFunctionSource::Inherent { .. } => None,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ReceiverFunctionSource {
+    Inherent { impl_match: InherentImplMatch },
+    Trait { selection: TraitSelection },
 }
 
 impl<'query, D, I, R> ImplMatcher<'query, D, I, R>

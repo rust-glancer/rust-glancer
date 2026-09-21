@@ -16,16 +16,15 @@ use rg_ir_view::lookup::name::NameNamespace;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind},
-    query::completion::site::{NameCompletionContext, PathCompletionSite, PatternCompletionKind},
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
-    pattern::{PatternCandidateRole, PatternCompletionPolicy},
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest,
+    query::completion::{
+        CompletionQuery,
+        candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
+        pattern::{PatternCandidateRole, PatternCompletionPolicy},
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest,
+        },
+        site::{NameCompletionContext, PathCompletionSite, PatternCompletionKind},
     },
 };
 

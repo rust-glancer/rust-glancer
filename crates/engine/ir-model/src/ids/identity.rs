@@ -6,13 +6,14 @@
 
 use std::fmt;
 
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
+
 use crate::{
     BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, CrateRef, DefId, DefMapRef, EnumVariantRef,
     ExprId, FieldRef, FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef,
     StaticRef, TraitDefRef, TypeAliasRef, TypeDefRef,
 };
-use rg_std::{MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable identity for one lowered function body declaration.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

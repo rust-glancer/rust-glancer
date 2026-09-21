@@ -17,12 +17,11 @@ use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_text::{NameInterner, PackageNameInterners};
 use rg_ty::trait_selection::TraitSelectionDeclarationCache;
 
-use crate::CrateBodies;
-
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool, lower::LoweredPackageBodies,
     state::CrateBodyBuildState,
 };
+use crate::CrateBodies;
 
 // Package resolution runs in parallel, so report only packages large enough to stand out from
 // normal scheduling variance.

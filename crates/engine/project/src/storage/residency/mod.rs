@@ -12,15 +12,13 @@ use anyhow::Context as _;
 use rg_ir_model::PackageSlot;
 use rg_std::Shrink;
 
+pub use self::policy::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+use super::artifacts::{PackageArtifactPhases, PackageArtifactWriter};
 use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
     selection::PhasePackageSet,
     state::ProjectState,
 };
-
-use super::artifacts::{PackageArtifactPhases, PackageArtifactWriter};
-
-pub use policy::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {

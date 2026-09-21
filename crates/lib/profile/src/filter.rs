@@ -8,13 +8,6 @@ pub struct ProfileFilter {
     mode: ProfileFilterMode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ProfileFilterMode {
-    Disabled,
-    All,
-    Selectors(Vec<String>),
-}
-
 impl ProfileFilter {
     pub fn disabled() -> Self {
         Self {
@@ -62,7 +55,7 @@ impl ProfileFilter {
             ProfileFilterMode::Selectors(selectors) => {
                 if !selectors
                     .iter()
-                    .any(|existing| path_is_ancestor_or_equal(selector, existing))
+                    .any(|existing| Self::path_is_ancestor_or_equal(selector, existing))
                 {
                     selectors.push(selector.to_string());
                 }
@@ -93,16 +86,23 @@ impl ProfileFilter {
             ProfileFilterMode::All => true,
             ProfileFilterMode::Selectors(selectors) => selectors
                 .iter()
-                .any(|selector| path_is_ancestor_or_equal(scope, selector)),
+                .any(|selector| Self::path_is_ancestor_or_equal(scope, selector)),
         }
+    }
+
+    fn path_is_ancestor_or_equal(ancestor: &str, descendant: &str) -> bool {
+        ancestor == descendant
+            || descendant
+                .strip_prefix(ancestor)
+                .is_some_and(|suffix| suffix.starts_with('.'))
     }
 }
 
-fn path_is_ancestor_or_equal(ancestor: &str, descendant: &str) -> bool {
-    ancestor == descendant
-        || descendant
-            .strip_prefix(ancestor)
-            .is_some_and(|suffix| suffix.starts_with('.'))
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProfileFilterMode {
+    Disabled,
+    All,
+    Selectors(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

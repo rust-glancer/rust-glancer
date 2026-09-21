@@ -1,4 +1,3 @@
-use crate::DefMap;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -7,7 +6,7 @@ use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, Workspac
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    DefMapBuildOutput, DefMapBuildProgress, DefMapDb, GeneratedItemStores,
+    DefMap, DefMapBuildOutput, DefMapBuildProgress, DefMapDb, GeneratedItemStores,
     MacroExpansionPerformancePreference,
 };
 

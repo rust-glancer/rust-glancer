@@ -37,13 +37,14 @@ impl DiagnosticsConfig {
                         anyhow::anyhow!("rust-glancer diagnostics.command must be a string")
                     })?
                     .trim();
-                validate_cargo_subcommand(command)?;
+                Self::validate_cargo_subcommand(command)?;
                 command.to_string()
             }
             None => "check".to_string(),
         };
-        let cargo_arguments = parse_arguments(diagnostics, "cargoArguments", &["--workspace"])?;
-        let extra_env = parse_extra_env(diagnostics)?;
+        let cargo_arguments =
+            Self::parse_arguments(diagnostics, "cargoArguments", &["--workspace"])?;
+        let extra_env = Self::parse_extra_env(diagnostics)?;
 
         Ok(Self {
             on_startup,
@@ -87,106 +88,106 @@ impl DiagnosticsConfig {
 
         arguments
     }
-}
 
-fn validate_cargo_subcommand(command: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !command.is_empty(),
-        "rust-glancer diagnostics.command must not be empty",
-    );
-    anyhow::ensure!(
-        !command.starts_with('-'),
-        "rust-glancer diagnostics.command must be a Cargo subcommand, not an argument",
-    );
-    anyhow::ensure!(
-        command
-            .chars()
-            .all(|char| char.is_ascii_alphanumeric() || char == '-' || char == '_'),
-        "rust-glancer diagnostics.command must be a single Cargo subcommand such as `check` or `clippy`",
-    );
-
-    Ok(())
-}
-
-fn parse_arguments(
-    diagnostics: &gen_lsp_types::LspObject,
-    key: &'static str,
-    default: &[&str],
-) -> anyhow::Result<Vec<String>> {
-    let Some(arguments) = diagnostics.get(key) else {
-        return Ok(default
-            .iter()
-            .map(|argument| argument.to_string())
-            .collect());
-    };
-
-    arguments
-        .as_array()
-        .ok_or_else(|| anyhow::anyhow!("rust-glancer diagnostics.{key} must be an array"))?
-        .iter()
-        .enumerate()
-        .map(|(idx, argument)| {
-            let argument = argument.as_str().ok_or_else(|| {
-                anyhow::anyhow!("rust-glancer diagnostics.{key}[{idx}] must be a string")
-            })?;
-            validate_diagnostics_argument(key, idx, argument)?;
-            Ok(argument.to_string())
-        })
-        .collect()
-}
-
-fn validate_diagnostics_argument(
-    key: &'static str,
-    idx: usize,
-    argument: &str,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !argument.is_empty(),
-        "rust-glancer diagnostics.{key}[{idx}] must not be empty",
-    );
-    anyhow::ensure!(
-        !argument.contains('\0'),
-        "rust-glancer diagnostics.{key}[{idx}] must not contain NUL bytes",
-    );
-    anyhow::ensure!(
-        argument != "--",
-        "rust-glancer diagnostics.{key}[{idx}] must not contain the `--` argument separator",
-    );
-
-    Ok(())
-}
-
-fn parse_extra_env(
-    diagnostics: &gen_lsp_types::LspObject,
-) -> anyhow::Result<BTreeMap<String, String>> {
-    let Some(extra_env) = diagnostics.get("extraEnv") else {
-        return Ok(BTreeMap::new());
-    };
-    let extra_env = extra_env
-        .as_object()
-        .ok_or_else(|| anyhow::anyhow!("rust-glancer diagnostics.extraEnv must be an object"))?;
-
-    let mut parsed = BTreeMap::new();
-    for (key, value) in extra_env {
+    fn validate_cargo_subcommand(command: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
-            !key.is_empty(),
-            "rust-glancer diagnostics.extraEnv keys must not be empty",
+            !command.is_empty(),
+            "rust-glancer diagnostics.command must not be empty",
         );
         anyhow::ensure!(
-            !key.contains('\0') && !key.contains('='),
-            "rust-glancer diagnostics.extraEnv.{key} must be a valid environment variable name",
+            !command.starts_with('-'),
+            "rust-glancer diagnostics.command must be a Cargo subcommand, not an argument",
         );
-        let value = value.as_str().ok_or_else(|| {
-            anyhow::anyhow!("rust-glancer diagnostics.extraEnv.{key} must be a string")
-        })?;
         anyhow::ensure!(
-            !value.contains('\0'),
-            "rust-glancer diagnostics.extraEnv.{key} must not contain NUL bytes",
+            command
+                .chars()
+                .all(|char| char.is_ascii_alphanumeric() || char == '-' || char == '_'),
+            "rust-glancer diagnostics.command must be a single Cargo subcommand such as `check` or `clippy`",
         );
-        parsed.insert(key.clone(), value.to_string());
+
+        Ok(())
     }
 
-    Ok(parsed)
+    fn parse_arguments(
+        diagnostics: &gen_lsp_types::LspObject,
+        key: &'static str,
+        default: &[&str],
+    ) -> anyhow::Result<Vec<String>> {
+        let Some(arguments) = diagnostics.get(key) else {
+            return Ok(default
+                .iter()
+                .map(|argument| argument.to_string())
+                .collect());
+        };
+
+        arguments
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("rust-glancer diagnostics.{key} must be an array"))?
+            .iter()
+            .enumerate()
+            .map(|(idx, argument)| {
+                let argument = argument.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("rust-glancer diagnostics.{key}[{idx}] must be a string")
+                })?;
+                Self::validate_diagnostics_argument(key, idx, argument)?;
+                Ok(argument.to_string())
+            })
+            .collect()
+    }
+
+    fn parse_extra_env(
+        diagnostics: &gen_lsp_types::LspObject,
+    ) -> anyhow::Result<BTreeMap<String, String>> {
+        let Some(extra_env) = diagnostics.get("extraEnv") else {
+            return Ok(BTreeMap::new());
+        };
+        let extra_env = extra_env.as_object().ok_or_else(|| {
+            anyhow::anyhow!("rust-glancer diagnostics.extraEnv must be an object")
+        })?;
+
+        let mut parsed = BTreeMap::new();
+        for (key, value) in extra_env {
+            anyhow::ensure!(
+                !key.is_empty(),
+                "rust-glancer diagnostics.extraEnv keys must not be empty",
+            );
+            anyhow::ensure!(
+                !key.contains('\0') && !key.contains('='),
+                "rust-glancer diagnostics.extraEnv.{key} must be a valid environment variable name",
+            );
+            let value = value.as_str().ok_or_else(|| {
+                anyhow::anyhow!("rust-glancer diagnostics.extraEnv.{key} must be a string")
+            })?;
+            anyhow::ensure!(
+                !value.contains('\0'),
+                "rust-glancer diagnostics.extraEnv.{key} must not contain NUL bytes",
+            );
+            parsed.insert(key.clone(), value.to_string());
+        }
+
+        Ok(parsed)
+    }
+
+    fn validate_diagnostics_argument(
+        key: &'static str,
+        idx: usize,
+        argument: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !argument.is_empty(),
+            "rust-glancer diagnostics.{key}[{idx}] must not be empty",
+        );
+        anyhow::ensure!(
+            !argument.contains('\0'),
+            "rust-glancer diagnostics.{key}[{idx}] must not contain NUL bytes",
+        );
+        anyhow::ensure!(
+            argument != "--",
+            "rust-glancer diagnostics.{key}[{idx}] must not contain the `--` argument separator",
+        );
+
+        Ok(())
+    }
 }
 
 impl Default for DiagnosticsConfig {

@@ -7,16 +7,14 @@ mod def_map;
 mod item_store;
 mod lower;
 
-pub(crate) use lower::LocalItemLowering;
-
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::BodyRef;
 use rg_package_store::PackageStoreError;
 
-use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, ScopeData};
-
+pub(crate) use self::lower::LocalItemLowering;
 use self::{def_map::LocalDefMapCollector, item_store::LocalItemStoreCollector};
+use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, ScopeData};
 
 /// Borrow the declaration part of a lowering result for the shared collectors.
 ///

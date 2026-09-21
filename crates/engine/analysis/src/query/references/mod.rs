@@ -18,8 +18,7 @@ use crate::{
 mod search;
 mod subject;
 
-pub use search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel};
-
+pub use self::search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel};
 use self::{
     search::{ReferenceScanTarget, ReferenceSearchScope},
     subject::{ReferenceSearchHints, ReferenceSubject},

@@ -8,9 +8,8 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
-use crate::generics::{add_auto_bounds, add_configured_bounds};
-
 use super::attrs::{ContainerAttrs, FieldAttrs, VariantAttrs};
+use crate::generics::{add_auto_bounds, add_configured_bounds};
 
 /// Expands one derive input into an implementation of `MemorySize`.
 pub(crate) fn expand_memory_size(input: DeriveInput) -> syn::Result<TokenStream2> {
@@ -90,7 +89,7 @@ impl DataExpansion {
 
             let label = FieldLabel::from_field(index, field);
             let access = label.struct_access();
-            statements.push(record_field(
+            statements.push(Self::record_field(
                 access,
                 &attrs,
                 &label.default_scope(),
@@ -115,7 +114,7 @@ impl DataExpansion {
             let variant_ident = &variant.ident;
 
             if attrs.skip {
-                arms.push(skipped_variant_arm(variant_ident, &variant.fields));
+                arms.push(Self::skipped_variant_arm(variant_ident, &variant.fields));
                 continue;
             }
 
@@ -135,10 +134,10 @@ impl DataExpansion {
                 pattern,
                 body,
                 bound_field_types,
-            } = expand_variant_arm(&variant.fields, single_field_variant, crate_path)?;
+            } = Self::expand_variant_arm(&variant.fields, single_field_variant, crate_path)?;
 
             bound_types.extend(bound_field_types);
-            let body = wrap_variant_scope(body, &attrs);
+            let body = Self::wrap_variant_scope(body, &attrs);
 
             arms.push(quote! {
                 Self::#variant_ident #pattern => {
@@ -156,6 +155,162 @@ impl DataExpansion {
             bound_types,
         })
     }
+
+    /// Builds the pattern and body for one enum variant.
+    fn expand_variant_arm(
+        fields: &Fields,
+        single_field_variant: bool,
+        crate_path: &Path,
+    ) -> syn::Result<VariantArmExpansion> {
+        match fields {
+            Fields::Unit => Ok(VariantArmExpansion {
+                pattern: TokenStream2::new(),
+                body: TokenStream2::new(),
+                bound_field_types: Vec::new(),
+            }),
+            Fields::Named(fields) => {
+                let mut patterns = Vec::new();
+                let mut statements = Vec::new();
+                let mut bound_field_types = Vec::new();
+                let mut omitted_field = false;
+
+                for field in &fields.named {
+                    let ident = field
+                        .ident
+                        .as_ref()
+                        .expect("named fields always have identifiers");
+                    let attrs = FieldAttrs::parse(&field.attrs)?;
+
+                    if attrs.skip {
+                        omitted_field = true;
+                        continue;
+                    }
+
+                    if attrs.needs_auto_bound() {
+                        bound_field_types.push(field.ty.clone());
+                    }
+
+                    patterns.push(quote! { #ident });
+                    let label = ident.to_string();
+                    statements.push(Self::record_field(
+                        quote! { #ident },
+                        &attrs,
+                        &label,
+                        single_field_variant,
+                        crate_path,
+                    ));
+                }
+
+                // Skipped named fields still need a valid pattern. `..` keeps the generated arm from
+                // depending on fields it does not record.
+                let pattern = if patterns.is_empty() {
+                    quote! { { .. } }
+                } else if omitted_field {
+                    quote! { { #(#patterns),*, .. } }
+                } else {
+                    quote! { { #(#patterns),* } }
+                };
+
+                Ok(VariantArmExpansion {
+                    pattern,
+                    body: quote! { #(#statements)* },
+                    bound_field_types,
+                })
+            }
+            Fields::Unnamed(fields) => {
+                let mut patterns = Vec::new();
+                let mut statements = Vec::new();
+                let mut bound_field_types = Vec::new();
+
+                for (index, field) in fields.unnamed.iter().enumerate() {
+                    let attrs = FieldAttrs::parse(&field.attrs)?;
+
+                    if attrs.skip {
+                        patterns.push(quote! { _ });
+                        continue;
+                    }
+
+                    if attrs.needs_auto_bound() {
+                        bound_field_types.push(field.ty.clone());
+                    }
+
+                    let binding = format_ident!("__memsize_field_{index}");
+                    patterns.push(quote! { #binding });
+                    let label = index.to_string();
+                    statements.push(Self::record_field(
+                        quote! { #binding },
+                        &attrs,
+                        &label,
+                        single_field_variant,
+                        crate_path,
+                    ));
+                }
+
+                Ok(VariantArmExpansion {
+                    pattern: quote! { ( #(#patterns),* ) },
+                    body: quote! { #(#statements)* },
+                    bound_field_types,
+                })
+            }
+        }
+    }
+
+    /// Generates a no-op arm for a skipped variant while still matching its shape.
+    fn skipped_variant_arm(variant_ident: &Ident, fields: &Fields) -> TokenStream2 {
+        match fields {
+            Fields::Unit => quote! { Self::#variant_ident => {} },
+            Fields::Named(_) => quote! { Self::#variant_ident { .. } => {} },
+            Fields::Unnamed(_) => quote! { Self::#variant_ident(..) => {} },
+        }
+    }
+
+    /// Adds an optional variant scope around the generated arm body.
+    fn wrap_variant_scope(body: TokenStream2, attrs: &VariantAttrs) -> TokenStream2 {
+        let Some(scope) = &attrs.scope else {
+            return body;
+        };
+
+        quote! {
+            recorder.scope(#scope, |recorder| {
+                #body
+            });
+        }
+    }
+
+    /// Generates the statement that records one field-like value.
+    fn record_field(
+        access: TokenStream2,
+        attrs: &FieldAttrs,
+        default_scope: &str,
+        default_inline: bool,
+        crate_path: &Path,
+    ) -> TokenStream2 {
+        // A custom recorder owns the field's whole accounting story; otherwise the normal trait walk
+        // is enough. Scoping is layered around either version below.
+        let record = if let Some(with) = &attrs.with {
+            quote! {
+                #with(#access, recorder);
+            }
+        } else {
+            quote! {
+                #crate_path::MemorySize::record_memory_children(#access, recorder);
+            }
+        };
+
+        if attrs.inline || (default_inline && attrs.scope.is_none()) {
+            return record;
+        }
+
+        let scope = attrs
+            .scope
+            .clone()
+            .unwrap_or_else(|| LitStr::new(default_scope, Span::call_site()));
+        quote! {
+            recorder.scope(#scope, |recorder| {
+                #record
+            });
+        }
+    }
 }
 
 /// The generated pieces for one enum variant arm.
@@ -163,162 +318,6 @@ struct VariantArmExpansion {
     pattern: TokenStream2,
     body: TokenStream2,
     bound_field_types: Vec<Type>,
-}
-
-/// Builds the pattern and body for one enum variant.
-fn expand_variant_arm(
-    fields: &Fields,
-    single_field_variant: bool,
-    crate_path: &Path,
-) -> syn::Result<VariantArmExpansion> {
-    match fields {
-        Fields::Unit => Ok(VariantArmExpansion {
-            pattern: TokenStream2::new(),
-            body: TokenStream2::new(),
-            bound_field_types: Vec::new(),
-        }),
-        Fields::Named(fields) => {
-            let mut patterns = Vec::new();
-            let mut statements = Vec::new();
-            let mut bound_field_types = Vec::new();
-            let mut omitted_field = false;
-
-            for field in &fields.named {
-                let ident = field
-                    .ident
-                    .as_ref()
-                    .expect("named fields always have identifiers");
-                let attrs = FieldAttrs::parse(&field.attrs)?;
-
-                if attrs.skip {
-                    omitted_field = true;
-                    continue;
-                }
-
-                if attrs.needs_auto_bound() {
-                    bound_field_types.push(field.ty.clone());
-                }
-
-                patterns.push(quote! { #ident });
-                let label = ident.to_string();
-                statements.push(record_field(
-                    quote! { #ident },
-                    &attrs,
-                    &label,
-                    single_field_variant,
-                    crate_path,
-                ));
-            }
-
-            // Skipped named fields still need a valid pattern. `..` keeps the generated arm from
-            // depending on fields it does not record.
-            let pattern = if patterns.is_empty() {
-                quote! { { .. } }
-            } else if omitted_field {
-                quote! { { #(#patterns),*, .. } }
-            } else {
-                quote! { { #(#patterns),* } }
-            };
-
-            Ok(VariantArmExpansion {
-                pattern,
-                body: quote! { #(#statements)* },
-                bound_field_types,
-            })
-        }
-        Fields::Unnamed(fields) => {
-            let mut patterns = Vec::new();
-            let mut statements = Vec::new();
-            let mut bound_field_types = Vec::new();
-
-            for (index, field) in fields.unnamed.iter().enumerate() {
-                let attrs = FieldAttrs::parse(&field.attrs)?;
-
-                if attrs.skip {
-                    patterns.push(quote! { _ });
-                    continue;
-                }
-
-                if attrs.needs_auto_bound() {
-                    bound_field_types.push(field.ty.clone());
-                }
-
-                let binding = format_ident!("__memsize_field_{index}");
-                patterns.push(quote! { #binding });
-                let label = index.to_string();
-                statements.push(record_field(
-                    quote! { #binding },
-                    &attrs,
-                    &label,
-                    single_field_variant,
-                    crate_path,
-                ));
-            }
-
-            Ok(VariantArmExpansion {
-                pattern: quote! { ( #(#patterns),* ) },
-                body: quote! { #(#statements)* },
-                bound_field_types,
-            })
-        }
-    }
-}
-
-/// Generates a no-op arm for a skipped variant while still matching its shape.
-fn skipped_variant_arm(variant_ident: &Ident, fields: &Fields) -> TokenStream2 {
-    match fields {
-        Fields::Unit => quote! { Self::#variant_ident => {} },
-        Fields::Named(_) => quote! { Self::#variant_ident { .. } => {} },
-        Fields::Unnamed(_) => quote! { Self::#variant_ident(..) => {} },
-    }
-}
-
-/// Adds an optional variant scope around the generated arm body.
-fn wrap_variant_scope(body: TokenStream2, attrs: &VariantAttrs) -> TokenStream2 {
-    let Some(scope) = &attrs.scope else {
-        return body;
-    };
-
-    quote! {
-        recorder.scope(#scope, |recorder| {
-            #body
-        });
-    }
-}
-
-/// Generates the statement that records one field-like value.
-fn record_field(
-    access: TokenStream2,
-    attrs: &FieldAttrs,
-    default_scope: &str,
-    default_inline: bool,
-    crate_path: &Path,
-) -> TokenStream2 {
-    // A custom recorder owns the field's whole accounting story; otherwise the normal trait walk
-    // is enough. Scoping is layered around either version below.
-    let record = if let Some(with) = &attrs.with {
-        quote! {
-            #with(#access, recorder);
-        }
-    } else {
-        quote! {
-            #crate_path::MemorySize::record_memory_children(#access, recorder);
-        }
-    };
-
-    if attrs.inline || (default_inline && attrs.scope.is_none()) {
-        return record;
-    }
-
-    let scope = attrs
-        .scope
-        .clone()
-        .unwrap_or_else(|| LitStr::new(default_scope, Span::call_site()));
-    quote! {
-        recorder.scope(#scope, |recorder| {
-            #record
-        });
-    }
 }
 
 /// Default label/access information for a struct field.

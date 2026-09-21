@@ -5,12 +5,11 @@ use rg_ir_view::{
     member::{MemberEnumVariantField, MemberField},
 };
 
+use super::sort::CompletionSortPolicy;
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
     CompletionTarget,
 };
-
-use super::sort::CompletionSortPolicy;
 
 /// Renders named fields from both ordinary records and enum-variant records.
 ///

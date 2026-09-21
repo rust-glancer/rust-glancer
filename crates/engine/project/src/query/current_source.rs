@@ -9,9 +9,8 @@ use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex};
 use rg_std::UniqueVec;
 
-use crate::selection::subset;
-
 use super::ProjectSnapshot;
+use crate::selection::subset;
 
 /// The source data a document query should use.
 ///

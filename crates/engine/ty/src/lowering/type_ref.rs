@@ -1,12 +1,12 @@
 //! Walk source type shapes while retaining one session's inference and opaque identities.
 
-use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
-use crate::inference::InferenceTable;
-use crate::{AliasTy, Lifetime, OpaqueTy, Ty};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+
+use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
+use crate::{AliasTy, Lifetime, OpaqueTy, Ty, inference::InferenceTable};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where

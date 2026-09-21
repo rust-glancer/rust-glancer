@@ -4,10 +4,10 @@ use expect_test::expect;
 use rg_body_ir::BodyIrBuildPolicy;
 
 use super::utils::{package_cache_header_for, write_cached_package_artifact};
-use crate::profile::metric;
-use crate::storage::cache::WorkspaceCachePlan;
 use crate::{
     PackageResidencyPolicy, Project,
+    profile::metric,
+    storage::cache::WorkspaceCachePlan,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 

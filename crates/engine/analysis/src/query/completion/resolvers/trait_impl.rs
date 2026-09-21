@@ -27,13 +27,14 @@ use crate::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
     },
-    query::completion::site::{TraitImplCompletionSite, TraitImplMemberKind},
-    query::trait_member::{RenderedTraitMember, TraitImplMemberQuery},
-};
-
-use super::super::{
-    CompletionQuery,
-    render::{CompletionSortPolicy, escape_lsp_snippet_text},
+    query::{
+        completion::{
+            CompletionQuery,
+            render::{CompletionSortPolicy, escape_lsp_snippet_text},
+            site::{TraitImplCompletionSite, TraitImplMemberKind},
+        },
+        trait_member::{RenderedTraitMember, TraitImplMemberQuery},
+    },
 };
 
 /// Turns missing trait declarations into editor-ready implementation scaffolds.

@@ -6,9 +6,8 @@ use rg_syntax::{
     ast::{self, IsString as _},
 };
 
-use crate::query::completion::site::SpecializedStringCompletionContext;
-
 use super::{CompletionPrefix, CompletionSyntaxContext};
+use crate::query::completion::site::SpecializedStringCompletionContext;
 
 impl<'source> CompletionSyntaxContext<'source> {
     /// Scan a string-owned word without changing the prefix rules for Rust identifiers.

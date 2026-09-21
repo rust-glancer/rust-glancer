@@ -1,9 +1,9 @@
 use rg_ir_model::{CrateRef, PackageSlot, Span, identity::DeclarationRef};
 
-use crate::source::{
-    IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView,
+use crate::{
+    source::{IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView},
+    testonly::ViewFixture,
 };
-use crate::testonly::ViewFixture;
 
 pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
     let fixture = ViewFixture::build(fixture);

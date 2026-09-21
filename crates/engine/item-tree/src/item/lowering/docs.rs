@@ -1,7 +1,7 @@
-use crate::item::{Documentation, DocumentationPlacement, DocumentationSource};
 use rg_syntax::ast;
 
 use super::MaybeFromAst;
+use crate::item::{Documentation, DocumentationPlacement, DocumentationSource};
 
 pub struct OuterDocs;
 pub struct InnerDocs;
@@ -31,11 +31,10 @@ impl MaybeFromAst<InnerDocs> for Documentation {
 
 #[cfg(test)]
 mod tests {
-    use crate::item::Documentation;
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use super::{InnerDocs, OuterDocs};
-    use crate::item::MaybeFromAst;
+    use crate::item::{Documentation, MaybeFromAst};
 
     #[test]
     fn extracts_outer_docs_in_source_order() {

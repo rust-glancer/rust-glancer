@@ -21,3 +21,6 @@ smol_str.workspace = true
 stdx.workspace = true
 text-size.workspace = true
 wincode.workspace = true
+
+[lints]
+workspace = true

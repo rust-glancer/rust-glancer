@@ -10,9 +10,11 @@ mod table;
 mod traversal;
 mod var;
 
-pub use subst::InferenceSubstitution;
-pub use table::{InferenceConflict, InferenceTable};
-pub use var::{InferVarId, InferVarKind};
+pub use self::{
+    subst::InferenceSubstitution,
+    table::{InferenceConflict, InferenceTable},
+    var::{InferVarId, InferVarKind},
+};
 
 #[cfg(test)]
 mod tests;

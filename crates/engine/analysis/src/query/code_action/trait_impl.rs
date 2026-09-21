@@ -18,12 +18,11 @@ use rg_syntax::{
     ast::{self, HasName as _},
 };
 
+use super::syntax::CodeActionSyntax;
 use crate::{
     Analysis, CodeAction, CodeActionEdit, CodeActionKind, CodeActionQuery,
     query::trait_member::{RenderedTraitMember, TraitImplMemberQuery},
 };
-
-use super::syntax::CodeActionSyntax;
 
 /// The part of a current-source impl member needed to compare it with saved trait information.
 ///

@@ -7,12 +7,11 @@ use rg_semantic_ir::SemanticIrDb;
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use rg_text::PackageNameInterners;
 
+use super::plan::PackageBuildPlan;
 use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
     storage::cache::Fingerprint,
 };
-
-use super::plan::PackageBuildPlan;
 
 /// Snapshot of the phase locals that are still alive at a build checkpoint.
 ///
@@ -30,19 +29,6 @@ pub(super) struct CheckpointMemory<'a> {
     semantic_ir: Option<&'a SemanticIrDb>,
     body_ir: Option<&'a BodyIrDb>,
 }
-
-/// Collects the phase locals that are alive at one memory checkpoint.
-macro_rules! checkpoint_memory {
-    ($($value:expr),+ $(,)?) => {{
-        let mut memory = CheckpointMemory::default();
-        $(
-            memory = memory.merge(CheckpointMemory::from(&$value));
-        )+
-        memory
-    }};
-}
-
-pub(super) use checkpoint_memory;
 
 impl<'a> CheckpointMemory<'a> {
     pub(super) fn merge(self, other: Self) -> Self {
@@ -168,6 +154,19 @@ impl<'a> CheckpointMemory<'a> {
         }
     }
 }
+
+/// Collects the phase locals that are alive at one memory checkpoint.
+macro_rules! checkpoint_memory {
+    ($($value:expr),+ $(,)?) => {{
+        let mut memory = CheckpointMemory::default();
+        $(
+            memory = memory.merge(CheckpointMemory::from(&$value));
+        )+
+        memory
+    }};
+}
+
+pub(super) use checkpoint_memory;
 
 macro_rules! impl_checkpoint_memory_from {
     ($ty:ty, $field:ident) => {

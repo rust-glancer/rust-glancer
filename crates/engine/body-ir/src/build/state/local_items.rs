@@ -11,17 +11,18 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{ItemStore, SemanticIrReadTxn};
 
-use crate::build::{
-    local_items::LocalItemSource,
-    lower::{
-        BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, CurrentRootItems,
-        LoweredBodyTask,
-    },
-    query_source::BodyBuildQuerySource,
-};
-use crate::{BodyLocalItems, BodyOwner};
-
 use super::CrateBodyBuildState;
+use crate::{
+    BodyLocalItems, BodyOwner,
+    build::{
+        local_items::LocalItemSource,
+        lower::{
+            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
+            CurrentRootItems, LoweredBodyTask,
+        },
+        query_source::BodyBuildQuerySource,
+    },
+};
 
 impl CrateBodyBuildState<'_> {
     // Walk every known body, collecting local facts and lowering newly discovered nested bodies.

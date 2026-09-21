@@ -17,16 +17,6 @@ pub struct ServiceNotificationsSink {
     publisher: Arc<dyn ServiceNotificationPublisher>,
 }
 
-#[derive(Clone, Debug)]
-struct TarpcServiceNotificationPublisher {
-    sender: UnboundedSender<ServiceNotification>,
-}
-
-#[derive(Clone, Debug)]
-struct ChannelServiceNotificationPublisher {
-    sender: UnboundedSender<ServiceNotification>,
-}
-
 impl ServiceNotificationsSink {
     pub fn new(notifications: NotificationsServiceClient) -> Self {
         Self::from_publisher(TarpcServiceNotificationPublisher::spawn(notifications))
@@ -54,6 +44,11 @@ impl ServiceNotificationsSink {
     pub(crate) fn send(&self, notification: ServiceNotification) {
         self.publisher.send(notification);
     }
+}
+
+#[derive(Clone, Debug)]
+struct TarpcServiceNotificationPublisher {
+    sender: UnboundedSender<ServiceNotification>,
 }
 
 impl TarpcServiceNotificationPublisher {
@@ -94,6 +89,11 @@ impl ServiceNotificationPublisher for TarpcServiceNotificationPublisher {
             tracing::debug!("failed to enqueue service notification");
         }
     }
+}
+
+#[derive(Clone, Debug)]
+struct ChannelServiceNotificationPublisher {
+    sender: UnboundedSender<ServiceNotification>,
 }
 
 impl ServiceNotificationPublisher for ChannelServiceNotificationPublisher {

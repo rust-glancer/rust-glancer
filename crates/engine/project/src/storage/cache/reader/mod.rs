@@ -32,8 +32,6 @@ use std::{
 use rg_package_store::MalformedCacheError;
 use rg_text::NameInterner;
 
-use crate::profile::metric;
-
 pub(crate) use self::error::PackageCacheReadError;
 use super::{
     PackageCacheProbe,
@@ -42,6 +40,7 @@ use super::{
         PackageDefMapCacheIndex, PackageSemanticIrCacheIndex,
     },
 };
+use crate::profile::metric;
 
 /// One open package artifact revision shared by phase loaders in a read transaction.
 ///
@@ -51,26 +50,6 @@ use super::{
 #[derive(Debug, Clone)]
 pub(crate) struct PackageArtifactReader {
     inner: Arc<PackageArtifactReaderInner>,
-}
-
-#[derive(Debug)]
-struct PackageArtifactReaderInner {
-    /// Stable path used in diagnostics for this open revision.
-    path: PathBuf,
-    /// Shared seek cursor for exact section reads.
-    file: Mutex<File>,
-    /// Outer ranges validated against the complete file length during open.
-    layout: PackageCacheLayout,
-    /// Small package identity and parse snapshot loaded during open.
-    probe: PackageCacheProbe,
-    /// Nested DefMap directory, decoded only when a DefMap query needs it.
-    def_map_index: OnceLock<PackageDefMapCacheIndex>,
-    /// Nested Semantic IR directory, decoded only when a declaration query needs it.
-    semantic_ir_index: OnceLock<PackageSemanticIrCacheIndex>,
-    /// Nested Body IR directory, decoded only when a Body IR query needs it.
-    body_index: OnceLock<PackageBodyCacheIndex>,
-    /// Package-local names shared by all independently decoded sections in this request.
-    names: Mutex<NameInterner>,
 }
 
 impl PackageArtifactReader {
@@ -293,4 +272,24 @@ impl PackageArtifactReader {
             },
         }
     }
+}
+
+#[derive(Debug)]
+struct PackageArtifactReaderInner {
+    /// Stable path used in diagnostics for this open revision.
+    path: PathBuf,
+    /// Shared seek cursor for exact section reads.
+    file: Mutex<File>,
+    /// Outer ranges validated against the complete file length during open.
+    layout: PackageCacheLayout,
+    /// Small package identity and parse snapshot loaded during open.
+    probe: PackageCacheProbe,
+    /// Nested DefMap directory, decoded only when a DefMap query needs it.
+    def_map_index: OnceLock<PackageDefMapCacheIndex>,
+    /// Nested Semantic IR directory, decoded only when a declaration query needs it.
+    semantic_ir_index: OnceLock<PackageSemanticIrCacheIndex>,
+    /// Nested Body IR directory, decoded only when a Body IR query needs it.
+    body_index: OnceLock<PackageBodyCacheIndex>,
+    /// Package-local names shared by all independently decoded sections in this request.
+    names: Mutex<NameInterner>,
 }

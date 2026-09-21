@@ -1,10 +1,11 @@
 use std::collections::HashMap;
 
-use crate::{ItemLookupIndex, ItemStore, TraitImplSelfHead};
 use rg_arena::Arena;
 use rg_ir_model::{CrateId, ImplRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::{ItemLookupIndex, ItemStore, TraitImplSelfHead};
 
 /// Semantic declarations and their aligned lookup index for one crate.
 ///

@@ -5,14 +5,12 @@ mod item_store;
 mod package;
 
 use anyhow::Context as _;
-
 use rg_def_map::{DefMapLoader, GeneratedItemStores};
 use rg_ir_model::PackageSlot;
 use rg_package_store::PackageSubset;
 
-use crate::{SemanticIrDb, SemanticIrLoader};
-
 pub use self::item_store::{ItemStoreLowerer, ItemStoreSourceReader};
+use crate::{SemanticIrDb, SemanticIrLoader};
 
 impl SemanticIrDb {
     /// Builds selected Semantic IR packages on top of this snapshot.

@@ -12,14 +12,12 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+pub(crate) use self::server::ServerReport;
+use self::{aggregate::MethodAggregateReport, fixture::FixtureReport, query::QueryReport};
 use crate::{
     compare_lsp::{comparison::ComparisonSummary, fixture::Fixture},
     report::{ReportDocument, ReportValue},
 };
-
-use self::{aggregate::MethodAggregateReport, fixture::FixtureReport, query::QueryReport};
-
-pub(crate) use self::server::ServerReport;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct LspComparisonReport {

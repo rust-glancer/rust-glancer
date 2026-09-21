@@ -22,9 +22,11 @@ use std::fmt;
 
 use rg_ir_model::{CrateRef, FileId};
 
-pub(crate) use resolvers::CompletionResolver;
-pub(crate) use site::{CompletionSiteDetector, PathCompletionSite};
-pub(crate) use syntax::CompletionSyntaxContext;
+pub(crate) use self::{
+    resolvers::CompletionResolver,
+    site::{CompletionSiteDetector, PathCompletionSite},
+    syntax::CompletionSyntaxContext,
+};
 
 /// One parsed and classified editor buffer shared across semantic crate interpretations.
 ///
@@ -33,7 +35,7 @@ pub(crate) use syntax::CompletionSyntaxContext;
 /// every `CompletionQuery` reuse the same speculative tree and normalized syntax domain.
 pub struct CompletionSource<'source> {
     offset: u32,
-    syntax: syntax::CompletionSyntaxContext<'source>,
+    syntax: CompletionSyntaxContext<'source>,
 }
 
 impl fmt::Debug for CompletionSource<'_> {
@@ -51,7 +53,7 @@ impl<'source> CompletionSource<'source> {
     pub fn new(source_text: &'source str, offset: u32) -> Option<Self> {
         Some(Self {
             offset,
-            syntax: syntax::CompletionSyntaxContext::at(Some(source_text), offset)?,
+            syntax: CompletionSyntaxContext::at(Some(source_text), offset)?,
         })
     }
 

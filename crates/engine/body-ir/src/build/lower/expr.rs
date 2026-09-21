@@ -1,5 +1,7 @@
 //! Expression lowering for syntax that Body IR models directly.
 
+use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span};
+use rg_item_tree::{FromAst as _, GenericArg};
 use rg_syntax::{
     AstNode as _,
     ast::{
@@ -9,15 +11,11 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span};
-use rg_item_tree::{FromAst as _, GenericArg};
-
+use super::body::BodyLowering;
 use crate::body::{
     BindingData, BindingKind, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,
     RecordExprField, RecordExprSpread,
 };
-
-use super::body::BodyLowering;
 
 impl BodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {

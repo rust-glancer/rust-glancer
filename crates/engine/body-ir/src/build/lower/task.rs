@@ -8,21 +8,17 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, SyntaxKind, ast};
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
 use rg_parse::CurrentSource;
+use rg_syntax::{AstNode as _, SyntaxKind, ast};
 use rg_text::NameInterner;
 
-use super::CurrentRootItems;
-
-use crate::BodyOwner;
-
 use super::{
-    LoweredCrateBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
-    syntax::source_for,
+    CurrentRootItems, LoweredCrateBodies, body::BodyLowering,
+    macro_expansion::BodyMacroExpansionContext, syntax::source_for,
 };
+use crate::BodyOwner;
 
 /// A function body or item initializer that should become immutable `BodyData`.
 #[derive(Debug, Clone, Copy)]
@@ -116,7 +112,7 @@ impl<'a> BodyTaskLowering<'a> {
 
         let mut lowered = Vec::new();
         for file_id in file_ids {
-            let range = task_range_for_file(&tasks, file_id);
+            let range = Self::task_range_for_file(&tasks, file_id);
             self.lower_file_tasks(file_id, &tasks[range], &mut lowered, &mut *macro_expansion)
                 .context("lower file body tasks")?;
         }
@@ -315,10 +311,10 @@ impl<'a> BodyTaskLowering<'a> {
     fn span_key(span: Span) -> (u32, u32) {
         (span.start, span.end)
     }
-}
 
-fn task_range_for_file(tasks: &[BodyLoweringTask], file_id: FileId) -> std::ops::Range<usize> {
-    let start = tasks.partition_point(|task| task.file_id.0 < file_id.0);
-    let end = tasks.partition_point(|task| task.file_id.0 <= file_id.0);
-    start..end
+    fn task_range_for_file(tasks: &[BodyLoweringTask], file_id: FileId) -> std::ops::Range<usize> {
+        let start = tasks.partition_point(|task| task.file_id.0 < file_id.0);
+        let end = tasks.partition_point(|task| task.file_id.0 <= file_id.0);
+        start..end
+    }
 }

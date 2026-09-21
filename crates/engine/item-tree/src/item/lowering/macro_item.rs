@@ -1,13 +1,13 @@
-use crate::item::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs,
-    MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
-};
 use rg_cfg_eval::CfgPredicate;
 use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_text::{Name, NameInterner};
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
 use super::{FromAst, MaybeFromAst, normalized_syntax};
+use crate::item::{
+    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs,
+    MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+};
 
 pub struct MacroRulesAst;
 pub struct MacroDefAst;

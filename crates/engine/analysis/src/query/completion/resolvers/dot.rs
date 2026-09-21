@@ -7,22 +7,21 @@
 use anyhow::Context as _;
 use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 
+use super::postfix::PostfixCompletionResolver;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionTarget},
-    query::completion::site::DotCompletionSite,
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, FieldCompletionRenderer,
-        FunctionCompletionRenderer, FunctionCompletionRequest,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, FieldCompletionRenderer,
+            FunctionCompletionRenderer, FunctionCompletionRequest,
+        },
+        site::DotCompletionSite,
+        syntax::CompletionSyntaxContext,
     },
-    syntax::CompletionSyntaxContext,
 };
-use super::postfix::PostfixCompletionResolver;
 
 /// Combines the three result families that can follow a dot.
 ///

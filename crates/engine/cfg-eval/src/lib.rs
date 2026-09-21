@@ -64,7 +64,7 @@ impl CfgOptions {
             .filter(|line| !line.is_empty())
         {
             if let Some((key, value)) = line.split_once('=') {
-                options.insert_key_value(key, cfg_value_from_rustc(value));
+                options.insert_key_value(key, Self::cfg_value_from_rustc(value));
             } else {
                 options.insert_atom(line);
             }
@@ -107,6 +107,14 @@ impl CfgOptions {
     pub fn key_values(&self) -> &[CfgKeyValue] {
         &self.key_values
     }
+
+    fn cfg_value_from_rustc(value: &str) -> String {
+        value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(value)
+            .to_string()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Shrink)]
@@ -123,14 +131,6 @@ impl CfgKeyValue {
     pub fn value(&self) -> &str {
         &self.value
     }
-}
-
-fn cfg_value_from_rustc(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-        .to_string()
 }
 
 /// Outer cfg gates that target-specific phases evaluate for attr-bearing syntax.
@@ -194,6 +194,20 @@ pub enum CfgGate {
     },
 }
 
+impl MemorySize for CfgGate {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Direct(predicate) => predicate.record_memory_children(recorder),
+            Self::CfgAttr { predicate, cfg } => {
+                recorder.scope("predicate", |recorder| {
+                    predicate.record_memory_children(recorder);
+                });
+                recorder.scope("cfg", |recorder| cfg.record_memory_children(recorder));
+            }
+        }
+    }
+}
+
 /// Lowered cfg predicate syntax used by target-specific evaluators.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub enum CfgPredicate {
@@ -229,7 +243,7 @@ impl CfgPredicate {
         };
 
         if atom.eq_token().is_some() {
-            return match atom.string_token().and_then(string_token_value) {
+            return match atom.string_token().and_then(Self::string_token_value) {
                 Some(value) => Self::KeyValue { key, value },
                 None => Self::Invalid,
             };
@@ -250,22 +264,38 @@ impl CfgPredicate {
             _ => Self::Invalid,
         }
     }
+
+    fn string_token_value(token: SyntaxToken) -> Option<String> {
+        let text = token.text();
+        if let Some(value) = text
+            .strip_prefix('"')
+            .and_then(|text| text.strip_suffix('"'))
+        {
+            return Some(value.to_string());
+        }
+
+        // Error-tolerant syntax can preserve surrounding token trivia. Pull out the quoted payload if
+        // the token still contains a recognizable string literal.
+        let first_quote = text.find('"')?;
+        let last_quote = text.rfind('"')?;
+        (first_quote < last_quote).then(|| text[first_quote + 1..last_quote].to_string())
+    }
 }
 
-fn string_token_value(token: SyntaxToken) -> Option<String> {
-    let text = token.text();
-    if let Some(value) = text
-        .strip_prefix('"')
-        .and_then(|text| text.strip_suffix('"'))
-    {
-        return Some(value.to_string());
+impl MemorySize for CfgPredicate {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Atom(atom) => atom.record_memory_children(recorder),
+            Self::KeyValue { key, value } => {
+                recorder.scope("key", |recorder| key.record_memory_children(recorder));
+                recorder.scope("value", |recorder| value.record_memory_children(recorder));
+            }
+            Self::All(predicates) | Self::Any(predicates) | Self::Not(predicates) => {
+                predicates.record_memory_children(recorder);
+            }
+            Self::True | Self::False | Self::Invalid => {}
+        }
     }
-
-    // Error-tolerant syntax can preserve surrounding token trivia. Pull out the quoted payload if
-    // the token still contains a recognizable string literal.
-    let first_quote = text.find('"')?;
-    let last_quote = text.rfind('"')?;
-    (first_quote < last_quote).then(|| text[first_quote + 1..last_quote].to_string())
 }
 
 /// Target-specific cfg environment used while collecting real definitions.
@@ -351,36 +381,6 @@ rg_std::memsize::impl_memory_size_children! {
     CfgOptions => atoms, key_values;
     CfgKeyValue => key, value;
     CfgExpr => gates;
-}
-
-impl MemorySize for CfgGate {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Direct(predicate) => predicate.record_memory_children(recorder),
-            Self::CfgAttr { predicate, cfg } => {
-                recorder.scope("predicate", |recorder| {
-                    predicate.record_memory_children(recorder);
-                });
-                recorder.scope("cfg", |recorder| cfg.record_memory_children(recorder));
-            }
-        }
-    }
-}
-
-impl MemorySize for CfgPredicate {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Atom(atom) => atom.record_memory_children(recorder),
-            Self::KeyValue { key, value } => {
-                recorder.scope("key", |recorder| key.record_memory_children(recorder));
-                recorder.scope("value", |recorder| value.record_memory_children(recorder));
-            }
-            Self::All(predicates) | Self::Any(predicates) | Self::Not(predicates) => {
-                predicates.record_memory_children(recorder);
-            }
-            Self::True | Self::False | Self::Invalid => {}
-        }
-    }
 }
 
 #[cfg(test)]

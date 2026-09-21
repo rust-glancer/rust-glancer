@@ -29,61 +29,6 @@ pub(crate) struct BodyTraitQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// A written `<Self as Trait<Args>>` prefix after matching it to concrete receiver impls.
-///
-/// For `<Vec<u8> as Convert<u16>>::Output`, `subst` retains the written trait arguments and each
-/// receiver entry retains the completed `Vec<u8>` plus impls whose trait application agrees with
-/// `Convert<u16>`. Consumers can then resolve the associated item without repeating prefix lookup.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BodyQualifiedTraitSelection {
-    subst: Substitution,
-    receivers: Vec<BodyQualifiedTraitReceiverSelection>,
-}
-
-/// One nominal interpretation of `Self` and the qualified impls that matched it.
-///
-/// A type path can conservatively resolve to more than one ADT while source is incomplete, so the
-/// outer selection keeps a list of these receiver-specific groups instead of pretending the path
-/// was unique.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BodyQualifiedTraitReceiverSelection {
-    receiver_ty: AdtTy,
-    impls: UniqueVec<TraitImplRef>,
-}
-
-/// Lowered trait application and substitutions taken directly from the written prefix.
-///
-/// This is the intermediate `Render<Color>` part of `<Widget as Render<Color>>`; receiver-specific
-/// impl filtering is deliberately performed after the prefix itself has resolved.
-struct ResolvedTraitPrefix {
-    application: TraitApplication,
-    subst: Substitution,
-}
-
-impl BodyQualifiedTraitSelection {
-    /// Return substitutions from the written trait prefix, such as `T = User`.
-    pub(crate) fn subst(&self) -> &Substitution {
-        &self.subst
-    }
-
-    /// Return receiver types and impls selected by the qualified trait prefix.
-    pub(crate) fn receivers(&self) -> &[BodyQualifiedTraitReceiverSelection] {
-        &self.receivers
-    }
-}
-
-impl BodyQualifiedTraitReceiverSelection {
-    /// Return the `Self` type from `<Self as Trait>`.
-    pub(crate) fn receiver_ty(&self) -> &AdtTy {
-        &self.receiver_ty
-    }
-
-    /// Return impls matching the written trait path and receiver.
-    pub(crate) fn impls(&self) -> &UniqueVec<TraitImplRef> {
-        &self.impls
-    }
-}
-
 impl<'query, D, I> BodyTraitQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -327,4 +272,59 @@ where
                     written_arg == impl_arg || written_arg.has_unknown() || impl_arg.has_unknown()
                 })
     }
+}
+
+/// A written `<Self as Trait<Args>>` prefix after matching it to concrete receiver impls.
+///
+/// For `<Vec<u8> as Convert<u16>>::Output`, `subst` retains the written trait arguments and each
+/// receiver entry retains the completed `Vec<u8>` plus impls whose trait application agrees with
+/// `Convert<u16>`. Consumers can then resolve the associated item without repeating prefix lookup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BodyQualifiedTraitSelection {
+    subst: Substitution,
+    receivers: Vec<BodyQualifiedTraitReceiverSelection>,
+}
+
+impl BodyQualifiedTraitSelection {
+    /// Return substitutions from the written trait prefix, such as `T = User`.
+    pub(crate) fn subst(&self) -> &Substitution {
+        &self.subst
+    }
+
+    /// Return receiver types and impls selected by the qualified trait prefix.
+    pub(crate) fn receivers(&self) -> &[BodyQualifiedTraitReceiverSelection] {
+        &self.receivers
+    }
+}
+
+/// One nominal interpretation of `Self` and the qualified impls that matched it.
+///
+/// A type path can conservatively resolve to more than one ADT while source is incomplete, so the
+/// outer selection keeps a list of these receiver-specific groups instead of pretending the path
+/// was unique.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BodyQualifiedTraitReceiverSelection {
+    receiver_ty: AdtTy,
+    impls: UniqueVec<TraitImplRef>,
+}
+
+impl BodyQualifiedTraitReceiverSelection {
+    /// Return the `Self` type from `<Self as Trait>`.
+    pub(crate) fn receiver_ty(&self) -> &AdtTy {
+        &self.receiver_ty
+    }
+
+    /// Return impls matching the written trait path and receiver.
+    pub(crate) fn impls(&self) -> &UniqueVec<TraitImplRef> {
+        &self.impls
+    }
+}
+
+/// Lowered trait application and substitutions taken directly from the written prefix.
+///
+/// This is the intermediate `Render<Color>` part of `<Widget as Render<Color>>`; receiver-specific
+/// impl filtering is deliberately performed after the prefix itself has resolved.
+struct ResolvedTraitPrefix {
+    application: TraitApplication,
+    subst: Substitution,
 }

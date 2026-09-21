@@ -3,7 +3,6 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_ir_model::FileId;
-
 use rg_parse::ParseDb;
 use rg_std::{MemorySize, Shrink};
 use rg_text::PackageNameInterners;
@@ -39,7 +38,7 @@ impl ItemTreeDb {
         packages: &[usize],
         interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Self> {
-        let package_slots = normalized_package_slots(parse.package_count(), packages)?;
+        let package_slots = Self::normalized_package_slots(parse.package_count(), packages)?;
         anyhow::ensure!(
             interners.package_count() == parse.package_count(),
             "name interner count {} does not match parse package count {}",
@@ -180,21 +179,21 @@ impl ItemTreeDb {
         package.evict_syntax_trees();
         Ok(item_tree)
     }
-}
 
-fn normalized_package_slots(
-    package_count: usize,
-    packages: &[usize],
-) -> anyhow::Result<Vec<usize>> {
-    let mut packages = packages.to_vec();
-    packages.sort_unstable();
-    packages.dedup();
+    fn normalized_package_slots(
+        package_count: usize,
+        packages: &[usize],
+    ) -> anyhow::Result<Vec<usize>> {
+        let mut packages = packages.to_vec();
+        packages.sort_unstable();
+        packages.dedup();
 
-    if let Some(package_slot) = packages.iter().copied().find(|slot| *slot >= package_count) {
-        anyhow::bail!(
-            "package slot {package_slot} is out of bounds for {package_count} parsed packages"
-        );
+        if let Some(package_slot) = packages.iter().copied().find(|slot| *slot >= package_count) {
+            anyhow::bail!(
+                "package slot {package_slot} is out of bounds for {package_count} parsed packages"
+            );
+        }
+
+        Ok(packages)
     }
-
-    Ok(packages)
 }

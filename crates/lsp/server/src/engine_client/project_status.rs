@@ -34,12 +34,6 @@ pub(super) struct EngineProjectStatusState {
     changes: watch::Sender<EngineProjectStatus>,
 }
 
-#[derive(Debug, Default)]
-struct EngineProjectStatusInner {
-    active_updates: usize,
-    failure: Option<Arc<str>>,
-}
-
 impl EngineProjectStatusState {
     pub(super) fn new() -> Self {
         let (changes, _) = watch::channel(EngineProjectStatus::Ready);
@@ -122,6 +116,12 @@ impl EngineProjectStatusState {
             true
         });
     }
+}
+
+#[derive(Debug, Default)]
+struct EngineProjectStatusInner {
+    active_updates: usize,
+    failure: Option<Arc<str>>,
 }
 
 /// One counted foreground saved-project update.

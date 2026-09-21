@@ -1,12 +1,15 @@
 //! Resolve type paths, `Self`, and transparent aliases in the active lowering context.
 
-use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::inference::InferenceTable;
-use crate::{AdtTy, AliasTy, PrimitiveTy, ProjectionTy, Substitution, TraitApplication, Ty};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TypeAliasRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathAnchor, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathResolution};
+
+use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
+use crate::{
+    AdtTy, AliasTy, PrimitiveTy, ProjectionTy, Substitution, TraitApplication, Ty,
+    inference::InferenceTable,
+};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where

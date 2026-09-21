@@ -160,9 +160,8 @@ impl SplitIndexingMode {
 mod tests {
     use rg_ir_model::PackageSlot;
 
-    use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
-
     use super::{IndexingPerformancePreference, PackageBatchSize, SplitIndexingMode};
+    use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
     #[test]
     fn package_batch_size_is_positive() {

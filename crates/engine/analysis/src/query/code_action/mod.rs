@@ -14,9 +14,8 @@ mod trait_impl;
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Span};
 
-use crate::{Analysis, CodeAction, CodeActionKind};
-
 use self::syntax::CodeActionSyntax;
+use crate::{Analysis, CodeAction, CodeActionKind};
 
 /// Which action families the client requested for this query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,9 +267,8 @@ impl<'analysis, 'db, 'source> CodeActionResolver<'analysis, 'db, 'source> {
 mod tests {
     use rg_ir_model::Span;
 
-    use crate::{CodeAction, CodeActionEdit, CodeActionKind};
-
     use super::CodeActionResolver;
+    use crate::{CodeAction, CodeActionEdit, CodeActionKind};
 
     fn action(edits: Vec<CodeActionEdit>) -> CodeAction {
         CodeAction {

@@ -103,6 +103,14 @@ struct JsonLogLayer<W = StderrLogWriter> {
     writer: W,
 }
 
+impl<W> JsonLogLayer<W> {
+    fn merge_fields(to: &mut Map<String, Value>, from: &Map<String, Value>) {
+        for (key, value) in from {
+            to.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 impl<S, W> Layer<S> for JsonLogLayer<W>
 where
     S: Subscriber + for<'lookup> LookupSpan<'lookup>,
@@ -149,11 +157,11 @@ where
             for span in scope.from_root() {
                 let extensions = span.extensions();
                 if let Some(span_fields) = extensions.get::<JsonSpanFields>() {
-                    merge_fields(&mut fields, &span_fields.values);
+                    Self::merge_fields(&mut fields, &span_fields.values);
                 }
             }
         }
-        merge_fields(&mut fields, &event_fields.values);
+        Self::merge_fields(&mut fields, &event_fields.values);
 
         let mut log = Map::new();
         log.insert("schema".to_string(), Value::String(LOG_SCHEMA.to_string()));
@@ -203,12 +211,6 @@ impl LogWriter for StderrLogWriter {
             let mut stderr = std::io::stderr().lock();
             let _ = stderr.write_all(&line);
         }
-    }
-}
-
-fn merge_fields(to: &mut Map<String, Value>, from: &Map<String, Value>) {
-    for (key, value) in from {
-        to.insert(key.clone(), value.clone());
     }
 }
 

@@ -1,7 +1,3 @@
-use crate::item::{
-    ConstExpr, GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor,
-    TypePathSegment, TypeRef,
-};
 use rg_ir_model::{Mutability, Span};
 use rg_parse::LineIndex;
 use rg_syntax::{
@@ -11,6 +7,10 @@ use rg_syntax::{
 use rg_text::NameInterner;
 
 use super::{FromAst, normalized_syntax};
+use crate::item::{
+    ConstExpr, GenericArg, TraitBoundModifier, TypeBound, TypePath, TypePathAnchor,
+    TypePathSegment, TypeRef,
+};
 
 impl FromAst for TypeRef {
     type AstNode = ast::Type;

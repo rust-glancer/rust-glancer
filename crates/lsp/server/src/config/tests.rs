@@ -1,9 +1,8 @@
 use rg_lsp_proto::{CargoMetadataTarget, PackageResidencyPolicy};
 use serde_json::json;
 
-use crate::tests::normalized_test_path;
-
 use super::ServerConfig;
+use crate::tests::normalized_test_path;
 
 #[test]
 fn exact_override_merges_with_base_cargo_config() {

@@ -13,3 +13,6 @@ description = "Rust Glancer cfg predicate lowering and evaluation."
 rg_std.workspace = true
 rg_syntax.workspace = true
 wincode.workspace = true
+
+[lints]
+workspace = true

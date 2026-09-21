@@ -13,16 +13,18 @@ pub mod symbol;
 
 use std::{fmt, slice::SliceIndex};
 
-use self::symbol::Symbol;
-use buffer::Cursor;
 use stdx::{impl_from, itertools::Itertools as _};
 
+use self::{
+    buffer::Cursor,
+    storage::{CompressedSpanPart, SpanStorage},
+    symbol::Symbol,
+};
+pub use self::{
+    iter::{TtElement, TtIter},
+    storage::{TopSubtree, TopSubtreeBuilder},
+};
 pub use crate::span::Span;
-
-use self::storage::{CompressedSpanPart, SpanStorage};
-
-pub use self::iter::{TtElement, TtIter};
-pub use self::storage::{TopSubtree, TopSubtreeBuilder};
 
 pub const MAX_GLUED_PUNCT_LEN: usize = 3;
 
@@ -99,6 +101,17 @@ impl Leaf {
         }
     }
 }
+
+impl fmt::Display for Leaf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Leaf::Ident(it) => fmt::Display::fmt(it, f),
+            Leaf::Literal(it) => fmt::Display::fmt(it, f),
+            Leaf::Punct(it) => fmt::Display::fmt(it, f),
+        }
+    }
+}
+
 impl_from!(Literal, Punct, Ident for Leaf);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
@@ -438,6 +451,49 @@ impl Literal {
     }
 }
 
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (text, suffix) = self.text_and_suffix();
+        match self.kind {
+            LitKind::Byte => write!(f, "b'{}'", text),
+            LitKind::Char => write!(f, "'{}'", text),
+            LitKind::Integer | LitKind::Float | LitKind::Err(_) => write!(f, "{}", text),
+            LitKind::Str => write!(f, "\"{}\"", text),
+            LitKind::ByteStr => write!(f, "b\"{}\"", text),
+            LitKind::CStr => write!(f, "c\"{}\"", text),
+            LitKind::StrRaw(num_of_hashes) => {
+                let num_of_hashes = num_of_hashes as usize;
+                write!(
+                    f,
+                    r#"r{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
+                    "",
+                    text = text
+                )
+            }
+            LitKind::ByteStrRaw(num_of_hashes) => {
+                let num_of_hashes = num_of_hashes as usize;
+                write!(
+                    f,
+                    r#"br{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
+                    "",
+                    text = text
+                )
+            }
+            LitKind::CStrRaw(num_of_hashes) => {
+                let num_of_hashes = num_of_hashes as usize;
+                write!(
+                    f,
+                    r#"cr{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
+                    "",
+                    text = text
+                )
+            }
+        }?;
+        write!(f, "{suffix}")?;
+        Ok(())
+    }
+}
+
 pub fn token_to_literal(text: &str, span: Span) -> Literal {
     use rustc_lexer::LiteralKind;
 
@@ -496,6 +552,12 @@ pub struct Punct {
     pub span: Span,
 }
 
+impl fmt::Display for Punct {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.char, f)
+    }
+}
+
 /// Indicates whether a token can join with the following token to form a
 /// compound token.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
@@ -545,6 +607,13 @@ impl Ident {
             span,
             is_raw,
         }
+    }
+}
+
+impl fmt::Display for Ident {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.is_raw.as_str(), f)?;
+        fmt::Display::fmt(&self.sym, f)
     }
 }
 
@@ -631,71 +700,5 @@ impl fmt::Debug for TopSubtree {
 impl fmt::Display for TopSubtree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.view(), f)
-    }
-}
-
-impl fmt::Display for Leaf {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Leaf::Ident(it) => fmt::Display::fmt(it, f),
-            Leaf::Literal(it) => fmt::Display::fmt(it, f),
-            Leaf::Punct(it) => fmt::Display::fmt(it, f),
-        }
-    }
-}
-
-impl fmt::Display for Ident {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.is_raw.as_str(), f)?;
-        fmt::Display::fmt(&self.sym, f)
-    }
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (text, suffix) = self.text_and_suffix();
-        match self.kind {
-            LitKind::Byte => write!(f, "b'{}'", text),
-            LitKind::Char => write!(f, "'{}'", text),
-            LitKind::Integer | LitKind::Float | LitKind::Err(_) => write!(f, "{}", text),
-            LitKind::Str => write!(f, "\"{}\"", text),
-            LitKind::ByteStr => write!(f, "b\"{}\"", text),
-            LitKind::CStr => write!(f, "c\"{}\"", text),
-            LitKind::StrRaw(num_of_hashes) => {
-                let num_of_hashes = num_of_hashes as usize;
-                write!(
-                    f,
-                    r#"r{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
-                    "",
-                    text = text
-                )
-            }
-            LitKind::ByteStrRaw(num_of_hashes) => {
-                let num_of_hashes = num_of_hashes as usize;
-                write!(
-                    f,
-                    r#"br{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
-                    "",
-                    text = text
-                )
-            }
-            LitKind::CStrRaw(num_of_hashes) => {
-                let num_of_hashes = num_of_hashes as usize;
-                write!(
-                    f,
-                    r#"cr{0:#<num_of_hashes$}"{text}"{0:#<num_of_hashes$}"#,
-                    "",
-                    text = text
-                )
-            }
-        }?;
-        write!(f, "{suffix}")?;
-        Ok(())
-    }
-}
-
-impl fmt::Display for Punct {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.char, f)
     }
 }

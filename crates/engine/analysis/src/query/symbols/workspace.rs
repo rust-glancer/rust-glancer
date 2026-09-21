@@ -3,9 +3,8 @@
 use anyhow::Result;
 use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
 
-use crate::model::WorkspaceSymbol;
-
 use super::adapter::workspace_symbol;
+use crate::model::WorkspaceSymbol;
 
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 

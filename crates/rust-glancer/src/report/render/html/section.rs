@@ -1,6 +1,5 @@
-use crate::report::{ReportDocument, ReportSection};
-
 use super::html_id;
+use crate::report::{ReportDocument, ReportSection};
 
 /// Section groups become top-level tabs in the HTML report.
 pub(super) struct SectionGroup<'a> {

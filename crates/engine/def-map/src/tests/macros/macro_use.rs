@@ -1,4 +1,4 @@
-use super::super::utils;
+use crate::tests::utils;
 
 #[test]
 fn macro_use_module_imports_child_macro_rules_into_parent_textual_scope() {

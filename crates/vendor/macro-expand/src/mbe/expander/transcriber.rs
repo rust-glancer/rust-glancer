@@ -3,18 +3,21 @@
 //! Transcriber takes a template, like `fn $ident() {}`, a set of bindings like
 //! `$ident => foo`, interpolates variables in the template, to get `fn foo() {}`
 
-use rg_tt::span::{Edition, Span};
-use rg_tt::tt::{
-    self, Delimiter, TopSubtreeBuilder,
-    iter::TtElement,
-    symbol::{Symbol, sym},
+use rg_tt::{
+    span::{Edition, Span},
+    tt::{
+        self, Delimiter, TopSubtreeBuilder,
+        iter::TtElement,
+        symbol::{Symbol, sym},
+    },
 };
 use stdx::itertools::Itertools;
 
-use super::super::parser::{ConcatMetaVarExprElem, MetaVarKind, Op, RepeatKind, Separator};
-use super::super::{ExpandError, ExpandErrorKind, ExpandResult, MetaTemplate};
-use super::TokensOrigin;
-use super::{Binding, Bindings, Fragment};
+use super::{Binding, Bindings, Fragment, TokensOrigin};
+use crate::mbe::{
+    ExpandError, ExpandErrorKind, ExpandResult, MetaTemplate,
+    parser::{ConcatMetaVarExprElem, MetaVarKind, Op, RepeatKind, Separator},
+};
 
 impl<'t> Bindings<'t> {
     fn get(&self, name: &Symbol, span: Span) -> Result<&Binding<'t>, ExpandError> {

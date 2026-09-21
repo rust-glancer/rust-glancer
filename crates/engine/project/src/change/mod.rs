@@ -13,10 +13,9 @@ use std::collections::btree_map::Entry;
 use anyhow::Context as _;
 use rg_ir_model::PackageSlot;
 
+pub use self::input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
+use self::workspace_graph::WorkspaceGraphChanges;
 use crate::{Project, StartupCacheLoad};
-use workspace_graph::WorkspaceGraphChanges;
-
-pub use input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
 
 impl Project {
     /// Rebuilds the whole project from the current workspace graph and saved source files.

@@ -6,8 +6,6 @@
 //! real parsed file.
 
 use anyhow::{Context as _, Result};
-
-use crate::source::GeneratedSourceData;
 use rg_arena::Arena;
 use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
@@ -31,6 +29,7 @@ use rg_tt::{
 };
 
 use super::generated::GeneratedOrigin;
+use crate::source::GeneratedSourceData;
 
 /// Lowers one parsed macro expansion into retained generated item payloads.
 pub(super) struct GeneratedSourceLowering<'a> {
@@ -167,7 +166,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 let origin_span = self.origin.span;
                 let edition = self.edition;
                 let mut span_for_range = move |range| {
-                    tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
+                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
                 };
                 let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                     &item,
@@ -185,7 +184,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 let origin_span = self.origin.span;
                 let edition = self.edition;
                 let mut span_for_range = move |range| {
-                    tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
+                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
                 };
                 let kind = ItemKind::MacroDefinition(<MacroDefinitionItem as FromAst<
                     MacroDefAst,
@@ -206,7 +205,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 let origin_span = self.origin.span;
                 let edition = self.edition;
                 let mut span_for_range = move |range| {
-                    tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
+                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
                 };
                 let kind = ItemKind::MacroDefinition(<MacroDefinitionItem as FromAst<
                     MacroRulesAst,
@@ -337,7 +336,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                         let origin_span = self.origin.span;
                         let edition = self.edition;
                         let mut span_for_range = move |range| {
-                            tt_span_for_range(
+                            Self::tt_span_for_range(
                                 &span_map,
                                 origin_file_id,
                                 origin_span,
@@ -460,7 +459,13 @@ impl<'a> GeneratedSourceLowering<'a> {
                     let origin_span = self.origin.span;
                     let edition = self.edition;
                     let mut span_for_range = move |range| {
-                        tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
+                        Self::tt_span_for_range(
+                            &span_map,
+                            origin_file_id,
+                            origin_span,
+                            edition,
+                            range,
+                        )
                     };
                     let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
@@ -578,23 +583,24 @@ impl<'a> GeneratedSourceLowering<'a> {
             .span_for_range_in_file(range, self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))
     }
-}
 
-fn tt_span_for_range(
-    span_map: &ExpansionSpanMap,
-    origin_file_id: FileId,
-    origin_span: Span,
-    edition: RustEdition,
-    range: rg_syntax::TextRange,
-) -> TtSpan {
-    if let Some(span) = span_map.span_for_range(range) {
-        return span;
+    fn tt_span_for_range(
+        span_map: &ExpansionSpanMap,
+        origin_file_id: FileId,
+        origin_span: Span,
+        edition: RustEdition,
+        range: rg_syntax::TextRange,
+    ) -> TtSpan {
+        if let Some(span) = span_map.span_for_range(range) {
+            return span;
+        }
+
+        let text_range =
+            rg_syntax::TextRange::new(origin_span.start.into(), origin_span.end.into());
+        SpanFactory::new(
+            u32::try_from(origin_file_id.0).expect("file id should fit macro span storage"),
+            syntax_edition(edition),
+        )
+        .span_for(text_range)
     }
-
-    let text_range = rg_syntax::TextRange::new(origin_span.start.into(), origin_span.end.into());
-    SpanFactory::new(
-        u32::try_from(origin_file_id.0).expect("file id should fit macro span storage"),
-        syntax_edition(edition),
-    )
-    .span_for(text_range)
 }

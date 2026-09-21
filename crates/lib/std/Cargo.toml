@@ -17,3 +17,6 @@ wincode.workspace = true
 [[test]]
 name = "derive"
 path = "tests/derive/mod.rs"
+
+[lints]
+workspace = true

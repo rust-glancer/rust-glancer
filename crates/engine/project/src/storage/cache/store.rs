@@ -29,17 +29,16 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::PackageResidencyPolicy;
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
 use rg_ir_model::PackageSlot;
 
-use super::reader::PackageArtifactReader;
 use super::{
     CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec, PackageCacheHeader,
     PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
-    codec::EncodedPackageCacheArtifact,
+    codec::EncodedPackageCacheArtifact, reader::PackageArtifactReader,
 };
+use crate::PackageResidencyPolicy;
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
@@ -54,23 +53,6 @@ const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 pub struct PackageCacheStore {
     root: PathBuf,
     generation: Fingerprint,
-}
-
-/// Holds a fully written replacement for a package cache file until the caller commits it.
-///
-/// [`Self::commit`] atomically replaces the old file; dropping this value discards the replacement.
-/// This lets the caller check cancellation after encoding and writing, before changing the cache
-/// that other readers will see.
-pub(crate) struct PreparedPackageArtifact {
-    file: AtomicWriteFile,
-}
-
-impl PreparedPackageArtifact {
-    pub(crate) fn commit(self) -> anyhow::Result<()> {
-        self.file
-            .commit()
-            .context("commit prepared package artifact")
-    }
 }
 
 impl PackageCacheStore {
@@ -359,6 +341,23 @@ impl PackageCacheStore {
 
     fn cache_update_marker_path(&self) -> PathBuf {
         self.generation_dir().join(CACHE_UPDATE_MARKER_FILE_NAME)
+    }
+}
+
+/// Holds a fully written replacement for a package cache file until the caller commits it.
+///
+/// [`Self::commit`] atomically replaces the old file; dropping this value discards the replacement.
+/// This lets the caller check cancellation after encoding and writing, before changing the cache
+/// that other readers will see.
+pub(crate) struct PreparedPackageArtifact {
+    file: AtomicWriteFile,
+}
+
+impl PreparedPackageArtifact {
+    pub(crate) fn commit(self) -> anyhow::Result<()> {
+        self.file
+            .commit()
+            .context("commit prepared package artifact")
     }
 }
 

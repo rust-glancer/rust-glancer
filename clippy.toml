@@ -1,0 +1,2 @@
+# Keep methods together within a file while allowing separate modules for distinct responsibilities.
+inherent-impl-lint-scope = "file"

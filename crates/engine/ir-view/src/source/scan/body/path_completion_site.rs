@@ -13,19 +13,18 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
+use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
 use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
-
-use super::super::{
-    NarrowestSourceSite, TypeNamePosition,
-    type_path::{AssociatedTypeBindingSyntax, TypePathCompletionSite},
-};
 use super::{
     BodyAssociatedTypeBindingSite, BodyQualifiedPathContext, PathCompletionSite,
     PatternCompletionKind, sites::BodyScanSites,
+};
+use crate::source::scan::{
+    NarrowestSourceSite, TypeNamePosition,
+    type_path::{AssociatedTypeBindingSyntax, TypePathCompletionSite},
 };
 
 /// Finds the source site that belongs to a qualified-path completion offset.

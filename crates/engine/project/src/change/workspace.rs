@@ -7,12 +7,10 @@
 use std::{collections::HashSet, sync::Arc};
 
 use anyhow::Context as _;
-
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
-
 use super::source;
+use crate::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, StartupCacheLoad};
 
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,

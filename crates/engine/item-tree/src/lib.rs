@@ -9,6 +9,10 @@ pub mod testonly;
 #[cfg(test)]
 mod tests;
 
+pub use rg_cfg_eval::{CfgExpr, CfgGate, CfgPredicate};
+pub use rg_ir_model::Mutability;
+pub use rg_text::{Name, PackageNameInterners};
+
 pub use self::{
     db::{IncrementalItemTreeLowering, ItemTreeDb},
     item::{
@@ -30,6 +34,3 @@ pub use self::{
     },
     package::{FileTree, Package, TargetRoot},
 };
-pub use rg_cfg_eval::{CfgExpr, CfgGate, CfgPredicate};
-pub use rg_ir_model::Mutability;
-pub use rg_text::{Name, PackageNameInterners};

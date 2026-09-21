@@ -1,9 +1,9 @@
 mod source;
 
-pub use source::{DocumentationPlacement, DocumentationSource};
-
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+pub use self::source::{DocumentationPlacement, DocumentationSource};
 
 /// User-facing documentation attached to one source declaration.
 ///

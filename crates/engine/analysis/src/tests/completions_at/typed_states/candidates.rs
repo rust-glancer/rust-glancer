@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use super::super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 
 /// Candidate providers must not accidentally rely on the terminator that follows their site.
 ///

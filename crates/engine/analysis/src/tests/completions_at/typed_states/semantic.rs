@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 
 /// Keep the common completion families honest about the source states editors actually send.
 ///

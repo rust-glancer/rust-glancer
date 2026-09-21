@@ -1,7 +1,6 @@
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{TraitDefRef, TypeAliasRef, TypeDefRef};
 use rg_std::{ExpectedUnique, MemorySize};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Definition-level result of resolving syntax in the type namespace.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use super::super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 
 /// Standalone sites are discovered directly from incomplete item syntax rather than Body IR.
 ///

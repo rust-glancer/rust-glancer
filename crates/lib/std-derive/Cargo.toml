@@ -23,3 +23,6 @@ syn = { workspace = true, features = [
   "proc-macro",
   "visit",
 ] }
+
+[lints]
+workspace = true

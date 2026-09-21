@@ -15,13 +15,15 @@ use rg_ir_model::ScopeId;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::autoderef::AutoderefMode;
-use rg_ty::lookup::{MemberMethodCandidateRef, MemberMethodOrigin};
-use rg_ty::{Ty, inference::InferenceTable};
-
-use crate::resolution::BodyResolutionContext;
+use rg_ty::{
+    Ty,
+    autoderef::AutoderefMode,
+    inference::InferenceTable,
+    lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
+};
 
 use super::{BodyCallableCandidate, BodyReceiverImplMatches};
+use crate::resolution::BodyResolutionContext;
 
 /// Resolves method declarations while preserving the evidence needed by body inference.
 ///

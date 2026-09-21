@@ -9,6 +9,7 @@ use itertools::Itertools;
 use parser::SyntaxKind;
 use smallvec::{SmallVec, smallvec};
 
+use super::{GenericParam, RangeItem, RangeOp};
 use crate::{
     NodeOrToken, SmolStr, SyntaxElement, SyntaxElementChildren, SyntaxToken, T, TokenText,
     ast::{
@@ -16,8 +17,6 @@ use crate::{
         HasTypeBounds, SyntaxNode, support,
     },
 };
-
-use super::{GenericParam, RangeItem, RangeOp};
 
 impl ast::Lifetime {
     pub fn text(&self) -> TokenText<'_> {
@@ -343,6 +342,13 @@ impl ast::PathSegment {
         };
         Some(res)
     }
+
+    // [#15778](https://github.com/rust-lang/rust-analyzer/issues/15778)
+    pub fn qualifying_trait(&self) -> Option<ast::PathType> {
+        let mut path_types = support::children(self.type_anchor()?.syntax());
+        let first = path_types.next()?;
+        path_types.next().or(Some(first))
+    }
 }
 
 impl ast::Path {
@@ -481,15 +487,6 @@ impl ast::Impl {
         } else {
             None
         }
-    }
-}
-
-// [#15778](https://github.com/rust-lang/rust-analyzer/issues/15778)
-impl ast::PathSegment {
-    pub fn qualifying_trait(&self) -> Option<ast::PathType> {
-        let mut path_types = support::children(self.type_anchor()?.syntax());
-        let first = path_types.next()?;
-        path_types.next().or(Some(first))
     }
 }
 
@@ -872,15 +869,6 @@ pub enum TypeOrConstParam {
     Const(ast::ConstParam),
 }
 
-impl From<TypeOrConstParam> for GenericParam {
-    fn from(value: TypeOrConstParam) -> Self {
-        match value {
-            TypeOrConstParam::Type(it) => GenericParam::TypeParam(it),
-            TypeOrConstParam::Const(it) => GenericParam::ConstParam(it),
-        }
-    }
-}
-
 impl TypeOrConstParam {
     pub fn name(&self) -> Option<ast::Name> {
         match self {
@@ -919,6 +907,15 @@ impl AstNode for TypeOrConstParam {
 }
 
 impl HasAttrs for TypeOrConstParam {}
+
+impl From<TypeOrConstParam> for GenericParam {
+    fn from(value: TypeOrConstParam) -> Self {
+        match value {
+            TypeOrConstParam::Type(it) => GenericParam::TypeParam(it),
+            TypeOrConstParam::Const(it) => GenericParam::ConstParam(it),
+        }
+    }
+}
 
 pub enum VisibilityKind {
     In(ast::Path),

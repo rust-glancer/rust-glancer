@@ -2,8 +2,9 @@
 
 use std::fs;
 
-use crate::{CapturedSource, SourceError, SourceInventory, SourceRevision};
 use rg_std::MemorySize as _;
+
+use crate::{CapturedSource, SourceError, SourceInventory, SourceRevision};
 
 #[test]
 fn reallocated_inventory_preserves_captured_sources() {

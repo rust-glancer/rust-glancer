@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_explicit_empty_import_type_expression_argument_and_generic_argument_paths() {
     check_analysis_queries(

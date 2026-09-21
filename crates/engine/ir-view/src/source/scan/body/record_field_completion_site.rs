@@ -6,15 +6,14 @@
 //! The cursor must be on a key or in free field-list space. `User { name: val$0 }` is deliberately
 //! rejected so ordinary value completion can handle the field value.
 
-use rg_ir_model::{BodyRef, CrateRef, FieldKey, FileId, ScopeId, Span};
-use rg_package_store::PackageStoreError;
-
 use rg_body_ir::{
     BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
+use rg_ir_model::{BodyRef, CrateRef, FieldKey, FileId, ScopeId, Span};
+use rg_package_store::PackageStoreError;
 
-use super::super::NarrowestSourceSite;
 use super::{RecordFieldCompletionSite, sites::BodyScanSites};
+use crate::source::scan::NarrowestSourceSite;
 
 /// Finds the record field-list site that belongs to a completion offset.
 ///

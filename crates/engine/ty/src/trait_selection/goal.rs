@@ -1,21 +1,18 @@
 //! Trait goals and the identities used to route and reuse their proofs.
 
-use crate::inference::InferenceTable;
-use crate::{AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty};
 use rg_ir_model::{CrateRef, TypeAliasRef};
 use rg_std::UniqueVec;
+
+use crate::{
+    AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty,
+    inference::InferenceTable,
+};
 
 /// A canonical trait application plus any associated-type equality constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TraitGoal {
     pub application: TraitApplication,
     pub associated_types: Vec<AssocTypeBinding>,
-}
-
-/// One `Trait<Assoc = Ty>` equality constraint carried by a trait goal.
-pub(crate) struct AssocTypeConstraint<'a> {
-    pub(crate) associated_ty: TypeAliasRef,
-    pub(crate) ty: &'a Ty,
 }
 
 impl TraitGoal {
@@ -167,4 +164,10 @@ impl TraitGoal {
                 .iter()
                 .all(|binding| !binding.ty.has_var() && !binding.ty.has_closure())
     }
+}
+
+/// One `Trait<Assoc = Ty>` equality constraint carried by a trait goal.
+pub(crate) struct AssocTypeConstraint<'a> {
+    pub(crate) associated_ty: TypeAliasRef,
+    pub(crate) ty: &'a Ty,
 }

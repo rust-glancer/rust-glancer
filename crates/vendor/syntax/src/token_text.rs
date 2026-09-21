@@ -6,11 +6,6 @@ use smol_str::SmolStr;
 
 pub struct TokenText<'a>(pub(crate) Repr<'a>);
 
-pub(crate) enum Repr<'a> {
-    Borrowed(&'a str),
-    Owned(SmolStr),
-}
-
 impl<'a> TokenText<'a> {
     pub fn borrowed(text: &'a str) -> Self {
         TokenText(Repr::Borrowed(text))
@@ -35,10 +30,60 @@ impl ops::Deref for TokenText<'_> {
         self.as_str()
     }
 }
+
 impl AsRef<str> for TokenText<'_> {
     fn as_ref(&self) -> &str {
         self.as_str()
     }
+}
+
+impl PartialEq<&'_ str> for TokenText<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+impl PartialEq<String> for TokenText<'_> {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl PartialEq for TokenText<'_> {
+    fn eq(&self, other: &TokenText<'_>) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for TokenText<'_> {}
+
+impl Ord for TokenText<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for TokenText<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl fmt::Display for TokenText<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+impl fmt::Debug for TokenText<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+pub(crate) enum Repr<'a> {
+    Borrowed(&'a str),
+    Owned(SmolStr),
 }
 
 impl From<TokenText<'_>> for String {
@@ -53,49 +98,14 @@ impl From<TokenText<'_>> for SmolStr {
     }
 }
 
-impl PartialEq<&'_ str> for TokenText<'_> {
-    fn eq(&self, other: &&str) -> bool {
-        self.as_str() == *other
-    }
-}
 impl PartialEq<TokenText<'_>> for &'_ str {
     fn eq(&self, other: &TokenText<'_>) -> bool {
         other == self
     }
 }
-impl PartialEq<String> for TokenText<'_> {
-    fn eq(&self, other: &String) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
+
 impl PartialEq<TokenText<'_>> for String {
     fn eq(&self, other: &TokenText<'_>) -> bool {
         other == self
-    }
-}
-impl PartialEq for TokenText<'_> {
-    fn eq(&self, other: &TokenText<'_>) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
-impl Eq for TokenText<'_> {}
-impl Ord for TokenText<'_> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.as_str().cmp(other.as_str())
-    }
-}
-impl PartialOrd for TokenText<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-impl fmt::Display for TokenText<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.as_str(), f)
-    }
-}
-impl fmt::Debug for TokenText<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
     }
 }

@@ -23,24 +23,6 @@ pub struct Output {
     error: Vec<String>,
 }
 
-#[derive(Debug)]
-pub enum Step<'a> {
-    Token {
-        kind: SyntaxKind,
-        n_input_tokens: u8,
-    },
-    FloatSplit {
-        ends_in_dot: bool,
-    },
-    Enter {
-        kind: SyntaxKind,
-    },
-    Exit,
-    Error {
-        msg: &'a str,
-    },
-}
-
 impl Output {
     const EVENT_MASK: u32 = 0b1;
     const TAG_MASK: u32 = 0x0000_00F0;
@@ -122,4 +104,22 @@ impl Output {
         let e = (idx as u32) << Self::ERROR_SHIFT;
         self.event.push(e);
     }
+}
+
+#[derive(Debug)]
+pub enum Step<'a> {
+    Token {
+        kind: SyntaxKind,
+        n_input_tokens: u8,
+    },
+    FloatSplit {
+        ends_in_dot: bool,
+    },
+    Enter {
+        kind: SyntaxKind,
+    },
+    Exit,
+    Error {
+        msg: &'a str,
+    },
 }

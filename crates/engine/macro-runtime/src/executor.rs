@@ -11,7 +11,6 @@ use std::{
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-
 use rg_macro_expand::{DeclarativeMacro, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 

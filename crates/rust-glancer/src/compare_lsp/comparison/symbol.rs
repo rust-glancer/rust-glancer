@@ -182,11 +182,10 @@ impl SymbolAggregate {
 mod tests {
     use gen_lsp_types::SymbolKind;
 
+    use super::SymbolComparison;
     use crate::compare_lsp::normalization::{
         NormalizedRange, NormalizedSymbol, NormalizedSymbolSet,
     };
-
-    use super::SymbolComparison;
 
     #[test]
     fn accepts_method_as_a_more_specific_function_classification() {

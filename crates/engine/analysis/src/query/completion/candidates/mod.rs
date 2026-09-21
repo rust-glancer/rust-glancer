@@ -189,13 +189,6 @@ pub(crate) struct DotMethodCompletionCandidate {
     applicability: CompletionApplicability,
 }
 
-/// Stable field identity selected for a record literal or pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RecordFieldCompletionCandidate {
-    Type(FieldRef),
-    EnumVariant(EnumVariantFieldRef),
-}
-
 impl DotMethodCompletionCandidate {
     pub(crate) fn function_ref(&self) -> FunctionRef {
         self.function
@@ -208,6 +201,13 @@ impl DotMethodCompletionCandidate {
     pub(crate) fn applicability(&self) -> CompletionApplicability {
         self.applicability
     }
+}
+
+/// Stable field identity selected for a record literal or pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecordFieldCompletionCandidate {
+    Type(FieldRef),
+    EnumVariant(EnumVariantFieldRef),
 }
 
 /// Turns normalized cursor sites into completion candidates from the matching indexed views.

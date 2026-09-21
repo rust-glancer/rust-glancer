@@ -39,3 +39,6 @@ test_fixture.workspace = true
 [[bench]]
 name = "query_latency"
 harness = false
+
+[lints]
+workspace = true

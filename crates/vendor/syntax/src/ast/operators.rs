@@ -30,36 +30,27 @@ pub enum BinaryOp {
     Assignment { op: Option<ArithOp> },
 }
 
+impl fmt::Display for BinaryOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BinaryOp::LogicOp(op) => fmt::Display::fmt(op, f),
+            BinaryOp::ArithOp(op) => fmt::Display::fmt(op, f),
+            BinaryOp::CmpOp(op) => fmt::Display::fmt(op, f),
+            BinaryOp::Assignment { op } => {
+                if let Some(op) = op {
+                    fmt::Display::fmt(op, f)?;
+                }
+                f.write_str("=")?;
+                Ok(())
+            }
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum LogicOp {
     And,
     Or,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum CmpOp {
-    Eq { negated: bool },
-    Ord { ordering: Ordering, strict: bool },
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum Ordering {
-    Less,
-    Greater,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ArithOp {
-    Add,
-    Mul,
-    Sub,
-    Div,
-    Rem,
-    Shl,
-    Shr,
-    BitXor,
-    BitOr,
-    BitAnd,
 }
 
 impl fmt::Display for LogicOp {
@@ -72,22 +63,10 @@ impl fmt::Display for LogicOp {
     }
 }
 
-impl fmt::Display for ArithOp {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let res = match self {
-            ArithOp::Add => "+",
-            ArithOp::Mul => "*",
-            ArithOp::Sub => "-",
-            ArithOp::Div => "/",
-            ArithOp::Rem => "%",
-            ArithOp::Shl => "<<",
-            ArithOp::Shr => ">>",
-            ArithOp::BitXor => "^",
-            ArithOp::BitOr => "|",
-            ArithOp::BitAnd => "&",
-        };
-        f.write_str(res)
-    }
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CmpOp {
+    Eq { negated: bool },
+    Ord { ordering: Ordering, strict: bool },
 }
 
 impl fmt::Display for CmpOp {
@@ -116,19 +95,40 @@ impl fmt::Display for CmpOp {
     }
 }
 
-impl fmt::Display for BinaryOp {
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Ordering {
+    Less,
+    Greater,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum ArithOp {
+    Add,
+    Mul,
+    Sub,
+    Div,
+    Rem,
+    Shl,
+    Shr,
+    BitXor,
+    BitOr,
+    BitAnd,
+}
+
+impl fmt::Display for ArithOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BinaryOp::LogicOp(op) => fmt::Display::fmt(op, f),
-            BinaryOp::ArithOp(op) => fmt::Display::fmt(op, f),
-            BinaryOp::CmpOp(op) => fmt::Display::fmt(op, f),
-            BinaryOp::Assignment { op } => {
-                if let Some(op) = op {
-                    fmt::Display::fmt(op, f)?;
-                }
-                f.write_str("=")?;
-                Ok(())
-            }
-        }
+        let res = match self {
+            ArithOp::Add => "+",
+            ArithOp::Mul => "*",
+            ArithOp::Sub => "-",
+            ArithOp::Div => "/",
+            ArithOp::Rem => "%",
+            ArithOp::Shl => "<<",
+            ArithOp::Shr => ">>",
+            ArithOp::BitXor => "^",
+            ArithOp::BitOr => "|",
+            ArithOp::BitAnd => "&",
+        };
+        f.write_str(res)
     }
 }

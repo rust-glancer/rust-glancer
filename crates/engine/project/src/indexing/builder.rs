@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
+use super::initial::build_resident_state;
 use crate::{
     BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy,
     Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SplitIndexingMode, StartupCacheLoad,
@@ -13,8 +14,6 @@ use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
     storage::{cache::PackageCacheInstance, residency::ResidencyApplication},
 };
-
-use super::initial::build_resident_state;
 
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {

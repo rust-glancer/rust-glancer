@@ -14,12 +14,6 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-
-use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind, LocalImplData,
-    MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
-};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span,
 };
@@ -32,18 +26,23 @@ use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
 use rg_text::{Name, NameInterner, PackageNameInterners};
 
-use crate::build::{
-    MacroSourceFileResolution, MacroSourceFileResolutions, collect::CrateState,
-    finalize::ScopeMatrix,
-};
-use crate::profile::metric;
-use crate::{GeneratedItemRef, GeneratedSourceId, ItemSource, MacroSourceFileRequest};
-
 use super::{
     ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
     MacroExpansionApplyResult,
     generated_tree::GeneratedSourceLowering,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
+};
+use crate::{
+    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
+    ItemSource, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    MacroSourceFileRequest, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+    build::{
+        MacroSourceFileResolution, MacroSourceFileResolutions,
+        collect::CrateState,
+        finalize::{FinalizeCrateStates, ScopeMatrix},
+    },
+    profile::metric,
 };
 
 /// Call-site identity used for every item produced by one macro expansion.
@@ -909,7 +908,7 @@ impl GeneratedCollector<'_> {
 /// the corresponding operation without inventing an empty source.
 pub(crate) fn apply_pending_macro_source_files(
     item_tree: &ItemTreeDb,
-    states: &mut super::super::finalize::FinalizeCrateStates,
+    states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
     macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,

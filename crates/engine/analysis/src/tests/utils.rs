@@ -4,14 +4,6 @@ use std::{
 };
 
 use expect_test::Expect;
-
-use crate::{
-    Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
-    CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
-    CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
-    RenameResult, RenameTarget, SavedSourceView, SymbolAt, WorkspaceSymbol,
-};
 use rg_body_ir::{ExprData, ExprKind};
 use rg_def_map::testonly::DefMapFixture;
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
@@ -22,6 +14,14 @@ use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, Workspac
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
     fixture_path_for_snapshot,
+};
+
+use crate::{
+    Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
+    CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
+    CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
+    RenameResult, RenameTarget, SavedSourceView, SymbolAt, WorkspaceSymbol,
 };
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
@@ -241,6 +241,21 @@ pub(super) struct DocumentSymbolsQuery {
     target: AnalysisTarget,
 }
 
+impl DocumentSymbolsQuery {
+    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
+        Self {
+            title,
+            path,
+            target: AnalysisTarget::lib(),
+        }
+    }
+
+    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::bin(package_name);
+        self
+    }
+}
+
 pub(super) struct InlayHintsQuery {
     title: &'static str,
     path: &'static str,
@@ -263,21 +278,6 @@ impl InlayHintsQuery {
 
     pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
         self.target = AnalysisTarget::lib_package(package_name);
-        self
-    }
-}
-
-impl DocumentSymbolsQuery {
-    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
-        Self {
-            title,
-            path,
-            target: AnalysisTarget::lib(),
-        }
-    }
-
-    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
-        self.target = AnalysisTarget::bin(package_name);
         self
     }
 }

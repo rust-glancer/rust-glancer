@@ -4,10 +4,10 @@
 //! supported identity on `ItemNode`; semantic lowering can then attach it to the typed trait,
 //! function, or type-alias id without rediscovering the item from its name or path.
 
-use crate::item::LangItem;
 use rg_syntax::{AstNode as _, ast};
 
 use super::MaybeFromAst;
+use crate::item::LangItem;
 
 impl MaybeFromAst for LangItem {
     type AstNode = dyn ast::HasAttrs;
@@ -40,10 +40,10 @@ impl MaybeFromAst for LangItem {
 
 #[cfg(test)]
 mod tests {
-    use crate::item::LangItem;
     use rg_syntax::{Edition, SourceFile, ast, ast::HasModuleItem as _};
 
     use super::MaybeFromAst;
+    use crate::item::LangItem;
 
     #[test]
     fn extracts_supported_language_items_from_their_own_declarations() {

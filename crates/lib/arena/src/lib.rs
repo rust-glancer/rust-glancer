@@ -9,6 +9,7 @@ use std::{
     ops::{Index, IndexMut},
     slice,
 };
+
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable typed index into an arena.

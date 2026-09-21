@@ -1,7 +1,7 @@
-use super::super::utils;
-use crate::{profile::metric, profile_descriptors};
 use expect_test::expect;
 use rg_ir_model::PackageSlot;
+
+use crate::{profile::metric, profile_descriptors, tests::utils};
 
 #[test]
 fn expands_local_macro_rules_items() {

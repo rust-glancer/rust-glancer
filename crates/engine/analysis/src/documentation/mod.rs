@@ -8,10 +8,6 @@
 mod highlight;
 mod source;
 
-pub(crate) use highlight::DocumentationHighlighter;
-
-pub(crate) use source::SourceDocumentationQuery;
-
 use std::ops::Range;
 
 use anyhow::Context as _;
@@ -22,6 +18,7 @@ use rg_ir_view::{
     item::documentation::{DocumentationLinkResolution, DocumentationView},
 };
 
+pub(crate) use self::{highlight::DocumentationHighlighter, source::SourceDocumentationQuery};
 use crate::{DocumentationLink, query::navigation::NavigationTargetProjection};
 
 /// Prepares source links for the documentation attached to a declaration.

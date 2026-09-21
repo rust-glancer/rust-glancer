@@ -3,12 +3,10 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_def_map::DefMapReadTxn;
-use rg_def_map::{DefMap, DefMapSource};
+use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, ModuleRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
-use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrReadTxn};
 use rg_std::UniqueVec;
 
 use crate::BodyLocalItems;

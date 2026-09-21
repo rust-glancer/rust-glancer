@@ -4,14 +4,17 @@
 //! proves the exact candidate's predicates. A definite rejection removes the impl; ambiguity or
 //! unsupported current-body evidence remains a useful editor-facing `Maybe` match.
 
-use crate::lowering::TypePathResolver;
-use crate::trait_selection::{TraitSelection, TraitSelectionQuery};
-use crate::{AdtTy, Ty, inference::InferenceTable};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{TraitApplicability, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
 
 use super::ImplMatcher;
+use crate::{
+    AdtTy, Ty,
+    inference::InferenceTable,
+    lowering::TypePathResolver,
+    trait_selection::{TraitSelection, TraitSelectionQuery},
+};
 
 impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
 where

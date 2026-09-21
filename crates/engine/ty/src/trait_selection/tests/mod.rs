@@ -10,13 +10,17 @@ use rg_semantic_ir::CrateItemQuery;
 use rg_std::CancellationToken;
 
 use self::utils::*;
-use super::candidate::TraitCandidate;
-use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
-use super::projection::NORMALIZATION_DEPTH_LIMIT;
-use super::{TraitGoal, TraitSelectionSession};
-use crate::inference::InferenceTable;
-use crate::lookup::{ImplMatcher, ItemPathQuery};
-use crate::{AdtTy, AliasTy, Clause, GenericArg, ProjectionTy, Ty, TyContext};
+use super::{
+    TraitGoal, TraitSelectionSession,
+    candidate::TraitCandidate,
+    chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+    projection::NORMALIZATION_DEPTH_LIMIT,
+};
+use crate::{
+    AdtTy, AliasTy, Clause, GenericArg, ProjectionTy, Ty, TyContext,
+    inference::InferenceTable,
+    lookup::{ImplMatcher, ItemPathQuery},
+};
 
 #[test]
 fn named_trait_discovery_ignores_unrelated_blanket_impls() {

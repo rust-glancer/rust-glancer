@@ -1,10 +1,5 @@
 //! Lowering for function parameters, blocks, statements, and body-local items.
 
-use rg_syntax::{
-    AstNode as _,
-    ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
-};
-
 use rg_ir_model::{ExprId, Mutability, ScopeId, Span, StmtId};
 use rg_item_tree::{
     Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst as _, FunctionItem,
@@ -12,15 +7,20 @@ use rg_item_tree::{
     MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, SelfParamKind, StaticItem,
     StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
+use rg_syntax::{
+    AstNode as _,
+    ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
+};
 use rg_text::Name;
 
-use crate::body::{
-    BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, FunctionParamData, StmtData,
-    StmtKind,
-};
-
 use super::body::BodyLowering;
-use crate::build::local_items::LocalItemLowering;
+use crate::{
+    body::{
+        BindingData, BindingKind, BodySource, ExprBlockKind, ExprKind, FunctionParamData, StmtData,
+        StmtKind,
+    },
+    build::local_items::LocalItemLowering,
+};
 
 impl BodyLowering<'_> {
     pub(super) fn lower_params(

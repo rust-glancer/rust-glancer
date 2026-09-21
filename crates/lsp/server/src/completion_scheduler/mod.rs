@@ -24,6 +24,7 @@ mod request;
 mod session;
 
 pub(crate) use self::request::{CompletionAttemptOutcome, CompletionRequest};
+use self::session::SchedulerState;
 
 /// Entry point used by ordered ingress to register completion messages.
 ///
@@ -32,7 +33,7 @@ pub(crate) use self::request::{CompletionAttemptOutcome, CompletionRequest};
 /// identity established at ingress.
 #[derive(Clone, Default)]
 pub(crate) struct CompletionScheduler {
-    state: Arc<Mutex<session::SchedulerState>>,
+    state: Arc<Mutex<SchedulerState>>,
 }
 
 impl CompletionScheduler {

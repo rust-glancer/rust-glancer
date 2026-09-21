@@ -6,13 +6,12 @@ use rg_parse::ParseDb;
 use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
+use super::cache_probe::{StartupCacheProbe, StartupPackageSelection};
 use crate::{
     PackageResidencyPlan, StartupCacheLoad,
     selection::PhasePackageSet,
     storage::cache::{PackageCacheStore, WorkspaceCachePlan},
 };
-
-use super::cache_probe::{StartupCacheProbe, StartupPackageSelection};
 
 /// Phase inputs retained after optional startup cache probing.
 ///

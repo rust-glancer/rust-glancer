@@ -12,10 +12,11 @@ use rg_ir_model::{TraitApplicability, TraitImplRef};
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use super::matcher::CandidateMatcher;
-use super::{TraitGoal, TraitSelectionSession};
-use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::lookup::ItemPathQuery;
+use super::{TraitGoal, TraitSelectionSession, matcher::CandidateMatcher};
+use crate::{
+    inference::{InferenceSubstitution, InferenceTable},
+    lookup::ItemPathQuery,
+};
 
 /// One visible impl whose canonical header is compatible with a trait goal.
 ///

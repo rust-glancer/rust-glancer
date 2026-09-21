@@ -7,18 +7,18 @@ use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::SemanticPackage;
 
 use super::utils::{assert_reader_matches_resident_package, write_resident_package_artifact};
-use crate::profile::metric;
-use crate::storage::cache::codec::{
-    BODY_CACHE_CONTAINER_PREFIX_BYTES, PACKAGE_CACHE_CONTAINER_PREFIX_BYTES, PackageCacheLayout,
-    PackageCacheSectionRange,
-};
-use crate::storage::cache::{
-    CachedCfgOptions, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,
-    CachedRustEdition, Fingerprint, PackageCacheCodec, PackageCacheHeader, PackageCacheWriteInput,
-    WorkspaceCachePlan,
-};
 use crate::{
     PackageResidencyPolicy,
+    profile::metric,
+    storage::cache::{
+        CachedCfgOptions, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,
+        CachedRustEdition, Fingerprint, PackageCacheCodec, PackageCacheHeader,
+        PackageCacheWriteInput, WorkspaceCachePlan,
+        codec::{
+            BODY_CACHE_CONTAINER_PREFIX_BYTES, PACKAGE_CACHE_CONTAINER_PREFIX_BYTES,
+            PackageCacheLayout, PackageCacheSectionRange,
+        },
+    },
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 

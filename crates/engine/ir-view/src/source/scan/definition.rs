@@ -10,12 +10,13 @@
 //!     ^^^^^  ^^^^^  ^^^^    ^^^^^ one path-prefix occurrence per segment, plus the alias
 //! ```
 
-use crate::IndexedViewDb;
 use anyhow::Context as _;
 use rg_def_map::{DefMap, ModuleOrigin};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Path, Span,
 };
+
+use crate::IndexedViewDb;
 
 /// One module-scope source node that can become an indexed occurrence.
 ///

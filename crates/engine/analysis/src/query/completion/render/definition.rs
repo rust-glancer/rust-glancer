@@ -8,16 +8,15 @@
 use anyhow::Context as _;
 use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 
-use crate::{
-    Analysis,
-    model::{CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind},
-};
-
-use super::super::{CompletionQuery, candidates::DefinitionCompletionCandidate};
 use super::{
     CallCompletionKind, definition_detail, escape_lsp_snippet_text,
     function::{FunctionCompletionRenderer, FunctionCompletionRequest},
     sort::{CompletionSortPolicy, CompletionSortPriority},
+};
+use crate::{
+    Analysis,
+    model::{CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind},
+    query::completion::{CompletionQuery, candidates::DefinitionCompletionCandidate},
 };
 
 /// Site-specific rendering choices for one definition-shaped candidate.

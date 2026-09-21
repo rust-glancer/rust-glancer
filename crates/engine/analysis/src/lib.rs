@@ -15,31 +15,32 @@ mod tests;
 
 use std::{collections::HashMap, sync::Arc};
 
-pub use query::{
-    code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
-    completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
-    references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
-};
-pub use rg_ir_view::SymbolKind;
-
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
+pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
 };
 use rg_syntax::SourceFile;
 
-use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
-
-pub use self::model::{
-    CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
-    CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
-    DocumentOutline, DocumentSymbol, DocumentationLink, Fold, FoldKind, Highlight, HighlightKind,
-    HoverBlock, HoverInfo, InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion,
-    NavigationTarget, NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit,
-    RenameResult, RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+pub use self::{
+    model::{
+        CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, DocumentationLink, Fold,
+        FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+        InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+        NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget,
+        SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+    },
+    query::{
+        code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
+        completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
+        references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
+    },
 };
+use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
 /// Request-scoped façade for editor queries over one frozen project view.
 ///
@@ -50,30 +51,6 @@ pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
     saved_source: SavedSourceView<'a>,
     current_source: Option<CurrentSourceView>,
-}
-
-/// One token range proven to name the same declaration in current and saved source.
-struct AssociatedSavedHeader {
-    current: Span,
-    saved: Span,
-}
-
-impl AssociatedSavedHeader {
-    fn current_span(&self) -> Span {
-        self.current
-    }
-
-    fn saved_span(&self) -> Span {
-        self.saved
-    }
-
-    /// Preserve the cursor's position within an associated header token.
-    fn saved_offset_for(&self, current_offset: u32) -> u32 {
-        let within_token = current_offset
-            .saturating_sub(self.current.start)
-            .min(self.current.len());
-        self.saved.start + within_token.min(self.saved.len())
-    }
 }
 
 impl rg_std::Cancelable for Analysis<'_> {
@@ -578,6 +555,30 @@ impl<'a> Analysis<'a> {
         self.run_query("workspace_symbols", || {
             query::symbols::SymbolCollector::new(self).workspace_symbols(query)
         })
+    }
+}
+
+/// One token range proven to name the same declaration in current and saved source.
+struct AssociatedSavedHeader {
+    current: Span,
+    saved: Span,
+}
+
+impl AssociatedSavedHeader {
+    fn current_span(&self) -> Span {
+        self.current
+    }
+
+    fn saved_span(&self) -> Span {
+        self.saved
+    }
+
+    /// Preserve the cursor's position within an associated header token.
+    fn saved_offset_for(&self, current_offset: u32) -> u32 {
+        let within_token = current_offset
+            .saturating_sub(self.current.start)
+            .min(self.current.len());
+        self.saved.start + within_token.min(self.saved.len())
     }
 }
 

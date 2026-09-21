@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::fmt::{Debug, Write as _};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fmt::{Debug, Write as _},
+};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin,
-    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_def_map::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
@@ -27,15 +29,17 @@ use rg_semantic_ir::{
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
-use super::super::{
-    TraitGoal, TraitSelectionQuery, TraitSelectionSession,
-    candidate::TraitCandidate,
-    chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+use crate::{
+    AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
+    inference::{InferVarKind, InferenceTable},
+    lookup::ItemPathQuery,
+    lowering::SemanticSignatureQuery,
+    trait_selection::{
+        TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+        candidate::TraitCandidate,
+        chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+    },
 };
-use crate::inference::{InferVarKind, InferenceTable};
-use crate::lookup::ItemPathQuery;
-use crate::lowering::SemanticSignatureQuery;
-use crate::{AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext};
 
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,
@@ -47,13 +51,6 @@ pub(super) struct TraitSelectionFixture {
     trait_names: HashMap<TraitDefRef, String>,
     type_refs_by_name: HashMap<String, TypeDefRef>,
     trait_refs_by_name: HashMap<String, TraitDefRef>,
-}
-
-struct TraitSelectionDependency {
-    target: CrateRef,
-    def_map: DefMap,
-    store: ItemStore,
-    lookup_index: ItemLookupIndex,
 }
 
 impl TraitSelectionFixture {
@@ -256,6 +253,13 @@ impl DefMapSource for TraitSelectionFixture {
     }
 }
 
+struct TraitSelectionDependency {
+    target: CrateRef,
+    def_map: DefMap,
+    store: ItemStore,
+    lookup_index: ItemLookupIndex,
+}
+
 impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
     type Error = Infallible;
 
@@ -308,13 +312,6 @@ pub(super) fn module() -> ModuleRef {
     ModuleRef {
         origin: origin(),
         module: ModuleId(0),
-    }
-}
-
-fn local_impl(index: usize) -> LocalImplRef {
-    LocalImplRef {
-        origin: origin(),
-        local_impl: LocalImplId(index),
     }
 }
 
@@ -495,176 +492,6 @@ pub(super) fn type_alias_data(
     }
 }
 
-fn fixture_with_traits_impls_aliases_and_structs(
-    mut traits: Vec<TraitData>,
-    impls: Vec<ImplData>,
-    functions: Vec<FunctionData>,
-    type_aliases: Vec<TypeAliasData>,
-    mut structs: Vec<StructData>,
-) -> TraitSelectionFixture {
-    let mut def_map_builder = DefMapBuilder::new(target());
-    let root_module = def_map_builder.alloc_module(ModuleData {
-        name: None,
-        name_span: None,
-        docs: None,
-        user_facing_attrs: Default::default(),
-        visibility: Visibility::Public,
-        parent: None,
-        children: Vec::new(),
-        local_defs: Vec::new(),
-        impls: Vec::new(),
-        imports: Vec::new(),
-        unresolved_imports: Vec::new(),
-        scope: Default::default(),
-        origin: ModuleOrigin::Root { file_id: FileId(0) },
-    });
-    debug_assert_eq!(root_module, module().module);
-
-    let mut scope = ModuleScopeBuilder::default();
-    let mut local_defs = Vec::new();
-
-    // The fixture language describes semantic items directly, but trait selection resolves names
-    // through `ItemPathQuery` just like production code. Build the smallest root module scope that
-    // can resolve declared structs and traits instead of relying on a production same-name
-    // fallback.
-    for struct_data in &mut structs {
-        let local_def = def_map_builder.alloc_local_def(LocalDefData {
-            module: root_module,
-            name: struct_data.name.clone(),
-            kind: LocalDefKind::Struct,
-            namespaces: NamespaceSet::TYPES,
-            visibility: VisibilityLevel::Public,
-            source: struct_data.source,
-            file_id: FileId(0),
-            name_span: None,
-            span: fixture_span(),
-            user_facing_attrs: Default::default(),
-        });
-        let local_def_ref = LocalDefRef {
-            origin: origin(),
-            local_def,
-        };
-        struct_data.local_def = local_def_ref;
-        local_defs.push(local_def);
-        scope.insert_binding(
-            &struct_data.name,
-            Namespace::Types,
-            ScopeBinding::new(
-                DefId::Local(local_def_ref),
-                Visibility::Public,
-                ScopeBindingProvenance::Direct,
-            ),
-        );
-    }
-
-    for trait_data in &mut traits {
-        let local_def = def_map_builder.alloc_local_def(LocalDefData {
-            module: root_module,
-            name: trait_data.name.clone(),
-            kind: LocalDefKind::Trait,
-            namespaces: NamespaceSet::TYPES,
-            visibility: VisibilityLevel::Public,
-            source: trait_data.source,
-            file_id: FileId(0),
-            name_span: None,
-            span: fixture_span(),
-            user_facing_attrs: Default::default(),
-        });
-        let local_def_ref = LocalDefRef {
-            origin: origin(),
-            local_def,
-        };
-        trait_data.local_def = local_def_ref;
-        local_defs.push(local_def);
-        scope.insert_binding(
-            &trait_data.name,
-            Namespace::Types,
-            ScopeBinding::new(
-                DefId::Local(local_def_ref),
-                Visibility::Public,
-                ScopeBindingProvenance::Direct,
-            ),
-        );
-    }
-
-    let module_data = def_map_builder
-        .module_mut(root_module)
-        .expect("fixture root module should exist");
-    let local_def_count = local_defs.len();
-    module_data.local_defs = local_defs;
-    module_data.scope = scope.freeze();
-
-    let mut builder = ItemStoreBuilder::new(origin(), local_def_count);
-    for struct_data in structs {
-        let local_def = struct_data.local_def.local_def;
-        let struct_id = builder.structs.alloc(struct_data);
-        builder.set_local_item(local_def, ItemId::Struct(struct_id));
-    }
-    for type_alias_data in type_aliases {
-        builder.type_aliases.alloc(type_alias_data);
-    }
-    for trait_data in traits {
-        let local_def = trait_data.local_def.local_def;
-        let trait_id = builder.traits.alloc(trait_data);
-        builder.set_local_item(local_def, ItemId::Trait(trait_id));
-    }
-    for impl_data in impls {
-        builder.impls.alloc(impl_data);
-    }
-    for function_data in functions {
-        builder.functions.alloc(function_data);
-    }
-    let mut fixture = TraitSelectionFixture {
-        def_map: def_map_builder.build(),
-        store: builder.build(),
-        target: target(),
-        lookup_index: ItemLookupIndex::default(),
-        dependencies: Vec::new(),
-        type_names: HashMap::new(),
-        trait_names: HashMap::new(),
-        type_refs_by_name: HashMap::new(),
-        trait_refs_by_name: HashMap::new(),
-    };
-    for (struct_id, data) in fixture.store.structs().iter_with_ids() {
-        let def = TypeDefRef {
-            origin: origin(),
-            id: TypeDefId::Struct(struct_id),
-        };
-        fixture.type_names.insert(def, data.name.to_string());
-        fixture.type_refs_by_name.insert(data.name.to_string(), def);
-    }
-    for (trait_id, data) in fixture.store.traits().iter_with_ids() {
-        let trait_ref = TraitDefRef {
-            origin: origin(),
-            id: trait_id,
-        };
-        fixture.trait_names.insert(trait_ref, data.name.to_string());
-        fixture
-            .trait_refs_by_name
-            .insert(data.name.to_string(), trait_ref);
-    }
-    fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
-    fixture
-}
-
-fn type_ref_path_name(ty: &TypeRef) -> Option<String> {
-    match ty {
-        TypeRef::Path(path) => path.segments.last().map(|segment| segment.name.to_string()),
-        TypeRef::Unit
-        | TypeRef::Never
-        | TypeRef::Infer
-        | TypeRef::Tuple(_)
-        | TypeRef::Array { .. }
-        | TypeRef::Slice(_)
-        | TypeRef::Reference { .. }
-        | TypeRef::RawPointer { .. }
-        | TypeRef::FnPointer { .. }
-        | TypeRef::ImplTrait(_)
-        | TypeRef::DynTrait(_)
-        | TypeRef::Unknown(_) => None,
-    }
-}
-
 pub(super) fn query(
     fixture: &TraitSelectionFixture,
 ) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
@@ -725,7 +552,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             self.parse_line(line);
         }
 
-        fixture_with_traits_impls_aliases_and_structs(
+        Self::fixture_with_traits_impls_aliases_and_structs(
             self.traits,
             self.impls,
             self.functions,
@@ -772,12 +599,12 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     }
 
     fn parse_trait(&mut self, line: &str) {
-        let (id, rest) = parse_numbered_line(line, "trait#");
+        let (id, rest) = Self::parse_numbered_line(line, "trait#");
         assert_eq!(id, self.traits.len(), "trait fixture ids should be dense");
         let (rest, super_traits) = split_top_level_keyword(rest, ": ")
             .map(|(head, tail)| (head, parse_type_bounds(tail)))
             .unwrap_or((rest, Vec::new()));
-        let (name, generics) = parse_named_generics(rest);
+        let (name, generics) = Self::parse_named_generics(rest);
         let trait_ref = trait_ref(id);
         self.trait_refs_by_name.insert(name.to_string(), trait_ref);
         let mut data = trait_data(id, name, generics);
@@ -786,26 +613,26 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     }
 
     fn parse_struct(&mut self, line: &str) {
-        let (id, rest) = parse_numbered_line(line, "struct#");
+        let (id, rest) = Self::parse_numbered_line(line, "struct#");
         assert_eq!(id, self.structs.len(), "struct fixture ids should be dense");
-        let (name, generics) = parse_named_generics(rest);
+        let (name, generics) = Self::parse_named_generics(rest);
         let def = type_def(id);
         self.type_refs_by_name.insert(name.to_string(), def);
         self.structs.push(struct_data(id, name, generics));
     }
 
     fn parse_impl(&mut self, line: &str) {
-        let (id, rest) = parse_numbered_line(line, "impl#");
+        let (id, rest) = Self::parse_numbered_line(line, "impl#");
         assert_eq!(id, self.impls.len(), "impl fixture ids should be dense");
-        let (rest, note) = split_trailing_note(rest);
+        let (rest, note) = Self::split_trailing_note(rest);
         let rest = rest
             .strip_prefix("impl")
             .expect("impl fixture should start with `impl`")
             .trim();
 
-        let (mut generics, rest) = parse_leading_generics(rest);
+        let (mut generics, rest) = Self::parse_leading_generics(rest);
         let (rest, where_predicates) = split_top_level_keyword(rest, " where ")
-            .map(|(head, tail)| (head, parse_where_predicates(tail)))
+            .map(|(head, tail)| (head, Self::parse_where_predicates(tail)))
             .unwrap_or((rest, Vec::new()));
         generics.where_predicates.extend(where_predicates);
 
@@ -814,7 +641,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         let trait_ty = parse_type_ref(trait_ty);
         let self_ty = parse_type_ref(self_ty);
         let trait_name =
-            type_ref_path_name(&trait_ty).expect("impl trait fixture should be a trait path");
+            Self::type_ref_path_name(&trait_ty).expect("impl trait fixture should be a trait path");
         let trait_ref = *self
             .trait_refs_by_name
             .get(&trait_name)
@@ -826,7 +653,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         // the fixture instead of hiding it in Rust construction code.
         let resolved_self_ty = self.resolve_impl_self_ty(&self_ty, note.as_deref());
         let impl_data = ImplData {
-            local_impl: local_impl(id),
+            local_impl: Self::local_impl(id),
             source: dummy_source(),
             owner: module(),
             generics,
@@ -841,7 +668,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     }
 
     fn parse_function(&mut self, line: &str) {
-        let (id, rest) = parse_numbered_line(line, "fn#");
+        let (id, rest) = Self::parse_numbered_line(line, "fn#");
         assert_eq!(
             id,
             self.functions.len(),
@@ -883,7 +710,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     }
 
     fn parse_type_alias(&mut self, line: &str) {
-        let (id, rest) = parse_numbered_line(line, "type#");
+        let (id, rest) = Self::parse_numbered_line(line, "type#");
         assert_eq!(
             id,
             self.type_aliases.len(),
@@ -938,7 +765,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             return resolved_one(def);
         }
 
-        let name = type_ref_path_name(self_ty)
+        let name = Self::type_ref_path_name(self_ty)
             .expect("impl self type should be a type path or use a `resolved self` note");
         let def = *self
             .type_refs_by_name
@@ -946,89 +773,266 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .unwrap_or_else(|| panic!("unknown impl self type `{name}`"));
         resolved_one(def)
     }
-}
 
-fn parse_numbered_line<'a>(line: &'a str, prefix: &str) -> (usize, &'a str) {
-    let rest = line
-        .strip_prefix(prefix)
-        .unwrap_or_else(|| panic!("fixture line should start with `{prefix}`: {line}"));
-    let (index, rest) = rest
-        .split_once(' ')
-        .unwrap_or_else(|| panic!("fixture line should have a number and body: {line}"));
-    (parse_usize(index, prefix), rest.trim())
+    fn local_impl(index: usize) -> LocalImplRef {
+        LocalImplRef {
+            origin: origin(),
+            local_impl: LocalImplId(index),
+        }
+    }
+
+    fn fixture_with_traits_impls_aliases_and_structs(
+        mut traits: Vec<TraitData>,
+        impls: Vec<ImplData>,
+        functions: Vec<FunctionData>,
+        type_aliases: Vec<TypeAliasData>,
+        mut structs: Vec<StructData>,
+    ) -> TraitSelectionFixture {
+        let mut def_map_builder = DefMapBuilder::new(target());
+        let root_module = def_map_builder.alloc_module(ModuleData {
+            name: None,
+            name_span: None,
+            docs: None,
+            user_facing_attrs: Default::default(),
+            visibility: Visibility::Public,
+            parent: None,
+            children: Vec::new(),
+            local_defs: Vec::new(),
+            impls: Vec::new(),
+            imports: Vec::new(),
+            unresolved_imports: Vec::new(),
+            scope: Default::default(),
+            origin: ModuleOrigin::Root { file_id: FileId(0) },
+        });
+        debug_assert_eq!(root_module, module().module);
+
+        let mut scope = ModuleScopeBuilder::default();
+        let mut local_defs = Vec::new();
+
+        // The fixture language describes semantic items directly, but trait selection resolves names
+        // through `ItemPathQuery` just like production code. Build the smallest root module scope that
+        // can resolve declared structs and traits instead of relying on a production same-name
+        // fallback.
+        for struct_data in &mut structs {
+            let local_def = def_map_builder.alloc_local_def(LocalDefData {
+                module: root_module,
+                name: struct_data.name.clone(),
+                kind: LocalDefKind::Struct,
+                namespaces: NamespaceSet::TYPES,
+                visibility: VisibilityLevel::Public,
+                source: struct_data.source,
+                file_id: FileId(0),
+                name_span: None,
+                span: fixture_span(),
+                user_facing_attrs: Default::default(),
+            });
+            let local_def_ref = LocalDefRef {
+                origin: origin(),
+                local_def,
+            };
+            struct_data.local_def = local_def_ref;
+            local_defs.push(local_def);
+            scope.insert_binding(
+                &struct_data.name,
+                Namespace::Types,
+                ScopeBinding::new(
+                    DefId::Local(local_def_ref),
+                    Visibility::Public,
+                    ScopeBindingProvenance::Direct,
+                ),
+            );
+        }
+
+        for trait_data in &mut traits {
+            let local_def = def_map_builder.alloc_local_def(LocalDefData {
+                module: root_module,
+                name: trait_data.name.clone(),
+                kind: LocalDefKind::Trait,
+                namespaces: NamespaceSet::TYPES,
+                visibility: VisibilityLevel::Public,
+                source: trait_data.source,
+                file_id: FileId(0),
+                name_span: None,
+                span: fixture_span(),
+                user_facing_attrs: Default::default(),
+            });
+            let local_def_ref = LocalDefRef {
+                origin: origin(),
+                local_def,
+            };
+            trait_data.local_def = local_def_ref;
+            local_defs.push(local_def);
+            scope.insert_binding(
+                &trait_data.name,
+                Namespace::Types,
+                ScopeBinding::new(
+                    DefId::Local(local_def_ref),
+                    Visibility::Public,
+                    ScopeBindingProvenance::Direct,
+                ),
+            );
+        }
+
+        let module_data = def_map_builder
+            .module_mut(root_module)
+            .expect("fixture root module should exist");
+        let local_def_count = local_defs.len();
+        module_data.local_defs = local_defs;
+        module_data.scope = scope.freeze();
+
+        let mut builder = ItemStoreBuilder::new(origin(), local_def_count);
+        for struct_data in structs {
+            let local_def = struct_data.local_def.local_def;
+            let struct_id = builder.structs.alloc(struct_data);
+            builder.set_local_item(local_def, ItemId::Struct(struct_id));
+        }
+        for type_alias_data in type_aliases {
+            builder.type_aliases.alloc(type_alias_data);
+        }
+        for trait_data in traits {
+            let local_def = trait_data.local_def.local_def;
+            let trait_id = builder.traits.alloc(trait_data);
+            builder.set_local_item(local_def, ItemId::Trait(trait_id));
+        }
+        for impl_data in impls {
+            builder.impls.alloc(impl_data);
+        }
+        for function_data in functions {
+            builder.functions.alloc(function_data);
+        }
+        let mut fixture = TraitSelectionFixture {
+            def_map: def_map_builder.build(),
+            store: builder.build(),
+            target: target(),
+            lookup_index: ItemLookupIndex::default(),
+            dependencies: Vec::new(),
+            type_names: HashMap::new(),
+            trait_names: HashMap::new(),
+            type_refs_by_name: HashMap::new(),
+            trait_refs_by_name: HashMap::new(),
+        };
+        for (struct_id, data) in fixture.store.structs().iter_with_ids() {
+            let def = TypeDefRef {
+                origin: origin(),
+                id: TypeDefId::Struct(struct_id),
+            };
+            fixture.type_names.insert(def, data.name.to_string());
+            fixture.type_refs_by_name.insert(data.name.to_string(), def);
+        }
+        for (trait_id, data) in fixture.store.traits().iter_with_ids() {
+            let trait_ref = TraitDefRef {
+                origin: origin(),
+                id: trait_id,
+            };
+            fixture.trait_names.insert(trait_ref, data.name.to_string());
+            fixture
+                .trait_refs_by_name
+                .insert(data.name.to_string(), trait_ref);
+        }
+        fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
+        fixture
+    }
+
+    fn type_ref_path_name(ty: &TypeRef) -> Option<String> {
+        match ty {
+            TypeRef::Path(path) => path.segments.last().map(|segment| segment.name.to_string()),
+            TypeRef::Unit
+            | TypeRef::Never
+            | TypeRef::Infer
+            | TypeRef::Tuple(_)
+            | TypeRef::Array { .. }
+            | TypeRef::Slice(_)
+            | TypeRef::Reference { .. }
+            | TypeRef::RawPointer { .. }
+            | TypeRef::FnPointer { .. }
+            | TypeRef::ImplTrait(_)
+            | TypeRef::DynTrait(_)
+            | TypeRef::Unknown(_) => None,
+        }
+    }
+
+    fn parse_numbered_line<'line>(line: &'line str, prefix: &str) -> (usize, &'line str) {
+        let rest = line
+            .strip_prefix(prefix)
+            .unwrap_or_else(|| panic!("fixture line should start with `{prefix}`: {line}"));
+        let (index, rest) = rest
+            .split_once(' ')
+            .unwrap_or_else(|| panic!("fixture line should have a number and body: {line}"));
+        (parse_usize(index, prefix), rest.trim())
+    }
+
+    fn split_trailing_note(line: &str) -> (&str, Option<String>) {
+        let Some((head, note)) = line.rsplit_once(" [") else {
+            return (line, None);
+        };
+        let note = note
+            .strip_suffix(']')
+            .unwrap_or_else(|| panic!("fixture note should end with `]`: {line}"));
+        (head.trim(), Some(note.to_string()))
+    }
+
+    fn parse_named_generics(text: &str) -> (&str, GenericParams) {
+        let Some(angle_start) = text.find('<') else {
+            return (text.trim(), GenericParams::default());
+        };
+        let angle_end = matching_angle(text, angle_start);
+        let name = text[..angle_start].trim();
+        let generics = Self::parse_generic_params(&text[angle_start + 1..angle_end]);
+        (name, generics)
+    }
+
+    fn parse_leading_generics(text: &str) -> (GenericParams, &str) {
+        let text = text.trim();
+        if !text.starts_with('<') {
+            return (GenericParams::default(), text);
+        }
+
+        let angle_end = matching_angle(text, 0);
+        (
+            Self::parse_generic_params(&text[1..angle_end]),
+            text[angle_end + 1..].trim(),
+        )
+    }
+
+    fn parse_where_predicates(text: &str) -> Vec<WherePredicate> {
+        split_top_level_commas(text)
+            .into_iter()
+            .map(|predicate| {
+                let (ty, bounds) = split_top_level_keyword(predicate, ": ")
+                    .expect("where predicate should be written as `Type: Bound`");
+                WherePredicate::Type {
+                    ty: parse_type_ref(ty),
+                    bounds: parse_type_bounds(bounds),
+                }
+            })
+            .collect()
+    }
+
+    fn parse_generic_params(text: &str) -> GenericParams {
+        if text.trim().is_empty() {
+            return GenericParams::default();
+        }
+
+        generics(
+            split_top_level_commas(text)
+                .into_iter()
+                .map(Self::parse_type_param_decl)
+                .collect(),
+        )
+    }
+
+    fn parse_type_param_decl(text: &str) -> TypeParamData {
+        if let Some((name, bounds)) = split_top_level_keyword(text, ": ") {
+            return type_param_with_bounds(name.trim(), parse_type_bounds(bounds));
+        }
+
+        type_param(text.trim())
+    }
 }
 
 fn parse_usize(text: &str, context: &str) -> usize {
     text.parse::<usize>()
         .unwrap_or_else(|_| panic!("{context} should be a usize: {text}"))
-}
-
-fn split_trailing_note(line: &str) -> (&str, Option<String>) {
-    let Some((head, note)) = line.rsplit_once(" [") else {
-        return (line, None);
-    };
-    let note = note
-        .strip_suffix(']')
-        .unwrap_or_else(|| panic!("fixture note should end with `]`: {line}"));
-    (head.trim(), Some(note.to_string()))
-}
-
-fn parse_named_generics(text: &str) -> (&str, GenericParams) {
-    let Some(angle_start) = text.find('<') else {
-        return (text.trim(), GenericParams::default());
-    };
-    let angle_end = matching_angle(text, angle_start);
-    let name = text[..angle_start].trim();
-    let generics = parse_generic_params(&text[angle_start + 1..angle_end]);
-    (name, generics)
-}
-
-fn parse_leading_generics(text: &str) -> (GenericParams, &str) {
-    let text = text.trim();
-    if !text.starts_with('<') {
-        return (GenericParams::default(), text);
-    }
-
-    let angle_end = matching_angle(text, 0);
-    (
-        parse_generic_params(&text[1..angle_end]),
-        text[angle_end + 1..].trim(),
-    )
-}
-
-fn parse_generic_params(text: &str) -> GenericParams {
-    if text.trim().is_empty() {
-        return GenericParams::default();
-    }
-
-    generics(
-        split_top_level_commas(text)
-            .into_iter()
-            .map(parse_type_param_decl)
-            .collect(),
-    )
-}
-
-fn parse_type_param_decl(text: &str) -> TypeParamData {
-    if let Some((name, bounds)) = split_top_level_keyword(text, ": ") {
-        return type_param_with_bounds(name.trim(), parse_type_bounds(bounds));
-    }
-
-    type_param(text.trim())
-}
-
-fn parse_where_predicates(text: &str) -> Vec<WherePredicate> {
-    split_top_level_commas(text)
-        .into_iter()
-        .map(|predicate| {
-            let (ty, bounds) = split_top_level_keyword(predicate, ": ")
-                .expect("where predicate should be written as `Type: Bound`");
-            WherePredicate::Type {
-                ty: parse_type_ref(ty),
-                bounds: parse_type_bounds(bounds),
-            }
-        })
-        .collect()
 }
 
 fn parse_type_bounds(text: &str) -> Vec<TypeBound> {
@@ -1241,13 +1245,6 @@ pub(super) struct TraitSelectionCase {
     kind: TraitSelectionCaseKind,
 }
 
-enum TraitSelectionCaseKind {
-    Probe(String),
-    CandidateProbe(String),
-    NormalizeAssoc(String),
-    ChalkNormalizeAssoc(String),
-}
-
 impl TraitSelectionCase {
     pub(super) fn probe(title: &'static str, goal: impl Into<String>) -> Self {
         Self {
@@ -1288,6 +1285,13 @@ impl TraitSelectionCase {
     }
 }
 
+enum TraitSelectionCaseKind {
+    Probe(String),
+    CandidateProbe(String),
+    NormalizeAssoc(String),
+    ChalkNormalizeAssoc(String),
+}
+
 pub(super) fn check_trait_selection_queries(
     fixture: impl Into<TraitSelectionFixture>,
     cases: Vec<TraitSelectionCase>,
@@ -1304,185 +1308,6 @@ pub(super) fn check_trait_selection_queries(
 struct TraitSelectionSnapshot {
     fixture: TraitSelectionFixture,
     cases: Vec<TraitSelectionCase>,
-}
-
-pub(super) struct ParsedTraitQuery {
-    pub(super) goal: TraitGoal,
-    pub(super) table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_names: HashMap<String, String>,
-}
-
-pub(super) struct ParsedAssocQuery {
-    pub(super) goal: TraitGoal,
-    pub(super) assoc_name: String,
-    pub(super) table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_names: HashMap<String, String>,
-}
-
-struct NamedInferVar {
-    name: String,
-    ty: Ty,
-}
-
-pub(super) struct TraitSelectionQueryParser<'a> {
-    fixture: &'a TraitSelectionFixture,
-    table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_by_name: HashMap<String, Ty>,
-}
-
-impl<'a> TraitSelectionQueryParser<'a> {
-    pub(super) fn new(fixture: &'a TraitSelectionFixture) -> Self {
-        Self {
-            fixture,
-            table: InferenceTable::new(),
-            vars: Vec::new(),
-            var_by_name: HashMap::new(),
-        }
-    }
-
-    pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
-        let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
-            .expect("trait query should be written as `Self: Trait<Args>`");
-        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
-        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
-        goal.associated_types = associated_types;
-        let var_names = self.var_name_map();
-        ParsedTraitQuery {
-            goal,
-            table: self.table,
-            vars: self.vars,
-            var_names,
-        }
-    }
-
-    pub(super) fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery {
-        let text = text.trim();
-        assert!(
-            text.starts_with('<'),
-            "associated projection query should start with `<`: {text}"
-        );
-        let angle_end = matching_angle(text, 0);
-        let assoc_name = text[angle_end + 1..].strip_prefix("::").unwrap_or_else(|| {
-            panic!("associated projection query should end with `::Assoc`: {text}")
-        });
-        let inner = &text[1..angle_end];
-        let (self_ty, trait_path) = split_top_level_keyword(inner, " as ")
-            .expect("associated projection query should contain ` as `");
-        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
-        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
-        goal.associated_types = associated_types;
-        let var_names = self.var_name_map();
-        ParsedAssocQuery {
-            goal,
-            assoc_name: assoc_name.to_string(),
-            table: self.table,
-            vars: self.vars,
-            var_names,
-        }
-    }
-
-    fn parse_trait_path(
-        &mut self,
-        text: &str,
-    ) -> (TraitDefRef, Vec<GenericArg>, Vec<AssocTypeBinding>) {
-        let (trait_name, args) = parse_path_head_and_args(text.trim());
-        let trait_ref = self
-            .fixture
-            .trait_ref_by_name(trait_name)
-            .unwrap_or_else(|| panic!("query refers to unknown trait `{trait_name}`"));
-        let mut positional = Vec::new();
-        let mut associated_types = Vec::new();
-        for arg in args {
-            if let Some((name, ty)) = split_top_level_keyword(arg, " = ") {
-                let associated_ty = self
-                    .fixture
-                    .associated_ty_by_name(trait_ref, name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "query refers to unknown associated type `{name}` on trait `{trait_name}`"
-                        )
-                    });
-                associated_types.push(AssocTypeBinding {
-                    associated_ty,
-                    ty: self.parse_infer_ty(ty),
-                });
-            } else {
-                positional.push(GenericArg::Type(Box::new(self.parse_infer_ty(arg))));
-            }
-        }
-        (trait_ref, positional, associated_types)
-    }
-
-    fn parse_infer_ty(&mut self, text: &str) -> Ty {
-        let text = text.trim();
-        if text == "_" {
-            return Ty::Unknown;
-        }
-        if let Some(name) = text.strip_prefix('?') {
-            return self.type_var(name);
-        }
-        if let Some(index) = text.strip_prefix("opaque#") {
-            let function = FunctionRef {
-                origin: origin(),
-                id: FunctionId(parse_usize(index, "opaque function id")),
-            };
-            return SemanticSignatureQuery::new(self.fixture, self.fixture)
-                .function(function)
-                .expect("fixture opaque signature should lower")
-                .unwrap_or_else(|| panic!("query refers to unknown opaque function `{index}`"))
-                .ret;
-        }
-        if let Some(ty) = parse_bracket_ty(text) {
-            return match ty {
-                ParsedBracketTy::Slice(inner) => Ty::Slice(Box::new(self.parse_infer_ty(inner))),
-                ParsedBracketTy::Array { inner, len } => Ty::Array {
-                    inner: Box::new(self.parse_infer_ty(inner)),
-                    len: len.into(),
-                },
-            };
-        }
-
-        let (name, args) = parse_path_head_and_args(text);
-        let def = self
-            .fixture
-            .type_ref_by_name(name)
-            .unwrap_or_else(|| panic!("query refers to unknown type `{name}`"));
-        let args = args
-            .into_iter()
-            .map(|arg| GenericArg::Type(Box::new(self.parse_infer_ty(arg))))
-            .collect();
-        nominal_infer_ty(def, args)
-    }
-
-    fn type_var(&mut self, name: &str) -> Ty {
-        if let Some(ty) = self.var_by_name.get(name) {
-            return ty.clone();
-        }
-
-        let ty = self.table.new_type_var();
-        self.var_by_name.insert(name.to_string(), ty.clone());
-        self.vars.push(NamedInferVar {
-            name: name.to_string(),
-            ty: ty.clone(),
-        });
-        ty
-    }
-
-    fn var_name_map(&self) -> HashMap<String, String> {
-        self.vars
-            .iter()
-            .filter_map(|var| match &var.ty {
-                Ty::InferVar { id, .. } => Some((
-                    TraitSelectionSnapshot::render_debug_tuple_id(id),
-                    var.name.clone(),
-                )),
-                _ => None,
-            })
-            .collect()
-    }
 }
 
 impl TraitSelectionSnapshot {
@@ -2121,5 +1946,184 @@ impl TraitSelectionSnapshot {
             .and_then(|text| text.strip_suffix(')'))
             .unwrap_or(&text)
             .to_string()
+    }
+}
+
+pub(super) struct ParsedTraitQuery {
+    pub(super) goal: TraitGoal,
+    pub(super) table: InferenceTable,
+    vars: Vec<NamedInferVar>,
+    var_names: HashMap<String, String>,
+}
+
+pub(super) struct ParsedAssocQuery {
+    pub(super) goal: TraitGoal,
+    pub(super) assoc_name: String,
+    pub(super) table: InferenceTable,
+    vars: Vec<NamedInferVar>,
+    var_names: HashMap<String, String>,
+}
+
+struct NamedInferVar {
+    name: String,
+    ty: Ty,
+}
+
+pub(super) struct TraitSelectionQueryParser<'a> {
+    fixture: &'a TraitSelectionFixture,
+    table: InferenceTable,
+    vars: Vec<NamedInferVar>,
+    var_by_name: HashMap<String, Ty>,
+}
+
+impl<'a> TraitSelectionQueryParser<'a> {
+    pub(super) fn new(fixture: &'a TraitSelectionFixture) -> Self {
+        Self {
+            fixture,
+            table: InferenceTable::new(),
+            vars: Vec::new(),
+            var_by_name: HashMap::new(),
+        }
+    }
+
+    pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
+        let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
+            .expect("trait query should be written as `Self: Trait<Args>`");
+        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
+        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
+        goal.associated_types = associated_types;
+        let var_names = self.var_name_map();
+        ParsedTraitQuery {
+            goal,
+            table: self.table,
+            vars: self.vars,
+            var_names,
+        }
+    }
+
+    pub(super) fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery {
+        let text = text.trim();
+        assert!(
+            text.starts_with('<'),
+            "associated projection query should start with `<`: {text}"
+        );
+        let angle_end = matching_angle(text, 0);
+        let assoc_name = text[angle_end + 1..].strip_prefix("::").unwrap_or_else(|| {
+            panic!("associated projection query should end with `::Assoc`: {text}")
+        });
+        let inner = &text[1..angle_end];
+        let (self_ty, trait_path) = split_top_level_keyword(inner, " as ")
+            .expect("associated projection query should contain ` as `");
+        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
+        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
+        goal.associated_types = associated_types;
+        let var_names = self.var_name_map();
+        ParsedAssocQuery {
+            goal,
+            assoc_name: assoc_name.to_string(),
+            table: self.table,
+            vars: self.vars,
+            var_names,
+        }
+    }
+
+    fn parse_trait_path(
+        &mut self,
+        text: &str,
+    ) -> (TraitDefRef, Vec<GenericArg>, Vec<AssocTypeBinding>) {
+        let (trait_name, args) = parse_path_head_and_args(text.trim());
+        let trait_ref = self
+            .fixture
+            .trait_ref_by_name(trait_name)
+            .unwrap_or_else(|| panic!("query refers to unknown trait `{trait_name}`"));
+        let mut positional = Vec::new();
+        let mut associated_types = Vec::new();
+        for arg in args {
+            if let Some((name, ty)) = split_top_level_keyword(arg, " = ") {
+                let associated_ty = self
+                    .fixture
+                    .associated_ty_by_name(trait_ref, name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "query refers to unknown associated type `{name}` on trait `{trait_name}`"
+                        )
+                    });
+                associated_types.push(AssocTypeBinding {
+                    associated_ty,
+                    ty: self.parse_infer_ty(ty),
+                });
+            } else {
+                positional.push(GenericArg::Type(Box::new(self.parse_infer_ty(arg))));
+            }
+        }
+        (trait_ref, positional, associated_types)
+    }
+
+    fn parse_infer_ty(&mut self, text: &str) -> Ty {
+        let text = text.trim();
+        if text == "_" {
+            return Ty::Unknown;
+        }
+        if let Some(name) = text.strip_prefix('?') {
+            return self.type_var(name);
+        }
+        if let Some(index) = text.strip_prefix("opaque#") {
+            let function = FunctionRef {
+                origin: origin(),
+                id: FunctionId(parse_usize(index, "opaque function id")),
+            };
+            return SemanticSignatureQuery::new(self.fixture, self.fixture)
+                .function(function)
+                .expect("fixture opaque signature should lower")
+                .unwrap_or_else(|| panic!("query refers to unknown opaque function `{index}`"))
+                .ret;
+        }
+        if let Some(ty) = parse_bracket_ty(text) {
+            return match ty {
+                ParsedBracketTy::Slice(inner) => Ty::Slice(Box::new(self.parse_infer_ty(inner))),
+                ParsedBracketTy::Array { inner, len } => Ty::Array {
+                    inner: Box::new(self.parse_infer_ty(inner)),
+                    len: len.into(),
+                },
+            };
+        }
+
+        let (name, args) = parse_path_head_and_args(text);
+        let def = self
+            .fixture
+            .type_ref_by_name(name)
+            .unwrap_or_else(|| panic!("query refers to unknown type `{name}`"));
+        let args = args
+            .into_iter()
+            .map(|arg| GenericArg::Type(Box::new(self.parse_infer_ty(arg))))
+            .collect();
+        nominal_infer_ty(def, args)
+    }
+
+    fn type_var(&mut self, name: &str) -> Ty {
+        if let Some(ty) = self.var_by_name.get(name) {
+            return ty.clone();
+        }
+
+        let ty = self.table.new_type_var();
+        self.var_by_name.insert(name.to_string(), ty.clone());
+        self.vars.push(NamedInferVar {
+            name: name.to_string(),
+            ty: ty.clone(),
+        });
+        ty
+    }
+
+    fn var_name_map(&self) -> HashMap<String, String> {
+        self.vars
+            .iter()
+            .filter_map(|var| match &var.ty {
+                Ty::InferVar { id, .. } => Some((
+                    TraitSelectionSnapshot::render_debug_tuple_id(id),
+                    var.name.clone(),
+                )),
+                _ => None,
+            })
+            .collect()
     }
 }

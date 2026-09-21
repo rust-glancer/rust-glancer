@@ -10,8 +10,10 @@ use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef, TypeAliasRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::inference::{InferVarId, InferVarKind};
-use crate::{ProjectionTy, Ty};
+use crate::{
+    ProjectionTy, Ty,
+    inference::{InferVarId, InferVarKind},
+};
 
 /// Lifetime argument retained by the semantic type model.
 ///
@@ -159,6 +161,52 @@ pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Lifetime(Lifetime),
     Const(ConstValue),
+}
+
+impl GenericArg {
+    pub fn as_ty(&self) -> Option<&Ty> {
+        match self {
+            Self::Type(ty) => Some(ty),
+            Self::Lifetime(_) | Self::Const(_) => None,
+        }
+    }
+
+    /// Returns whether this generic argument still carries inference variables.
+    pub fn has_var(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_var(),
+            Self::Lifetime(_) | Self::Const(_) => false,
+        }
+    }
+
+    /// Returns true when this generic argument contains `Ty::Unknown`.
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_unknown(),
+            Self::Lifetime(_) | Self::Const(_) => false,
+        }
+    }
+
+    pub(crate) fn has_projection(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_projection(),
+            Self::Lifetime(_) | Self::Const(_) => false,
+        }
+    }
+
+    pub(crate) fn has_closure(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_closure(),
+            Self::Lifetime(_) | Self::Const(_) => false,
+        }
+    }
+
+    pub(crate) fn is_projectable(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.is_projectable(),
+            Self::Lifetime(_) | Self::Const(_) => true,
+        }
+    }
 }
 
 /// A trait definition applied to its full semantic argument list.
@@ -346,16 +394,6 @@ pub struct TraitRefLowering {
     pub associated_types: Vec<AssocTypeBinding>,
 }
 
-/// Flat predicate vocabulary consumed by trait selection and the Chalk adapter.
-///
-/// A bound such as `T: Iterator<Item = User>` becomes one `Implemented` clause for
-/// `T: Iterator` and one `AliasEq` clause for `<T as Iterator>::Item = User`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Clause {
-    Implemented(TraitApplication),
-    AliasEq { alias: ProjectionTy, ty: Ty },
-}
-
 impl TraitRefLowering {
     pub fn into_clauses(self) -> impl Iterator<Item = Clause> {
         let application = self.application;
@@ -374,48 +412,12 @@ impl TraitRefLowering {
     }
 }
 
-impl GenericArg {
-    pub fn as_ty(&self) -> Option<&Ty> {
-        match self {
-            Self::Type(ty) => Some(ty),
-            Self::Lifetime(_) | Self::Const(_) => None,
-        }
-    }
-
-    /// Returns whether this generic argument still carries inference variables.
-    pub fn has_var(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.has_var(),
-            Self::Lifetime(_) | Self::Const(_) => false,
-        }
-    }
-
-    /// Returns true when this generic argument contains `Ty::Unknown`.
-    pub fn has_unknown(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.has_unknown(),
-            Self::Lifetime(_) | Self::Const(_) => false,
-        }
-    }
-
-    pub(crate) fn has_projection(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.has_projection(),
-            Self::Lifetime(_) | Self::Const(_) => false,
-        }
-    }
-
-    pub(crate) fn has_closure(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.has_closure(),
-            Self::Lifetime(_) | Self::Const(_) => false,
-        }
-    }
-
-    pub(crate) fn is_projectable(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.is_projectable(),
-            Self::Lifetime(_) | Self::Const(_) => true,
-        }
-    }
+/// Flat predicate vocabulary consumed by trait selection and the Chalk adapter.
+///
+/// A bound such as `T: Iterator<Item = User>` becomes one `Implemented` clause for
+/// `T: Iterator` and one `AliasEq` clause for `<T as Iterator>::Item = User`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Clause {
+    Implemented(TraitApplication),
+    AliasEq { alias: ProjectionTy, ty: Ty },
 }

@@ -1,8 +1,7 @@
 //! Shared comparison outcome helpers.
 
-use crate::compare_lsp::normalization::NormalizedOutcome;
-
 use super::metrics::NonComparableMetrics;
+use crate::compare_lsp::normalization::NormalizedOutcome;
 
 #[derive(Debug)]
 pub(crate) struct NonComparableComparison {
@@ -17,8 +16,8 @@ impl NonComparableComparison {
         Self {
             rust_glancer: OutcomeStatus::from_outcome(rust_glancer),
             rust_analyzer: OutcomeStatus::from_outcome(rust_analyzer),
-            rust_glancer_detail: outcome_detail(rust_glancer),
-            rust_analyzer_detail: outcome_detail(rust_analyzer),
+            rust_glancer_detail: Self::outcome_detail(rust_glancer),
+            rust_analyzer_detail: Self::outcome_detail(rust_analyzer),
         }
     }
 
@@ -28,6 +27,15 @@ impl NonComparableComparison {
             rust_analyzer_status: self.rust_analyzer,
             rust_glancer_detail: self.rust_glancer_detail.clone(),
             rust_analyzer_detail: self.rust_analyzer_detail.clone(),
+        }
+    }
+
+    fn outcome_detail(outcome: &NormalizedOutcome) -> Option<String> {
+        match outcome {
+            NormalizedOutcome::MalformedSuccess { message } => Some(message.clone()),
+            NormalizedOutcome::Error { code, message } => Some(format!("{code}: {message}")),
+            NormalizedOutcome::TransportFailure { message } => Some(message.clone()),
+            _ => None,
         }
     }
 }
@@ -100,14 +108,5 @@ impl Ratio {
 
     pub(super) fn percent(self) -> f64 {
         (self.numerator as f64 / self.denominator as f64) * 100.0
-    }
-}
-
-fn outcome_detail(outcome: &NormalizedOutcome) -> Option<String> {
-    match outcome {
-        NormalizedOutcome::MalformedSuccess { message } => Some(message.clone()),
-        NormalizedOutcome::Error { code, message } => Some(format!("{code}: {message}")),
-        NormalizedOutcome::TransportFailure { message } => Some(message.clone()),
-        _ => None,
     }
 }

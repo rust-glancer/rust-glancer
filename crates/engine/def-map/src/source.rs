@@ -52,15 +52,6 @@ pub struct ItemSource {
     pub kind: ItemSourceKind,
 }
 
-/// The storage layer that owns a source item payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[shrink(leaf)]
-pub enum ItemSourceKind {
-    ItemTree(ItemTreeRef),
-    Generated(GeneratedItemRef),
-    Body(BodyItemSourceRef),
-}
-
 impl ItemSource {
     pub fn item_tree(source: ItemTreeRef) -> Self {
         Self {
@@ -121,6 +112,15 @@ impl From<ItemTreeRef> for ItemSource {
     fn from(source: ItemTreeRef) -> Self {
         Self::item_tree(source)
     }
+}
+
+/// The storage layer that owns a source item payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
+pub enum ItemSourceKind {
+    ItemTree(ItemTreeRef),
+    Generated(GeneratedItemRef),
+    Body(BodyItemSourceRef),
 }
 
 /// Item-tree-shaped payload produced for one declarative macro expansion.

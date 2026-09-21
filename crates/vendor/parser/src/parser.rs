@@ -28,12 +28,6 @@ pub(crate) struct Parser<'t> {
     steps: Cell<u32>,
 }
 
-const PARSER_STEP_LIMIT: usize = if cfg!(debug_assertions) {
-    150_000
-} else {
-    15_000_000
-};
-
 impl<'t> Parser<'t> {
     pub(super) fn new(inp: &'t Input) -> Parser<'t> {
         Parser {
@@ -309,6 +303,12 @@ impl<'t> Parser<'t> {
         self.inp.edition(self.pos)
     }
 }
+
+const PARSER_STEP_LIMIT: usize = if cfg!(debug_assertions) {
+    150_000
+} else {
+    15_000_000
+};
 
 /// See [`Parser::start`].
 pub(crate) struct Marker {

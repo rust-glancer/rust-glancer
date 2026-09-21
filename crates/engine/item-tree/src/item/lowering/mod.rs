@@ -6,6 +6,7 @@ mod macro_item;
 mod type_ref;
 mod visibility;
 
+pub(crate) use self::type_ref::type_bound_list_from_ast;
 pub use self::{
     decl::{ImplItemContext, TraitItemContext},
     docs::{InnerDocs, OuterDocs},
@@ -13,8 +14,6 @@ pub use self::{
         MacroCallContext, MacroDefAst, MacroDefContext, MacroRulesAst, MacroRulesContext,
     },
 };
-
-pub(crate) use self::type_ref::type_bound_list_from_ast;
 
 pub trait FromAst<Mode = ()> {
     type AstNode: ?Sized;

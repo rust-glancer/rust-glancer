@@ -34,17 +34,15 @@ mod crate_shards;
 mod def_map;
 mod semantic_ir;
 
-use self::body::EncodedBodyIr;
-pub(crate) use self::body::{BODY_CACHE_CONTAINER_PREFIX_BYTES, PackageBodyCacheIndex};
-use self::crate_shards::EncodedCrateShards;
+use self::{body::EncodedBodyIr, crate_shards::EncodedCrateShards};
 pub(crate) use self::{
+    body::{BODY_CACHE_CONTAINER_PREFIX_BYTES, PackageBodyCacheIndex},
     crate_shards::CRATE_SHARD_CONTAINER_PREFIX_BYTES,
     def_map::PackageDefMapCacheIndex,
     semantic_ir::{
         PackageSemanticIrCacheIndex, SEMANTIC_IR_CRATE_PREFIX_BYTES, SemanticIrCrateCacheIndex,
     },
 };
-
 use super::{
     BodyIrWriteInput, CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheBodyUpdateInput,
     PackageCacheHeader, PackageCacheProbe, PackageCacheWriteInput,
@@ -81,60 +79,6 @@ pub(crate) struct PackageCacheLayout {
     pub(crate) def_map: PackageCacheSectionRange,
     pub(crate) semantic_ir: PackageCacheSectionRange,
     pub(crate) body_ir: PackageCacheSectionRange,
-}
-
-/// Encoded package sections in their final on-disk order.
-///
-/// The fragments stay separate until `write_to` sends them to an atomic file or another byte sink.
-/// This preserves one write path without allocating a final contiguous artifact buffer.
-#[derive(Debug)]
-pub(crate) struct EncodedPackageCacheArtifact {
-    prefix: [u8; PACKAGE_CACHE_CONTAINER_PREFIX_BYTES],
-    probe: Vec<u8>,
-    def_map: EncodedDeclarationSection,
-    semantic_ir: EncodedDeclarationSection,
-    body_ir: EncodedBodyIr,
-}
-
-impl EncodedPackageCacheArtifact {
-    /// Write the final fragments without first joining them into another artifact-sized buffer.
-    pub(crate) fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
-        for fragment in [&self.prefix[..], &self.probe] {
-            writer.write_all(fragment)?;
-        }
-        self.def_map.write_to(writer)?;
-        self.semantic_ir.write_to(writer)?;
-        for fragment in self.body_ir.fragments() {
-            writer.write_all(fragment)?;
-        }
-        Ok(())
-    }
-}
-
-/// Encoded DefMap or Semantic IR data ready to write as a section of the package cache file.
-///
-/// Full writes provide newly encoded crate shards. When only bodies change, the declaration bytes
-/// are copied from the existing file. The outer encoder can write either form in the same way.
-#[derive(Debug)]
-enum EncodedDeclarationSection {
-    CrateShards(EncodedCrateShards),
-    Copied(Vec<u8>),
-}
-
-impl EncodedDeclarationSection {
-    fn encoded_len(&self) -> usize {
-        match self {
-            Self::CrateShards(section) => section.encoded_len(),
-            Self::Copied(bytes) => bytes.len(),
-        }
-    }
-
-    fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
-        match self {
-            Self::CrateShards(section) => section.write_to(writer),
-            Self::Copied(bytes) => writer.write_all(bytes),
-        }
-    }
 }
 
 impl PackageCacheLayout {
@@ -234,6 +178,60 @@ impl PackageCacheLayout {
             cursor = end;
         }
         Ok(prefix)
+    }
+}
+
+/// Encoded package sections in their final on-disk order.
+///
+/// The fragments stay separate until `write_to` sends them to an atomic file or another byte sink.
+/// This preserves one write path without allocating a final contiguous artifact buffer.
+#[derive(Debug)]
+pub(crate) struct EncodedPackageCacheArtifact {
+    prefix: [u8; PACKAGE_CACHE_CONTAINER_PREFIX_BYTES],
+    probe: Vec<u8>,
+    def_map: EncodedDeclarationSection,
+    semantic_ir: EncodedDeclarationSection,
+    body_ir: EncodedBodyIr,
+}
+
+impl EncodedPackageCacheArtifact {
+    /// Write the final fragments without first joining them into another artifact-sized buffer.
+    pub(crate) fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        for fragment in [&self.prefix[..], &self.probe] {
+            writer.write_all(fragment)?;
+        }
+        self.def_map.write_to(writer)?;
+        self.semantic_ir.write_to(writer)?;
+        for fragment in self.body_ir.fragments() {
+            writer.write_all(fragment)?;
+        }
+        Ok(())
+    }
+}
+
+/// Encoded DefMap or Semantic IR data ready to write as a section of the package cache file.
+///
+/// Full writes provide newly encoded crate shards. When only bodies change, the declaration bytes
+/// are copied from the existing file. The outer encoder can write either form in the same way.
+#[derive(Debug)]
+enum EncodedDeclarationSection {
+    CrateShards(EncodedCrateShards),
+    Copied(Vec<u8>),
+}
+
+impl EncodedDeclarationSection {
+    fn encoded_len(&self) -> usize {
+        match self {
+            Self::CrateShards(section) => section.encoded_len(),
+            Self::Copied(bytes) => bytes.len(),
+        }
+    }
+
+    fn write_to(&self, writer: &mut impl std::io::Write) -> std::io::Result<()> {
+        match self {
+            Self::CrateShards(section) => section.write_to(writer),
+            Self::Copied(bytes) => writer.write_all(bytes),
+        }
     }
 }
 

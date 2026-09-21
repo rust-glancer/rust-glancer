@@ -53,21 +53,21 @@ impl BenchTarget {
 
     fn project_root(self) -> PathBuf {
         match self {
-            Self::SmallApp => workspace_root().join("test_targets/bench_fixtures/small_app"),
+            Self::SmallApp => Self::workspace_root().join("test_targets/bench_fixtures/small_app"),
             Self::SyntheticParseHeavy => {
-                workspace_root().join("test_targets/bench_fixtures/synthetic_parse_heavy")
+                Self::workspace_root().join("test_targets/bench_fixtures/synthetic_parse_heavy")
             }
             Self::SyntheticItemTreeHeavy => {
-                workspace_root().join("test_targets/bench_fixtures/synthetic_item_tree_heavy")
+                Self::workspace_root().join("test_targets/bench_fixtures/synthetic_item_tree_heavy")
             }
             Self::SyntheticDefMapHeavy => {
-                workspace_root().join("test_targets/bench_fixtures/synthetic_def_map_heavy")
+                Self::workspace_root().join("test_targets/bench_fixtures/synthetic_def_map_heavy")
             }
             Self::SyntheticBodyHeavy => {
-                workspace_root().join("test_targets/bench_fixtures/synthetic_body_heavy")
+                Self::workspace_root().join("test_targets/bench_fixtures/synthetic_body_heavy")
             }
             Self::RustAnalyzer => {
-                workspace_root().join("test_targets/bench_fixtures/rust-analyzer")
+                Self::workspace_root().join("test_targets/bench_fixtures/rust-analyzer")
             }
         }
     }
@@ -171,6 +171,10 @@ impl BenchTarget {
 
         fetched_targets.insert(self);
     }
+
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    }
 }
 
 impl fmt::Display for BenchTarget {
@@ -237,8 +241,8 @@ impl BenchFixture {
         .unwrap_or_else(|error| panic!("{target} workspace metadata should lower: {error}"));
         let parse = ParseDb::build(&workspace)
             .unwrap_or_else(|error| panic!("{target} parse db should build: {error}"));
-        let source_files = count_source_files(&parse);
-        let source_bytes = count_source_bytes(&parse);
+        let source_files = Self::count_source_files(&parse);
+        let source_bytes = Self::count_source_bytes(&parse);
 
         // Building item trees evicts syntax from its parse input. Keep the original parsed syntax
         // for the item-tree benchmark, and use the post-item-tree parse for downstream phases.
@@ -247,7 +251,7 @@ impl BenchFixture {
         let item_tree_before_def_map =
             rg_project::bench_support::build_item_tree(&mut parse_before_def_map, &mut names)
                 .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
-        let item_tree_items = count_item_tree_items(&workspace, &item_tree_before_def_map);
+        let item_tree_items = Self::count_item_tree_items(&workspace, &item_tree_before_def_map);
         let names_before_def_map = names.clone();
 
         // DefMap source discovery can grow both inputs. Preserve the phase boundary above for
@@ -311,6 +315,32 @@ impl BenchFixture {
             body_expressions,
         }
     }
+
+    fn count_source_files(parse: &ParseDb) -> usize {
+        parse
+            .packages()
+            .iter()
+            .map(|package| package.parsed_files().count())
+            .sum()
+    }
+
+    fn count_source_bytes(parse: &ParseDb) -> u64 {
+        parse
+            .packages()
+            .iter()
+            .flat_map(|package| package.parsed_files())
+            .filter_map(|file| std::fs::metadata(file.path()).ok())
+            .map(|metadata| metadata.len())
+            .sum()
+    }
+
+    fn count_item_tree_items(workspace: &WorkspaceMetadata, item_tree: &ItemTreeDb) -> usize {
+        (0..workspace.packages().len())
+            .filter_map(|package| item_tree.package(package))
+            .flat_map(|package| package.files())
+            .map(|file| file.items.len())
+            .sum()
+    }
 }
 
 pub(crate) fn bench_targets() -> Vec<BenchTarget> {
@@ -319,34 +349,4 @@ pub(crate) fn bench_targets() -> Vec<BenchTarget> {
         Err(std::env::VarError::NotPresent) => BenchTarget::ALL.to_vec(),
         Err(error) => panic!("failed to read RUST_GLANCER_BENCH_TARGETS: {error}"),
     }
-}
-
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
-}
-
-fn count_source_files(parse: &ParseDb) -> usize {
-    parse
-        .packages()
-        .iter()
-        .map(|package| package.parsed_files().count())
-        .sum()
-}
-
-fn count_source_bytes(parse: &ParseDb) -> u64 {
-    parse
-        .packages()
-        .iter()
-        .flat_map(|package| package.parsed_files())
-        .filter_map(|file| std::fs::metadata(file.path()).ok())
-        .map(|metadata| metadata.len())
-        .sum()
-}
-
-fn count_item_tree_items(workspace: &WorkspaceMetadata, item_tree: &ItemTreeDb) -> usize {
-    (0..workspace.packages().len())
-        .filter_map(|package| item_tree.package(package))
-        .flat_map(|package| package.files())
-        .map(|file| file.items.len())
-        .sum()
 }

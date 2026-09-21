@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use expect_test::expect;
 
-use super::super::utils::{
+use crate::tests::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
 };
 #[test]

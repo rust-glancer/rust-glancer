@@ -11,14 +11,15 @@ mod primitive;
 mod sort;
 mod synthetic;
 
+pub(super) use self::{
+    definition::{DefinitionCompletionRenderer, DefinitionCompletionRequest},
+    field::FieldCompletionRenderer,
+    function::{FunctionCompletionRenderer, FunctionCompletionRequest},
+    primitive::PrimitiveTypeCompletionRenderer,
+    sort::{CompletionSortPolicy, CompletionSortPriority},
+    synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
+};
 use crate::model::CompletionKind;
-
-pub(super) use self::definition::{DefinitionCompletionRenderer, DefinitionCompletionRequest};
-pub(super) use self::field::FieldCompletionRenderer;
-pub(super) use self::function::{FunctionCompletionRenderer, FunctionCompletionRequest};
-pub(super) use self::primitive::PrimitiveTypeCompletionRenderer;
-pub(super) use self::sort::{CompletionSortPolicy, CompletionSortPriority};
-pub(super) use self::synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer};
 
 /// Controls whether accepting a callable candidate inserts syntax around the completed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

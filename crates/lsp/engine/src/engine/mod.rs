@@ -42,41 +42,6 @@ pub(crate) struct EngineHandle {
     notifications: ServiceNotificationsSink,
 }
 
-/// Separates time spent waiting behind older commands from time spent executing this command.
-#[derive(Debug)]
-pub(crate) struct QueuedEngineCommand {
-    pub(crate) command: EngineCommand,
-    pub(crate) enqueued_at: Instant,
-    pub(crate) cancellation: CancellationToken,
-}
-
-impl QueuedEngineCommand {
-    fn new(command: EngineCommand) -> Self {
-        Self {
-            command,
-            enqueued_at: Instant::now(),
-            cancellation: CancellationToken::new(),
-        }
-    }
-
-    fn with_cancellation(command: EngineCommand, cancellation: CancellationToken) -> Self {
-        Self {
-            command,
-            enqueued_at: Instant::now(),
-            cancellation,
-        }
-    }
-}
-
-/// Marks synchronous engine work obsolete when its async requester disappears.
-struct RequestCancellationGuard(CancellationToken);
-
-impl Drop for RequestCancellationGuard {
-    fn drop(&mut self) {
-        self.0.cancel();
-    }
-}
-
 impl EngineHandle {
     /// Starts the in-process engine behind the service abstraction.
     pub(crate) fn spawn(
@@ -155,6 +120,41 @@ impl EngineHandle {
     }
 }
 
+/// Separates time spent waiting behind older commands from time spent executing this command.
+#[derive(Debug)]
+pub(crate) struct QueuedEngineCommand {
+    pub(crate) command: EngineCommand,
+    pub(crate) enqueued_at: Instant,
+    pub(crate) cancellation: CancellationToken,
+}
+
+impl QueuedEngineCommand {
+    fn new(command: EngineCommand) -> Self {
+        Self {
+            command,
+            enqueued_at: Instant::now(),
+            cancellation: CancellationToken::new(),
+        }
+    }
+
+    fn with_cancellation(command: EngineCommand, cancellation: CancellationToken) -> Self {
+        Self {
+            command,
+            enqueued_at: Instant::now(),
+            cancellation,
+        }
+    }
+}
+
+/// Marks synchronous engine work obsolete when its async requester disappears.
+struct RequestCancellationGuard(CancellationToken);
+
+impl Drop for RequestCancellationGuard {
+    fn drop(&mut self) {
+        self.0.cancel();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
@@ -202,12 +202,15 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_running_query_releases_the_lane_for_the_next_request() {
-        use crate::memory::{AllocatorStats, MemoryControl};
-        use std::sync::{
-            Arc, Mutex,
-            atomic::{AtomicUsize, Ordering},
+        use std::{
+            sync::{
+                Arc, Mutex,
+                atomic::{AtomicUsize, Ordering},
+            },
+            time::Duration,
         };
-        use std::time::Duration;
+
+        use crate::memory::{AllocatorStats, MemoryControl};
 
         #[derive(Debug, Default)]
         struct QueryBarrier {

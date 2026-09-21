@@ -3,8 +3,7 @@
 use rg_ir_model::{FunctionRef, ScopeId, identity::DeclarationRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::trait_selection::TraitSelection;
-use rg_ty::{Substitution, Ty};
+use rg_ty::{Substitution, Ty, trait_selection::TraitSelection};
 
 use crate::body::facts::BodyResolution;
 
@@ -21,25 +20,6 @@ pub(crate) struct ResolvedCallTarget {
     site_scope: ScopeId,
     pub(crate) self_source: CallSelfSource,
     pub(crate) trait_selection: Option<TraitSelection>,
-}
-
-/// How `Self` entered a selected call and whether syntax supplied an implicit receiver argument.
-///
-/// `Type::make(value)` contributes a `Self` substitution but its written arguments still begin at
-/// signature parameter zero. `value.method(arg)` contributes the same substitution and consumes
-/// parameter zero as the implicit receiver.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum CallSelfSource {
-    None,
-    TypePrefix(CallSelf),
-    Receiver(CallSelf),
-}
-
-/// Concrete `Self` evidence recovered together with its owner-scoped substitution.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct CallSelf {
-    pub(crate) self_ty: Ty,
-    pub(crate) subst: Substitution,
 }
 
 impl ResolvedCallTarget {
@@ -113,6 +93,18 @@ impl ResolvedCallTarget {
     }
 }
 
+/// How `Self` entered a selected call and whether syntax supplied an implicit receiver argument.
+///
+/// `Type::make(value)` contributes a `Self` substitution but its written arguments still begin at
+/// signature parameter zero. `value.method(arg)` contributes the same substitution and consumes
+/// parameter zero as the implicit receiver.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CallSelfSource {
+    None,
+    TypePrefix(CallSelf),
+    Receiver(CallSelf),
+}
+
 impl CallSelfSource {
     /// Skip implicit receiver params when projecting written arguments.
     fn first_written_param_idx(&self) -> usize {
@@ -122,6 +114,13 @@ impl CallSelfSource {
             Self::Receiver(_) => 1,
         }
     }
+}
+
+/// Concrete `Self` evidence recovered together with its owner-scoped substitution.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CallSelf {
+    pub(crate) self_ty: Ty,
+    pub(crate) subst: Substitution,
 }
 
 /// Call targets selected for one call expression.

@@ -978,8 +978,9 @@ struct DependencyLookupResults {
 
 #[cfg(test)]
 mod tests {
-    use super::{CancellationToken, CrateRef, ItemLookupIndex, ItemLookupQueryCache, TraitDefRef};
     use rg_ir_model::{CrateId, DefMapRef, PackageSlot, TraitId};
+
+    use super::{CancellationToken, CrateRef, ItemLookupIndex, ItemLookupQueryCache, TraitDefRef};
 
     thread_local! {
         static CANCEL_AFTER_BATCHES: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };

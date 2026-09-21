@@ -7,12 +7,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
-
-use crate::{CrateResolutionEnv, MacroDefinitionEnv};
 use rg_ir_model::{CrateRef, FileId, Path};
-use rg_item_tree::BuiltinMacroKind;
 use rg_item_tree::{
-    BuiltinMacroItem, CfgSelectArmPayload, IncludePathExpression, ItemTreeDb, ItemTreeId,
+    BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmPayload, IncludePathExpression, ItemTreeDb,
+    ItemTreeId,
 };
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
@@ -21,19 +19,20 @@ use rg_macro_runtime::{
 use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 
-use crate::MacroSourceFileRequest;
-use crate::build::{
-    MacroSourceFileResolution, MacroSourceFileResolutions,
-    collect::CrateState,
-    finalize::{FinalizeCrateStates, ScopeMatrix},
-};
-use crate::profile::metric;
-
 use super::{
     MacroCallSite, MacroDirectiveState,
     generated::{GeneratedCollector, GeneratedOrigin, PendingGeneratedInclude},
     resolve::ItemMacroResolver,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
+};
+use crate::{
+    CrateResolutionEnv, MacroDefinitionEnv, MacroSourceFileRequest,
+    build::{
+        MacroSourceFileResolution, MacroSourceFileResolutions,
+        collect::CrateState,
+        finalize::{FinalizeCrateStates, ScopeMatrix},
+    },
+    profile::metric,
 };
 
 /// Selects which part of the macro worklist one expansion pass should inspect.

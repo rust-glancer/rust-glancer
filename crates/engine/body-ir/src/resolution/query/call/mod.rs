@@ -13,16 +13,13 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{Ty, inference::InferenceTable};
 
-use crate::body::facts::BodyResolution;
+use self::target::{CallSelf, ResolvedCallTargets};
+pub(crate) use self::target::{CallSelfSource, ResolvedCallTarget};
+use super::BodyCallableCandidate;
 use crate::{
-    body::{ExprData, ExprKind},
+    body::{ExprData, ExprKind, facts::BodyResolution},
     resolution::BodyResolutionContext,
 };
-
-use self::target::{CallSelf, ResolvedCallTargets};
-use super::BodyCallableCandidate;
-
-pub(crate) use self::target::{CallSelfSource, ResolvedCallTarget};
 
 /// Method-call syntax facts needed for method lookup.
 struct MethodCallSite<'a> {

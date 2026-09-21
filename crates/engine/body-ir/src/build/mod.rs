@@ -17,7 +17,6 @@ mod state;
 use std::{num::NonZeroUsize, sync::Mutex};
 
 use anyhow::Context as _;
-
 use rg_def_map::{DefMapDb, DefMapLoader};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
@@ -26,16 +25,15 @@ use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
-use crate::{CrateBodies, PackageBodies};
-
-pub use self::policy::{BodyIrBuildPolicy, BodyIrFile};
-
 use self::materialization::BodyIrMaterializationPlan;
-
-pub use self::current::{
-    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
-    CurrentSourceSelection, CurrentSourceUnavailable,
+pub use self::{
+    current::{
+        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
+        CurrentSourceSelection, CurrentSourceUnavailable,
+    },
+    policy::{BodyIrBuildPolicy, BodyIrFile},
 };
+use crate::{CrateBodies, PackageBodies};
 
 /// Package-local stage of one Body IR build.
 ///
@@ -125,7 +123,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             semantic_ir,
             materialization: None,
             packages,
-            packages_to_reallocate: normalized_package_slots(packages_to_reallocate),
+            packages_to_reallocate: Self::normalized_package_slots(packages_to_reallocate),
             interners,
             def_map_loader,
             semantic_ir_loader,
@@ -159,7 +157,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         let def_map = self
             .def_map
             .read_txn_for_subset(self.def_map_loader, self.subset);
-        let packages = normalized_package_slots(self.packages);
+        let packages = Self::normalized_package_slots(self.packages);
         let lowered = lower::build_selected_packages(
             self.parse,
             &def_map,
@@ -251,7 +249,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         publish: &(dyn Fn(Vec<(CrateRef, CrateBodies)>) + Sync),
         report_progress: &(dyn Fn(BodyIrBuildProgress) + Sync),
     ) -> anyhow::Result<()> {
-        let packages = normalized_package_slots(self.packages);
+        let packages = Self::normalized_package_slots(self.packages);
         let materialization = self
             .materialization
             .as_ref()
@@ -322,6 +320,13 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         rg_std::check_cancel!(self.cancellation, "finish body build");
         Ok(())
     }
+
+    fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
+        let mut slots = packages.to_vec();
+        slots.sort_by_key(|slot| slot.0);
+        slots.dedup();
+        slots
+    }
 }
 
 fn local_thread_pool(
@@ -341,13 +346,6 @@ fn local_thread_pool(
     builder
         .build()
         .with_context(|| format!("while attempting to create {thread_name_prefix} thread pool"))
-}
-
-fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
-    let mut slots = packages.to_vec();
-    slots.sort_by_key(|slot| slot.0);
-    slots.dedup();
-    slots
 }
 
 #[cfg(test)]

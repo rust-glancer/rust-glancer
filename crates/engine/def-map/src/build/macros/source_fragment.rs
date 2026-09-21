@@ -15,12 +15,6 @@
 use std::{collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
-
-use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
-    ModuleOrigin, ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
-};
 use rg_ir_model::{DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span};
 use rg_item_tree::{
     ExternBlockItem, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
@@ -30,11 +24,15 @@ use rg_item_tree::{
 use rg_parse::ModuleFileContext;
 use rg_text::Name;
 
-use crate::build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult};
-
 use super::{
     ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
     MacroDirective, MacroDirectiveState, MacroUseImport,
+};
+use crate::{
+    ImportBinding, ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
+    ModuleOrigin, ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+    build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
 };
 
 /// Semantic module, ordering, and file context used to insert already-lowered items.

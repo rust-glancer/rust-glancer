@@ -24,14 +24,15 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
-    query::completion::site::DotCompletionSite,
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{SyntheticCompletionCandidate, SyntheticCompletionRenderer, escape_lsp_snippet_text},
-    syntax::CompletionSyntaxContext,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            SyntheticCompletionCandidate, SyntheticCompletionRenderer, escape_lsp_snippet_text,
+        },
+        site::DotCompletionSite,
+        syntax::CompletionSyntaxContext,
+    },
 };
 
 /// Builds whole-expression edits for synthetic postfix transforms.

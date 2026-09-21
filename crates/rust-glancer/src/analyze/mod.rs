@@ -19,8 +19,10 @@ mod data;
 mod output;
 mod profile;
 
-pub(crate) use self::config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat};
-pub(crate) use self::profile::profile_groups_help;
+pub(crate) use self::{
+    config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat},
+    profile::profile_groups_help,
+};
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 #[allow(clippy::too_many_arguments)]

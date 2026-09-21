@@ -1,6 +1,5 @@
-use crate::grammar::types::type_;
-
 use super::*;
+use crate::grammar::types::type_;
 
 // test expr_literals
 // fn foo() {
@@ -68,9 +67,6 @@ pub(super) const ATOM_EXPR_FIRST: TokenSet =
             T![yield],
             LIFETIME_IDENT,
         ]));
-
-pub(in crate::grammar) const EXPR_RECOVERY_SET: TokenSet =
-    TokenSet::new(&[T!['}'], T![')'], T![']'], T![,]]);
 
 pub(super) fn atom_expr(
     p: &mut Parser<'_>,

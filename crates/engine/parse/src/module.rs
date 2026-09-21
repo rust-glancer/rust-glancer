@@ -12,6 +12,8 @@ use std::{
 };
 
 use anyhow::Context as _;
+use rg_ir_model::FileId;
+use rg_source::SourceInventory;
 use rg_syntax::{
     AstNode as _, Edition, SourceFile, SyntaxNode,
     ast::{self, HasAttrs, HasModuleItem, HasName},
@@ -19,8 +21,6 @@ use rg_syntax::{
 use rg_text::{Name, identifier_text};
 
 use crate::{Package, fs};
-use rg_ir_model::FileId;
-use rg_source::SourceInventory;
 
 /// Return the inline modules that contain `node`, from the outermost module inward.
 ///

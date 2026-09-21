@@ -7,8 +7,7 @@
 mod resolution;
 mod structure;
 
-pub(crate) use resolution::BodyResolutionView;
-
-pub use structure::{
+pub(crate) use self::resolution::BodyResolutionView;
+pub use self::structure::{
     BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView, MethodChainExprTy,
 };

@@ -21,7 +21,6 @@ pub struct Input {
     edition: Vec<Edition>,
 }
 
-/// `pub` impl used by callers to create `Tokens`.
 impl Input {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
@@ -72,10 +71,7 @@ impl Input {
         self.contextual_kind.push(contextual_kind);
         self.edition.push(edition);
     }
-}
 
-/// pub(crate) impl used by the parser to consume `Tokens`.
-impl Input {
     pub(crate) fn kind(&self, idx: usize) -> SyntaxKind {
         self.kind.get(idx).copied().unwrap_or(SyntaxKind::EOF)
     }
@@ -92,9 +88,7 @@ impl Input {
         let (idx, b_idx) = self.bit_index(n);
         self.joint[idx] & (1 << b_idx) != 0
     }
-}
 
-impl Input {
     fn bit_index(&self, n: usize) -> (usize, usize) {
         let idx = n / (bits::BITS as usize);
         let b_idx = n % (bits::BITS as usize);

@@ -15,10 +15,10 @@ use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{IndexingPerformancePreference, memory::NoopProjectMemoryHooks};
-
 use super::macro_source_files;
-use crate::selection::PhasePackageSet;
+use crate::{
+    IndexingPerformancePreference, memory::NoopProjectMemoryHooks, selection::PhasePackageSet,
+};
 
 /// Builds ItemTree for every parsed benchmark package through the selected-package lowerer.
 pub fn build_item_tree(

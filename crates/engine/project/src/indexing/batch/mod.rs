@@ -25,25 +25,23 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use self::schedule::PackageBatchSchedule;
-
+use super::{
+    checkpoint_memory::{CheckpointMemory, checkpoint_memory},
+    macro_source_files,
+    phases::BuiltPhases,
+    plan::PackageBuildPlan,
+};
 use crate::{
     IndexingPerformancePreference, PackageBatchSize, PackageResidency, PackageResidencyPlan,
     SplitIndexingMode, StartupCacheLoad,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     stats::MacroExpansionLimitBuildSummary,
-    storage::cache::{PackageCacheStore, WorkspaceCachePlan},
     storage::{
         artifacts::{PackageArtifactPhases, PackageArtifactWriter},
+        cache::{PackageCacheStore, WorkspaceCachePlan},
         loaders::PackageReadLoaders,
     },
-};
-
-use super::{
-    checkpoint_memory::{CheckpointMemory, checkpoint_memory},
-    macro_source_files,
-    phases::BuiltPhases,
-    plan::PackageBuildPlan,
 };
 
 /// Builds complete package artifacts one package batch at a time.

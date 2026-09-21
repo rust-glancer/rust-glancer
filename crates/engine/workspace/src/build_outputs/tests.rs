@@ -7,9 +7,8 @@ use std::{
     time::{Duration, UNIX_EPOCH},
 };
 
-use test_fixture::CrateFixture;
-
 use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
+use test_fixture::CrateFixture;
 
 use super::{CargoCompileEnvVar, CargoGeneratedSources, CargoGeneratedSourcesData};
 use crate::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};

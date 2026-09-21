@@ -47,14 +47,6 @@ pub(crate) struct ProjectWatcher {
     _workspaces: Vec<WorkspaceWatcher>,
 }
 
-/// One native watcher, filesystem snapshot, and async forwarder for an editor workspace folder.
-#[derive(Debug)]
-struct WorkspaceWatcher {
-    _root: NormalizedPathBuf,
-    _debouncer: ProjectDebouncer,
-    _forwarder: JoinHandle<()>,
-}
-
 impl ProjectWatcher {
     /// Starts every watcher the host accepts and leaves rejected roots usable without native
     /// external-change tracking. Editor saves remain an independent coherence boundary.
@@ -96,6 +88,14 @@ impl ProjectWatcher {
             _workspaces: workspaces,
         }
     }
+}
+
+/// One native watcher, filesystem snapshot, and async forwarder for an editor workspace folder.
+#[derive(Debug)]
+struct WorkspaceWatcher {
+    _root: NormalizedPathBuf,
+    _debouncer: ProjectDebouncer,
+    _forwarder: JoinHandle<()>,
 }
 
 impl WorkspaceWatcher {

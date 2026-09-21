@@ -1,14 +1,11 @@
-use std::fmt;
-use std::hash::Hash;
-use std::sync::Arc;
+use std::{fmt, hash::Hash, sync::Arc};
 
-use chalk_ir::interner::Interner;
 use chalk_ir::{
     AdtId, AssocTypeId, CanonicalVarKind, ConstData, Constraint, Constraints, CoroutineId, FnDefId,
     ForeignDefId, GenericArg, GenericArgData, Goal, GoalData, Goals, InEnvironment, LifetimeData,
     OpaqueTyId, ProgramClause, ProgramClauseData, ProgramClauseImplication, ProgramClauses,
     ProjectionTy, QuantifiedWhereClause, QuantifiedWhereClauses, SeparatorTraitRef, Substitution,
-    TraitId, TyData, TyKind, VariableKind, Variance, Variances,
+    TraitId, TyData, TyKind, VariableKind, Variance, Variances, interner::Interner,
 };
 use rg_ir_model::{FunctionRef, ImplRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef};
 

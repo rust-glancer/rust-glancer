@@ -8,17 +8,18 @@
 mod build;
 mod publication;
 
-use crate::Project;
-use crate::{
-    ProjectMemoryPurgePoint,
-    profile::{BuildMemorySampler, BuildProcessMemory, record_build_checkpoint},
-};
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildProgress, BodyIrBuildStage, CrateBodiesCoverage};
 use rg_ir_model::{CrateRef, FileId};
 
-pub use self::build::{SavedBodyBuildInputs, SavedBodyProducts};
-pub use self::publication::{BodyPublication, BodyPublicationOutcome};
+pub use self::{
+    build::{SavedBodyBuildInputs, SavedBodyProducts},
+    publication::{BodyPublication, BodyPublicationOutcome},
+};
+use crate::{
+    Project, ProjectMemoryPurgePoint,
+    profile::{BuildMemorySampler, BuildProcessMemory, record_build_checkpoint},
+};
 
 /// Files and crates whose body analysis a query needs before it can run.
 ///
@@ -38,6 +39,16 @@ pub enum AnalysisSurface<'a> {
         files: &'a [(CrateRef, FileId)],
         crates: &'a [CrateRef],
     },
+}
+
+impl<'a> AnalysisSurface<'a> {
+    fn parts(self) -> (&'a [(CrateRef, FileId)], &'a [CrateRef]) {
+        match self {
+            Self::Files(files) => (files, &[]),
+            Self::Crates(crates) => (&[], crates),
+            Self::FilesAndCrates { files, crates } => (files, crates),
+        }
+    }
 }
 
 /// Stage reported while analyzing bodies through [`SavedBodyBuildInputs`].
@@ -247,15 +258,5 @@ impl<'project> SplitIndexing<'project> {
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<BodyPublication> {
         publication::publish(&mut self.project.state, products, cancellation)
-    }
-}
-
-impl<'a> AnalysisSurface<'a> {
-    fn parts(self) -> (&'a [(CrateRef, FileId)], &'a [CrateRef]) {
-        match self {
-            Self::Files(files) => (files, &[]),
-            Self::Crates(crates) => (&[], crates),
-            Self::FilesAndCrates { files, crates } => (files, crates),
-        }
     }
 }

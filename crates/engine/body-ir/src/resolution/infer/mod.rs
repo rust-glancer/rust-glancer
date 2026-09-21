@@ -16,12 +16,13 @@ use rg_ir_model::{BodyRef, ExprId, identity::DeclarationRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
 use rg_std::OperationError;
-use rg_ty::Ty;
-use rg_ty::trait_selection::TraitSelectionSession;
+use rg_ty::{Ty, trait_selection::TraitSelectionSession};
 
-use crate::{BodyData, BodyFacts, body::ExprKind, body::facts::BodyResolution};
-
-use crate::resolution::BodyResolutionContext;
+use crate::{
+    BodyData, BodyFacts,
+    body::{ExprKind, facts::BodyResolution},
+    resolution::BodyResolutionContext,
+};
 
 mod builtin_macro;
 mod call;
@@ -31,8 +32,7 @@ mod fulfill;
 mod pat;
 mod unify;
 
-use fulfill::Deferred;
-use unify::InferenceState;
+use self::{fulfill::Deferred, unify::InferenceState};
 
 /// One body's recursive inference operation. Structure and semantic query inputs are immutable;
 /// live types, selected calls, and pending work are owned until the final sidecar is published.

@@ -14,6 +14,10 @@ mod symbol;
 
 use std::time::Duration;
 
+pub(crate) use self::metrics::{
+    AggregateSummaryMetrics, MappedSetAggregateMetrics, MappedSetComparisonMetrics,
+    NonComparableMetrics, SetComparisonMetrics,
+};
 use crate::compare_lsp::{
     comparison::{
         hover::{HoverAggregate, HoverComparison},
@@ -30,11 +34,6 @@ use crate::compare_lsp::{
     execution::ServerUnderTest,
     normalization::{NormalizedOutcome, NormalizedSummary},
     query::QueryKind,
-};
-
-pub(crate) use self::metrics::{
-    AggregateSummaryMetrics, MappedSetAggregateMetrics, MappedSetComparisonMetrics,
-    NonComparableMetrics, SetComparisonMetrics,
 };
 
 /// Complete comparison result for one normalized benchmark run.

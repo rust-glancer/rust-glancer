@@ -16,6 +16,8 @@ use rg_package_store::MalformedCacheError;
 use rg_text::NameInterner;
 
 use super::{PackageArtifactReader, PackageArtifactReaderInner, PackageCacheReadError};
+#[cfg(test)]
+use crate::storage::cache::PackageCacheProbe;
 use crate::{
     profile::metric,
     storage::cache::{
@@ -24,9 +26,6 @@ use crate::{
         codec::{PACKAGE_CACHE_CONTAINER_PREFIX_BYTES, PackageCacheLayout},
     },
 };
-
-#[cfg(test)]
-use crate::storage::cache::PackageCacheProbe;
 
 impl PackageCacheStore {
     /// Open an artifact expected to match this complete header.

@@ -1,7 +1,4 @@
-use rg_std::{MemorySize, Shrink};
-use rg_text::identifier_text;
 use std::collections::HashMap;
-use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
@@ -9,6 +6,9 @@ use rg_ir_model::{
     LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
+use rg_std::{MemorySize, Shrink};
+use rg_text::identifier_text;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     ItemSource,

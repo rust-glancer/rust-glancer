@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::PackageStoreError;
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
-
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 
 use crate::{
     CrateData, DefMapBuildProgress, DefMapDb, DefMapLoader, LoadDefMap, PackageDefMaps,
@@ -283,7 +282,7 @@ struct RebuiltDefMaps {
 impl RebuiltDefMaps {
     fn lib_root_module(&self, package_name: &str) -> &crate::ModuleData {
         let package_slot = package_slot(&self.parse, package_name);
-        let crate_ref = lib_crate_ref(&self.parse, package_slot);
+        let crate_ref = Self::lib_crate_ref(&self.parse, package_slot);
         let package = self
             .def_map
             .resident_package(crate_ref.package)
@@ -300,6 +299,21 @@ impl RebuiltDefMaps {
             .module(root_module)
             .expect("rebuilt root module should exist")
     }
+
+    fn lib_crate_ref(parse: &ParseDb, package_slot: PackageSlot) -> CrateRef {
+        let package = parse
+            .package(package_slot.0)
+            .expect("fixture package should exist");
+        let target = package
+            .targets()
+            .iter()
+            .find(|target| target.kind.is_lib())
+            .expect("fixture package should have a library target");
+        CrateRef {
+            package: package_slot,
+            crate_id: CrateId(target.id.0),
+        }
+    }
 }
 
 fn package_slot(parse: &ParseDb, name: &str) -> PackageSlot {
@@ -311,21 +325,6 @@ fn package_slot(parse: &ParseDb, name: &str) -> PackageSlot {
             (package.package_name() == name).then_some(PackageSlot(package_idx))
         })
         .expect("fixture package should exist")
-}
-
-fn lib_crate_ref(parse: &ParseDb, package_slot: PackageSlot) -> CrateRef {
-    let package = parse
-        .package(package_slot.0)
-        .expect("fixture package should exist");
-    let target = package
-        .targets()
-        .iter()
-        .find(|target| target.kind.is_lib())
-        .expect("fixture package should have a library target");
-    CrateRef {
-        package: package_slot,
-        crate_id: CrateId(target.id.0),
-    }
 }
 
 #[derive(Debug)]

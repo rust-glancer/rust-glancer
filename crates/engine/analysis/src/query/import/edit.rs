@@ -22,7 +22,8 @@
 
 use rg_ir_model::{Path, Span};
 use rg_syntax::{
-    AstNode as _, SourceFile, TextRange, TextSize, ast, ast::HasModuleItem as _, ast::HasName as _,
+    AstNode as _, SourceFile, TextRange, TextSize, ast,
+    ast::{HasModuleItem as _, HasName as _},
 };
 
 use crate::{

@@ -1,7 +1,6 @@
 //! There are many AstNodes, but only a few tokens, so we hand-write them here.
 
-use std::ops::Range;
-use std::{borrow::Cow, num::ParseIntError};
+use std::{borrow::Cow, num::ParseIntError, ops::Range};
 
 use rustc_literal_escaper::{
     EscapeError, MixedUnit, unescape_byte, unescape_byte_str, unescape_c_str, unescape_char,
@@ -66,28 +65,6 @@ impl ast::Comment {
 pub struct CommentKind {
     pub shape: CommentShape,
     pub doc: Option<CommentPlacement>,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum CommentShape {
-    Line,
-    Block,
-}
-
-impl CommentShape {
-    pub fn is_line(self) -> bool {
-        self == CommentShape::Line
-    }
-
-    pub fn is_block(self) -> bool {
-        self == CommentShape::Block
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum CommentPlacement {
-    Inner,
-    Outer,
 }
 
 impl CommentKind {
@@ -173,6 +150,28 @@ impl CommentKind {
             .unwrap();
         prefix
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CommentShape {
+    Line,
+    Block,
+}
+
+impl CommentShape {
+    pub fn is_line(self) -> bool {
+        self == CommentShape::Line
+    }
+
+    pub fn is_block(self) -> bool {
+        self == CommentShape::Block
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CommentPlacement {
+    Inner,
+    Outer,
 }
 
 impl ast::Whitespace {

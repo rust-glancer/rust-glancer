@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_qualified_paths_in_control_flow_patterns() {
     check_analysis_queries(

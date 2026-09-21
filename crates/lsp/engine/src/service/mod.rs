@@ -19,15 +19,14 @@ use rg_project::SavedFileChange;
 use rg_source::CapturedSource;
 use tarpc::context;
 
+#[cfg(test)]
+pub(crate) use self::notifications::ServiceNotificationPublisher;
 pub use self::notifications::ServiceNotificationsSink;
 use crate::{
     diagnostics::DiagnosticsHandle,
     engine::{EngineCommand, EngineHandle, ProjectConfiguration},
     memory::MemoryControl,
 };
-
-#[cfg(test)]
-pub(crate) use self::notifications::ServiceNotificationPublisher;
 
 /// RPC-facing façade owned by one engine process.
 ///

@@ -7,15 +7,15 @@
 mod receiver;
 mod trait_impl;
 
-pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
-
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability};
 use rg_semantic_ir::ItemStoreSource;
 
-use crate::lowering::{ImplHeader, TypePathResolver};
+pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
 use crate::{
-    ConstValue, GenericArg, Lifetime, Substitution, Ty, TyContext, lookup::ItemPathQuery,
+    ConstValue, GenericArg, Lifetime, Substitution, Ty, TyContext,
+    lookup::ItemPathQuery,
+    lowering::{ImplHeader, TypePathResolver},
     trait_selection::CachedImplSelfMatch,
 };
 

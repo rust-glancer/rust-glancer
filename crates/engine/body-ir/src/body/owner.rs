@@ -1,7 +1,6 @@
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{ConstRef, FunctionRef, GenericDefRef, StaticRef, identity::DeclarationRef};
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Semantic item that owns a lowered expression body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -10,8 +10,11 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::trait_selection::{TraitGoal, TraitSelectionQuery};
-use crate::{AdtTy, GenericArgs, Ty, TyContext, inference::InferenceTable};
+use crate::{
+    AdtTy, GenericArgs, Ty, TyContext,
+    inference::InferenceTable,
+    trait_selection::{TraitGoal, TraitSelectionQuery},
+};
 
 /// Resolves the associated `Target` type for applicable canonical `Deref` impls.
 #[derive(Clone)]

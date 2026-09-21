@@ -1,14 +1,15 @@
 mod utils;
 
-use crate::{
-    FromAst, GenericArg, GenericParams, ItemKind, TraitBoundModifier, TypeBound, TypePathAnchor,
-    TypeRef,
-};
 use expect_test::expect;
 use rg_ir_model::Span;
 use rg_parse::{LineColumnSpan, LineIndex, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
+
+use crate::{
+    FromAst, GenericArg, GenericParams, ItemKind, TraitBoundModifier, TypeBound, TypePathAnchor,
+    TypeRef,
+};
 
 #[test]
 fn preserves_relaxed_trait_bound_modifier() {

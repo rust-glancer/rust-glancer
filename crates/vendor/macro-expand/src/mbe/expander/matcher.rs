@@ -63,18 +63,21 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use rg_tt::span::{Edition, SyntaxContext};
-use rg_tt::tt::{
-    self, DelimSpan,
-    iter::{TtElement, TtIter},
-    symbol::{Symbol, sym},
+use rg_tt::{
+    span::{Edition, SyntaxContext},
+    tt::{
+        self, DelimSpan,
+        iter::{TtElement, TtIter},
+        symbol::{Symbol, sym},
+    },
 };
 use smallvec::{SmallVec, smallvec};
 
-use super::super::expect_fragment;
-use super::super::parser::{ExprKind, MetaVarKind, Op, RepeatKind, Separator};
-use super::super::{ExpandError, ExpandErrorKind, MetaTemplate, ValueResult};
 use super::{Binding, Bindings, ExpandResult, Fragment, TokensOrigin};
+use crate::mbe::{
+    ExpandError, ExpandErrorKind, MetaTemplate, ValueResult, expect_fragment,
+    parser::{ExprKind, MetaVarKind, Op, RepeatKind, Separator},
+};
 
 impl<'a> Bindings<'a> {
     fn push_optional(&mut self, name: Symbol) {

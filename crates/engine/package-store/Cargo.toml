@@ -13,3 +13,6 @@ description.workspace = true
 rg_ir_model.workspace = true
 rg_std.workspace = true
 thiserror.workspace = true
+
+[lints]
+workspace = true

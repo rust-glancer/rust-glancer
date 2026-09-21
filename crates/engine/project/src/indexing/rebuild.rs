@@ -12,6 +12,7 @@ use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_std::Shrink;
 
+use super::macro_source_files;
 use crate::{
     ProjectMemoryPurgePoint, SplitIndexingMode,
     selection::PhasePackageSet,
@@ -19,8 +20,6 @@ use crate::{
     stats::MacroExpansionLimitBuildSummary,
     storage::{loaders::PackageReadLoaders, residency::ResidencyApplication},
 };
-
-use super::macro_source_files;
 
 pub(crate) fn rebuild_packages(
     state: &mut ProjectState,

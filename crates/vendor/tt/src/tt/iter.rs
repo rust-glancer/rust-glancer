@@ -7,11 +7,12 @@
 use std::fmt;
 
 use super::symbol::sym;
-use crate::span::Span;
-
-use crate::tt::{
-    Ident, Leaf, MAX_GLUED_PUNCT_LEN, Punct, Spacing, Subtree, TokenTree, TokenTreesReprRef,
-    TokenTreesView, dispatch_ref,
+use crate::{
+    span::Span,
+    tt::{
+        Ident, Leaf, MAX_GLUED_PUNCT_LEN, Punct, Spacing, Subtree, TokenTree, TokenTreesReprRef,
+        TokenTreesView, dispatch_ref,
+    },
 };
 
 #[derive(Clone)]
@@ -26,9 +27,6 @@ impl fmt::Debug for TtIter<'_> {
             .finish()
     }
 }
-
-#[derive(Clone, Copy)]
-pub struct TtIterSavepoint<'a>(TokenTreesView<'a>);
 
 impl<'a> TtIter<'a> {
     pub(crate) fn new(tt: TokenTreesView<'a>) -> TtIter<'a> {
@@ -245,6 +243,22 @@ impl<'a> TtIter<'a> {
     }
 }
 
+impl<'a> Iterator for TtIter<'a> {
+    type Item = TtElement<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.peek()?;
+        let skip = match &result {
+            TtElement::Leaf(_) => 1,
+            TtElement::Subtree(subtree, _) => subtree.usize_len() + 1,
+        };
+        self.inner.repr = self.inner.repr.get(skip..).unwrap();
+        Some(result)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TtIterSavepoint<'a>(TokenTreesView<'a>);
+
 #[derive(Clone)]
 pub enum TtElement<'a> {
     Leaf(Leaf),
@@ -271,18 +285,5 @@ impl TtElement<'_> {
             TtElement::Leaf(it) => *it.span(),
             TtElement::Subtree(it, _) => it.delimiter.open,
         }
-    }
-}
-
-impl<'a> Iterator for TtIter<'a> {
-    type Item = TtElement<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.peek()?;
-        let skip = match &result {
-            TtElement::Leaf(_) => 1,
-            TtElement::Subtree(subtree, _) => subtree.usize_len() + 1,
-        };
-        self.inner.repr = self.inner.repr.get(skip..).unwrap();
-        Some(result)
     }
 }

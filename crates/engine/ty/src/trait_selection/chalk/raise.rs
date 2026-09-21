@@ -11,8 +11,10 @@ use chalk_ir::{
     TyKind,
 };
 
-use super::evidence::{SolverAnswerVars, SolverVariableEnv};
-use super::interner::{ChalkDefId, RgChalkInterner};
+use super::{
+    evidence::{SolverAnswerVars, SolverVariableEnv},
+    interner::{ChalkDefId, RgChalkInterner},
+};
 use crate::{
     AdtTy, AliasTy, ConstValue, FloatTy, FnDefTy, GenericArg, GenericArgs, Lifetime, OpaqueTy,
     PrimitiveTy, ProjectionTy, SignedIntTy, Ty, UnsignedIntTy,

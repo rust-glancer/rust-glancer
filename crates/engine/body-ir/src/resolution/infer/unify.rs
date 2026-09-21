@@ -6,16 +6,14 @@
 
 use rg_arena::Arena;
 use rg_ir_model::{BindingId, BodyRef, ExprBinaryOp, ExprId, ExprUnaryOp};
-
 use rg_ty::{
     ClosureTyId, PrimitiveTy, Ty,
     inference::{InferVarKind, InferenceTable},
     ty_for_binary, ty_for_unary,
 };
 
-use crate::{BodyFacts, ExprFacts, body::facts::BodyResolution};
-
 use super::call::CallInferenceState;
+use crate::{BodyFacts, ExprFacts, body::facts::BodyResolution};
 
 /// Live expression and binding facts, selected calls, and their unification table.
 /// Finalization resolves the type variables in these arenas before moving them into `BodyFacts`.

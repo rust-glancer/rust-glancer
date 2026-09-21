@@ -6,6 +6,7 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
+use super::phases;
 use crate::{
     IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, PackageResidencyPolicy,
     ProjectMemoryHooks, SplitIndexingMode, StartupCacheLoad,
@@ -13,8 +14,6 @@ use crate::{
     state::{ProjectGenerationId, ProjectState},
     storage::cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
-
-use super::phases;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_resident_state(

@@ -1,8 +1,7 @@
 use rg_ir_model::{BindingId, CrateId, CrateRef, ExprId, PackageSlot};
 use rg_ty::{ConstValue, GenericArg};
 
-use crate::ExprKind;
-use crate::testonly::BodyIrFixture;
+use crate::{ExprKind, testonly::BodyIrFixture};
 
 #[test]
 fn finalized_bodies_have_aligned_structural_and_semantic_arenas() {

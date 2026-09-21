@@ -15,11 +15,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::Value;
 
-use crate::compare_lsp::{fixture::Fixture, lsp_client::RequestOutcome, query::QueryCase};
-
-use self::{command::ServerKind, process::RunningServer};
-
 pub(crate) use self::uri::file_uri;
+use self::{command::ServerKind, process::RunningServer};
+use crate::compare_lsp::{fixture::Fixture, lsp_client::RequestOutcome, query::QueryCase};
 
 /// Two initialized servers that have opened the same fixture files.
 #[derive(Debug)]
@@ -34,7 +32,7 @@ pub(crate) struct StartedServers {
 impl StartedServers {
     /// Spawn both servers and prepare them to answer the fixture query vector.
     pub(crate) async fn start(fixture: &Fixture) -> anyhow::Result<Self> {
-        let source_paths = unique_source_paths(fixture.query_cases());
+        let source_paths = Self::unique_source_paths(fixture.query_cases());
         let mut rust_glancer_server = RunningServer::spawn(ServerKind::RustGlancer).await?;
         let mut rust_analyzer_server = RunningServer::spawn(ServerKind::RustAnalyzer).await?;
 
@@ -147,6 +145,19 @@ impl StartedServers {
             }
         }
     }
+
+    fn unique_source_paths(query_cases: &[QueryCase]) -> Vec<&'static str> {
+        let mut source_paths = Vec::new();
+        for query_case in query_cases {
+            let Some(source_path) = query_case.source_path() else {
+                continue;
+            };
+            if !source_paths.contains(&source_path) {
+                source_paths.push(source_path);
+            }
+        }
+        source_paths
+    }
 }
 
 /// Initialization facts reported with the comparison run.
@@ -192,17 +203,4 @@ impl ServerReadiness {
     pub(crate) fn settle_latency(&self) -> Duration {
         self.settle_latency
     }
-}
-
-fn unique_source_paths(query_cases: &[QueryCase]) -> Vec<&'static str> {
-    let mut source_paths = Vec::new();
-    for query_case in query_cases {
-        let Some(source_path) = query_case.source_path() else {
-            continue;
-        };
-        if !source_paths.contains(&source_path) {
-            source_paths.push(source_path);
-        }
-    }
-    source_paths
 }

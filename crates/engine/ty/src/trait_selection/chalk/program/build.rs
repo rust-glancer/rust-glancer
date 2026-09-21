@@ -5,9 +5,7 @@
 //! bounds come after the traits they expose. ADTs are collected along the way whenever they appear
 //! inside a lowered substitution or predicate.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use chalk_ir::{AliasTy, AssocTypeId, Substitution, Ty, TyKind, Variance, Variances, WhereClause};
 use chalk_solve::rust_ir::{AssociatedTyValueId, FnDefDatum, ImplDatum, TraitDatum};
@@ -16,13 +14,20 @@ use rg_ir_model::{AssocItemId, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
-use super::super::interner::RgChalkInterner;
-use super::super::lower::{
-    ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id, chalk_assoc_type_value_id,
-};
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::TraitSelectionSession;
+use crate::{
+    lookup::ItemPathQuery,
+    trait_selection::{
+        TraitSelectionSession,
+        chalk::{
+            interner::RgChalkInterner,
+            lower::{
+                ChalkLowerer, GenericBinderEnv, adt_datum, chalk_assoc_type_id,
+                chalk_assoc_type_value_id,
+            },
+        },
+    },
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 

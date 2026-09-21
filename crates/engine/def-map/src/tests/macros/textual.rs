@@ -1,4 +1,4 @@
-use super::super::utils;
+use crate::tests::utils;
 
 #[test]
 fn parent_textual_macro_rules_respects_child_module_source_order() {

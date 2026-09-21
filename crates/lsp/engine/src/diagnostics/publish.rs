@@ -4,9 +4,8 @@ use gen_lsp_types::Diagnostic;
 use rg_lsp_proto::ServiceNotification;
 use rg_std::NormalizedPathBuf;
 
-use crate::service::ServiceNotificationsSink;
-
 use super::cargo::CargoDiagnostics;
+use crate::service::ServiceNotificationsSink;
 
 /// Complete saved-source diagnostics output for one Cargo run.
 ///
@@ -95,7 +94,8 @@ mod tests {
     use rg_std::NormalizedPathBuf;
     use test_fixture::synthetic_test_path;
 
-    use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
+    use super::WorkspaceDiagnostics;
+    use crate::diagnostics::cargo::CargoDiagnostics;
 
     #[test]
     fn current_results_and_known_stale_paths_are_both_emitted() {

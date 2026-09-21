@@ -27,15 +27,12 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{
-        CompletionSourceAttachment, LabelCompletionContext, LifetimeCompletionContext,
+    query::completion::{
+        CompletionQuery,
+        render::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
+        site::{CompletionSourceAttachment, LabelCompletionContext, LifetimeCompletionContext},
+        syntax::CompletionSyntaxContext,
     },
-};
-
-use super::super::{
-    CompletionQuery,
-    render::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
-    syntax::CompletionSyntaxContext,
 };
 
 /// Chooses the semantic scope that matches an already-classified apostrophe site.

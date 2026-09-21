@@ -349,7 +349,7 @@ impl<'a> TtTreeSink<'a> {
         // after non-joint tokens so materializing that text does not merge neighboring tokens into a
         // different token stream.
         if let Some([current, next]) = last_two
-            && needs_space_after(&current, &next)
+            && Self::needs_space_after(&current, &next)
         {
             self.inner.token(SyntaxKind::WHITESPACE, " ");
             self.token_map
@@ -381,14 +381,14 @@ impl<'a> TtTreeSink<'a> {
             }
             Some(TokenTree::Subtree(subtree)) => {
                 self.cursor.bump();
-                let Some(text) = delimiter_token_text(subtree.delimiter.kind, false) else {
+                let Some(text) = Self::delimiter_token_text(subtree.delimiter.kind, false) else {
                     return self.next_token_text();
                 };
                 (SmolStr::new_inline(text), subtree.delimiter.open)
             }
             None => {
                 let subtree = self.cursor.end();
-                let Some(text) = delimiter_token_text(subtree.delimiter.kind, true) else {
+                let Some(text) = Self::delimiter_token_text(subtree.delimiter.kind, true) else {
                     return self.next_token_text();
                 };
                 (SmolStr::new_inline(text), subtree.delimiter.close)
@@ -422,28 +422,28 @@ impl<'a> TtTreeSink<'a> {
             ctx: left.ctx,
         }
     }
-}
 
-fn needs_space_after(current: &Leaf, next: &Leaf) -> bool {
-    match current {
-        Leaf::Punct(punct) => {
-            punct.spacing == Spacing::Alone
-                && punct.char != ';'
-                && !matches!(next, Leaf::Punct(next) if next.char == '\'')
+    fn needs_space_after(current: &Leaf, next: &Leaf) -> bool {
+        match current {
+            Leaf::Punct(punct) => {
+                punct.spacing == Spacing::Alone
+                    && punct.char != ';'
+                    && !matches!(next, Leaf::Punct(next) if next.char == '\'')
+            }
+            Leaf::Ident(_) | Leaf::Literal(_) => true,
         }
-        Leaf::Ident(_) | Leaf::Literal(_) => true,
     }
-}
 
-fn delimiter_token_text(kind: DelimiterKind, closing: bool) -> Option<&'static str> {
-    match (kind, closing) {
-        (DelimiterKind::Parenthesis, false) => Some("("),
-        (DelimiterKind::Parenthesis, true) => Some(")"),
-        (DelimiterKind::Brace, false) => Some("{"),
-        (DelimiterKind::Brace, true) => Some("}"),
-        (DelimiterKind::Bracket, false) => Some("["),
-        (DelimiterKind::Bracket, true) => Some("]"),
-        (DelimiterKind::Invisible, _) => None,
+    fn delimiter_token_text(kind: DelimiterKind, closing: bool) -> Option<&'static str> {
+        match (kind, closing) {
+            (DelimiterKind::Parenthesis, false) => Some("("),
+            (DelimiterKind::Parenthesis, true) => Some(")"),
+            (DelimiterKind::Brace, false) => Some("{"),
+            (DelimiterKind::Brace, true) => Some("}"),
+            (DelimiterKind::Bracket, false) => Some("["),
+            (DelimiterKind::Bracket, true) => Some("]"),
+            (DelimiterKind::Invisible, _) => None,
+        }
     }
 }
 

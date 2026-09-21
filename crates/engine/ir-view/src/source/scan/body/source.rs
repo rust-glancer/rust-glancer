@@ -10,15 +10,13 @@
 //!     ^     ^ retain both references, as well as the `value` declaration
 //! ```
 
-use crate::IndexedViewDb;
 use anyhow::Context as _;
+use rg_body_ir::{BodyLocalItems, BodyView, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FileId, SemanticItemRef,
     TypeDefId,
 };
-
-use rg_body_ir::{BodyLocalItems, BodyView, ExprKind, PatKind};
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -26,6 +24,7 @@ use super::{
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
+use crate::IndexedViewDb;
 
 /// Scans one crate for every written body-local source candidate used by whole-project queries.
 ///

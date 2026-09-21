@@ -2,9 +2,8 @@ use expect_test::expect;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{BodyId, BodyRef, CrateRef, PackageSlot};
 
-use crate::testonly::BodyIrFixture;
-
 use super::utils::check_project_body_ir;
+use crate::testonly::BodyIrFixture;
 
 #[test]
 fn body_local_extern_blocks_collect_declarations_without_scheduling_foreign_bodies() {

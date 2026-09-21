@@ -2,9 +2,8 @@
 
 use rg_arena::Arena;
 
-use crate::{CrateBodies, CurrentBody};
-
 use super::CrateBodyBuildState;
+use crate::{CrateBodies, CurrentBody};
 
 impl CrateBodyBuildState<'_> {
     /// Finish request-local bodies without requiring their IDs to match worklist slots.

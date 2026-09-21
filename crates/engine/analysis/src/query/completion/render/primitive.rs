@@ -5,14 +5,13 @@
 
 use rg_ir_model::PrimitiveTy;
 
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget,
-};
-
 use super::{
     definition_detail,
     sort::{CompletionSortPolicy, CompletionSortPriority},
+};
+use crate::model::{
+    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionTarget,
 };
 
 /// Renders primitive types after scope lookup proves their spelling is not shadowed.

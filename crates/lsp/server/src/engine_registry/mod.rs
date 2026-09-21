@@ -51,45 +51,6 @@ pub(crate) struct EngineRegistry {
     inner: Arc<Mutex<EngineRegistryInner>>,
 }
 
-/// Engine ownership plus the project-source identity selected while routing one open document.
-///
-/// The editor URI can outlive its filesystem spelling: a rename or removal after `didOpen` must
-/// not force later analysis to rediscover which source the open session originally addressed.
-#[derive(Clone, Debug)]
-pub(crate) struct OpenDocumentRoute {
-    engine_client: EngineClient,
-    source_path: NormalizedPathBuf,
-}
-
-impl OpenDocumentRoute {
-    pub(crate) fn new(engine_client: EngineClient, source_path: NormalizedPathBuf) -> Self {
-        Self {
-            engine_client,
-            source_path,
-        }
-    }
-
-    pub(crate) fn engine_client(&self) -> &EngineClient {
-        &self.engine_client
-    }
-
-    pub(crate) fn source_path(&self) -> &NormalizedPathBuf {
-        &self.source_path
-    }
-}
-
-/// Foreground project updates held while one native watcher burst settles and rebuilds.
-///
-/// The watcher is scoped to an editor workspace folder, which may contain several already-started
-/// Cargo engines. Keeping their updates together lets every affected status change happen before
-/// the watcher waits for quiet. An update that finds no forwarded path is dropped as cancelled, so
-/// filtering a watcher event cannot accidentally clear an older failed status.
-#[must_use = "external project changes must be forwarded after the watcher settles"]
-#[derive(Debug)]
-pub(crate) struct ExternalProjectChanges {
-    updates: BTreeMap<EngineId, EngineProjectUpdate>,
-}
-
 impl EngineRegistry {
     /// Creates a registry that can spawn engines and forward their notifications to the LSP client.
     pub(crate) fn new(
@@ -635,6 +596,45 @@ impl EngineRegistry {
     }
 }
 
+/// Engine ownership plus the project-source identity selected while routing one open document.
+///
+/// The editor URI can outlive its filesystem spelling: a rename or removal after `didOpen` must
+/// not force later analysis to rediscover which source the open session originally addressed.
+#[derive(Clone, Debug)]
+pub(crate) struct OpenDocumentRoute {
+    engine_client: EngineClient,
+    source_path: NormalizedPathBuf,
+}
+
+impl OpenDocumentRoute {
+    pub(crate) fn new(engine_client: EngineClient, source_path: NormalizedPathBuf) -> Self {
+        Self {
+            engine_client,
+            source_path,
+        }
+    }
+
+    pub(crate) fn engine_client(&self) -> &EngineClient {
+        &self.engine_client
+    }
+
+    pub(crate) fn source_path(&self) -> &NormalizedPathBuf {
+        &self.source_path
+    }
+}
+
+/// Foreground project updates held while one native watcher burst settles and rebuilds.
+///
+/// The watcher is scoped to an editor workspace folder, which may contain several already-started
+/// Cargo engines. Keeping their updates together lets every affected status change happen before
+/// the watcher waits for quiet. An update that finds no forwarded path is dropped as cancelled, so
+/// filtering a watcher event cannot accidentally clear an older failed status.
+#[must_use = "external project changes must be forwarded after the watcher settles"]
+#[derive(Debug)]
+pub(crate) struct ExternalProjectChanges {
+    updates: BTreeMap<EngineId, EngineProjectUpdate>,
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -647,10 +647,8 @@ mod tests {
         jsonrpc::Result,
     };
 
+    use super::{document_owner::DocumentOwnerSource, *};
     use crate::client_status::ActiveWorkspaceState;
-
-    use super::document_owner::DocumentOwnerSource;
-    use super::*;
 
     const WORKSPACE_FIXTURE: &str = r#"
 //- /workspace/Cargo.toml

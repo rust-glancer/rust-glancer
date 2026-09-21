@@ -1,11 +1,11 @@
 //! Captures saved source and declarations so body analysis can run outside the live project.
 
-use super::{AnalysisSurface, SplitIndexingProgress};
-use crate::{
-    selection::PhasePackageSet,
-    state::{ProjectGenerationId, ProjectState},
-    storage::loaders::PackageReadLoaders,
+use std::{
+    num::NonZeroUsize,
+    path::Path,
+    sync::{Arc, Mutex},
 };
+
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuilder, BodyIrFile, CrateBodies, CrateBodiesCoverage};
 use rg_def_map::{DefMapDb, DefMapLoader};
@@ -15,10 +15,12 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{MemorySize, UniqueVec};
 use rg_text::PackageNameInterners;
-use std::{
-    num::NonZeroUsize,
-    path::Path,
-    sync::{Arc, Mutex},
+
+use super::{AnalysisSurface, SplitIndexingProgress};
+use crate::{
+    selection::PhasePackageSet,
+    state::{ProjectGenerationId, ProjectState},
+    storage::loaders::PackageReadLoaders,
 };
 
 /// Owned inputs for analyzing selected bodies from one saved version of [`Project`](crate::Project).
@@ -42,24 +44,6 @@ pub struct SavedBodyBuildInputs {
     subset: PackageSubset,
     packages_to_reallocate: Vec<PackageSlot>,
     worker_limit: Option<NonZeroUsize>,
-}
-
-/// Body analysis results ready to be installed in a [`Project`](crate::Project).
-///
-/// Each result pairs a [`CrateRef`] with its new [`CrateBodies`]. The batch also records the
-/// [`ProjectGenerationId`] of the source and declarations used by the build. Pass it to
-/// [`SplitIndexing::publish`](crate::SplitIndexing::publish), which rejects results from an older
-/// project version and checks for work completed by other requests since the build started.
-#[derive(Debug, MemorySize)]
-pub struct SavedBodyProducts {
-    pub(super) generation: ProjectGenerationId,
-    pub(super) crates: Vec<(CrateRef, CrateBodies)>,
-}
-
-impl SavedBodyProducts {
-    pub fn generation_id(&self) -> ProjectGenerationId {
-        self.generation
-    }
 }
 
 impl SavedBodyBuildInputs {
@@ -224,5 +208,23 @@ impl SavedBodyBuildInputs {
         // Names in a completed payload own their strings and need no interner publication.
         self.parse.evict_saved_source_text();
         result.context("construct saved body products")
+    }
+}
+
+/// Body analysis results ready to be installed in a [`Project`](crate::Project).
+///
+/// Each result pairs a [`CrateRef`] with its new [`CrateBodies`]. The batch also records the
+/// [`ProjectGenerationId`] of the source and declarations used by the build. Pass it to
+/// [`SplitIndexing::publish`](crate::SplitIndexing::publish), which rejects results from an older
+/// project version and checks for work completed by other requests since the build started.
+#[derive(Debug, MemorySize)]
+pub struct SavedBodyProducts {
+    pub(super) generation: ProjectGenerationId,
+    pub(super) crates: Vec<(CrateRef, CrateBodies)>,
+}
+
+impl SavedBodyProducts {
+    pub fn generation_id(&self) -> ProjectGenerationId {
+        self.generation
     }
 }

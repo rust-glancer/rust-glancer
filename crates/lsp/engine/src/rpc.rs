@@ -10,8 +10,10 @@ use anyhow::Context as _;
 use futures::prelude::*;
 use rg_lsp_proto::{EngineService, NotificationsServiceClient};
 use tarpc::{
-    client::Config as TarpcClientConfig, serde_transport::tcp, server::BaseChannel,
-    server::Channel as _, tokio_serde::formats::Json,
+    client::Config as TarpcClientConfig,
+    serde_transport::tcp,
+    server::{BaseChannel, Channel as _},
+    tokio_serde::formats::Json,
 };
 
 use crate::{Service, memory::MemoryControl, service::ServiceNotificationsSink};

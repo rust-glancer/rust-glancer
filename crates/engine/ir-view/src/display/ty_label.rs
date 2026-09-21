@@ -8,9 +8,9 @@
 use rg_ir_model::{GenericParamRef, ItemOwner, TraitDefRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
-use rg_ty::lowering::SemanticSignatureQuery;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
+    lowering::SemanticSignatureQuery,
 };
 
 use crate::{

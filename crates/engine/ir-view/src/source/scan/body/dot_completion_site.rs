@@ -11,13 +11,12 @@
 //! user.name($0) not a dot-completion site: the cursor is inside the arguments
 //! ```
 
+use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
 use rg_ir_model::{CrateRef, ExprId, FileId, Span};
 use rg_package_store::PackageStoreError;
 
-use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
-
-use super::super::NarrowestSourceSite;
 use super::DotCompletionSite;
+use crate::source::scan::NarrowestSourceSite;
 
 /// Finds the source site that belongs to a dot-completion offset.
 ///

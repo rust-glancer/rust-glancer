@@ -26,3 +26,6 @@ wincode.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true
+
+[lints]
+workspace = true

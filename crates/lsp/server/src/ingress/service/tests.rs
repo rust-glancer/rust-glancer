@@ -14,17 +14,18 @@ use tower_lsp_server::{
     jsonrpc::{Request, Response},
 };
 
+use super::{EditorIngress, completion_request, document_request};
 use crate::{
     completion_scheduler::CompletionScheduler, ingress::EditorStateHandle,
     inlay_refresher::InlayRefresher, recent_editor_saves::RecentEditorSaves,
     tests::synthetic_test_path,
 };
 
-use super::{EditorIngress, completion_request, document_request, is_document_request};
-
 #[test]
 fn folding_range_is_a_document_request() {
-    assert!(is_document_request("textDocument/foldingRange"));
+    assert!(EditorIngress::<()>::is_document_request(
+        "textDocument/foldingRange"
+    ));
 }
 
 #[test]
@@ -33,7 +34,7 @@ fn semantic_tokens_capture_the_requested_document() {
         "textDocument/semanticTokens/full",
         "textDocument/semanticTokens/range",
     ] {
-        assert!(is_document_request(method), "{method}");
+        assert!(EditorIngress::<()>::is_document_request(method), "{method}");
     }
 }
 
@@ -205,41 +206,6 @@ struct CapturingService {
     captured: Arc<Mutex<Vec<CapturedQuery>>>,
 }
 
-#[derive(Debug)]
-struct CompletionOwnershipService {
-    observations: Arc<Mutex<Vec<(u64, bool)>>>,
-}
-
-impl Service<Request> for CompletionOwnershipService {
-    type Response = Option<Response>;
-    type Error = Infallible;
-    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: Request) -> Self::Future {
-        let character = request
-            .params()
-            .and_then(|params| params.get("position")?.get("character")?.as_u64());
-        let observations = Arc::clone(&self.observations);
-        Box::pin(async move {
-            if let Some(character) = character {
-                let request = completion_request()
-                    .expect("completion should carry an ingress ownership token");
-                observations
-                    .lock()
-                    .expect("completion observation mutex should be usable")
-                    .push((character, request.is_replaced()));
-            }
-            Ok(None)
-        })
-    }
-}
-
-type CapturedQuery = (String, (u64, u64));
-
 impl Service<Request> for CapturingService {
     type Response = Option<Response>;
     type Error = Infallible;
@@ -275,6 +241,41 @@ impl Service<Request> for CapturingService {
         })
     }
 }
+
+#[derive(Debug)]
+struct CompletionOwnershipService {
+    observations: Arc<Mutex<Vec<(u64, bool)>>>,
+}
+
+impl Service<Request> for CompletionOwnershipService {
+    type Response = Option<Response>;
+    type Error = Infallible;
+    type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: Request) -> Self::Future {
+        let character = request
+            .params()
+            .and_then(|params| params.get("position")?.get("character")?.as_u64());
+        let observations = Arc::clone(&self.observations);
+        Box::pin(async move {
+            if let Some(character) = character {
+                let request = completion_request()
+                    .expect("completion should carry an ingress ownership token");
+                observations
+                    .lock()
+                    .expect("completion observation mutex should be usable")
+                    .push((character, request.is_replaced()));
+            }
+            Ok(None)
+        })
+    }
+}
+
+type CapturedQuery = (String, (u64, u64));
 
 fn completion_request_message(uri: &Uri, id: i64, character: u32) -> Request {
     Request::build("textDocument/completion")

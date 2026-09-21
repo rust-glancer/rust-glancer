@@ -1,4 +1,4 @@
-use super::super::utils;
+use crate::tests::utils;
 
 #[test]
 fn macro_export_makes_macro_rules_visible_from_crate_root() {

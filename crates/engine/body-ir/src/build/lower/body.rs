@@ -1,16 +1,12 @@
 //! Shared lowering context for expression bodies.
 
 use anyhow::Context as _;
-
-use rg_syntax::{AstNode as _, ast};
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
+use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
-
-use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::{
     CurrentDeclarationBuilder, CurrentRootItems,
@@ -18,6 +14,7 @@ use super::{
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
 };
+use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 pub(super) struct BodyLowering<'a> {
     owner: BodyOwner,
@@ -31,23 +28,6 @@ pub(super) struct BodyLowering<'a> {
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
     cancellation: &'a rg_std::CancellationToken,
-}
-
-/// Temporary context for syntax produced by one body macro expansion.
-///
-/// The macro call source is the stable fallback for generated syntax. When the expansion span map
-/// proves that a small token came from the invocation, the token gets its original argument span
-/// instead. For example, `make_expr!(input)` can expose `input` as the source of a generated path,
-/// while the surrounding binary expression still belongs to the macro call.
-struct GeneratedBodyMacroContext {
-    source: BodySource,
-    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
-}
-
-impl GeneratedBodyMacroContext {
-    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
-        Self { source, expanded }
-    }
 }
 
 impl<'a> BodyLowering<'a> {
@@ -345,5 +325,22 @@ impl BodyLowering<'_> {
                 ExprKind::BuiltinMacro { kind },
             )),
         }
+    }
+}
+
+/// Temporary context for syntax produced by one body macro expansion.
+///
+/// The macro call source is the stable fallback for generated syntax. When the expansion span map
+/// proves that a small token came from the invocation, the token gets its original argument span
+/// instead. For example, `make_expr!(input)` can expose `input` as the source of a generated path,
+/// while the surrounding binary expression still belongs to the macro call.
+struct GeneratedBodyMacroContext {
+    source: BodySource,
+    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
+}
+
+impl GeneratedBodyMacroContext {
+    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
+        Self { source, expanded }
     }
 }

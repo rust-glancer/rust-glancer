@@ -1,6 +1,5 @@
-use crate::grammar::attributes::ATTRIBUTE_FIRST;
-
 use super::*;
+use crate::grammar::attributes::ATTRIBUTE_FIRST;
 
 // test param_list
 // fn a() {}

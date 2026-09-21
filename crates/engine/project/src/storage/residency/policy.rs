@@ -9,10 +9,10 @@
 //! memory may let the allocator free pages used during indexing. A package headed straight to
 //! the cache does not need a second copy of data that will soon be released.
 
-use rg_std::MemorySize;
 use std::collections::HashSet;
 
 use rg_ir_model::PackageSlot;
+use rg_std::MemorySize;
 use rg_workspace::{Package, PackageId, PackageSource, WorkspaceMetadata};
 use serde::{Deserialize, Serialize};
 
@@ -34,6 +34,36 @@ pub enum PackageResidencyPolicy {
     WorkspacePathAndDirectDepsResident,
     /// Treat every package as eligible for offloading.
     AllOffloadable,
+}
+
+impl PackageResidencyPolicy {
+    /// Stable kebab-case name used by CLI flags and LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::AllResident => "all-resident",
+            Self::WorkspaceResident => "workspace",
+            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
+            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
+            Self::AllOffloadable => "all-offloadable",
+        }
+    }
+
+    /// Parses the public policy names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        match normalized.as_str() {
+            "all-resident" => Some(Self::AllResident),
+            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
+            "workspace-and-path-deps" | "workspace-path-deps" => {
+                Some(Self::WorkspaceAndPathDepsResident)
+            }
+            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
+                Some(Self::WorkspacePathAndDirectDepsResident)
+            }
+            "all-offloadable" => Some(Self::AllOffloadable),
+            _ => None,
+        }
+    }
 }
 
 /// Storage decision for the heavy phase payloads of one package.
@@ -136,44 +166,14 @@ impl PackageResidencyPlan {
     }
 }
 
-impl PackageResidencyPolicy {
-    /// Stable kebab-case name used by CLI flags and LSP initialization options.
-    pub fn config_name(self) -> &'static str {
-        match self {
-            Self::AllResident => "all-resident",
-            Self::WorkspaceResident => "workspace",
-            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
-            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
-            Self::AllOffloadable => "all-offloadable",
-        }
-    }
-
-    /// Parses the public policy names accepted by frontends.
-    pub fn from_config_name(value: &str) -> Option<Self> {
-        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
-        match normalized.as_str() {
-            "all-resident" => Some(Self::AllResident),
-            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
-            "workspace-and-path-deps" | "workspace-path-deps" => {
-                Some(Self::WorkspaceAndPathDepsResident)
-            }
-            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
-                Some(Self::WorkspacePathAndDirectDepsResident)
-            }
-            "all-offloadable" => Some(Self::AllOffloadable),
-            _ => None,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use cargo_metadata::Source;
+    use rg_ir_model::PackageSlot;
+    use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
     use test_fixture::fixture_crate;
 
     use super::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
-    use rg_ir_model::PackageSlot;
-    use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 
     #[test]
     fn classifies_package_residency_by_policy() {

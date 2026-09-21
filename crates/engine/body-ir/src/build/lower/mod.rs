@@ -23,7 +23,6 @@ mod task;
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
@@ -32,17 +31,18 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::CrateBodiesCoverage;
-
-pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
-pub(super) use self::declaration::{CurrentDeclarationBuilder, CurrentRootItems};
-pub(super) use self::macro_expansion::BodyMacroExpansion;
-pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
+pub(super) use self::{
+    builder::{LoweredBodyData, PendingBindingResolution},
+    declaration::{CurrentDeclarationBuilder, CurrentRootItems},
+    macro_expansion::BodyMacroExpansion,
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
+};
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,
 };
+use crate::CrateBodiesCoverage;
 
 // These thresholds are diagnostic filters, not build budgets. Debug logging should identify
 // unusually expensive units without producing one record for every ordinary package or crate.

@@ -13,12 +13,10 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, PackageSlot};
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{SysrootCrate, WorkspaceMetadata};
-
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, PackageSlot};
 
 /// Implicit roots for one semantic crate.
 type CrateImplicitRoots = HashMap<Name, ModuleRef>;

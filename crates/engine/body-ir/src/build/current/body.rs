@@ -15,8 +15,6 @@
 
 use std::time::Instant;
 
-use crate::store::current::SelectedImpl;
-
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
@@ -29,19 +27,21 @@ use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 use rg_ty::trait_selection::TraitSelectionSession;
 
-use crate::{
-    BodyOwner, CrateBodiesCoverage, CurrentBody,
-    build::state::{BodySemanticStage, CrateBodyBuildState},
-};
-
 use super::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
     saved_identity::{SavedNestedBodyIndex, SavedRootOwnerIndex},
     syntax_owner::SyntaxBodyOwner,
 };
-use crate::build::lower::{
-    BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource, CurrentRootItems,
-    LoweredCrateBodies,
+use crate::{
+    BodyOwner, CrateBodiesCoverage, CurrentBody,
+    build::{
+        lower::{
+            BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
+            CurrentRootItems, LoweredCrateBodies,
+        },
+        state::{BodySemanticStage, CrateBodyBuildState},
+    },
+    store::current::SelectedImpl,
 };
 
 pub(super) struct CurrentBodyBuildOutcome {

@@ -37,6 +37,24 @@ pub(crate) struct PackageCacheWriteInput<'a> {
     pub(crate) body_ir: &'a PackageBodies,
 }
 
+impl<'a> PackageCacheWriteInput<'a> {
+    pub(crate) fn new(
+        header: &'a PackageCacheHeader,
+        parse: &'a PackageParseSnapshot,
+        def_map: &'a DefMapPackage,
+        semantic_ir: &'a SemanticPackage,
+        body_ir: &'a PackageBodies,
+    ) -> Self {
+        Self {
+            header,
+            parse,
+            def_map,
+            semantic_ir,
+            body_ir,
+        }
+    }
+}
+
 /// The bodies to write for each Cargo target in one package cache file.
 ///
 /// New results are borrowed [`CrateBodies`]. Unchanged targets use a [`CrateBodiesManifest`] read
@@ -46,13 +64,6 @@ pub(crate) struct PackageCacheWriteInput<'a> {
 #[derive(Debug)]
 pub(crate) struct BodyIrWriteInput<'a> {
     pub(crate) crates: Vec<CrateBodyWriteInput<'a>>,
-}
-
-#[derive(Debug)]
-pub(crate) enum CrateBodyWriteInput<'a> {
-    Resident(&'a CrateBodies),
-    /// Copy encoded bodies from the same open cache file that supplied this manifest.
-    Cached(&'a CrateBodiesManifest),
 }
 
 impl<'a> BodyIrWriteInput<'a> {
@@ -108,6 +119,13 @@ impl<'a> BodyIrWriteInput<'a> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum CrateBodyWriteInput<'a> {
+    Resident(&'a CrateBodies),
+    /// Copy encoded bodies from the same open cache file that supplied this manifest.
+    Cached(&'a CrateBodiesManifest),
+}
+
 /// New body analysis and startup metadata for a package cache file.
 ///
 /// DefMap and Semantic IR are unchanged. The writer copies their encoded data from the existing
@@ -117,24 +135,6 @@ pub(crate) struct PackageCacheBodyUpdateInput<'a> {
     pub(crate) header: &'a PackageCacheHeader,
     pub(crate) parse: &'a PackageParseSnapshot,
     pub(crate) body_ir: &'a BodyIrWriteInput<'a>,
-}
-
-impl<'a> PackageCacheWriteInput<'a> {
-    pub(crate) fn new(
-        header: &'a PackageCacheHeader,
-        parse: &'a PackageParseSnapshot,
-        def_map: &'a DefMapPackage,
-        semantic_ir: &'a SemanticPackage,
-        body_ir: &'a PackageBodies,
-    ) -> Self {
-        Self {
-            header,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
-        }
-    }
 }
 
 /// Small package state needed to validate a cache hit before retained IR is decoded.
@@ -147,17 +147,6 @@ pub(crate) struct PackageCacheProbe {
     pub(crate) header: PackageCacheHeader,
     pub(crate) parse: PackageParseSnapshot,
     pub(crate) body_ir_coverage: Vec<CrateBodiesCoverage>,
-}
-
-/// Validated startup data retained after the temporary artifact reader is closed.
-///
-/// The probe owns source identity and Body IR coverage. The [`PackageDefMapsManifest`] is retained
-/// because dependency visibility and file routing are frequent cross-package queries that should
-/// not reopen every artifact merely to discover which crate payload would be relevant.
-#[derive(Debug, Clone)]
-pub(crate) struct PackageCacheStartup {
-    pub(crate) probe: PackageCacheProbe,
-    pub(crate) def_map_manifest: PackageDefMapsManifest,
 }
 
 impl PackageCacheProbe {
@@ -183,4 +172,15 @@ impl PackageCacheProbe {
             body_ir_coverage: input.body_ir.coverage(),
         }
     }
+}
+
+/// Validated startup data retained after the temporary artifact reader is closed.
+///
+/// The probe owns source identity and Body IR coverage. The [`PackageDefMapsManifest`] is retained
+/// because dependency visibility and file routing are frequent cross-package queries that should
+/// not reopen every artifact merely to discover which crate payload would be relevant.
+#[derive(Debug, Clone)]
+pub(crate) struct PackageCacheStartup {
+    pub(crate) probe: PackageCacheProbe,
+    pub(crate) def_map_manifest: PackageDefMapsManifest,
 }

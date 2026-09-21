@@ -15,9 +15,11 @@ mod build;
 mod database;
 mod roots;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use chalk_ir::{
     AliasTy as ChalkAliasTy, GenericArgData, Substitution as ChalkSubstitution, TyKind, Variances,
@@ -37,10 +39,12 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::interner::RgChalkInterner;
-use crate::inference::InferenceTable;
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::{TraitGoal, TraitSelectionSession};
-use crate::{Clause, TraitRefLowering};
+use crate::{
+    Clause, TraitRefLowering,
+    inference::InferenceTable,
+    lookup::ItemPathQuery,
+    trait_selection::{TraitGoal, TraitSelectionSession},
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 // Program extensions are relatively rare; a subsecond threshold still filters ordinary root
@@ -55,117 +59,6 @@ const SLOW_PROGRAM_EXTENSION: Duration = Duration::from_millis(100);
 pub(super) struct ChalkProgramState {
     roots: ChalkProgramRoots,
     program: ChalkProgram,
-}
-
-/// Whether the goal-directed database is ready for one solver query.
-pub(super) enum ProgramAvailability {
-    Ready,
-    Unsupported,
-    Exhausted,
-}
-
-/// Semantic definitions that can become entry points into one Chalk program.
-///
-/// A goal normally contributes one or two traits. Opaque types are roots too because their bounds
-/// can introduce traits that are not written directly in the outer goal.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct ChalkProgramRoots {
-    traits: UniqueVec<TraitDefRef>,
-    opaque_tys: UniqueVec<OpaqueTyRef>,
-    functions: UniqueVec<FunctionRef>,
-}
-
-/// The complete semantic input discovered from a set of new roots.
-///
-/// This is temporary build data. It keeps canonical headers beside their identities so the build
-/// phase does not repeat semantic lowering while it turns the discovered closure into Chalk
-/// datums. Discovery and materialization therefore read the same declaration values even when
-/// those values are shared with other use-site sessions through the snapshot declaration cache.
-#[derive(Default)]
-struct ChalkProgramScope {
-    definitions: ChalkProgramRoots,
-    trait_headers: HashMap<TraitDefRef, Arc<crate::lowering::TraitHeader>>,
-    impls: Vec<ImplRef>,
-    #[cfg(debug_assertions)] // Used to assert uniqueness without expensive `UniqueVec`
-    discovered_impls: std::collections::HashSet<ImplRef>,
-    impl_headers: HashMap<ImplRef, Arc<crate::lowering::ImplHeader>>,
-    opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
-    function_signatures: HashMap<FunctionRef, Arc<crate::lowering::CallableSignature>>,
-    loaded_opaque_owners: UniqueVec<GenericDefRef>,
-}
-
-/// Materialized Chalk datums and the lookup tables needed by Chalk's database callbacks.
-///
-/// The program only contains definitions reachable from goals seen by its solver. Once a trait is
-/// materialized, however, all of its visible impls are added together so extending the program
-/// later cannot invalidate answers already retained in Chalk's solver forests.
-#[derive(Debug)]
-pub(super) struct ChalkProgram {
-    materialized_traits: UniqueVec<TraitDefRef>,
-    materialized_opaque_owners: UniqueVec<GenericDefRef>,
-    known_items: ChalkKnownItems,
-    traits: HashMap<TraitDefRef, Arc<TraitDatum<RgChalkInterner>>>,
-    trait_arities: HashMap<TraitDefRef, usize>,
-    associated_tys: HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
-    associated_ty_by_trait_name: HashMap<(TraitDefRef, Name), TypeAliasRef>,
-    associated_ty_values: HashMap<TypeAliasRef, Arc<AssociatedTyValue<RgChalkInterner>>>,
-    associated_ty_value_by_impl: HashMap<(ImplRef, TypeAliasRef), TypeAliasRef>,
-    opaque_tys: HashMap<OpaqueTyRef, Arc<OpaqueTyDatum<RgChalkInterner>>>,
-    functions: HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>>,
-    adts: HashMap<TypeDefRef, Arc<chalk_solve::rust_ir::AdtDatum<RgChalkInterner>>>,
-    adt_variances: HashMap<TypeDefRef, Variances<RgChalkInterner>>,
-    impls: HashMap<ImplRef, Arc<ImplDatum<RgChalkInterner>>>,
-    impls_by_trait: HashMap<TraitDefRef, Vec<ImplRef>>,
-}
-
-/// Exact compiler-known identities used by Chalk's callable built-ins.
-#[derive(Debug, Default)]
-struct ChalkKnownItems {
-    fn_trait: Option<TraitDefRef>,
-    fn_mut_trait: Option<TraitDefRef>,
-    fn_once_trait: Option<TraitDefRef>,
-    fn_once_output: Option<TypeAliasRef>,
-}
-
-impl ChalkKnownItems {
-    fn from_lookup(item_lookup: &ItemLookupQuery<'_>) -> Self {
-        Self {
-            fn_trait: item_lookup.lang_trait(LangItem::Fn),
-            fn_mut_trait: item_lookup.lang_trait(LangItem::FnMut),
-            fn_once_trait: item_lookup.lang_trait(LangItem::FnOnce),
-            fn_once_output: item_lookup.lang_type_alias(LangItem::FnOnceOutput),
-        }
-    }
-
-    fn well_known_trait(
-        &self,
-        trait_ref: TraitDefRef,
-        associated_ty_ids: &[chalk_ir::AssocTypeId<RgChalkInterner>],
-    ) -> Option<WellKnownTrait> {
-        if self.fn_trait == Some(trait_ref) {
-            return Some(WellKnownTrait::Fn);
-        }
-        if self.fn_mut_trait == Some(trait_ref) {
-            return Some(WellKnownTrait::FnMut);
-        }
-        if self.fn_once_trait == Some(trait_ref)
-            && self.fn_once_output.is_some_and(|output| {
-                associated_ty_ids == [super::lower::chalk_assoc_type_id(output)]
-            })
-        {
-            return Some(WellKnownTrait::FnOnce);
-        }
-        None
-    }
-
-    fn trait_ref(&self, well_known: WellKnownTrait) -> Option<TraitDefRef> {
-        match well_known {
-            WellKnownTrait::Fn => self.fn_trait,
-            WellKnownTrait::FnMut => self.fn_mut_trait,
-            WellKnownTrait::FnOnce => self.fn_once_trait,
-            _ => None,
-        }
-    }
 }
 
 impl ChalkProgramState {
@@ -351,5 +244,116 @@ impl ChalkProgramState {
             };
             (equality.alias == *alias).then(|| equality.ty.clone())
         })
+    }
+}
+
+/// Whether the goal-directed database is ready for one solver query.
+pub(super) enum ProgramAvailability {
+    Ready,
+    Unsupported,
+    Exhausted,
+}
+
+/// Semantic definitions that can become entry points into one Chalk program.
+///
+/// A goal normally contributes one or two traits. Opaque types are roots too because their bounds
+/// can introduce traits that are not written directly in the outer goal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ChalkProgramRoots {
+    traits: UniqueVec<TraitDefRef>,
+    opaque_tys: UniqueVec<OpaqueTyRef>,
+    functions: UniqueVec<FunctionRef>,
+}
+
+/// The complete semantic input discovered from a set of new roots.
+///
+/// This is temporary build data. It keeps canonical headers beside their identities so the build
+/// phase does not repeat semantic lowering while it turns the discovered closure into Chalk
+/// datums. Discovery and materialization therefore read the same declaration values even when
+/// those values are shared with other use-site sessions through the snapshot declaration cache.
+#[derive(Default)]
+struct ChalkProgramScope {
+    definitions: ChalkProgramRoots,
+    trait_headers: HashMap<TraitDefRef, Arc<crate::lowering::TraitHeader>>,
+    impls: Vec<ImplRef>,
+    #[cfg(debug_assertions)] // Used to assert uniqueness without expensive `UniqueVec`
+    discovered_impls: std::collections::HashSet<ImplRef>,
+    impl_headers: HashMap<ImplRef, Arc<crate::lowering::ImplHeader>>,
+    opaque_bounds: HashMap<OpaqueTyRef, (crate::OpaqueTy, Vec<TraitRefLowering>)>,
+    function_signatures: HashMap<FunctionRef, Arc<crate::lowering::CallableSignature>>,
+    loaded_opaque_owners: UniqueVec<GenericDefRef>,
+}
+
+/// Materialized Chalk datums and the lookup tables needed by Chalk's database callbacks.
+///
+/// The program only contains definitions reachable from goals seen by its solver. Once a trait is
+/// materialized, however, all of its visible impls are added together so extending the program
+/// later cannot invalidate answers already retained in Chalk's solver forests.
+#[derive(Debug)]
+pub(super) struct ChalkProgram {
+    materialized_traits: UniqueVec<TraitDefRef>,
+    materialized_opaque_owners: UniqueVec<GenericDefRef>,
+    known_items: ChalkKnownItems,
+    traits: HashMap<TraitDefRef, Arc<TraitDatum<RgChalkInterner>>>,
+    trait_arities: HashMap<TraitDefRef, usize>,
+    associated_tys: HashMap<TypeAliasRef, Arc<AssociatedTyDatum<RgChalkInterner>>>,
+    associated_ty_by_trait_name: HashMap<(TraitDefRef, Name), TypeAliasRef>,
+    associated_ty_values: HashMap<TypeAliasRef, Arc<AssociatedTyValue<RgChalkInterner>>>,
+    associated_ty_value_by_impl: HashMap<(ImplRef, TypeAliasRef), TypeAliasRef>,
+    opaque_tys: HashMap<OpaqueTyRef, Arc<OpaqueTyDatum<RgChalkInterner>>>,
+    functions: HashMap<FunctionRef, Arc<FnDefDatum<RgChalkInterner>>>,
+    adts: HashMap<TypeDefRef, Arc<chalk_solve::rust_ir::AdtDatum<RgChalkInterner>>>,
+    adt_variances: HashMap<TypeDefRef, Variances<RgChalkInterner>>,
+    impls: HashMap<ImplRef, Arc<ImplDatum<RgChalkInterner>>>,
+    impls_by_trait: HashMap<TraitDefRef, Vec<ImplRef>>,
+}
+
+/// Exact compiler-known identities used by Chalk's callable built-ins.
+#[derive(Debug, Default)]
+struct ChalkKnownItems {
+    fn_trait: Option<TraitDefRef>,
+    fn_mut_trait: Option<TraitDefRef>,
+    fn_once_trait: Option<TraitDefRef>,
+    fn_once_output: Option<TypeAliasRef>,
+}
+
+impl ChalkKnownItems {
+    fn from_lookup(item_lookup: &ItemLookupQuery<'_>) -> Self {
+        Self {
+            fn_trait: item_lookup.lang_trait(LangItem::Fn),
+            fn_mut_trait: item_lookup.lang_trait(LangItem::FnMut),
+            fn_once_trait: item_lookup.lang_trait(LangItem::FnOnce),
+            fn_once_output: item_lookup.lang_type_alias(LangItem::FnOnceOutput),
+        }
+    }
+
+    fn well_known_trait(
+        &self,
+        trait_ref: TraitDefRef,
+        associated_ty_ids: &[chalk_ir::AssocTypeId<RgChalkInterner>],
+    ) -> Option<WellKnownTrait> {
+        if self.fn_trait == Some(trait_ref) {
+            return Some(WellKnownTrait::Fn);
+        }
+        if self.fn_mut_trait == Some(trait_ref) {
+            return Some(WellKnownTrait::FnMut);
+        }
+        if self.fn_once_trait == Some(trait_ref)
+            && self.fn_once_output.is_some_and(|output| {
+                associated_ty_ids == [super::lower::chalk_assoc_type_id(output)]
+            })
+        {
+            return Some(WellKnownTrait::FnOnce);
+        }
+        None
+    }
+
+    fn trait_ref(&self, well_known: WellKnownTrait) -> Option<TraitDefRef> {
+        match well_known {
+            WellKnownTrait::Fn => self.fn_trait,
+            WellKnownTrait::FnMut => self.fn_mut_trait,
+            WellKnownTrait::FnOnce => self.fn_once_trait,
+            _ => None,
+        }
     }
 }

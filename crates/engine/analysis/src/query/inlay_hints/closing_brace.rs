@@ -5,12 +5,11 @@ use rg_ir_view::{
     display::syntax::SyntaxRenderer,
 };
 
+use super::InlaySource;
 use crate::{
     Analysis,
     model::{DocumentSymbol, InlayHint, InlayHintKind, InlayHintPosition},
 };
-
-use super::InlaySource;
 
 pub(super) fn closing_brace_hints(
     analysis: &Analysis<'_>,

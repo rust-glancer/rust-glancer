@@ -9,15 +9,14 @@ use std::{path::PathBuf, sync::Arc};
 use rg_std::NormalizedPathBuf;
 use tokio::sync::Notify;
 
+use super::{
+    routing::{EngineId, EngineRouting, WorkspaceEngineRoute},
+    slot::EngineSlot,
+};
 use crate::{
     client_status::{ActiveWorkspaceState, ActiveWorkspaceStatus},
     config::ServerConfig,
     engine_client::EngineProjectStatus,
-};
-
-use super::{
-    routing::{EngineId, EngineRouting, WorkspaceEngineRoute},
-    slot::EngineSlot,
 };
 
 /// Mutable registry state guarded by `EngineRegistry`'s mutex.
@@ -199,9 +198,8 @@ mod tests {
     use rg_lsp_proto::CargoMetadataTarget;
     use serde_json::json;
 
-    use crate::tests::normalized_test_path;
-
     use super::*;
+    use crate::tests::normalized_test_path;
 
     #[test]
     fn reserved_spawn_uses_config_for_exact_workspace_root() {

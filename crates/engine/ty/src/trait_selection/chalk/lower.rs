@@ -5,11 +5,8 @@
 //! body inference. Returning `None` here means that the bounded solver does not model a semantic
 //! shape; it must never trigger another walk over `TypeRef`.
 
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use chalk_ir::cast::Cast;
-use chalk_ir::fold::Shift;
 use chalk_ir::{
     AdtId, AliasEq, AliasTy as ChalkAliasTy, AssocTypeId, Binders, BoundVar, ConcreteConst,
     ConstData, ConstValue as ChalkConstValue, DebruijnIndex, DomainGoal, FnDefId, FnPointer, FnSig,
@@ -17,7 +14,7 @@ use chalk_ir::{
     Mutability as ChalkMutability, Normalize, OpaqueTyId, ProjectionTy as ChalkProjectionTy,
     QuantifiedWhereClause, QuantifierKind, Safety, Scalar, Substitution as ChalkSubstitution,
     TraitId, TraitRef as ChalkTraitRef, TyKind, TyVariableKind, UintTy, VariableKind,
-    VariableKinds, WhereClause,
+    VariableKinds, WhereClause, cast::Cast, fold::Shift,
 };
 use chalk_solve::rust_ir::{
     AdtDatum, AdtDatumBound, AdtFlags, AdtKind, AdtVariantDatum, AssociatedTyDatum,
@@ -32,15 +29,16 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{Generics, TypeAliasData};
 
-use super::evidence::{ProjectionAliasLowering, SolverVariableEnv};
-use super::interner::{ChalkDefId, RgChalkInterner};
-use crate::inference::{InferVarKind, InferenceTable};
-use crate::lowering::TraitHeader;
-use crate::lowering::{CallableSignature, ImplHeader};
-use crate::trait_selection::TraitGoal;
+use super::{
+    evidence::{ProjectionAliasLowering, SolverVariableEnv},
+    interner::{ChalkDefId, RgChalkInterner},
+};
 use crate::{
     AliasTy, Clause, ConstValue, FloatTy, GenericArg, Lifetime, PrimitiveTy, SignedIntTy,
     TraitApplication, TraitRefLowering, Ty, UnsignedIntTy,
+    inference::{InferVarKind, InferenceTable},
+    lowering::{CallableSignature, ImplHeader, TraitHeader},
+    trait_selection::TraitGoal,
 };
 
 pub(super) type ChalkTy = chalk_ir::Ty<RgChalkInterner>;
@@ -63,13 +61,6 @@ pub(super) struct PredicateGoalLowering {
 pub(super) struct GenericBinderEnv {
     bindings: Vec<GenericBinding>,
     indices: HashMap<GenericParamRef, usize>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum GenericBinding {
-    Type,
-    Lifetime,
-    Const,
 }
 
 impl GenericBinderEnv {
@@ -115,6 +106,13 @@ impl GenericBinderEnv {
             .copied()
             .map(|index| BoundVar::new(DebruijnIndex::INNERMOST, index))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GenericBinding {
+    Type,
+    Lifetime,
+    Const,
 }
 
 /// Stateless conversion scoped by the semantic binder and solver-supported definitions.

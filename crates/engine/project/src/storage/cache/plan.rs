@@ -4,11 +4,11 @@
 //! package identity and dependency edges. The parse crate supplies the target-selection rule so
 //! cache planning can predict the artifact graph before a `ParseDb` exists.
 
-use rg_std::MemorySize;
 use std::path::Path;
 
 use rg_ir_model::PackageSlot;
 use rg_parse::{PackageParseSnapshot, ParseDb};
+use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{

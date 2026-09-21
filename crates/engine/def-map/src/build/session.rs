@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-
 use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionPerformancePreference;
@@ -71,8 +70,8 @@ impl DefMapBuildSession {
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<Self> {
-        let packages = normalized_package_slots(packages);
-        let packages_to_reallocate = normalized_package_slots(packages_to_reallocate)
+        let packages = Self::normalized_package_slots(packages);
+        let packages_to_reallocate = Self::normalized_package_slots(packages_to_reallocate)
             .into_iter()
             .filter(|package| packages.binary_search(package).is_ok())
             .collect();
@@ -283,11 +282,11 @@ impl DefMapBuildSession {
             generated_items,
         )))
     }
-}
 
-fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
-    let mut slots = packages.to_vec();
-    slots.sort_by_key(|slot| slot.0);
-    slots.dedup();
-    slots
+    fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
+        let mut slots = packages.to_vec();
+        slots.sort_by_key(|slot| slot.0);
+        slots.dedup();
+        slots
+    }
 }

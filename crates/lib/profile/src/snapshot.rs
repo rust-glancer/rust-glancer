@@ -156,6 +156,19 @@ pub struct ProfileCheckpointValue {
     pub value: ProfileMeasurement,
 }
 
+impl ProfileCheckpointValue {
+    pub fn new(key: impl Into<String>, value: impl Into<ProfileMeasurement>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
+
+    pub fn optional_bytes(key: impl Into<String>, value: Option<usize>) -> Self {
+        Self::new(key, ProfileMeasurement::optional_bytes(value))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileMemorySnapshot {
     pub retained_bytes: usize,
@@ -192,19 +205,6 @@ impl ProfileMemoryRecord {
             kind: kind.into(),
             bytes,
         }
-    }
-}
-
-impl ProfileCheckpointValue {
-    pub fn new(key: impl Into<String>, value: impl Into<ProfileMeasurement>) -> Self {
-        Self {
-            key: key.into(),
-            value: value.into(),
-        }
-    }
-
-    pub fn optional_bytes(key: impl Into<String>, value: Option<usize>) -> Self {
-        Self::new(key, ProfileMeasurement::optional_bytes(value))
     }
 }
 

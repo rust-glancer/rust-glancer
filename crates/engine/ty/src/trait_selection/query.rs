@@ -1,17 +1,18 @@
 //! Discover matching impls and prove their conditions using trial inference state.
 
-use super::TraitGoal;
-use super::candidate::TraitCandidate;
-use super::chalk::ChalkOutcome;
-use super::native_proof::NativeProofQuery;
-use super::projection::CandidateEvidence;
-use super::work::TraitWorkKind;
-use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::{AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TyContext};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
+
+use super::{
+    TraitGoal, candidate::TraitCandidate, chalk::ChalkOutcome, native_proof::NativeProofQuery,
+    projection::CandidateEvidence, work::TraitWorkKind,
+};
+use crate::{
+    AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TyContext,
+    inference::{InferenceSubstitution, InferenceTable},
+};
 
 /// One visible trait impl after the bounded proof pipeline classified its remaining conditions.
 ///

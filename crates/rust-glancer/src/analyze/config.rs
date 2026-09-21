@@ -34,15 +34,6 @@ pub(crate) enum CliIndexingPreference {
     FasterBuilds,
 }
 
-impl From<CliIndexingPreference> for IndexingPerformancePreference {
-    fn from(preference: CliIndexingPreference) -> Self {
-        match preference {
-            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
-            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
-        }
-    }
-}
-
 impl From<IndexingPerformancePreference> for CliIndexingPreference {
     fn from(preference: IndexingPerformancePreference) -> Self {
         match preference {
@@ -61,6 +52,15 @@ impl Default for CliIndexingPreference {
 impl std_fmt::Display for CliIndexingPreference {
     fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
         f.write_str(IndexingPerformancePreference::from(*self).config_name())
+    }
+}
+
+impl From<CliIndexingPreference> for IndexingPerformancePreference {
+    fn from(preference: CliIndexingPreference) -> Self {
+        match preference {
+            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
+            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
+        }
     }
 }
 

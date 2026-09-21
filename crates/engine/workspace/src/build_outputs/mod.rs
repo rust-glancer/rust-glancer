@@ -116,13 +116,6 @@ impl CargoBuildOutputScanStats {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CargoGeneratedSources(Arc<CargoGeneratedSourcesData>);
 
-#[derive(Debug, PartialEq, Eq, MemorySize)]
-struct CargoGeneratedSourcesData {
-    out_dir: PathBuf,
-    compile_env: Vec<CargoCompileEnvVar>,
-    generated_files: Vec<PathBuf>,
-}
-
 impl CargoGeneratedSources {
     fn new(
         out_dir: PathBuf,
@@ -189,6 +182,13 @@ impl MemorySize for CargoGeneratedSources {
             MemorySize::record_memory_children(&self.0, recorder);
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, MemorySize)]
+struct CargoGeneratedSourcesData {
+    out_dir: PathBuf,
+    compile_env: Vec<CargoCompileEnvVar>,
+    generated_files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]

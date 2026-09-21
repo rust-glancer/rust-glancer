@@ -6,12 +6,11 @@ use rg_ir_view::{IndexedViewDb, display::syntax::SyntaxRenderer, member::MemberV
 
 use crate::{
     model::{CompletionEdit, CompletionItem},
-    query::completion::site::RecordFieldCompletionSite,
-};
-
-use super::super::{
-    candidates::{CompletionCandidateSource, RecordFieldCompletionCandidate},
-    render::FieldCompletionRenderer,
+    query::completion::{
+        candidates::{CompletionCandidateSource, RecordFieldCompletionCandidate},
+        render::FieldCompletionRenderer,
+        site::RecordFieldCompletionSite,
+    },
 };
 
 /// Turns a resolved record owner into field rows, excluding fields already written in the list.

@@ -9,9 +9,12 @@ use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, Typ
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{OperationError, UniqueVec};
 
-use crate::autoderef::{Autoderef, AutoderefMode, ReferencePeelingCandidates};
-use crate::lookup::ImplMatcher;
-use crate::{Ty, TyContext, inference::InferenceTable};
+use crate::{
+    Ty, TyContext,
+    autoderef::{Autoderef, AutoderefMode, ReferencePeelingCandidates},
+    inference::InferenceTable,
+    lookup::ImplMatcher,
+};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {

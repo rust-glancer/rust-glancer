@@ -13,8 +13,10 @@ use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::inference::{InferVarId, InferVarKind};
-use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
+use crate::{
+    ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy,
+    inference::{InferVarId, InferVarKind},
+};
 
 /// Identity of one anonymous closure type.
 ///
@@ -101,66 +103,6 @@ pub enum Ty {
         #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarId>")]
         id: InferVarId,
     },
-}
-
-/// Algebraic data type together with its full semantic argument list.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct AdtTy {
-    pub def: TypeDefRef,
-    pub args: GenericArgs,
-}
-
-impl AdtTy {
-    pub fn bare(def: TypeDefRef) -> Self {
-        Self {
-            def,
-            args: GenericArgs::empty(),
-        }
-    }
-}
-
-/// Instantiated type of one function definition.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct FnDefTy {
-    pub def: FunctionRef,
-    pub args: GenericArgs,
-}
-
-/// Semantic alias identities that are not transparent type aliases.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub enum AliasTy {
-    Projection(ProjectionTy),
-    Opaque(OpaqueTy),
-}
-
-/// Associated type selected from a fully instantiated trait application.
-///
-/// For `<Vec<User> as IntoIterator>::Item`, `associated_ty` identifies the `Item` declaration and
-/// `args` retains `Self = Vec<User>` plus every declared `IntoIterator` argument. The value of the
-/// projection is resolved separately by trait selection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ProjectionTy {
-    pub associated_ty: TypeAliasRef,
-    pub args: GenericArgs,
-}
-
-impl ProjectionTy {
-    /// Compare projections after bijectively renaming transient inference-variable IDs.
-    pub(crate) fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
-        self.associated_ty == other.associated_ty
-            && self.args.equivalent_modulo_inference_ids(&other.args)
-    }
-}
-
-/// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.
-///
-/// In `fn make<T>() -> impl Iterator<Item = T>`, `opaque` identifies this particular `impl Trait`
-/// occurrence and `args` records the chosen `T`. Its `Iterator` predicates are queryable signature
-/// data rather than part of opaque type equality.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct OpaqueTy {
-    pub opaque: OpaqueTyRef,
-    pub args: GenericArgs,
 }
 
 impl Ty {
@@ -394,6 +336,62 @@ impl Ty {
     }
 }
 
+impl Shrink for Ty {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Tuple(fields) => Shrink::shrink_to_fit(fields),
+            Self::Array { inner, .. }
+            | Self::Slice(inner)
+            | Self::Reference { inner, .. }
+            | Self::RawPointer { inner, .. } => Shrink::shrink_to_fit(inner),
+            Self::FnPointer { params, ret } => {
+                Shrink::shrink_to_fit(params);
+                Shrink::shrink_to_fit(ret);
+            }
+            Self::Adt(ty) => Shrink::shrink_to_fit(ty),
+            Self::Alias(alias) => Shrink::shrink_to_fit(alias),
+            Self::Closure(closure) => Shrink::shrink_to_fit(closure),
+            Self::FnDef(function) => Shrink::shrink_to_fit(function),
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Param(_)
+            | Self::Unknown
+            | Self::InferVar { .. } => {}
+        }
+    }
+}
+
+/// Algebraic data type together with its full semantic argument list.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct AdtTy {
+    pub def: TypeDefRef,
+    pub args: GenericArgs,
+}
+
+impl AdtTy {
+    pub fn bare(def: TypeDefRef) -> Self {
+        Self {
+            def,
+            args: GenericArgs::empty(),
+        }
+    }
+}
+
+/// Instantiated type of one function definition.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct FnDefTy {
+    pub def: FunctionRef,
+    pub args: GenericArgs,
+}
+
+/// Semantic alias identities that are not transparent type aliases.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum AliasTy {
+    Projection(ProjectionTy),
+    Opaque(OpaqueTy),
+}
+
 impl AliasTy {
     pub(crate) fn args(&self) -> &GenericArgs {
         match self {
@@ -427,6 +425,36 @@ impl AliasTy {
     }
 }
 
+/// Associated type selected from a fully instantiated trait application.
+///
+/// For `<Vec<User> as IntoIterator>::Item`, `associated_ty` identifies the `Item` declaration and
+/// `args` retains `Self = Vec<User>` plus every declared `IntoIterator` argument. The value of the
+/// projection is resolved separately by trait selection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct ProjectionTy {
+    pub associated_ty: TypeAliasRef,
+    pub args: GenericArgs,
+}
+
+impl ProjectionTy {
+    /// Compare projections after bijectively renaming transient inference-variable IDs.
+    pub(crate) fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
+        self.associated_ty == other.associated_ty
+            && self.args.equivalent_modulo_inference_ids(&other.args)
+    }
+}
+
+/// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.
+///
+/// In `fn make<T>() -> impl Iterator<Item = T>`, `opaque` identifies this particular `impl Trait`
+/// occurrence and `args` records the chosen `T`. Its `Iterator` predicates are queryable signature
+/// data rather than part of opaque type equality.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct OpaqueTy {
+    pub opaque: OpaqueTyRef,
+    pub args: GenericArgs,
+}
+
 /// Converts expected-unique type candidates into the public type vocabulary.
 pub trait ExpectedTyExt {
     fn into_ty(self) -> Ty;
@@ -446,31 +474,5 @@ pub trait ExpectedAdtTyExt {
 impl ExpectedAdtTyExt for ExpectedUnique<AdtTy> {
     fn into_adt_ty(self) -> Ty {
         self.into_option().map(Ty::adt).unwrap_or(Ty::Unknown)
-    }
-}
-
-impl Shrink for Ty {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Tuple(fields) => Shrink::shrink_to_fit(fields),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => Shrink::shrink_to_fit(inner),
-            Self::FnPointer { params, ret } => {
-                Shrink::shrink_to_fit(params);
-                Shrink::shrink_to_fit(ret);
-            }
-            Self::Adt(ty) => Shrink::shrink_to_fit(ty),
-            Self::Alias(alias) => Shrink::shrink_to_fit(alias),
-            Self::Closure(closure) => Shrink::shrink_to_fit(closure),
-            Self::FnDef(function) => Shrink::shrink_to_fit(function),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => {}
-        }
     }
 }

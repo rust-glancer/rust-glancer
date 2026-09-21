@@ -24,45 +24,6 @@ pub(crate) enum CompletionSortPolicy {
     TypePosition,
 }
 
-/// Optional proximity bucket used before the ordinary completion sort key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CompletionSortPriority {
-    /// A candidate implied by the expected semantic type at the cursor.
-    ExpectedType,
-    /// A body-local name; smaller distance means a nearer lexical scope.
-    BodyScope { distance: usize },
-    /// Owner generics and impl `Self`, after body locals but before module-scope names.
-    GenericScope,
-    /// A declaration or import visible directly from the containing module.
-    ModuleScope,
-    /// A builtin primitive type available in a type position.
-    Primitive,
-    /// A name introduced by the crate's configured prelude.
-    Prelude,
-    /// An external crate name available at the crate root.
-    ExternRoot,
-    /// A declaration that becomes available after accepting an attached import edit.
-    AutoImport { path_len: usize },
-}
-
-impl CompletionSortPriority {
-    /// Returns the priority bucket for a body-local name.
-    pub(crate) fn body_scope(scope_distance: usize) -> Self {
-        Self::BodyScope {
-            distance: scope_distance,
-        }
-    }
-
-    /// Returns the priority bucket for a visible module-scope name.
-    pub(crate) fn visible_scope(origin: NameOrigin) -> Self {
-        match origin {
-            NameOrigin::ModuleScope => Self::ModuleScope,
-            NameOrigin::Prelude => Self::Prelude,
-            NameOrigin::ExternRoot => Self::ExternRoot,
-        }
-    }
-}
-
 impl CompletionSortPolicy {
     /// Builds the lexicographic string consumed by LSP clients.
     pub(crate) fn sort_text(
@@ -111,6 +72,67 @@ impl CompletionSortPolicy {
     }
 }
 
+/// Optional proximity bucket used before the ordinary completion sort key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CompletionSortPriority {
+    /// A candidate implied by the expected semantic type at the cursor.
+    ExpectedType,
+    /// A body-local name; smaller distance means a nearer lexical scope.
+    BodyScope { distance: usize },
+    /// Owner generics and impl `Self`, after body locals but before module-scope names.
+    GenericScope,
+    /// A declaration or import visible directly from the containing module.
+    ModuleScope,
+    /// A builtin primitive type available in a type position.
+    Primitive,
+    /// A name introduced by the crate's configured prelude.
+    Prelude,
+    /// An external crate name available at the crate root.
+    ExternRoot,
+    /// A declaration that becomes available after accepting an attached import edit.
+    AutoImport { path_len: usize },
+}
+
+impl CompletionSortPriority {
+    /// Returns the priority bucket for a body-local name.
+    pub(crate) fn body_scope(scope_distance: usize) -> Self {
+        Self::BodyScope {
+            distance: scope_distance,
+        }
+    }
+
+    /// Returns the priority bucket for a visible module-scope name.
+    pub(crate) fn visible_scope(origin: NameOrigin) -> Self {
+        match origin {
+            NameOrigin::ModuleScope => Self::ModuleScope,
+            NameOrigin::Prelude => Self::Prelude,
+            NameOrigin::ExternRoot => Self::ExternRoot,
+        }
+    }
+}
+
+impl SortTextComponent for CompletionSortPriority {
+    /// Serializes broad origin before narrower distance inside body scopes.
+    fn append_to(&self, out: &mut String) {
+        match self {
+            Self::ExpectedType => out.push_str("00-expected"),
+            Self::BodyScope { distance } => {
+                let distance = (*distance).min(9_999);
+                write!(out, "00-body:{distance:04}").expect("string writes should not fail");
+            }
+            Self::GenericScope => out.push_str("01-generic"),
+            Self::ModuleScope => out.push_str("01-module"),
+            Self::Primitive => out.push_str("02-primitive"),
+            Self::Prelude => out.push_str("03-prelude"),
+            Self::ExternRoot => out.push_str("04-extern"),
+            Self::AutoImport { path_len } => {
+                let path_len = (*path_len).min(9_999);
+                write!(out, "05-auto-import:{path_len:04}").expect("string writes should not fail");
+            }
+        }
+    }
+}
+
 /// One component in the left-to-right LSP sort key.
 trait SortTextComponent {
     /// Appends the component in a lexicographically sortable form.
@@ -144,28 +166,6 @@ impl SortText {
     /// Finishes the assembled sort text.
     fn build(self) -> String {
         self.out
-    }
-}
-
-impl SortTextComponent for CompletionSortPriority {
-    /// Serializes broad origin before narrower distance inside body scopes.
-    fn append_to(&self, out: &mut String) {
-        match self {
-            Self::ExpectedType => out.push_str("00-expected"),
-            Self::BodyScope { distance } => {
-                let distance = (*distance).min(9_999);
-                write!(out, "00-body:{distance:04}").expect("string writes should not fail");
-            }
-            Self::GenericScope => out.push_str("01-generic"),
-            Self::ModuleScope => out.push_str("01-module"),
-            Self::Primitive => out.push_str("02-primitive"),
-            Self::Prelude => out.push_str("03-prelude"),
-            Self::ExternRoot => out.push_str("04-extern"),
-            Self::AutoImport { path_len } => {
-                let path_len = (*path_len).min(9_999);
-                write!(out, "05-auto-import:{path_len:04}").expect("string writes should not fail");
-            }
-        }
     }
 }
 

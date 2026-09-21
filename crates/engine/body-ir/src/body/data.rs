@@ -1,9 +1,8 @@
 use rg_arena::Arena;
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
@@ -252,16 +251,16 @@ impl BodyData {
         // Lowering stored pending ids in many places: scope binding lists, pattern-owned binding
         // lists, and expression visibility boundaries. They all have to move together or later
         // path lookup will see a different scope than the pattern tree describes.
-        rewrite_binding_list(&mut self.params, &old_to_new);
+        Self::rewrite_binding_list(&mut self.params, &old_to_new);
         for param in &mut self.function_params {
-            rewrite_binding_list(&mut param.bindings, &old_to_new);
+            Self::rewrite_binding_list(&mut param.bindings, &old_to_new);
         }
         for scope in self.scopes.iter_mut() {
-            rewrite_binding_list(&mut scope.bindings, &old_to_new);
+            Self::rewrite_binding_list(&mut scope.bindings, &old_to_new);
         }
         for statement in self.statements.iter_mut() {
             if let StmtKind::Let { bindings, .. } = &mut statement.kind {
-                rewrite_binding_list(bindings, &old_to_new);
+                Self::rewrite_binding_list(bindings, &old_to_new);
             }
         }
         for expr in self.exprs.iter_mut() {
@@ -272,11 +271,11 @@ impl BodyData {
 
             match &mut expr.kind {
                 ExprKind::Let { bindings, .. } | ExprKind::For { bindings, .. } => {
-                    rewrite_binding_list(bindings, &old_to_new);
+                    Self::rewrite_binding_list(bindings, &old_to_new);
                 }
                 ExprKind::Closure { params, .. } => {
                     for param in params {
-                        rewrite_binding_list(&mut param.bindings, &old_to_new);
+                        Self::rewrite_binding_list(&mut param.bindings, &old_to_new);
                     }
                 }
                 _ => {}
@@ -292,6 +291,19 @@ impl BodyData {
 
         self.bindings = new_bindings;
     }
+
+    fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {
+        let mut rewritten = Vec::with_capacity(bindings.len());
+        for binding in bindings.iter().copied() {
+            let Some(Some(new_binding)) = old_to_new.get(binding.0) else {
+                continue;
+            };
+            if !rewritten.contains(new_binding) {
+                rewritten.push(*new_binding);
+            }
+        }
+        *bindings = rewritten;
+    }
 }
 
 /// One function parameter pattern and its lowered bindings.
@@ -303,19 +315,6 @@ pub struct FunctionParamData {
     pub annotation: Option<TypeRef>,
 }
 
-fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {
-    let mut rewritten = Vec::with_capacity(bindings.len());
-    for binding in bindings.iter().copied() {
-        let Some(Some(new_binding)) = old_to_new.get(binding.0) else {
-            continue;
-        };
-        if !rewritten.contains(new_binding) {
-            rewritten.push(*new_binding);
-        }
-    }
-    *bindings = rewritten;
-}
-
 #[cfg(test)]
 mod tests {
     use rg_ir_model::{
@@ -323,11 +322,10 @@ mod tests {
         PackageSlot, Span,
     };
 
+    use super::*;
     use crate::{
         BindingKind, BodyData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
     };
-
-    use super::*;
 
     fn source() -> BodySource {
         BodySource::written(FileId(0), Span { start: 0, end: 0 })

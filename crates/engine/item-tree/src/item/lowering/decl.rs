@@ -1,10 +1,3 @@
-use crate::item::{
-    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem,
-    ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
-    GenericParams, ImplItem, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
-    ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
-    TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
-};
 use rg_ir_model::{Mutability, Span};
 use rg_parse::LineIndex;
 use rg_syntax::{
@@ -14,6 +7,13 @@ use rg_syntax::{
 use rg_text::{Name, NameInterner};
 
 use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
+use crate::item::{
+    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem,
+    ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
+    GenericParams, ImplItem, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
+    ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
+    TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
+};
 
 pub struct TraitItemContext<'a> {
     pub items: Vec<ItemTreeId>,

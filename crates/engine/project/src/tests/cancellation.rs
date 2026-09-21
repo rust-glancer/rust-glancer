@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use rg_analysis::{Analysis, ReferenceQuery, SavedSourceView};
 use rg_body_ir::{
     BodyFileShard, BodyIrLoader, CrateBodies, LoadBodyIr, PackageBodies, PackageBodiesManifest,
     testonly::BodyIrFixture,
@@ -11,8 +12,6 @@ use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_ir_view::IndexedViewDb;
 use rg_package_store::PackageStoreError;
 use rg_std::CancellationToken;
-
-use rg_analysis::{Analysis, ReferenceQuery, SavedSourceView};
 
 const SOURCE: &str = r#"
 //- /Cargo.toml
@@ -108,11 +107,12 @@ pub(crate) fn materialization_checkpoint(
 
 #[test]
 fn cancelled_materialization_preserves_coverage_and_allows_retry() {
+    use std::fmt::Write as _;
+
     use crate::{
         AnalysisSurface, PackageResidencyPolicy, Project, SplitIndexingMode,
         testonly::ProjectSourceFixture,
     };
-    use std::fmt::Write as _;
 
     let mut source = String::from(
         "//- /Cargo.toml\n[workspace]\nmembers = [\"first\", \"second\"]\nresolver = \"3\"\n",

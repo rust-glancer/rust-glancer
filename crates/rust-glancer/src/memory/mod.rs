@@ -60,6 +60,20 @@ impl MemoryControl for ProcessMemoryControl {
     }
 }
 
+impl ProcessMemoryControl {
+    pub(crate) fn allocator_name() -> &'static str {
+        allocator::NAME
+    }
+
+    pub(crate) fn allocator_stats() -> Option<AllocatorStats> {
+        allocator::capture_stats()
+    }
+
+    pub(crate) fn try_purge_allocator() -> bool {
+        allocator::try_purge()
+    }
+}
+
 pub(crate) fn memory_control() -> ProcessMemoryControl {
     ProcessMemoryControl
 }
@@ -78,20 +92,6 @@ struct ProjectProcessMemoryHooks {
 impl ProjectMemoryHooks for ProjectProcessMemoryHooks {
     fn purge(&self, _point: ProjectMemoryPurgePoint) {
         self.memory_control.try_purge_allocator();
-    }
-}
-
-impl ProcessMemoryControl {
-    pub(crate) fn allocator_name() -> &'static str {
-        allocator::NAME
-    }
-
-    pub(crate) fn allocator_stats() -> Option<AllocatorStats> {
-        allocator::capture_stats()
-    }
-
-    pub(crate) fn try_purge_allocator() -> bool {
-        allocator::try_purge()
     }
 }
 

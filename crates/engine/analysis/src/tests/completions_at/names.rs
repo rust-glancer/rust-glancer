@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_unqualified_values_from_lexical_and_module_scope() {
     check_analysis_queries(

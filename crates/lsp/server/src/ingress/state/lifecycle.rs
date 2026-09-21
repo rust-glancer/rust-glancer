@@ -25,9 +25,8 @@ use rg_lsp_proto::{EditorDocumentSnapshot, OpenDocumentSession, SaveProposal};
 use rg_std::NormalizedPathBuf;
 use tokio::sync::watch;
 
-use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
-
 use super::EditorState;
+use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
 
 /// Async work assigned after the matching open/save/close message was prepared.
 #[derive(Clone, Debug)]

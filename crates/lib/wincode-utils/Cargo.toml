@@ -11,3 +11,6 @@ description.workspace = true
 
 [dependencies]
 wincode.workspace = true
+
+[lints]
+workspace = true

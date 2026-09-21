@@ -32,11 +32,14 @@ pub mod fuzz;
 pub mod hacks;
 pub mod utils;
 
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
+pub use parser::{Edition, LexedStr, SyntaxKind, T};
+pub use rustc_literal_escaper as unescape;
+pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 use stdx::format_to;
 
+use self::syntax_node::{SyntaxTree, SyntaxTreeBuilder};
 pub use crate::{
     ast::{AstNode, AstToken},
     syntax_error::SyntaxError,
@@ -47,9 +50,6 @@ pub use crate::{
     },
     token_text::TokenText,
 };
-pub use parser::{Edition, LexedStr, SyntaxKind, T};
-pub use rustc_literal_escaper as unescape;
-pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 
 /// Builder used by token-tree parsers that already know the parser input and token text.
 ///
@@ -57,13 +57,13 @@ pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 /// expansions, where the parser consumes token trees instead of lexing source text.
 #[doc(hidden)]
 pub struct GeneratedSyntaxBuilder {
-    inner: syntax_node::SyntaxTreeBuilder,
+    inner: SyntaxTreeBuilder,
 }
 
 impl GeneratedSyntaxBuilder {
     pub fn new() -> Self {
         Self {
-            inner: syntax_node::SyntaxTreeBuilder::generated(),
+            inner: SyntaxTreeBuilder::generated(),
         }
     }
 
@@ -105,7 +105,7 @@ impl Default for GeneratedSyntaxBuilder {
 /// files.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Parse<T> {
-    tree: Arc<syntax_node::SyntaxTree>,
+    tree: Arc<SyntaxTree>,
     _ty: PhantomData<fn() -> T>,
 }
 
@@ -119,7 +119,7 @@ impl<T> Clone for Parse<T> {
 }
 
 impl<T> Parse<T> {
-    fn new(tree: Arc<syntax_node::SyntaxTree>) -> Parse<T> {
+    fn new(tree: Arc<SyntaxTree>) -> Parse<T> {
         Parse {
             tree,
             _ty: PhantomData,
@@ -197,7 +197,7 @@ impl Parse<SourceFile> {
     }
 }
 
-impl ast::Expr {
+impl self::ast::Expr {
     /// Parses an `ast::Expr` from `text`.
     ///
     /// Note that if the parsed root node is not a valid expression, [`Parse::tree`] will panic.
@@ -206,13 +206,13 @@ impl ast::Expr {
     /// # use syntax::{ast, Edition};
     /// ast::Expr::parse("let fail = true;", Edition::CURRENT).tree();
     /// ```
-    pub fn parse(text: &str, edition: Edition) -> Parse<ast::Expr> {
+    pub fn parse(text: &str, edition: Edition) -> Parse<Self> {
         let _p = tracing::info_span!("Expr::parse").entered();
         let tree = parsing::parse_text_at(text, parser::TopEntryPoint::Expr, edition);
         let root = SyntaxNode::new_root(tree.clone());
 
         assert!(
-            ast::Expr::can_cast(root.kind()) || root.kind() == SyntaxKind::ERROR,
+            Self::can_cast(root.kind()) || root.kind() == SyntaxKind::ERROR,
             "{:?} isn't an expression",
             root.kind()
         );

@@ -50,7 +50,7 @@ impl CargoConfigOverrides {
                 })?;
             let cargo_override = CargoConfigOverride::parse(item, idx)?;
 
-            for root in override_roots(path, workspace_folders).with_context(|| {
+            for root in Self::override_roots(path, workspace_folders).with_context(|| {
                 format!("while resolving rust-glancer cargo.overrides[{idx}].path `{path}`")
             })? {
                 by_root.insert(root, cargo_override.clone());
@@ -65,6 +65,26 @@ impl CargoConfigOverrides {
         root: &NormalizedPathBuf,
     ) -> Option<&CargoConfigOverride> {
         self.by_root.get(root)
+    }
+
+    fn override_roots(
+        path: &str,
+        workspace_folders: &[NormalizedPathBuf],
+    ) -> anyhow::Result<Vec<NormalizedPathBuf>> {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            return NormalizedPathBuf::from_absolute(path)
+                .map(|path| vec![path])
+                .context("while normalizing absolute Cargo override path");
+        }
+
+        workspace_folders
+            .iter()
+            .map(|workspace_folder| {
+                NormalizedPathBuf::resolve_from(workspace_folder, &path)
+                    .context("while resolving relative Cargo override path")
+            })
+            .collect()
     }
 }
 
@@ -161,24 +181,4 @@ impl CargoConfigOverride {
 
         config
     }
-}
-
-fn override_roots(
-    path: &str,
-    workspace_folders: &[NormalizedPathBuf],
-) -> anyhow::Result<Vec<NormalizedPathBuf>> {
-    let path = PathBuf::from(path);
-    if path.is_absolute() {
-        return NormalizedPathBuf::from_absolute(path)
-            .map(|path| vec![path])
-            .context("while normalizing absolute Cargo override path");
-    }
-
-    workspace_folders
-        .iter()
-        .map(|workspace_folder| {
-            NormalizedPathBuf::resolve_from(workspace_folder, &path)
-                .context("while resolving relative Cargo override path")
-        })
-        .collect()
 }

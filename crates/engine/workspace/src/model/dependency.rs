@@ -1,5 +1,6 @@
-use super::{package::PackageId, target::TargetKind};
 use rg_std::MemorySize;
+
+use super::{package::PackageId, target::TargetKind};
 
 /// One dependency edge after Cargo resolution.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]

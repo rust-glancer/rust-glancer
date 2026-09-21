@@ -15,6 +15,7 @@
 //! second lane because one lowered expression can contain several independently navigable path
 //! segments.
 
+use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
@@ -22,15 +23,13 @@ use rg_ir_model::{
 };
 use rg_package_store::PackageStoreError;
 
-use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
-
-use super::super::NarrowestSourceSite;
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
     paths::{BodyPathSourceScanner, TypePathSourceScanner},
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
+use crate::source::scan::NarrowestSourceSite;
 
 /// Scans one Body IR transaction for all source interpretations at a cursor offset.
 ///

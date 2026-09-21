@@ -6,11 +6,6 @@ use crate::SyntaxKind;
 #[derive(Clone, Copy)]
 pub(crate) struct TokenSet([u64; 3]);
 
-/// `TokenSet`s should only include token `SyntaxKind`s, so the discriminant of any passed/included
-/// `SyntaxKind` must *not* be greater than that of the last token `SyntaxKind`.
-/// See #17037.
-const LAST_TOKEN_KIND_DISCRIMINANT: usize = SyntaxKind::SHEBANG as usize;
-
 impl TokenSet {
     pub(crate) const EMPTY: TokenSet = TokenSet([0; 3]);
 
@@ -49,6 +44,11 @@ impl TokenSet {
         self.0[idx] & mask != 0
     }
 }
+
+/// `TokenSet`s should only include token `SyntaxKind`s, so the discriminant of any passed/included
+/// `SyntaxKind` must *not* be greater than that of the last token `SyntaxKind`.
+/// See #17037.
+const LAST_TOKEN_KIND_DISCRIMINANT: usize = SyntaxKind::SHEBANG as usize;
 
 #[test]
 fn token_set_works_for_tokens() {

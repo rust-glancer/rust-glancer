@@ -18,19 +18,17 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::autoderef::ReferencePeelingCandidates;
-use rg_ty::trait_selection::TraitSelectionSession;
-use rg_ty::{ExpectedAdtTyExt, Ty};
-
-use crate::{
-    BodyPath,
-    body::facts::BodyResolution,
-    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind},
+use rg_ty::{
+    ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates,
+    trait_selection::TraitSelectionSession,
 };
 
-use crate::resolution::BodyResolutionContext;
-
 use super::lower::{LoweredBodyData, PendingBindingResolution};
+use crate::{
+    BodyPath,
+    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind, facts::BodyResolution},
+    resolution::BodyResolutionContext,
+};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///

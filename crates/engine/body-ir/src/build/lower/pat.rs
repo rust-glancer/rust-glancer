@@ -1,20 +1,18 @@
 //! Pattern lowering and binding allocation for destructuring syntax.
 
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span};
+use rg_item_tree::TypeRef;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _, RangeItem as _},
 };
-
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span};
-use rg_item_tree::TypeRef;
 use rg_text::Name;
 
+use super::{PendingBindingResolution, body::BodyLowering};
 use crate::body::{
     BindingData, BindingKind, BodyPath, BodyPathSegment, BodyPathSegmentKind, LiteralKind, PatData,
     PatKind, RecordPatField,
 };
-
-use super::{PendingBindingResolution, body::BodyLowering};
 
 /// A priori binding information from the syntactic position of an identifier pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

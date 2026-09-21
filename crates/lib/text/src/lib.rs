@@ -5,7 +5,6 @@
 //! allocation through `Arc<str>`, while the interner itself can prune names that no live analysis
 //! snapshot still references.
 
-use rg_std::{MemorySize, Shrink};
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
@@ -15,6 +14,8 @@ use std::{
     ops::Deref,
     sync::{Arc, Weak},
 };
+
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Rust language edition used to interpret and present source text.
@@ -89,25 +90,6 @@ impl Name {
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-/// Returns the semantic spelling of one Rust identifier token.
-///
-/// Raw identifiers only change how source text is parsed. Once syntax has identified the token as
-/// an identifier, `r#type` and `type` must participate in lookup as the same name.
-pub fn identifier_text(text: &str) -> &str {
-    text.strip_prefix("r#").unwrap_or(text)
-}
-
-/// Canonicalizes every raw spelling that can be stored as a semantic name.
-fn canonical_name_text(text: &str) -> Cow<'_, str> {
-    if let Some(identifier) = text.strip_prefix("r#") {
-        return Cow::Borrowed(identifier);
-    }
-    if let Some(lifetime) = text.strip_prefix("'r#") {
-        return Cow::Owned(format!("'{lifetime}"));
-    }
-    Cow::Borrowed(text)
 }
 
 impl Shrink for Name {
@@ -215,6 +197,25 @@ impl PartialEq<&str> for Name {
     }
 }
 
+/// Returns the semantic spelling of one Rust identifier token.
+///
+/// Raw identifiers only change how source text is parsed. Once syntax has identified the token as
+/// an identifier, `r#type` and `type` must participate in lookup as the same name.
+pub fn identifier_text(text: &str) -> &str {
+    text.strip_prefix("r#").unwrap_or(text)
+}
+
+/// Canonicalizes every raw spelling that can be stored as a semantic name.
+fn canonical_name_text(text: &str) -> Cow<'_, str> {
+    if let Some(identifier) = text.strip_prefix("r#") {
+        return Cow::Borrowed(identifier);
+    }
+    if let Some(lifetime) = text.strip_prefix("'r#") {
+        return Cow::Owned(format!("'{lifetime}"));
+    }
+    Cow::Borrowed(text)
+}
+
 /// Reuse table that deduplicates short text allocations without owning them forever.
 ///
 /// The table stores weak handles grouped by text hash. Phase data owns the strong `Name`s; once a
@@ -222,58 +223,6 @@ impl PartialEq<&str> for Name {
 #[derive(Debug, Clone, Default)]
 pub struct NameInterner {
     buckets: HashMap<u64, Vec<Weak<str>>>,
-}
-
-/// Independent name reuse tables keyed by package slot.
-///
-/// Package-level interners preserve the cheap `Name` handles while avoiding a single mutable
-/// interner that would serialize package-level lowering. Equal names still compare by text, so
-/// sharing allocations across package boundaries is an optimization, not a correctness property.
-#[derive(Debug, Clone, Default)]
-pub struct PackageNameInterners {
-    packages: Vec<NameInterner>,
-}
-
-thread_local! {
-    static DECODE_NAME_INTERNER: RefCell<Option<NameInterner>> = const { RefCell::new(None) };
-}
-
-/// Runs one decode operation through an explicit reusable name table.
-///
-/// Wincode's schema reader does not carry runtime context, so the table is installed only for the
-/// dynamic extent of `decode`. Callers retain ownership and can reuse it across independently
-/// decoded sections of the same logical package.
-pub fn with_decode_name_interner<R>(
-    interner: NameInterner,
-    decode: impl FnOnce() -> R,
-) -> (NameInterner, R) {
-    struct DecodeNameInternerGuard;
-
-    impl Drop for DecodeNameInternerGuard {
-        fn drop(&mut self) {
-            DECODE_NAME_INTERNER.with(|interner| {
-                interner.borrow_mut().take();
-            });
-        }
-    }
-
-    DECODE_NAME_INTERNER.with(|active| {
-        assert!(
-            active.borrow().is_none(),
-            "name decode interner scopes must not be nested",
-        );
-        active.borrow_mut().replace(interner);
-    });
-    let guard = DecodeNameInternerGuard;
-    let result = decode();
-    let interner = DECODE_NAME_INTERNER.with(|active| {
-        active
-            .borrow_mut()
-            .take()
-            .expect("name decode interner should remain installed during decode")
-    });
-    drop(guard);
-    (interner, result)
 }
 
 impl NameInterner {
@@ -351,6 +300,16 @@ impl Shrink for NameInterner {
     }
 }
 
+/// Independent name reuse tables keyed by package slot.
+///
+/// Package-level interners preserve the cheap `Name` handles while avoiding a single mutable
+/// interner that would serialize package-level lowering. Equal names still compare by text, so
+/// sharing allocations across package boundaries is an optimization, not a correctness property.
+#[derive(Debug, Clone, Default)]
+pub struct PackageNameInterners {
+    packages: Vec<NameInterner>,
+}
+
 impl PackageNameInterners {
     pub fn new(package_count: usize) -> Self {
         let mut packages = Vec::with_capacity(package_count);
@@ -387,6 +346,48 @@ impl Shrink for PackageNameInterners {
             Shrink::shrink_to_fit(package);
         }
     }
+}
+
+thread_local! {
+    static DECODE_NAME_INTERNER: RefCell<Option<NameInterner>> = const { RefCell::new(None) };
+}
+
+/// Runs one decode operation through an explicit reusable name table.
+///
+/// Wincode's schema reader does not carry runtime context, so the table is installed only for the
+/// dynamic extent of `decode`. Callers retain ownership and can reuse it across independently
+/// decoded sections of the same logical package.
+pub fn with_decode_name_interner<R>(
+    interner: NameInterner,
+    decode: impl FnOnce() -> R,
+) -> (NameInterner, R) {
+    struct DecodeNameInternerGuard;
+
+    impl Drop for DecodeNameInternerGuard {
+        fn drop(&mut self) {
+            DECODE_NAME_INTERNER.with(|interner| {
+                interner.borrow_mut().take();
+            });
+        }
+    }
+
+    DECODE_NAME_INTERNER.with(|active| {
+        assert!(
+            active.borrow().is_none(),
+            "name decode interner scopes must not be nested",
+        );
+        active.borrow_mut().replace(interner);
+    });
+    let guard = DecodeNameInternerGuard;
+    let result = decode();
+    let interner = DECODE_NAME_INTERNER.with(|active| {
+        active
+            .borrow_mut()
+            .take()
+            .expect("name decode interner should remain installed during decode")
+    });
+    drop(guard);
+    (interner, result)
 }
 
 mod memsize {

@@ -5,24 +5,20 @@
 //! body's local item store exists.
 
 use anyhow::Context as _;
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
     ConstRef, CrateRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef,
     TraitDefRef,
 };
-use rg_semantic_ir::ItemStoreQuery;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::NameInterner;
 
-use crate::BodyOwner;
-
 use super::{
-    BodyMacroExpansion, LoweredCrateBodies, task::BodyLoweringTask, task::BodyTaskLowering,
-    task::BodyTaskSource,
+    BodyMacroExpansion, LoweredCrateBodies,
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource},
 };
-use crate::build::materialization::BodyIrMaterialization;
+use crate::{BodyOwner, build::materialization::BodyIrMaterialization};
 
 type FunctionLoweringTarget = (FunctionRef, FileId, Span);
 type ConstLoweringTarget = (ConstRef, FileId, Span);

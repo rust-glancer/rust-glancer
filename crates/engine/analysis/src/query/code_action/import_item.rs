@@ -16,6 +16,7 @@ use rg_ir_view::{
 };
 use rg_syntax::{AstNode as _, ast};
 
+use super::syntax::CodeActionSyntax;
 use crate::{
     Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
     query::{
@@ -23,8 +24,6 @@ use crate::{
         import::{ImportContext, ImportEditPlan, ImportEditPlanner},
     },
 };
-
-use super::syntax::CodeActionSyntax;
 
 /// Turns one unresolved name into one action for each concrete `use` path that can provide it.
 ///

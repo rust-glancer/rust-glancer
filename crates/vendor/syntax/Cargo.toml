@@ -43,5 +43,5 @@ test-utils.workspace = true
 default = []
 in-rust-tree = []
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(no_salsa_async_drops)'] }
+[lints]
+workspace = true

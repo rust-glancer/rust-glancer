@@ -1,13 +1,6 @@
 use std::fmt::Write as _;
 
 use expect_test::Expect;
-
-use crate::body::facts::BodyResolution;
-use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
-    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, testonly::BodyIrFixture,
-};
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
@@ -18,8 +11,17 @@ use rg_ir_model::{
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
-use rg_ty::lowering::SemanticSignatureQuery;
-use rg_ty::{AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
+    lowering::SemanticSignatureQuery,
+};
+
+use crate::{
+    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
+    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
+    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
+    testonly::BodyIrFixture,
+};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -72,10 +74,10 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let crate_dumps = sorted_targets(package)
+                let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
                     .map(|target| {
                         CrateBodyIrSnapshot {
@@ -99,10 +101,10 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
     }
 
     fn render_patterns(&self) -> String {
-        sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let crate_dumps = sorted_targets(package)
+                let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
                     .map(|target| {
                         CrateBodyIrSnapshot {
@@ -123,6 +125,29 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n\n")
+    }
+
+    fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+        let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+        packages
+    }
+
+    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
+        let mut targets = package.targets().iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| {
+            (
+                left.kind.sort_order(),
+                left.name.as_str(),
+                left.src_path.as_path(),
+            )
+                .cmp(&(
+                    right.kind.sort_order(),
+                    right.name.as_str(),
+                    right.src_path.as_path(),
+                ))
+        });
+        targets
     }
 }
 
@@ -371,16 +396,16 @@ impl CrateBodyIrSnapshot<'_> {
                     .unwrap_or_default();
                 format!(
                     "binding {} {binding}{path}{subpat}",
-                    render_pat_binding_mode(*mode)
+                    Self::render_pat_binding_mode(*mode)
                 )
             }
-            PatKind::Tuple { fields } => format!("tuple {}", render_pat_list(fields)),
+            PatKind::Tuple { fields } => format!("tuple {}", Self::render_pat_list(fields)),
             PatKind::TupleStruct { path, fields } => {
                 let path = path
                     .as_ref()
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "<missing>".to_string());
-                format!("tuple_struct {path} {}", render_pat_list(fields))
+                format!("tuple_struct {path} {}", Self::render_pat_list(fields))
             }
             PatKind::Record {
                 path, fields, rest, ..
@@ -406,8 +431,8 @@ impl CrateBodyIrSnapshot<'_> {
                     .unwrap_or_default();
                 format!("record {path} [{fields}]{rest}")
             }
-            PatKind::Or { pats } => format!("or {}", render_pat_list(pats)),
-            PatKind::Slice { fields } => format!("slice {}", render_pat_list(fields)),
+            PatKind::Or { pats } => format!("or {}", Self::render_pat_list(pats)),
+            PatKind::Slice { fields } => format!("slice {}", Self::render_pat_list(fields)),
             PatKind::Ref { mutability, pat } => format!("ref {mutability} p{}", pat.0),
             PatKind::Box { pat } => format!("box p{}", pat.0),
             PatKind::Path { path } => {
@@ -477,18 +502,18 @@ impl CrateBodyIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}stmt s{} let {bindings}{annotation} @ {}",
-                    indent(depth),
+                    Self::indent(depth),
                     statement.0,
                     self.render_source(data.source),
                 )
                 .expect("string writes should not fail");
                 if let Some(initializer) = initializer {
-                    writeln!(dump, "{}initializer", indent(depth + 1))
+                    writeln!(dump, "{}initializer", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *initializer, depth + 2, dump);
                 }
                 if let Some(else_branch) = else_branch {
-                    writeln!(dump, "{}else", indent(depth + 1))
+                    writeln!(dump, "{}else", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *else_branch, depth + 2, dump);
                 }
@@ -501,7 +526,7 @@ impl CrateBodyIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}stmt s{} expr{suffix} @ {}",
-                    indent(depth),
+                    Self::indent(depth),
                     statement.0,
                     self.render_source(data.source),
                 )
@@ -512,7 +537,7 @@ impl CrateBodyIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}stmt s{} source_item i{} @ {}",
-                    indent(depth),
+                    Self::indent(depth),
                     statement.0,
                     item.0,
                     self.render_source(data.source),
@@ -523,7 +548,7 @@ impl CrateBodyIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}stmt s{} item <ignored> @ {}",
-                    indent(depth),
+                    Self::indent(depth),
                     statement.0,
                     self.render_source(data.source),
                 )
@@ -542,7 +567,7 @@ impl CrateBodyIrSnapshot<'_> {
         writeln!(
             dump,
             "{}expr e{} {}{} => {} @ {}",
-            indent(depth),
+            Self::indent(depth),
             expr.0,
             self.render_expr_head(data),
             self.render_resolution(&facts.resolution),
@@ -559,33 +584,33 @@ impl CrateBodyIrSnapshot<'_> {
                     self.render_statement(body, *statement, depth + 1, dump);
                 }
                 if let Some(tail) = tail {
-                    writeln!(dump, "{}tail", indent(depth + 1))
+                    writeln!(dump, "{}tail", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *tail, depth + 2, dump);
                 }
             }
             ExprKind::Call { callee, args } => {
                 if let Some(callee) = callee {
-                    writeln!(dump, "{}callee", indent(depth + 1))
+                    writeln!(dump, "{}callee", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *callee, depth + 2, dump);
                 }
                 for arg in args {
-                    writeln!(dump, "{}arg", indent(depth + 1))
+                    writeln!(dump, "{}arg", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *arg, depth + 2, dump);
                 }
             }
             ExprKind::Tuple { fields } => {
                 for field in fields {
-                    writeln!(dump, "{}field", indent(depth + 1))
+                    writeln!(dump, "{}field", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *field, depth + 2, dump);
                 }
             }
             ExprKind::Array { elements } => {
                 for element in elements {
-                    writeln!(dump, "{}element", indent(depth + 1))
+                    writeln!(dump, "{}element", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *element, depth + 2, dump);
                 }
@@ -596,82 +621,82 @@ impl CrateBodyIrSnapshot<'_> {
                 ..
             } => {
                 if let Some(initializer) = initializer {
-                    writeln!(dump, "{}initializer", indent(depth + 1))
+                    writeln!(dump, "{}initializer", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *initializer, depth + 2, dump);
                 }
                 if let Some(repeat) = repeat {
-                    writeln!(dump, "{}repeat", indent(depth + 1))
+                    writeln!(dump, "{}repeat", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *repeat, depth + 2, dump);
                 }
             }
             ExprKind::Index { base, index } => {
                 if let Some(base) = base {
-                    writeln!(dump, "{}base", indent(depth + 1))
+                    writeln!(dump, "{}base", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *base, depth + 2, dump);
                 }
                 if let Some(index) = index {
-                    writeln!(dump, "{}index", indent(depth + 1))
+                    writeln!(dump, "{}index", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *index, depth + 2, dump);
                 }
             }
             ExprKind::Range { start, end, .. } => {
                 if let Some(start) = start {
-                    writeln!(dump, "{}start", indent(depth + 1))
+                    writeln!(dump, "{}start", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *start, depth + 2, dump);
                 }
                 if let Some(end) = end {
-                    writeln!(dump, "{}end", indent(depth + 1))
+                    writeln!(dump, "{}end", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *end, depth + 2, dump);
                 }
             }
             ExprKind::Cast { expr: inner, .. } | ExprKind::Unary { expr: inner, .. } => {
                 if let Some(inner) = inner {
-                    writeln!(dump, "{}inner", indent(depth + 1))
+                    writeln!(dump, "{}inner", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *inner, depth + 2, dump);
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
                 if let Some(lhs) = lhs {
-                    writeln!(dump, "{}lhs", indent(depth + 1))
+                    writeln!(dump, "{}lhs", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *lhs, depth + 2, dump);
                 }
                 if let Some(rhs) = rhs {
-                    writeln!(dump, "{}rhs", indent(depth + 1))
+                    writeln!(dump, "{}rhs", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *rhs, depth + 2, dump);
                 }
             }
             ExprKind::Assign { target, value, .. } => {
                 if let Some(target) = target {
-                    writeln!(dump, "{}target", indent(depth + 1))
+                    writeln!(dump, "{}target", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *target, depth + 2, dump);
                 }
                 if let Some(value) = value {
-                    writeln!(dump, "{}value", indent(depth + 1))
+                    writeln!(dump, "{}value", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *value, depth + 2, dump);
                 }
             }
             ExprKind::Match { scrutinee, arms } => {
                 if let Some(scrutinee) = scrutinee {
-                    writeln!(dump, "{}scrutinee", indent(depth + 1))
+                    writeln!(dump, "{}scrutinee", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *scrutinee, depth + 2, dump);
                 }
                 for arm in arms {
-                    writeln!(dump, "{}arm s{}", indent(depth + 1), arm.scope.0)
+                    writeln!(dump, "{}arm s{}", Self::indent(depth + 1), arm.scope.0)
                         .expect("string writes should not fail");
                     if let Some(guard) = arm.guard {
-                        writeln!(dump, "{}guard", indent(depth + 2))
+                        writeln!(dump, "{}guard", Self::indent(depth + 2))
                             .expect("string writes should not fail");
                         self.render_expr(body, guard, depth + 3, dump);
                     }
@@ -686,24 +711,24 @@ impl CrateBodyIrSnapshot<'_> {
                 else_branch,
             } => {
                 if let Some(condition) = condition {
-                    writeln!(dump, "{}condition", indent(depth + 1))
+                    writeln!(dump, "{}condition", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *condition, depth + 2, dump);
                 }
                 if let Some(then_branch) = then_branch {
-                    writeln!(dump, "{}then", indent(depth + 1))
+                    writeln!(dump, "{}then", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *then_branch, depth + 2, dump);
                 }
                 if let Some(else_branch) = else_branch {
-                    writeln!(dump, "{}else", indent(depth + 1))
+                    writeln!(dump, "{}else", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *else_branch, depth + 2, dump);
                 }
             }
             ExprKind::Let { initializer, .. } => {
                 if let Some(initializer) = initializer {
-                    writeln!(dump, "{}initializer", indent(depth + 1))
+                    writeln!(dump, "{}initializer", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *initializer, depth + 2, dump);
                 }
@@ -712,7 +737,7 @@ impl CrateBodyIrSnapshot<'_> {
                 body: closure_body, ..
             } => {
                 if let Some(closure_body) = closure_body {
-                    writeln!(dump, "{}body", indent(depth + 1))
+                    writeln!(dump, "{}body", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *closure_body, depth + 2, dump);
                 }
@@ -721,7 +746,7 @@ impl CrateBodyIrSnapshot<'_> {
                 body: loop_body, ..
             } => {
                 if let Some(loop_body) = loop_body {
-                    writeln!(dump, "{}body", indent(depth + 1))
+                    writeln!(dump, "{}body", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *loop_body, depth + 2, dump);
                 }
@@ -732,12 +757,12 @@ impl CrateBodyIrSnapshot<'_> {
                 ..
             } => {
                 if let Some(condition) = condition {
-                    writeln!(dump, "{}condition", indent(depth + 1))
+                    writeln!(dump, "{}condition", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *condition, depth + 2, dump);
                 }
                 if let Some(loop_body) = loop_body {
-                    writeln!(dump, "{}body", indent(depth + 1))
+                    writeln!(dump, "{}body", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *loop_body, depth + 2, dump);
                 }
@@ -748,38 +773,38 @@ impl CrateBodyIrSnapshot<'_> {
                 ..
             } => {
                 if let Some(iterable) = iterable {
-                    writeln!(dump, "{}iterable", indent(depth + 1))
+                    writeln!(dump, "{}iterable", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *iterable, depth + 2, dump);
                 }
                 if let Some(loop_body) = loop_body {
-                    writeln!(dump, "{}body", indent(depth + 1))
+                    writeln!(dump, "{}body", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *loop_body, depth + 2, dump);
                 }
             }
             ExprKind::Break { value, .. } => {
                 if let Some(value) = value {
-                    writeln!(dump, "{}value", indent(depth + 1))
+                    writeln!(dump, "{}value", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *value, depth + 2, dump);
                 }
             }
             ExprKind::MethodCall { receiver, args, .. } => {
                 if let Some(receiver) = receiver {
-                    writeln!(dump, "{}receiver", indent(depth + 1))
+                    writeln!(dump, "{}receiver", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *receiver, depth + 2, dump);
                 }
                 for arg in args {
-                    writeln!(dump, "{}arg", indent(depth + 1))
+                    writeln!(dump, "{}arg", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *arg, depth + 2, dump);
                 }
             }
             ExprKind::Field { base, .. } => {
                 if let Some(base) = base {
-                    writeln!(dump, "{}base", indent(depth + 1))
+                    writeln!(dump, "{}base", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *base, depth + 2, dump);
                 }
@@ -787,7 +812,7 @@ impl CrateBodyIrSnapshot<'_> {
             ExprKind::Record { fields, spread, .. } => {
                 for field in fields {
                     if let Some(value) = field.value {
-                        writeln!(dump, "{}field {}", indent(depth + 1), field.key)
+                        writeln!(dump, "{}field {}", Self::indent(depth + 1), field.key)
                             .expect("string writes should not fail");
                         self.render_expr(body, value, depth + 2, dump);
                     }
@@ -796,7 +821,7 @@ impl CrateBodyIrSnapshot<'_> {
                     writeln!(
                         dump,
                         "{}spread @ {}",
-                        indent(depth + 1),
+                        Self::indent(depth + 1),
                         self.render_source(BodySource::written(
                             data.source.file_id,
                             spread.source_span
@@ -810,7 +835,7 @@ impl CrateBodyIrSnapshot<'_> {
             }
             ExprKind::Wrapper { inner, .. } => {
                 if let Some(inner) = inner {
-                    writeln!(dump, "{}inner", indent(depth + 1))
+                    writeln!(dump, "{}inner", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *inner, depth + 2, dump);
                 }
@@ -818,14 +843,14 @@ impl CrateBodyIrSnapshot<'_> {
             ExprKind::BuiltinMacro { .. } => {}
             ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
                 if let Some(value) = value {
-                    writeln!(dump, "{}value", indent(depth + 1))
+                    writeln!(dump, "{}value", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *value, depth + 2, dump);
                 }
             }
             ExprKind::Unknown { children, .. } => {
                 for child in children {
-                    writeln!(dump, "{}child", indent(depth + 1))
+                    writeln!(dump, "{}child", Self::indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *child, depth + 2, dump);
                 }
@@ -846,7 +871,7 @@ impl CrateBodyIrSnapshot<'_> {
                 };
                 format!(
                     "block{}{} s{}",
-                    render_label_suffix(label.as_ref()),
+                    Self::render_label_suffix(label.as_ref()),
                     modifier,
                     scope.0
                 )
@@ -897,7 +922,7 @@ impl CrateBodyIrSnapshot<'_> {
             ExprKind::Let {
                 scope, bindings, ..
             } => {
-                format!("let s{} {}", scope.0, render_binding_list(bindings))
+                format!("let s{} {}", scope.0, Self::render_binding_list(bindings))
             }
             ExprKind::Closure {
                 scope,
@@ -917,7 +942,7 @@ impl CrateBodyIrSnapshot<'_> {
                 };
                 let params = params
                     .iter()
-                    .map(render_closure_param)
+                    .map(Self::render_closure_param)
                     .collect::<Vec<_>>()
                     .join(", ");
                 let ret_ty = ret_ty
@@ -927,10 +952,10 @@ impl CrateBodyIrSnapshot<'_> {
                 format!("closure{kind}{capture} s{} ({params}){ret_ty}", scope.0)
             }
             ExprKind::Loop { label, .. } => {
-                format!("loop{}", render_label_suffix(label.as_ref()))
+                format!("loop{}", Self::render_label_suffix(label.as_ref()))
             }
             ExprKind::While { label, .. } => {
-                format!("while{}", render_label_suffix(label.as_ref()))
+                format!("while{}", Self::render_label_suffix(label.as_ref()))
             }
             ExprKind::For {
                 label,
@@ -940,23 +965,23 @@ impl CrateBodyIrSnapshot<'_> {
             } => {
                 format!(
                     "for{} s{} {}",
-                    render_label_suffix(label.as_ref()),
+                    Self::render_label_suffix(label.as_ref()),
                     scope.0,
-                    render_binding_list(bindings)
+                    Self::render_binding_list(bindings)
                 )
             }
             ExprKind::Break { label, .. } => {
-                format!("break{}", render_label_suffix(label.as_ref()))
+                format!("break{}", Self::render_label_suffix(label.as_ref()))
             }
             ExprKind::Continue { label } => {
-                format!("continue{}", render_label_suffix(label.as_ref()))
+                format!("continue{}", Self::render_label_suffix(label.as_ref()))
             }
             ExprKind::MethodCall {
                 method_name,
                 generic_args,
                 ..
             } => {
-                let generic_args = render_item_generic_args(generic_args);
+                let generic_args = Self::render_item_generic_args(generic_args);
                 format!("method_call {method_name}{generic_args}")
             }
             ExprKind::Field { field, .. } => {
@@ -1656,95 +1681,76 @@ impl CrateBodyIrSnapshot<'_> {
             .collect::<Vec<_>>()
             .join(" ")
     }
-}
 
-fn render_binding_list(bindings: &[BindingId]) -> String {
-    if bindings.is_empty() {
-        return "<none>".to_string();
-    }
+    fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
 
-    bindings
-        .iter()
-        .map(|binding| format!("v{}", binding.0))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
-    if args.is_empty() {
-        return String::new();
-    }
-
-    format!(
-        "<{}>",
-        args.iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn render_closure_param(param: &ClosureParamData) -> String {
-    let annotation = param
-        .annotation
-        .as_ref()
-        .map(|ty| format!(": {ty}"))
-        .unwrap_or_default();
-    format!("{}{}", render_binding_list(&param.bindings), annotation)
-}
-
-fn render_pat_list(pats: &[PatId]) -> String {
-    if pats.is_empty() {
-        return "[]".to_string();
-    }
-
-    format!(
-        "[{}]",
-        pats.iter()
-            .map(|pat| format!("p{}", pat.0))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn render_pat_binding_mode(mode: PatBindingMode) -> &'static str {
-    match (mode.by_ref, mode.mutable) {
-        (false, false) => "move",
-        (false, true) => "move mut",
-        (true, false) => "ref",
-        (true, true) => "ref mut",
-    }
-}
-
-fn render_label_suffix(label: Option<&LabelData>) -> String {
-    label
-        .map(|label| format!(" {}", label.name))
-        .unwrap_or_default()
-}
-
-fn indent(depth: usize) -> String {
-    "  ".repeat(depth)
-}
-
-fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-    packages
-}
-
-fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
-    let mut targets = package.targets().iter().collect::<Vec<_>>();
-    targets.sort_by(|left, right| {
-        (
-            left.kind.sort_order(),
-            left.name.as_str(),
-            left.src_path.as_path(),
+        format!(
+            "<{}>",
+            args.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         )
-            .cmp(&(
-                right.kind.sort_order(),
-                right.name.as_str(),
-                right.src_path.as_path(),
-            ))
-    });
-    targets
+    }
+
+    fn render_closure_param(param: &ClosureParamData) -> String {
+        let annotation = param
+            .annotation
+            .as_ref()
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_default();
+        format!(
+            "{}{}",
+            Self::render_binding_list(&param.bindings),
+            annotation
+        )
+    }
+
+    fn render_pat_list(pats: &[PatId]) -> String {
+        if pats.is_empty() {
+            return "[]".to_string();
+        }
+
+        format!(
+            "[{}]",
+            pats.iter()
+                .map(|pat| format!("p{}", pat.0))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn render_pat_binding_mode(mode: PatBindingMode) -> &'static str {
+        match (mode.by_ref, mode.mutable) {
+            (false, false) => "move",
+            (false, true) => "move mut",
+            (true, false) => "ref",
+            (true, true) => "ref mut",
+        }
+    }
+
+    fn render_label_suffix(label: Option<&LabelData>) -> String {
+        label
+            .map(|label| format!(" {}", label.name))
+            .unwrap_or_default()
+    }
+
+    fn indent(depth: usize) -> String {
+        "  ".repeat(depth)
+    }
+
+    fn render_binding_list(bindings: &[BindingId]) -> String {
+        if bindings.is_empty() {
+            return "<none>".to_string();
+        }
+
+        bindings
+            .iter()
+            .map(|binding| format!("v{}", binding.0))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
 }

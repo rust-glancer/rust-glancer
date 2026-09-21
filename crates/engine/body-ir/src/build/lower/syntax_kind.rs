@@ -7,12 +7,11 @@
 use rg_ir_model::{ExprBinaryOp, ExprUnaryOp};
 use rg_syntax::ast;
 
+use super::body::BodyLowering;
 use crate::body::{
     ClosureCapture, ClosureKind, ExprAssignOp, ExprRangeKind, PatBindingMode, PatRangeKind,
     RecordFieldSyntax,
 };
-
-use super::body::BodyLowering;
 
 impl BodyLowering<'_> {
     pub(super) fn closure_capture_from_ast(closure: &ast::ClosureExpr) -> ClosureCapture {

@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use super::optional_percent;
 use crate::{
     compare_lsp::comparison::{
         MappedSetAggregateMetrics, MethodAggregate, MethodAggregateData, SetComparisonMetrics,
@@ -11,8 +12,6 @@ use crate::{
         ReportValue,
     },
 };
-
-use super::optional_percent;
 
 #[derive(Debug, Serialize)]
 pub(super) struct MethodAggregateReport {

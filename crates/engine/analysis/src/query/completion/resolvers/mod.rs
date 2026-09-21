@@ -20,20 +20,7 @@ mod trait_impl;
 mod unqualified;
 mod visibility;
 
-use crate::{
-    Analysis,
-    model::{CompletionEdit, CompletionItem},
-};
 use anyhow::Context as _;
-
-use super::{
-    CompletionQuery,
-    site::{
-        CompletionSite, CompletionSiteDetector, CompletionSourceAttachment, ItemListCompletionKind,
-        NameCompletionContext, SpecializedCompletionContext, SyntaxCompletionContext,
-    },
-    syntax::CompletionSyntaxContext,
-};
 
 use self::{
     apostrophe::ApostropheCompletionResolver,
@@ -45,6 +32,18 @@ use self::{
     record::RecordFieldCompletionResolver, specialized::SpecializedCompletionResolver,
     trait_impl::TraitImplCompletionResolver, unqualified::UnqualifiedCompletionResolver,
     visibility::VisibilityCompletionResolver,
+};
+use super::{
+    CompletionQuery,
+    site::{
+        CompletionSite, CompletionSiteDetector, CompletionSourceAttachment, ItemListCompletionKind,
+        NameCompletionContext, SpecializedCompletionContext, SyntaxCompletionContext,
+    },
+    syntax::CompletionSyntaxContext,
+};
+use crate::{
+    Analysis,
+    model::{CompletionEdit, CompletionItem},
 };
 
 /// Coordinates completion-site detection with semantic candidate rendering.

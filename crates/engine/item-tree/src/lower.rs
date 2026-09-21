@@ -10,14 +10,13 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use rg_arena::Arena;
+use rg_ir_model::{FileId, Span};
 use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
+use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
-
-use rg_ir_model::{FileId, Span};
-use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_text::{Name, NameInterner};
 use rg_tt::{
     Span as TtSpan,
@@ -288,7 +287,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        if macro_call_terminal_name(item).as_deref() != Some("cfg_select") {
+        if Self::macro_call_terminal_name(item).as_deref() != Some("cfg_select") {
             return Ok(());
         }
         let Some(args) = item.token_tree() else {
@@ -732,7 +731,7 @@ impl<'db> PackageLowering<'db> {
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<BuiltinMacroItem>> {
-        if macro_call_terminal_name(item).as_deref() != Some("cfg_select") {
+        if Self::macro_call_terminal_name(item).as_deref() != Some("cfg_select") {
             return Ok(None);
         }
 
@@ -975,6 +974,13 @@ impl<'db> PackageLowering<'db> {
 
         Ok(item_id)
     }
+
+    fn macro_call_terminal_name(item: &ast::MacroCall) -> Option<String> {
+        item.path()?
+            .segment()?
+            .name_ref()
+            .map(|name| name.text().to_string())
+    }
 }
 
 /// File-local item arena under construction.
@@ -1023,7 +1029,7 @@ impl<'a> FileTreeBuilder<'a> {
             return span;
         }
 
-        SpanFactory::new(file_id_u32(self.current_file_id), edition).span_for(range)
+        SpanFactory::new(Self::file_id_u32(self.current_file_id), edition).span_for(range)
     }
 
     fn alloc_item(
@@ -1084,15 +1090,8 @@ impl<'a> FileTreeBuilder<'a> {
             self.current_file_id,
         ))
     }
-}
 
-fn file_id_u32(file_id: FileId) -> u32 {
-    u32::try_from(file_id.0).expect("file id should fit macro span storage")
-}
-
-fn macro_call_terminal_name(item: &ast::MacroCall) -> Option<String> {
-    item.path()?
-        .segment()?
-        .name_ref()
-        .map(|name| name.text().to_string())
+    fn file_id_u32(file_id: FileId) -> u32 {
+        u32::try_from(file_id.0).expect("file id should fit macro span storage")
+    }
 }

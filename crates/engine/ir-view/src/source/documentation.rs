@@ -3,9 +3,8 @@
 use anyhow::Context as _;
 use rg_def_map::{DefMapSource, ModuleOrigin};
 use rg_ir_model::{CrateRef, FileId, ModuleRef, Span, identity::DeclarationRef};
-use rg_std::ExpectedUnique;
-
 pub use rg_item_tree::{DocumentationPlacement, DocumentationSource};
+use rg_std::ExpectedUnique;
 
 use super::{IndexedSourceFact, IndexedSourceRole, SourceOccurrenceView};
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};

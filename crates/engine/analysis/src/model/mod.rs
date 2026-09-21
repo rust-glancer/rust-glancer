@@ -12,17 +12,20 @@ mod rename;
 mod symbol;
 mod symbols;
 
-pub use code_action::{CodeAction, CodeActionEdit, CodeActionKind};
-pub use completion::{
-    CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
-    CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion, SyntheticCompletionTarget,
+pub use self::{
+    code_action::{CodeAction, CodeActionEdit, CodeActionKind},
+    completion::{
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion,
+        SyntheticCompletionTarget,
+    },
+    folding::{Fold, FoldKind},
+    highlight::{Highlight, HighlightKind},
+    hover::{DocumentationLink, HoverBlock, HoverInfo},
+    inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition},
+    navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource},
+    references::ReferenceLocation,
+    rename::{RenameEdit, RenameResult, RenameTarget},
+    symbol::SymbolAt,
+    symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol},
 };
-pub use folding::{Fold, FoldKind};
-pub use highlight::{Highlight, HighlightKind};
-pub use hover::{DocumentationLink, HoverBlock, HoverInfo};
-pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
-pub use navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
-pub use references::ReferenceLocation;
-pub use rename::{RenameEdit, RenameResult, RenameTarget};
-pub use symbol::SymbolAt;
-pub use symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol};

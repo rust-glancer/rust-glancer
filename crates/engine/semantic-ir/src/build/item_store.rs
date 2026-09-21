@@ -6,12 +6,6 @@
 use std::{collections::HashSet, marker::PhantomData};
 
 use anyhow::Context as _;
-
-use crate::item::{
-    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
-    ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
-    UnionData,
-};
 use rg_def_map::{DefMap, ItemSource, LocalDefKind};
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
@@ -23,6 +17,12 @@ use rg_item_tree::{
 };
 use rg_std::ExpectedUnique;
 use rg_text::Name;
+
+use crate::item::{
+    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
+    ItemStoreBuilder, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature,
+    UnionData,
+};
 
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
 pub trait ItemStoreSourceReader<'item> {

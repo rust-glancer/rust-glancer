@@ -41,6 +41,8 @@ pub use rg_body_ir::{
 };
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
+#[doc(hidden)]
+pub use self::indexing::bench_support;
 pub use self::{
     change::{AnalysisChangeSummary, ChangedFile, SavedFileChange},
     indexing::{
@@ -56,9 +58,6 @@ pub use self::{
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
     storage::residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };
-
-#[doc(hidden)]
-pub use self::indexing::bench_support;
 
 #[cfg(test)]
 pub mod testonly;

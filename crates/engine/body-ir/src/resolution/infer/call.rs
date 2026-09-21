@@ -10,18 +10,15 @@ use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
 use rg_item_tree::FunctionQualifiers;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
-use rg_ty::lowering::CallableSignature;
-use rg_ty::trait_selection::TraitProof;
 use rg_ty::{
     Clause, GenericArg, Substitution, Ty,
     inference::{InferenceSubstitution, InferenceTable},
+    lowering::CallableSignature,
+    trait_selection::TraitProof,
 };
 
-use crate::CallFacts;
-use crate::resolution::query::CallSelfSource;
-
 use super::{InferenceContext, fulfill::DeferredKind};
-use crate::body::ExprKind;
+use crate::{CallFacts, body::ExprKind, resolution::query::CallSelfSource};
 
 /// Call-owned signature projection and live generic slots.
 ///

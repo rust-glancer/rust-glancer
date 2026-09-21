@@ -13,12 +13,11 @@ use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathRoot};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
+use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
 use crate::{
     ImportBinding, ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder,
     Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-
-use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
 
 /// Macro candidates kept in the buckets required by Rust lookup precedence.
 ///

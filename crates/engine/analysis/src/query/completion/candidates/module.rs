@@ -9,14 +9,13 @@ use rg_ir_view::{
     ty::locals::BodyView,
 };
 
+use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
 use crate::{
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
     query::completion::site::{
         ModuleMacroCompletionSite, PathCompletionSite, UnqualifiedCompletionSite,
     },
 };
-
-use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     /// Return definitions visible from an explicit module or one resolved qualifier.

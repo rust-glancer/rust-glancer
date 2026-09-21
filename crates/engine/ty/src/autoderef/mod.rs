@@ -10,10 +10,10 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::UniqueVec;
 
 use self::deref::DerefResolver;
 use crate::{Mutability, Ty, TyContext};
-use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
 
@@ -119,68 +119,6 @@ pub struct AutoderefCandidates<'query, 'ty, D, I> {
     kind: AutoderefCandidatesKind<'ty>,
 }
 
-#[derive(Debug, Clone)]
-enum AutoderefCandidatesKind<'ty> {
-    Recursive {
-        mode: AutoderefMode,
-        pending: VecDeque<PendingAutoderefCandidate<'ty>>,
-    },
-    ExplicitDeref {
-        source_ty: Option<&'ty Ty>,
-        targets: VecDeque<Ty>,
-    },
-}
-
-#[derive(Debug, Clone)]
-struct PendingAutoderefCandidate<'ty> {
-    ty: PendingAutoderefTy<'ty>,
-    depth: usize,
-    mutability: Option<Mutability>,
-}
-
-#[derive(Debug, Clone)]
-enum PendingAutoderefTy<'ty> {
-    Borrowed(&'ty Ty),
-    Owned(Ty),
-}
-
-impl<'ty> PendingAutoderefTy<'ty> {
-    fn as_ref(&self) -> &Ty {
-        match self {
-            Self::Borrowed(ty) => ty,
-            Self::Owned(ty) => ty,
-        }
-    }
-
-    fn into_cow(self) -> Cow<'ty, Ty> {
-        match self {
-            Self::Borrowed(ty) => Cow::Borrowed(ty),
-            Self::Owned(ty) => Cow::Owned(ty),
-        }
-    }
-
-    fn reference_inner(&self) -> Option<(Self, Mutability)> {
-        match self {
-            Self::Borrowed(ty) => ty
-                .reference_inner()
-                .map(|(inner, mutability)| (Self::Borrowed(inner), mutability)),
-            Self::Owned(Ty::Reference {
-                mutability, inner, ..
-            }) => Some((Self::Owned((**inner).clone()), *mutability)),
-            Self::Owned(_) => None,
-        }
-    }
-
-    fn array_to_slice_adjustment(&self) -> Option<Self> {
-        match self.as_ref() {
-            // Array-to-slice is a builtin receiver adjustment, not a trait-backed deref. Returning
-            // an owned slice candidate lets method lookup reuse ordinary `impl<T> [T]` handling.
-            Ty::Array { inner, .. } => Some(Self::Owned(Ty::slice((**inner).clone()))),
-            _ => None,
-        }
-    }
-}
-
 impl<'query, 'ty, D, I> Iterator for AutoderefCandidates<'query, 'ty, D, I>
 where
     D: DefMapSource + Clone,
@@ -263,6 +201,68 @@ where
                     Err(error) => Some(Err(error)),
                 }
             }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum AutoderefCandidatesKind<'ty> {
+    Recursive {
+        mode: AutoderefMode,
+        pending: VecDeque<PendingAutoderefCandidate<'ty>>,
+    },
+    ExplicitDeref {
+        source_ty: Option<&'ty Ty>,
+        targets: VecDeque<Ty>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct PendingAutoderefCandidate<'ty> {
+    ty: PendingAutoderefTy<'ty>,
+    depth: usize,
+    mutability: Option<Mutability>,
+}
+
+#[derive(Debug, Clone)]
+enum PendingAutoderefTy<'ty> {
+    Borrowed(&'ty Ty),
+    Owned(Ty),
+}
+
+impl<'ty> PendingAutoderefTy<'ty> {
+    fn as_ref(&self) -> &Ty {
+        match self {
+            Self::Borrowed(ty) => ty,
+            Self::Owned(ty) => ty,
+        }
+    }
+
+    fn into_cow(self) -> Cow<'ty, Ty> {
+        match self {
+            Self::Borrowed(ty) => Cow::Borrowed(ty),
+            Self::Owned(ty) => Cow::Owned(ty),
+        }
+    }
+
+    fn reference_inner(&self) -> Option<(Self, Mutability)> {
+        match self {
+            Self::Borrowed(ty) => ty
+                .reference_inner()
+                .map(|(inner, mutability)| (Self::Borrowed(inner), mutability)),
+            Self::Owned(Ty::Reference {
+                mutability, inner, ..
+            }) => Some((Self::Owned((**inner).clone()), *mutability)),
+            Self::Owned(_) => None,
+        }
+    }
+
+    fn array_to_slice_adjustment(&self) -> Option<Self> {
+        match self.as_ref() {
+            // Array-to-slice is a builtin receiver adjustment, not a trait-backed deref. Returning
+            // an owned slice candidate lets method lookup reuse ordinary `impl<T> [T]` handling.
+            Ty::Array { inner, .. } => Some(Self::Owned(Ty::slice((**inner).clone()))),
+            _ => None,
         }
     }
 }

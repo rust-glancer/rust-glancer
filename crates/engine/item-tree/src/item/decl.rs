@@ -3,12 +3,12 @@
 //! These types preserve what the user wrote in signatures and item headers. Name resolution,
 //! type solving, and semantic ownership are left to later IR layers.
 
-use rg_std::{MemorySize, Shrink};
 use std::fmt;
-use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{FieldKey, Mutability, Span};
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     ConstExpr, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,
@@ -170,10 +170,30 @@ pub enum WherePredicate {
     Unsupported(String),
 }
 
+impl WherePredicate {
+    fn write_bound_list(
+        f: &mut fmt::Formatter<'_>,
+        subject: &str,
+        bounds: &[TypeBound],
+    ) -> fmt::Result {
+        write!(f, "{subject}")?;
+        if !bounds.is_empty() {
+            write!(f, ": ")?;
+            for (idx, bound) in bounds.iter().enumerate() {
+                if idx > 0 {
+                    write!(f, " + ")?;
+                }
+                write!(f, "{bound}")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl fmt::Display for WherePredicate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Type { ty, bounds } => write_bound_list(f, &ty.to_string(), bounds),
+            Self::Type { ty, bounds } => Self::write_bound_list(f, &ty.to_string(), bounds),
             Self::Lifetime { lifetime, bounds } => {
                 write!(f, "{lifetime}: ")?;
                 for (index, bound) in bounds.iter().enumerate() {
@@ -384,22 +404,4 @@ pub struct ConstItem {
 pub struct StaticItem {
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
-}
-
-fn write_bound_list(
-    f: &mut fmt::Formatter<'_>,
-    subject: &str,
-    bounds: &[TypeBound],
-) -> fmt::Result {
-    write!(f, "{subject}")?;
-    if !bounds.is_empty() {
-        write!(f, ": ")?;
-        for (idx, bound) in bounds.iter().enumerate() {
-            if idx > 0 {
-                write!(f, " + ")?;
-            }
-            write!(f, "{bound}")?;
-        }
-    }
-    Ok(())
 }

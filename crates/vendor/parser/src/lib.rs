@@ -44,10 +44,10 @@ pub use T_ as T;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use token_set::TokenSet;
-
 pub use edition::Edition;
 
+use self::parser::Parser;
+pub(crate) use self::token_set::TokenSet;
 pub use crate::{
     input::Input,
     lexed_str::LexedStr,
@@ -93,7 +93,7 @@ pub enum TopEntryPoint {
 impl TopEntryPoint {
     pub fn parse(&self, input: &Input) -> Output {
         let _p = tracing::info_span!("TopEntryPoint::parse", ?self).entered();
-        let entry_point: fn(&'_ mut parser::Parser<'_>) = match self {
+        let entry_point: fn(&'_ mut Parser<'_>) = match self {
             TopEntryPoint::SourceFile => grammar::entry::top::source_file,
             TopEntryPoint::MacroStmts => grammar::entry::top::macro_stmts,
             TopEntryPoint::MacroItems => grammar::entry::top::macro_items,
@@ -102,7 +102,7 @@ impl TopEntryPoint {
             TopEntryPoint::Expr => grammar::entry::top::expr,
             TopEntryPoint::MetaItem => grammar::entry::top::meta_item,
         };
-        let mut p = parser::Parser::new(input);
+        let mut p = Parser::new(input);
         entry_point(&mut p);
         let events = p.finish();
         let res = event::process(events);
@@ -155,7 +155,7 @@ pub enum PrefixEntryPoint {
 
 impl PrefixEntryPoint {
     pub fn parse(&self, input: &Input) -> Output {
-        let entry_point: fn(&'_ mut parser::Parser<'_>) = match self {
+        let entry_point: fn(&'_ mut Parser<'_>) = match self {
             PrefixEntryPoint::Vis => grammar::entry::prefix::vis,
             PrefixEntryPoint::Block => grammar::entry::prefix::block,
             PrefixEntryPoint::Stmt => grammar::entry::prefix::stmt,
@@ -167,7 +167,7 @@ impl PrefixEntryPoint {
             PrefixEntryPoint::Item => grammar::entry::prefix::item,
             PrefixEntryPoint::MetaItem => grammar::entry::prefix::meta_item,
         };
-        let mut p = parser::Parser::new(input);
+        let mut p = Parser::new(input);
         entry_point(&mut p);
         let events = p.finish();
         event::process(events)
@@ -175,7 +175,7 @@ impl PrefixEntryPoint {
 }
 
 /// A parsing function for a specific braced-block.
-pub struct Reparser(fn(&mut parser::Parser<'_>));
+pub struct Reparser(fn(&mut Parser<'_>));
 
 impl Reparser {
     /// If the node is a braced block, return the corresponding `Reparser`.
@@ -193,7 +193,7 @@ impl Reparser {
     /// sequence.
     pub fn parse(self, tokens: &Input) -> Output {
         let Reparser(r) = self;
-        let mut p = parser::Parser::new(tokens);
+        let mut p = Parser::new(tokens);
         r(&mut p);
         let events = p.finish();
         event::process(events)

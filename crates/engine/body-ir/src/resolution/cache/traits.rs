@@ -35,79 +35,6 @@ pub(crate) struct BodyTraitLookupCache {
     shared: Arc<BodyTraitLookupCacheShared>,
 }
 
-#[derive(Default)]
-struct BodyTraitLookupCacheShared {
-    /// Low-frequency scope and declaration results, plus their batched profiling counters.
-    state: Mutex<BodyTraitLookupCacheState>,
-    /// A hot-path counter kept outside the mutex and flushed when the body cache is dropped.
-    empty_extension_probes: AtomicUsize,
-}
-
-/// Published lexical sets and declaration surfaces for one immutable body.
-///
-/// For a scope containing `use api::{Inspect, Render};`, `scopes` stores both trait identities. A
-/// later `value.render()` probe may add `FunctionNamed("render") -> [Render]` under the same scope
-/// in `surfaces`. The hit/miss counters stay beside the cached data and are emitted once on drop so
-/// normal lookup does not update global metrics on every access.
-#[derive(Default)]
-struct BodyTraitLookupCacheState {
-    scopes: HashMap<ScopeId, Arc<HashSet<TraitDefRef>>>,
-    surfaces: HashMap<ScopeId, CachedTraitSurfaces>,
-    scope_hits: usize,
-    scope_misses: usize,
-    surface_hits: usize,
-    surface_misses: usize,
-}
-
-/// One lexical scope's declaration surfaces after intersecting them with its visible traits.
-///
-/// Each slot represents a different way a caller enters trait lookup. Broad completion fills a
-/// broad slot once, while `value.render()` and `Type::MAX` use their own named entries. These lists
-/// contain trait declarations only; receiver-specific impl proof happens after the cache boundary.
-#[derive(Default)]
-struct CachedTraitSurfaces {
-    associated_items: Option<Arc<UniqueVec<TraitDefRef>>>,
-    functions: Option<Arc<UniqueVec<TraitDefRef>>>,
-    functions_by_name: HashMap<Name, Arc<UniqueVec<TraitDefRef>>>,
-    consts_by_name: HashMap<Name, Arc<UniqueVec<TraitDefRef>>>,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum BodyTraitSurface<'name> {
-    /// Traits declaring any associated item, used by broad associated-item lookup.
-    AssociatedItems,
-    /// Traits declaring at least one function, used by method completion.
-    Functions,
-    /// Traits declaring a particular method name, such as `render` in `value.render()`.
-    FunctionNamed(&'name str),
-    /// Traits declaring a particular const name, such as `MAX` in associated-item lookup.
-    ConstNamed(&'name str),
-}
-
-impl CachedTraitSurfaces {
-    fn get(&self, surface: BodyTraitSurface<'_>) -> Option<Arc<UniqueVec<TraitDefRef>>> {
-        match surface {
-            BodyTraitSurface::AssociatedItems => self.associated_items.clone(),
-            BodyTraitSurface::Functions => self.functions.clone(),
-            BodyTraitSurface::FunctionNamed(name) => self.functions_by_name.get(name).cloned(),
-            BodyTraitSurface::ConstNamed(name) => self.consts_by_name.get(name).cloned(),
-        }
-    }
-
-    fn insert(&mut self, surface: BodyTraitSurface<'_>, traits: Arc<UniqueVec<TraitDefRef>>) {
-        match surface {
-            BodyTraitSurface::AssociatedItems => self.associated_items = Some(traits),
-            BodyTraitSurface::Functions => self.functions = Some(traits),
-            BodyTraitSurface::FunctionNamed(name) => {
-                self.functions_by_name.insert(Name::new(name), traits);
-            }
-            BodyTraitSurface::ConstNamed(name) => {
-                self.consts_by_name.insert(Name::new(name), traits);
-            }
-        }
-    }
-}
-
 impl BodyTraitLookupCache {
     /// Return one cached scope, publishing only a complete successful collection.
     pub(crate) fn scope_or_try_init<E>(
@@ -217,6 +144,14 @@ impl BodyTraitLookupCache {
     }
 }
 
+#[derive(Default)]
+struct BodyTraitLookupCacheShared {
+    /// Low-frequency scope and declaration results, plus their batched profiling counters.
+    state: Mutex<BodyTraitLookupCacheState>,
+    /// A hot-path counter kept outside the mutex and flushed when the body cache is dropped.
+    empty_extension_probes: AtomicUsize,
+}
+
 impl Drop for BodyTraitLookupCacheShared {
     fn drop(&mut self) {
         let state = self
@@ -241,6 +176,71 @@ impl Drop for BodyTraitLookupCacheShared {
                 .add(empty_extension_probes as u64);
         }
     }
+}
+
+/// Published lexical sets and declaration surfaces for one immutable body.
+///
+/// For a scope containing `use api::{Inspect, Render};`, `scopes` stores both trait identities. A
+/// later `value.render()` probe may add `FunctionNamed("render") -> [Render]` under the same scope
+/// in `surfaces`. The hit/miss counters stay beside the cached data and are emitted once on drop so
+/// normal lookup does not update global metrics on every access.
+#[derive(Default)]
+struct BodyTraitLookupCacheState {
+    scopes: HashMap<ScopeId, Arc<HashSet<TraitDefRef>>>,
+    surfaces: HashMap<ScopeId, CachedTraitSurfaces>,
+    scope_hits: usize,
+    scope_misses: usize,
+    surface_hits: usize,
+    surface_misses: usize,
+}
+
+/// One lexical scope's declaration surfaces after intersecting them with its visible traits.
+///
+/// Each slot represents a different way a caller enters trait lookup. Broad completion fills a
+/// broad slot once, while `value.render()` and `Type::MAX` use their own named entries. These lists
+/// contain trait declarations only; receiver-specific impl proof happens after the cache boundary.
+#[derive(Default)]
+struct CachedTraitSurfaces {
+    associated_items: Option<Arc<UniqueVec<TraitDefRef>>>,
+    functions: Option<Arc<UniqueVec<TraitDefRef>>>,
+    functions_by_name: HashMap<Name, Arc<UniqueVec<TraitDefRef>>>,
+    consts_by_name: HashMap<Name, Arc<UniqueVec<TraitDefRef>>>,
+}
+
+impl CachedTraitSurfaces {
+    fn get(&self, surface: BodyTraitSurface<'_>) -> Option<Arc<UniqueVec<TraitDefRef>>> {
+        match surface {
+            BodyTraitSurface::AssociatedItems => self.associated_items.clone(),
+            BodyTraitSurface::Functions => self.functions.clone(),
+            BodyTraitSurface::FunctionNamed(name) => self.functions_by_name.get(name).cloned(),
+            BodyTraitSurface::ConstNamed(name) => self.consts_by_name.get(name).cloned(),
+        }
+    }
+
+    fn insert(&mut self, surface: BodyTraitSurface<'_>, traits: Arc<UniqueVec<TraitDefRef>>) {
+        match surface {
+            BodyTraitSurface::AssociatedItems => self.associated_items = Some(traits),
+            BodyTraitSurface::Functions => self.functions = Some(traits),
+            BodyTraitSurface::FunctionNamed(name) => {
+                self.functions_by_name.insert(Name::new(name), traits);
+            }
+            BodyTraitSurface::ConstNamed(name) => {
+                self.consts_by_name.insert(Name::new(name), traits);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum BodyTraitSurface<'name> {
+    /// Traits declaring any associated item, used by broad associated-item lookup.
+    AssociatedItems,
+    /// Traits declaring at least one function, used by method completion.
+    Functions,
+    /// Traits declaring a particular method name, such as `render` in `value.render()`.
+    FunctionNamed(&'name str),
+    /// Traits declaring a particular const name, such as `MAX` in associated-item lookup.
+    ConstNamed(&'name str),
 }
 
 #[cfg(test)]
