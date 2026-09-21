@@ -67,7 +67,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("rust_g
 
 [workspace.metadata.dylint]
 libraries = [
-  { git = "https://github.com/rust-glancer/rust-glancer-lints", rev = "b4879e3f25d70777a5af40bb8e1aaeeea46158bb", pattern = "crates/rust-glancer-lints" },
+  { git = "https://github.com/rust-glancer/rust-glancer-lints", rev = "2334b9b4f866dcd29ab864590301fc01afb544ab", pattern = "crates/rust-glancer-lints" },
 ]
 
 [workspace.dependencies]
