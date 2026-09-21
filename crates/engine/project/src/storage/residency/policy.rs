@@ -36,6 +36,36 @@ pub enum PackageResidencyPolicy {
     AllOffloadable,
 }
 
+impl PackageResidencyPolicy {
+    /// Stable kebab-case name used by CLI flags and LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::AllResident => "all-resident",
+            Self::WorkspaceResident => "workspace",
+            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
+            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
+            Self::AllOffloadable => "all-offloadable",
+        }
+    }
+
+    /// Parses the public policy names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        match normalized.as_str() {
+            "all-resident" => Some(Self::AllResident),
+            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
+            "workspace-and-path-deps" | "workspace-path-deps" => {
+                Some(Self::WorkspaceAndPathDepsResident)
+            }
+            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
+                Some(Self::WorkspacePathAndDirectDepsResident)
+            }
+            "all-offloadable" => Some(Self::AllOffloadable),
+            _ => None,
+        }
+    }
+}
+
 /// Storage decision for the heavy phase payloads of one package.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
@@ -133,36 +163,6 @@ impl PackageResidencyPlan {
             .flat_map(|package| package.dependencies.iter())
             .map(|dependency| dependency.package_id().clone())
             .collect()
-    }
-}
-
-impl PackageResidencyPolicy {
-    /// Stable kebab-case name used by CLI flags and LSP initialization options.
-    pub fn config_name(self) -> &'static str {
-        match self {
-            Self::AllResident => "all-resident",
-            Self::WorkspaceResident => "workspace",
-            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
-            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
-            Self::AllOffloadable => "all-offloadable",
-        }
-    }
-
-    /// Parses the public policy names accepted by frontends.
-    pub fn from_config_name(value: &str) -> Option<Self> {
-        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
-        match normalized.as_str() {
-            "all-resident" => Some(Self::AllResident),
-            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
-            "workspace-and-path-deps" | "workspace-path-deps" => {
-                Some(Self::WorkspaceAndPathDepsResident)
-            }
-            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
-                Some(Self::WorkspacePathAndDirectDepsResident)
-            }
-            "all-offloadable" => Some(Self::AllOffloadable),
-            _ => None,
-        }
     }
 }
 

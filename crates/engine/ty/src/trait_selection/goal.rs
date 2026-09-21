@@ -12,12 +12,6 @@ pub struct TraitGoal {
     pub associated_types: Vec<AssocTypeBinding>,
 }
 
-/// One `Trait<Assoc = Ty>` equality constraint carried by a trait goal.
-pub(crate) struct AssocTypeConstraint<'a> {
-    pub(crate) associated_ty: TypeAliasRef,
-    pub(crate) ty: &'a Ty,
-}
-
 impl TraitGoal {
     /// Build a goal from positional arguments that do not include `Self`.
     pub fn new(
@@ -167,4 +161,10 @@ impl TraitGoal {
                 .iter()
                 .all(|binding| !binding.ty.has_var() && !binding.ty.has_closure())
     }
+}
+
+/// One `Trait<Assoc = Ty>` equality constraint carried by a trait goal.
+pub(crate) struct AssocTypeConstraint<'a> {
+    pub(crate) associated_ty: TypeAliasRef,
+    pub(crate) ty: &'a Ty,
 }

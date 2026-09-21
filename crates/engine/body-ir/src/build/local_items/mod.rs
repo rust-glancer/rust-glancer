@@ -7,7 +7,7 @@ mod def_map;
 mod item_store;
 mod lower;
 
-pub(crate) use lower::LocalItemLowering;
+pub(crate) use self::lower::LocalItemLowering;
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;

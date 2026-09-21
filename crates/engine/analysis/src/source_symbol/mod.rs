@@ -4,6 +4,6 @@ mod adapter;
 mod index;
 mod resolver;
 
-pub(crate) use adapter::{SourceSymbol, SourceSymbolRole};
-pub(crate) use index::SourceSymbolIndex;
-pub(crate) use resolver::SourceSymbolResolver;
+pub(crate) use self::adapter::{SourceSymbol, SourceSymbolRole};
+pub(crate) use self::index::SourceSymbolIndex;
+pub(crate) use self::resolver::SourceSymbolResolver;

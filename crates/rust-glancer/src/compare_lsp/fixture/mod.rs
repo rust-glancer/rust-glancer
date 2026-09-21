@@ -62,7 +62,7 @@ impl Fixture {
     fn default_root(kind: CliFixture) -> PathBuf {
         match kind {
             CliFixture::RustAnalyzer | CliFixture::RustAnalyzerDirty => {
-                workspace_root().join("test_targets/bench_fixtures/rust-analyzer")
+                Self::workspace_root().join("test_targets/bench_fixtures/rust-analyzer")
             }
         }
     }
@@ -179,8 +179,8 @@ impl Fixture {
     pub(crate) fn uses_dirty_editor_text(&self) -> bool {
         self.kind.uses_dirty_editor_text()
     }
-}
 
-fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    }
 }

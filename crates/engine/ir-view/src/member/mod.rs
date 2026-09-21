@@ -245,11 +245,30 @@ pub struct MemberMethodCandidate<'a> {
     origin: MemberMethodOrigin,
 }
 
+impl<'a> MemberMethodCandidate<'a> {
+    pub fn function(&self) -> MemberFunction<'a> {
+        self.function
+    }
+
+    pub fn origin(&self) -> MemberMethodOrigin {
+        self.origin
+    }
+}
+
 /// Declaration source for a method candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemberMethodOrigin {
     Inherent,
     Trait { applicability: TraitApplicability },
+}
+
+impl From<TyMemberMethodOrigin> for MemberMethodOrigin {
+    fn from(origin: TyMemberMethodOrigin) -> Self {
+        match origin {
+            TyMemberMethodOrigin::Inherent => Self::Inherent,
+            TyMemberMethodOrigin::Trait { applicability } => Self::Trait { applicability },
+        }
+    }
 }
 
 /// Stable identity for a declaration that may be offered after `::`.
@@ -335,25 +354,6 @@ impl MemberAssociatedItemDefinition {
 
     pub fn documentation(&self) -> Option<&str> {
         self.documentation.as_deref()
-    }
-}
-
-impl From<TyMemberMethodOrigin> for MemberMethodOrigin {
-    fn from(origin: TyMemberMethodOrigin) -> Self {
-        match origin {
-            TyMemberMethodOrigin::Inherent => Self::Inherent,
-            TyMemberMethodOrigin::Trait { applicability } => Self::Trait { applicability },
-        }
-    }
-}
-
-impl<'a> MemberMethodCandidate<'a> {
-    pub fn function(&self) -> MemberFunction<'a> {
-        self.function
-    }
-
-    pub fn origin(&self) -> MemberMethodOrigin {
-        self.origin
     }
 }
 

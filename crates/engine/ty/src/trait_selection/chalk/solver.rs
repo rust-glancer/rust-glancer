@@ -79,14 +79,6 @@ struct SolverBudget {
     exhausted: Cell<bool>,
 }
 
-/// Why an otherwise valid Chalk substitution cannot become project inference evidence.
-enum AnswerFailure {
-    /// The answer uses a type shape outside rust-glancer's semantic model.
-    Unsupported,
-    /// Applying the answer would contradict evidence already present in the caller's table.
-    Conflicting,
-}
-
 impl SolverBudget {
     fn new(remaining: usize) -> Self {
         Self {
@@ -114,6 +106,14 @@ impl SolverBudget {
     }
 }
 
+/// Why an otherwise valid Chalk substitution cannot become project inference evidence.
+enum AnswerFailure {
+    /// The answer uses a type shape outside rust-glancer's semantic model.
+    Unsupported,
+    /// Applying the answer would contradict evidence already present in the caller's table.
+    Conflicting,
+}
+
 /// Long-lived Chalk state shared by `TraitSelectionSession`s for one crate view.
 ///
 /// The semantic program grows as new goals mention new traits. Only forests whose goals contain no
@@ -121,69 +121,6 @@ impl SolverBudget {
 /// identities instead live in `ChalkInferenceCache` and disappear with the body that owns them.
 pub(crate) struct ChalkTraitSolver {
     state: Mutex<ChalkSolverState>,
-}
-
-/// Solver forests whose answers are valid only within one inference scope.
-///
-/// The semantic program is still crate-scoped and shared through `ChalkTraitSolver`. A body pass
-/// receives a fresh cache so its fixed-point rounds can reuse answers involving that body's
-/// closures and inference slots, then drops the forests when the body finishes.
-pub(crate) struct ChalkInferenceCache {
-    forests: Mutex<ChalkSolverForests>,
-    declined_proofs: Mutex<HashMap<Vec<Clause>, DeclinedProof>>,
-}
-
-/// A bounded adapter result that cannot become more precise without different input clauses.
-#[derive(Clone, Copy)]
-enum DeclinedProof {
-    Unsupported,
-    Exhausted,
-}
-
-/// Mutable crate program together with answers safe to reuse across bodies.
-struct ChalkSolverState {
-    program: ChalkProgramState,
-    stable_forests: ChalkSolverForests,
-}
-
-/// Separate SLG forests for predicate proof and associated-type projection.
-///
-/// Both operations submit Chalk goals, but projection adds an explicit result variable while
-/// predicate proof maps only the input variables. Keeping the forests separate avoids mixing
-/// those goal and answer layouts and lets each retain work for its own query kind.
-struct ChalkSolverForests {
-    impl_bounds_solver: SLGSolver<RgChalkInterner>,
-    assoc_projection_solver: SLGSolver<RgChalkInterner>,
-}
-
-impl ChalkInferenceCache {
-    pub(crate) fn new() -> Self {
-        Self {
-            forests: Mutex::new(ChalkSolverForests::new()),
-            declined_proofs: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// Reuse only declines from this body's exact canonical clauses.
-    ///
-    /// Solver forests may resume incomplete search, but body inference should not spend another
-    /// full allowance on an unchanged obligation merely because an unrelated expression made the
-    /// outer fixed point run again. A changed inference solution produces different canonical
-    /// clauses and therefore gets a fresh attempt.
-    fn declined_proof(&self, clauses: &[Clause]) -> Option<DeclinedProof> {
-        self.declined_proofs
-            .lock()
-            .expect("Chalk declined-proof cache lock should not be poisoned")
-            .get(clauses)
-            .copied()
-    }
-
-    fn remember_declined_proof(&self, clauses: &[Clause], declined: DeclinedProof) {
-        self.declined_proofs
-            .lock()
-            .expect("Chalk declined-proof cache lock should not be poisoned")
-            .insert(clauses.to_vec(), declined);
-    }
 }
 
 impl ChalkTraitSolver {
@@ -523,16 +460,57 @@ impl ChalkTraitSolver {
     }
 }
 
-impl ChalkSolverForests {
-    fn new() -> Self {
+/// Solver forests whose answers are valid only within one inference scope.
+///
+/// The semantic program is still crate-scoped and shared through `ChalkTraitSolver`. A body pass
+/// receives a fresh cache so its fixed-point rounds can reuse answers involving that body's
+/// closures and inference slots, then drops the forests when the body finishes.
+pub(crate) struct ChalkInferenceCache {
+    forests: Mutex<ChalkSolverForests>,
+    declined_proofs: Mutex<HashMap<Vec<Clause>, DeclinedProof>>,
+}
+
+impl ChalkInferenceCache {
+    pub(crate) fn new() -> Self {
         Self {
-            // Predicate proof and associated projection use separate forests because their goal
-            // shapes and answer decoding differ. `expected_answers` is a diagnostic assertion in
-            // Chalk, not a work limit; rust-glancer bounds work through `solve_limited` instead.
-            impl_bounds_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
-            assoc_projection_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+            forests: Mutex::new(ChalkSolverForests::new()),
+            declined_proofs: Mutex::new(HashMap::new()),
         }
     }
+
+    /// Reuse only declines from this body's exact canonical clauses.
+    ///
+    /// Solver forests may resume incomplete search, but body inference should not spend another
+    /// full allowance on an unchanged obligation merely because an unrelated expression made the
+    /// outer fixed point run again. A changed inference solution produces different canonical
+    /// clauses and therefore gets a fresh attempt.
+    fn declined_proof(&self, clauses: &[Clause]) -> Option<DeclinedProof> {
+        self.declined_proofs
+            .lock()
+            .expect("Chalk declined-proof cache lock should not be poisoned")
+            .get(clauses)
+            .copied()
+    }
+
+    fn remember_declined_proof(&self, clauses: &[Clause], declined: DeclinedProof) {
+        self.declined_proofs
+            .lock()
+            .expect("Chalk declined-proof cache lock should not be poisoned")
+            .insert(clauses.to_vec(), declined);
+    }
+}
+
+/// A bounded adapter result that cannot become more precise without different input clauses.
+#[derive(Clone, Copy)]
+enum DeclinedProof {
+    Unsupported,
+    Exhausted,
+}
+
+/// Mutable crate program together with answers safe to reuse across bodies.
+struct ChalkSolverState {
+    program: ChalkProgramState,
+    stable_forests: ChalkSolverForests,
 }
 
 impl ChalkSolverState {
@@ -945,5 +923,27 @@ impl ChalkSolverState {
             }
         }
         Ok(table)
+    }
+}
+
+/// Separate SLG forests for predicate proof and associated-type projection.
+///
+/// Both operations submit Chalk goals, but projection adds an explicit result variable while
+/// predicate proof maps only the input variables. Keeping the forests separate avoids mixing
+/// those goal and answer layouts and lets each retain work for its own query kind.
+struct ChalkSolverForests {
+    impl_bounds_solver: SLGSolver<RgChalkInterner>,
+    assoc_projection_solver: SLGSolver<RgChalkInterner>,
+}
+
+impl ChalkSolverForests {
+    fn new() -> Self {
+        Self {
+            // Predicate proof and associated projection use separate forests because their goal
+            // shapes and answer decoding differ. `expected_answers` is a diagnostic assertion in
+            // Chalk, not a work limit; rust-glancer bounds work through `solve_limited` instead.
+            impl_bounds_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+            assoc_projection_solver: SLGSolver::new(SOLVER_MAX_SIZE, None),
+        }
     }
 }

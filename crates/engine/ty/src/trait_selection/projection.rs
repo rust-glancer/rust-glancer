@@ -37,6 +37,12 @@ pub struct AssocProjectionResult {
     pub table: InferenceTable,
 }
 
+impl AssocProjectionResult {
+    pub(crate) fn into_parts(self) -> (Ty, TraitApplicability, InferenceTable) {
+        (self.ty, self.applicability, self.table)
+    }
+}
+
 /// Native impls already being proved while recursively normalizing associated projections.
 ///
 /// Candidate predicates often mention an associated type supplied by a different predicate-free
@@ -77,12 +83,6 @@ impl<'path> CandidateEvidence<'path> {
 
     pub(super) fn allows_solver_fallback(self) -> bool {
         !self.native_declarations_only
-    }
-}
-
-impl AssocProjectionResult {
-    pub(crate) fn into_parts(self) -> (Ty, TraitApplicability, InferenceTable) {
-        (self.ty, self.applicability, self.table)
     }
 }
 

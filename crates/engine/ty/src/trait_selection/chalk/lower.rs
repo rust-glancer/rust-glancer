@@ -65,13 +65,6 @@ pub(super) struct GenericBinderEnv {
     indices: HashMap<GenericParamRef, usize>,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum GenericBinding {
-    Type,
-    Lifetime,
-    Const,
-}
-
 impl GenericBinderEnv {
     pub(super) fn for_generics(generics: &Generics<'_>) -> Self {
         let mut bindings = Vec::with_capacity(generics.len());
@@ -115,6 +108,13 @@ impl GenericBinderEnv {
             .copied()
             .map(|index| BoundVar::new(DebruijnIndex::INNERMOST, index))
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum GenericBinding {
+    Type,
+    Lifetime,
+    Const,
 }
 
 /// Stateless conversion scoped by the semantic binder and solver-supported definitions.

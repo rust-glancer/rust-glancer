@@ -26,132 +26,6 @@ struct TokenId(u32);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct ElementId(u32);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NodeData {
-    kind: SyntaxKind,
-    parent: Option<NodeId>,
-    index_in_parent: u32,
-    first_child: u32,
-    child_count: u32,
-    text_range: TextRange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct TokenData {
-    kind: SyntaxKind,
-    parent: NodeId,
-    index_in_parent: u32,
-    text_range: TextRange,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct SyntaxTree {
-    source: Box<str>,
-    nodes: Box<[NodeData]>,
-    tokens: Box<[TokenData]>,
-    children: Box<[ElementId]>,
-    errors: Box<[SyntaxError]>,
-}
-
-/// Approximate retained storage for one immutable syntax tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SyntaxTreeMemoryUsage {
-    pub source_bytes: usize,
-    pub node_table_bytes: usize,
-    pub token_table_bytes: usize,
-    pub child_table_bytes: usize,
-    pub error_bytes: usize,
-}
-
-#[derive(Clone)]
-pub struct SyntaxNode {
-    tree: Arc<SyntaxTree>,
-    id: NodeId,
-}
-
-#[derive(Clone)]
-pub struct SyntaxToken {
-    tree: Arc<SyntaxTree>,
-    id: TokenId,
-}
-
-pub type SyntaxElement = NodeOrToken<SyntaxNode, SyntaxToken>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum NodeOrToken<N, T> {
-    Node(N),
-    Token(T),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Direction {
-    Next,
-    Prev,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum WalkEvent<T> {
-    Enter(T),
-    Leave(T),
-}
-
-#[derive(Clone, Debug)]
-pub enum TokenAtOffset<T> {
-    None,
-    Single(T),
-    Between(T, T),
-}
-
-#[derive(Debug, Clone)]
-pub struct SyntaxNodeChildren {
-    parent: SyntaxNode,
-    next_index: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct SyntaxElementChildren {
-    parent: SyntaxNode,
-    next_index: u32,
-}
-
-#[derive(Debug, Clone)]
-pub struct Preorder {
-    start: SyntaxNode,
-    next: Option<WalkEvent<SyntaxNode>>,
-    skip_subtree: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreorderWithTokens {
-    start: SyntaxElement,
-    next: Option<WalkEvent<SyntaxElement>>,
-    skip_subtree: bool,
-}
-
-#[derive(Clone)]
-pub struct SyntaxText {
-    tree: Arc<SyntaxTree>,
-    range: TextRange,
-}
-
-#[derive(Default)]
-pub(crate) struct SyntaxTreeBuilder {
-    source: String,
-    nodes: Vec<NodeData>,
-    tokens: Vec<TokenData>,
-    children: Vec<ElementId>,
-    stack: Vec<OpenNode>,
-    errors: Vec<SyntaxError>,
-    root: Option<NodeId>,
-    offset: TextSize,
-}
-
-struct OpenNode {
-    id: NodeId,
-    start: TextSize,
-    children: Vec<ElementId>,
-}
-
 impl ElementId {
     fn node(id: NodeId) -> Self {
         ElementId(id.0 << 1)
@@ -187,6 +61,33 @@ impl ElementId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NodeData {
+    kind: SyntaxKind,
+    parent: Option<NodeId>,
+    index_in_parent: u32,
+    first_child: u32,
+    child_count: u32,
+    text_range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TokenData {
+    kind: SyntaxKind,
+    parent: NodeId,
+    index_in_parent: u32,
+    text_range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SyntaxTree {
+    source: Box<str>,
+    nodes: Box<[NodeData]>,
+    tokens: Box<[TokenData]>,
+    children: Box<[ElementId]>,
+    errors: Box<[SyntaxError]>,
+}
+
 impl SyntaxTree {
     fn node(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
@@ -216,6 +117,22 @@ impl SyntaxTree {
             error_bytes: self.errors.iter().map(SyntaxError::memory_usage).sum(),
         }
     }
+}
+
+/// Approximate retained storage for one immutable syntax tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyntaxTreeMemoryUsage {
+    pub source_bytes: usize,
+    pub node_table_bytes: usize,
+    pub token_table_bytes: usize,
+    pub child_table_bytes: usize,
+    pub error_bytes: usize,
+}
+
+#[derive(Clone)]
+pub struct SyntaxNode {
+    tree: Arc<SyntaxTree>,
+    id: NodeId,
 }
 
 impl SyntaxNode {
@@ -457,6 +374,60 @@ impl SyntaxNode {
     }
 }
 
+impl PartialEq for SyntaxNode {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.tree, &other.tree)
+    }
+}
+
+impl Eq for SyntaxNode {}
+
+impl Hash for SyntaxNode {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.tree).hash(state);
+        self.id.hash(state);
+    }
+}
+
+impl fmt::Debug for SyntaxNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if f.alternate() {
+            let mut level = 0;
+            for event in self.preorder_with_tokens() {
+                match event {
+                    WalkEvent::Enter(element) => {
+                        for _ in 0..level {
+                            write!(f, "  ")?;
+                        }
+                        match element {
+                            SyntaxElement::Node(node) => writeln!(f, "{:?}", node)?,
+                            SyntaxElement::Token(token) => writeln!(f, "{:?}", token)?,
+                        }
+                        level += 1;
+                    }
+                    WalkEvent::Leave(_) => level -= 1,
+                }
+            }
+            debug_assert_eq!(level, 0);
+            Ok(())
+        } else {
+            write!(f, "{:?}@{:?}", self.kind(), self.text_range())
+        }
+    }
+}
+
+impl fmt::Display for SyntaxNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.text(), f)
+    }
+}
+
+#[derive(Clone)]
+pub struct SyntaxToken {
+    tree: Arc<SyntaxTree>,
+    id: TokenId,
+}
+
 impl SyntaxToken {
     pub fn kind(&self) -> SyntaxKind {
         self.tree.token(self.id).kind
@@ -544,78 +515,51 @@ impl SyntaxToken {
     }
 }
 
-impl SyntaxElement {
-    pub fn text_range(&self) -> TextRange {
-        match self {
-            SyntaxElement::Node(node) => node.text_range(),
-            SyntaxElement::Token(token) => token.text_range(),
-        }
+impl PartialEq for SyntaxToken {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id && Arc::ptr_eq(&self.tree, &other.tree)
     }
+}
 
-    pub fn index(&self) -> usize {
-        match self {
-            SyntaxElement::Node(node) => node.index(),
-            SyntaxElement::Token(token) => token.index(),
-        }
-    }
+impl Eq for SyntaxToken {}
 
-    pub fn kind(&self) -> SyntaxKind {
-        match self {
-            SyntaxElement::Node(node) => node.kind(),
-            SyntaxElement::Token(token) => token.kind(),
-        }
+impl Hash for SyntaxToken {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Arc::as_ptr(&self.tree).hash(state);
+        self.id.hash(state);
     }
+}
 
-    pub fn parent(&self) -> Option<SyntaxNode> {
-        match self {
-            SyntaxElement::Node(node) => node.parent(),
-            SyntaxElement::Token(token) => token.parent(),
+impl fmt::Debug for SyntaxToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}@{:?}", self.kind(), self.text_range())?;
+        if self.text().len() < 25 {
+            return write!(f, " {:?}", self.text());
         }
-    }
 
-    pub fn ancestors(&self) -> impl Iterator<Item = SyntaxNode> + use<> {
-        let first = match self {
-            SyntaxElement::Node(node) => Some(node.clone()),
-            SyntaxElement::Token(token) => token.parent(),
-        };
-        iter::successors(first, SyntaxNode::parent)
-    }
-
-    pub fn next_sibling_or_token(&self) -> Option<SyntaxElement> {
-        match self {
-            SyntaxElement::Node(node) => node.next_sibling_or_token(),
-            SyntaxElement::Token(token) => token.next_sibling_or_token(),
+        let text = self.text();
+        for idx in 21..25 {
+            if text.is_char_boundary(idx) {
+                let text = format!("{} ...", &text[..idx]);
+                return write!(f, " {:?}", text);
+            }
         }
+        unreachable!("the inspected range should contain a char boundary")
     }
+}
 
-    pub fn prev_sibling_or_token(&self) -> Option<SyntaxElement> {
-        match self {
-            SyntaxElement::Node(node) => node.prev_sibling_or_token(),
-            SyntaxElement::Token(token) => token.prev_sibling_or_token(),
-        }
+impl fmt::Display for SyntaxToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.text(), f)
     }
+}
 
-    fn first_token(&self) -> Option<SyntaxToken> {
-        match self {
-            SyntaxElement::Node(node) => node.first_token(),
-            SyntaxElement::Token(token) => Some(token.clone()),
-        }
-    }
+pub type SyntaxElement = NodeOrToken<SyntaxNode, SyntaxToken>;
 
-    fn last_token(&self) -> Option<SyntaxToken> {
-        match self {
-            SyntaxElement::Node(node) => node.last_token(),
-            SyntaxElement::Token(token) => Some(token.clone()),
-        }
-    }
-
-    fn token_at_offset(&self, offset: TextSize) -> TokenAtOffset<SyntaxToken> {
-        assert!(self.text_range().start() <= offset && offset <= self.text_range().end());
-        match self {
-            SyntaxElement::Node(node) => node.token_at_offset(offset),
-            SyntaxElement::Token(token) => TokenAtOffset::Single(token.clone()),
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NodeOrToken<N, T> {
+    Node(N),
+    Token(T),
 }
 
 impl<N, T> NodeOrToken<N, T> {
@@ -657,6 +601,18 @@ impl<N: fmt::Display, T: fmt::Display> fmt::Display for NodeOrToken<N, T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Direction {
+    Next,
+    Prev,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum WalkEvent<T> {
+    Enter(T),
+    Leave(T),
+}
+
 impl<T> WalkEvent<T> {
     pub fn map<F: FnOnce(T) -> U, U>(self, f: F) -> WalkEvent<U> {
         match self {
@@ -664,6 +620,13 @@ impl<T> WalkEvent<T> {
             WalkEvent::Leave(value) => WalkEvent::Leave(f(value)),
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum TokenAtOffset<T> {
+    None,
+    Single(T),
+    Between(T, T),
 }
 
 impl<T> TokenAtOffset<T> {
@@ -717,6 +680,12 @@ impl<T> Iterator for TokenAtOffset<T> {
 
 impl<T> ExactSizeIterator for TokenAtOffset<T> {}
 
+#[derive(Debug, Clone)]
+pub struct SyntaxNodeChildren {
+    parent: SyntaxNode,
+    next_index: u32,
+}
+
 impl Iterator for SyntaxNodeChildren {
     type Item = SyntaxNode;
 
@@ -731,6 +700,12 @@ impl Iterator for SyntaxNodeChildren {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct SyntaxElementChildren {
+    parent: SyntaxNode,
+    next_index: u32,
+}
+
 impl Iterator for SyntaxElementChildren {
     type Item = SyntaxElement;
 
@@ -739,6 +714,13 @@ impl Iterator for SyntaxElementChildren {
         self.next_index += 1;
         Some(child.to_element(self.parent.tree.clone()))
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct Preorder {
+    start: SyntaxNode,
+    next: Option<WalkEvent<SyntaxNode>>,
+    skip_subtree: bool,
 }
 
 impl Preorder {
@@ -790,6 +772,13 @@ impl Iterator for Preorder {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct PreorderWithTokens {
+    start: SyntaxElement,
+    next: Option<WalkEvent<SyntaxElement>>,
+    skip_subtree: bool,
+}
+
 impl PreorderWithTokens {
     pub fn skip_subtree(&mut self) {
         self.skip_subtree = true;
@@ -837,6 +826,12 @@ impl Iterator for PreorderWithTokens {
         });
         next
     }
+}
+
+#[derive(Clone)]
+pub struct SyntaxText {
+    tree: Arc<SyntaxTree>,
+    range: TextRange,
 }
 
 impl SyntaxText {
@@ -907,6 +902,50 @@ impl SyntaxText {
     fn as_str(&self) -> &str {
         &self.tree.source[self.range]
     }
+}
+
+impl fmt::Debug for SyntaxText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl fmt::Display for SyntaxText {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+impl PartialEq<str> for SyntaxText {
+    fn eq(&self, rhs: &str) -> bool {
+        self.as_str() == rhs
+    }
+}
+
+impl PartialEq<&'_ str> for SyntaxText {
+    fn eq(&self, rhs: &&str) -> bool {
+        self == *rhs
+    }
+}
+
+impl PartialEq for SyntaxText {
+    fn eq(&self, other: &SyntaxText) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for SyntaxText {}
+
+#[derive(Default)]
+pub(crate) struct SyntaxTreeBuilder {
+    source: String,
+    nodes: Vec<NodeData>,
+    tokens: Vec<TokenData>,
+    children: Vec<ElementId>,
+    stack: Vec<OpenNode>,
+    errors: Vec<SyntaxError>,
+    root: Option<NodeId>,
+    offset: TextSize,
 }
 
 impl SyntaxTreeBuilder {
@@ -1072,6 +1111,86 @@ impl SyntaxTreeBuilder {
     }
 }
 
+struct OpenNode {
+    id: NodeId,
+    start: TextSize,
+    children: Vec<ElementId>,
+}
+
+impl SyntaxElement {
+    pub fn text_range(&self) -> TextRange {
+        match self {
+            SyntaxElement::Node(node) => node.text_range(),
+            SyntaxElement::Token(token) => token.text_range(),
+        }
+    }
+
+    pub fn index(&self) -> usize {
+        match self {
+            SyntaxElement::Node(node) => node.index(),
+            SyntaxElement::Token(token) => token.index(),
+        }
+    }
+
+    pub fn kind(&self) -> SyntaxKind {
+        match self {
+            SyntaxElement::Node(node) => node.kind(),
+            SyntaxElement::Token(token) => token.kind(),
+        }
+    }
+
+    pub fn parent(&self) -> Option<SyntaxNode> {
+        match self {
+            SyntaxElement::Node(node) => node.parent(),
+            SyntaxElement::Token(token) => token.parent(),
+        }
+    }
+
+    pub fn ancestors(&self) -> impl Iterator<Item = SyntaxNode> + use<> {
+        let first = match self {
+            SyntaxElement::Node(node) => Some(node.clone()),
+            SyntaxElement::Token(token) => token.parent(),
+        };
+        iter::successors(first, SyntaxNode::parent)
+    }
+
+    pub fn next_sibling_or_token(&self) -> Option<SyntaxElement> {
+        match self {
+            SyntaxElement::Node(node) => node.next_sibling_or_token(),
+            SyntaxElement::Token(token) => token.next_sibling_or_token(),
+        }
+    }
+
+    pub fn prev_sibling_or_token(&self) -> Option<SyntaxElement> {
+        match self {
+            SyntaxElement::Node(node) => node.prev_sibling_or_token(),
+            SyntaxElement::Token(token) => token.prev_sibling_or_token(),
+        }
+    }
+
+    fn first_token(&self) -> Option<SyntaxToken> {
+        match self {
+            SyntaxElement::Node(node) => node.first_token(),
+            SyntaxElement::Token(token) => Some(token.clone()),
+        }
+    }
+
+    fn last_token(&self) -> Option<SyntaxToken> {
+        match self {
+            SyntaxElement::Node(node) => node.last_token(),
+            SyntaxElement::Token(token) => Some(token.clone()),
+        }
+    }
+
+    fn token_at_offset(&self, offset: TextSize) -> TokenAtOffset<SyntaxToken> {
+        assert!(self.text_range().start() <= offset && offset <= self.text_range().end());
+        match self {
+            SyntaxElement::Node(node) => node.token_at_offset(offset),
+            SyntaxElement::Token(token) => TokenAtOffset::Single(token.clone()),
+        }
+    }
+}
+
 impl From<SyntaxNode> for SyntaxElement {
     fn from(node: SyntaxNode) -> Self {
         SyntaxElement::Node(node)
@@ -1084,114 +1203,9 @@ impl From<SyntaxToken> for SyntaxElement {
     }
 }
 
-impl PartialEq for SyntaxNode {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && Arc::ptr_eq(&self.tree, &other.tree)
-    }
-}
-
-impl Eq for SyntaxNode {}
-
-impl Hash for SyntaxNode {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Arc::as_ptr(&self.tree).hash(state);
-        self.id.hash(state);
-    }
-}
-
-impl PartialEq for SyntaxToken {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && Arc::ptr_eq(&self.tree, &other.tree)
-    }
-}
-
-impl Eq for SyntaxToken {}
-
-impl Hash for SyntaxToken {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Arc::as_ptr(&self.tree).hash(state);
-        self.id.hash(state);
-    }
-}
-
-impl fmt::Debug for SyntaxNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if f.alternate() {
-            let mut level = 0;
-            for event in self.preorder_with_tokens() {
-                match event {
-                    WalkEvent::Enter(element) => {
-                        for _ in 0..level {
-                            write!(f, "  ")?;
-                        }
-                        match element {
-                            SyntaxElement::Node(node) => writeln!(f, "{:?}", node)?,
-                            SyntaxElement::Token(token) => writeln!(f, "{:?}", token)?,
-                        }
-                        level += 1;
-                    }
-                    WalkEvent::Leave(_) => level -= 1,
-                }
-            }
-            debug_assert_eq!(level, 0);
-            Ok(())
-        } else {
-            write!(f, "{:?}@{:?}", self.kind(), self.text_range())
-        }
-    }
-}
-
-impl fmt::Display for SyntaxNode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.text(), f)
-    }
-}
-
-impl fmt::Debug for SyntaxToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}@{:?}", self.kind(), self.text_range())?;
-        if self.text().len() < 25 {
-            return write!(f, " {:?}", self.text());
-        }
-
-        let text = self.text();
-        for idx in 21..25 {
-            if text.is_char_boundary(idx) {
-                let text = format!("{} ...", &text[..idx]);
-                return write!(f, " {:?}", text);
-            }
-        }
-        unreachable!("the inspected range should contain a char boundary")
-    }
-}
-
-impl fmt::Display for SyntaxToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.text(), f)
-    }
-}
-
-impl fmt::Debug for SyntaxText {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(self.as_str(), f)
-    }
-}
-
-impl fmt::Display for SyntaxText {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(self.as_str(), f)
-    }
-}
-
 impl From<SyntaxText> for String {
     fn from(text: SyntaxText) -> Self {
         text.to_string()
-    }
-}
-
-impl PartialEq<str> for SyntaxText {
-    fn eq(&self, rhs: &str) -> bool {
-        self.as_str() == rhs
     }
 }
 
@@ -1201,25 +1215,11 @@ impl PartialEq<SyntaxText> for str {
     }
 }
 
-impl PartialEq<&'_ str> for SyntaxText {
-    fn eq(&self, rhs: &&str) -> bool {
-        self == *rhs
-    }
-}
-
 impl PartialEq<SyntaxText> for &'_ str {
     fn eq(&self, rhs: &SyntaxText) -> bool {
         rhs == self
     }
 }
-
-impl PartialEq for SyntaxText {
-    fn eq(&self, other: &SyntaxText) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
-
-impl Eq for SyntaxText {}
 
 mod private {
     use std::ops;

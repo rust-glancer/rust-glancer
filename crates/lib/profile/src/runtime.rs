@@ -126,15 +126,24 @@ impl ProfileRun {
 
     pub fn finish(mut self) -> ProfileSnapshot {
         self.finished = true;
-        deactivate_run(self.id);
+        Self::deactivate_run(self.id);
         self.active.snapshot()
+    }
+
+    fn deactivate_run(id: u64) {
+        ACTIVE_RUN.with(|active_slot| {
+            let mut active = active_slot.borrow_mut();
+            if active.as_ref().is_some_and(|active| active.id == id) {
+                *active = None;
+            }
+        });
     }
 }
 
 impl Drop for ProfileRun {
     fn drop(&mut self) {
         if !self.finished {
-            deactivate_run(self.id);
+            Self::deactivate_run(self.id);
         }
     }
 }
@@ -178,15 +187,6 @@ impl Drop for ProfileThreadGuard {
             *active_slot.borrow_mut() = self.previous.take();
         });
     }
-}
-
-fn deactivate_run(id: u64) {
-    ACTIVE_RUN.with(|active_slot| {
-        let mut active = active_slot.borrow_mut();
-        if active.as_ref().is_some_and(|active| active.id == id) {
-            *active = None;
-        }
-    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

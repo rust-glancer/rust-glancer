@@ -119,15 +119,6 @@ impl<T> IntoIterator for UniqueVec<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a UniqueVec<T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.items.iter()
-    }
-}
-
 impl<T> MemorySize for UniqueVec<T>
 where
     T: MemorySize,
@@ -184,6 +175,15 @@ where
         for item in &mut self.items {
             item.shrink_to_fit();
         }
+    }
+}
+
+impl<'a, T> IntoIterator for &'a UniqueVec<T> {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.items.iter()
     }
 }
 

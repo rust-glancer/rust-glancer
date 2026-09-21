@@ -8,9 +8,9 @@
 mod highlight;
 mod source;
 
-pub(crate) use highlight::DocumentationHighlighter;
+pub(crate) use self::highlight::DocumentationHighlighter;
 
-pub(crate) use source::SourceDocumentationQuery;
+pub(crate) use self::source::SourceDocumentationQuery;
 
 use std::ops::Range;
 

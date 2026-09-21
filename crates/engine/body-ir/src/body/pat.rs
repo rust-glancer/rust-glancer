@@ -103,16 +103,6 @@ pub enum PatKind {
     Unsupported,
 }
 
-/// One field inside a record pattern.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct RecordPatField {
-    pub key: FieldKey,
-    pub key_span: Span,
-    pub source_span: Span,
-    pub syntax: RecordFieldSyntax,
-    pub pat: PatId,
-}
-
 impl PatKind {
     /// Direct child patterns in source order. Callers handle const-block expressions separately.
     pub fn child_pats(&self) -> impl Iterator<Item = PatId> + '_ {
@@ -198,4 +188,14 @@ impl PatKind {
         };
         path.as_ref()
     }
+}
+
+/// One field inside a record pattern.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct RecordPatField {
+    pub key: FieldKey,
+    pub key_span: Span,
+    pub source_span: Span,
+    pub syntax: RecordFieldSyntax,
+    pub pat: PatId,
 }

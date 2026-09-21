@@ -23,18 +23,6 @@ pub(crate) struct BodyMethodCache {
     shared: Arc<Mutex<BodyMethodCacheState>>,
 }
 
-/// Negative extension-method keys plus profiling counters for one body cache.
-///
-/// The nested maps keep scope and canonical receiver grouping explicit; the final `HashSet<Name>`
-/// records method spellings that produced no callable trait candidate. Counters are emitted when
-/// the shared state is dropped instead of touching global metrics on every lookup.
-#[derive(Default)]
-struct BodyMethodCacheState {
-    trait_misses: HashMap<ScopeId, HashMap<Ty, HashSet<Name>>>,
-    hits: usize,
-    entries: usize,
-}
-
 impl BodyMethodCache {
     pub(crate) fn contains_trait_miss(
         &self,
@@ -73,6 +61,18 @@ impl BodyMethodCache {
             state.entries += 1;
         }
     }
+}
+
+/// Negative extension-method keys plus profiling counters for one body cache.
+///
+/// The nested maps keep scope and canonical receiver grouping explicit; the final `HashSet<Name>`
+/// records method spellings that produced no callable trait candidate. Counters are emitted when
+/// the shared state is dropped instead of touching global metrics on every lookup.
+#[derive(Default)]
+struct BodyMethodCacheState {
+    trait_misses: HashMap<ScopeId, HashMap<Ty, HashSet<Name>>>,
+    hits: usize,
+    entries: usize,
 }
 
 impl Drop for BodyMethodCacheState {

@@ -31,19 +31,6 @@ pub(super) struct CheckpointMemory<'a> {
     body_ir: Option<&'a BodyIrDb>,
 }
 
-/// Collects the phase locals that are alive at one memory checkpoint.
-macro_rules! checkpoint_memory {
-    ($($value:expr),+ $(,)?) => {{
-        let mut memory = CheckpointMemory::default();
-        $(
-            memory = memory.merge(CheckpointMemory::from(&$value));
-        )+
-        memory
-    }};
-}
-
-pub(super) use checkpoint_memory;
-
 impl<'a> CheckpointMemory<'a> {
     pub(super) fn merge(self, other: Self) -> Self {
         Self {
@@ -168,6 +155,19 @@ impl<'a> CheckpointMemory<'a> {
         }
     }
 }
+
+/// Collects the phase locals that are alive at one memory checkpoint.
+macro_rules! checkpoint_memory {
+    ($($value:expr),+ $(,)?) => {{
+        let mut memory = CheckpointMemory::default();
+        $(
+            memory = memory.merge(CheckpointMemory::from(&$value));
+        )+
+        memory
+    }};
+}
+
+pub(super) use checkpoint_memory;
 
 macro_rules! impl_checkpoint_memory_from {
     ($ty:ty, $field:ident) => {

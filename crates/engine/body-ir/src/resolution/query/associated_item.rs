@@ -30,12 +30,6 @@ pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BodyAssociatedItemCandidate {
-    EnumVariant(EnumVariantRef, Ty),
-    Const(ConstRef, Ty),
-}
-
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -721,4 +715,10 @@ where
         };
         Ok(selection.table.finalize(&ty))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyAssociatedItemCandidate {
+    EnumVariant(EnumVariantRef, Ty),
+    Const(ConstRef, Ty),
 }

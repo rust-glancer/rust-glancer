@@ -19,5 +19,5 @@ pub mod testonly;
 pub mod trait_impl;
 pub mod ty;
 
-pub use db::IndexedViewDb;
-pub use symbol::SymbolKind;
+pub use self::db::IndexedViewDb;
+pub use self::symbol::SymbolKind;

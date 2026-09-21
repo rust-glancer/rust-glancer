@@ -20,63 +20,6 @@ use crate::{
 
 pub(crate) struct InlayHintCollector<'a, 'db>(&'a Analysis<'db>);
 
-/// Source-coordinate operations shared by every inlay-hint family in one file.
-///
-/// The selected Body IR already determines whether its spans belong to current or saved text. Pick
-/// that source once here so individual hint providers cannot accidentally mix the two.
-pub(super) enum InlaySource<'a, 'db> {
-    Current {
-        source: &'a CurrentSource,
-        file: FileId,
-    },
-    Saved {
-        analysis: &'a Analysis<'db>,
-        package: PackageSlot,
-    },
-}
-
-impl<'a, 'db> InlaySource<'a, 'db> {
-    fn new(analysis: &'a Analysis<'db>, package: PackageSlot, file: FileId) -> Self {
-        match analysis.current_source(package, file) {
-            Some(source) => Self::Current { source, file },
-            None => Self::Saved { analysis, package },
-        }
-    }
-
-    pub(super) fn current(&self) -> Option<&CurrentSource> {
-        match self {
-            Self::Current { source, .. } => Some(source),
-            Self::Saved { .. } => None,
-        }
-    }
-
-    pub(super) fn text_for_span(&self, file: FileId, span: Span) -> anyhow::Result<Option<String>> {
-        match self {
-            Self::Current {
-                source,
-                file: source_file,
-            } if *source_file == file => Ok(source.text_for_span(span).map(ToString::to_string)),
-            Self::Current { .. } => Ok(None),
-            Self::Saved { analysis, package } => {
-                analysis.saved_source_text_for_span(*package, file, span)
-            }
-        }
-    }
-
-    pub(super) fn line_for_offset(&self, file: FileId, offset: u32) -> anyhow::Result<Option<u32>> {
-        match self {
-            Self::Current {
-                source,
-                file: source_file,
-            } if *source_file == file => Ok(source.line_for_offset(offset)),
-            Self::Current { .. } => Ok(None),
-            Self::Saved { analysis, package } => {
-                analysis.saved_source_line_for_offset(*package, file, offset)
-            }
-        }
-    }
-}
-
 impl<'a, 'db> InlayHintCollector<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
@@ -267,5 +210,62 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         };
 
         Ok(parent_dot_line > expr_end_line)
+    }
+}
+
+/// Source-coordinate operations shared by every inlay-hint family in one file.
+///
+/// The selected Body IR already determines whether its spans belong to current or saved text. Pick
+/// that source once here so individual hint providers cannot accidentally mix the two.
+pub(super) enum InlaySource<'a, 'db> {
+    Current {
+        source: &'a CurrentSource,
+        file: FileId,
+    },
+    Saved {
+        analysis: &'a Analysis<'db>,
+        package: PackageSlot,
+    },
+}
+
+impl<'a, 'db> InlaySource<'a, 'db> {
+    fn new(analysis: &'a Analysis<'db>, package: PackageSlot, file: FileId) -> Self {
+        match analysis.current_source(package, file) {
+            Some(source) => Self::Current { source, file },
+            None => Self::Saved { analysis, package },
+        }
+    }
+
+    pub(super) fn current(&self) -> Option<&CurrentSource> {
+        match self {
+            Self::Current { source, .. } => Some(source),
+            Self::Saved { .. } => None,
+        }
+    }
+
+    pub(super) fn text_for_span(&self, file: FileId, span: Span) -> anyhow::Result<Option<String>> {
+        match self {
+            Self::Current {
+                source,
+                file: source_file,
+            } if *source_file == file => Ok(source.text_for_span(span).map(ToString::to_string)),
+            Self::Current { .. } => Ok(None),
+            Self::Saved { analysis, package } => {
+                analysis.saved_source_text_for_span(*package, file, span)
+            }
+        }
+    }
+
+    pub(super) fn line_for_offset(&self, file: FileId, offset: u32) -> anyhow::Result<Option<u32>> {
+        match self {
+            Self::Current {
+                source,
+                file: source_file,
+            } if *source_file == file => Ok(source.line_for_offset(offset)),
+            Self::Current { .. } => Ok(None),
+            Self::Saved { analysis, package } => {
+                analysis.saved_source_line_for_offset(*package, file, offset)
+            }
+        }
     }
 }

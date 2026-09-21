@@ -241,6 +241,21 @@ pub(super) struct DocumentSymbolsQuery {
     target: AnalysisTarget,
 }
 
+impl DocumentSymbolsQuery {
+    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
+        Self {
+            title,
+            path,
+            target: AnalysisTarget::lib(),
+        }
+    }
+
+    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::bin(package_name);
+        self
+    }
+}
+
 pub(super) struct InlayHintsQuery {
     title: &'static str,
     path: &'static str,
@@ -263,21 +278,6 @@ impl InlayHintsQuery {
 
     pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
         self.target = AnalysisTarget::lib_package(package_name);
-        self
-    }
-}
-
-impl DocumentSymbolsQuery {
-    pub(super) fn new(title: &'static str, path: &'static str) -> Self {
-        Self {
-            title,
-            path,
-            target: AnalysisTarget::lib(),
-        }
-    }
-
-    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
-        self.target = AnalysisTarget::bin(package_name);
         self
     }
 }

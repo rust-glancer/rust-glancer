@@ -14,41 +14,6 @@ pub enum PrimitiveTy {
     Float(FloatTy),
 }
 
-/// Signed integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum SignedIntTy {
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    Isize,
-}
-
-/// Unsigned integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum UnsignedIntTy {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    Usize,
-}
-
-/// Floating-point primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum FloatTy {
-    F32,
-    F64,
-}
-
 impl PrimitiveTy {
     pub const DEFAULT_INT: Self = Self::SignedInt(SignedIntTy::I32);
     pub const DEFAULT_FLOAT: Self = Self::Float(FloatTy::F64);
@@ -142,6 +107,19 @@ impl PrimitiveTy {
     }
 }
 
+/// Signed integer primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum SignedIntTy {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Isize,
+}
+
 impl SignedIntTy {
     pub fn label(self) -> &'static str {
         match self {
@@ -155,6 +133,19 @@ impl SignedIntTy {
     }
 }
 
+/// Unsigned integer primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum UnsignedIntTy {
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    Usize,
+}
+
 impl UnsignedIntTy {
     pub fn label(self) -> &'static str {
         match self {
@@ -166,6 +157,15 @@ impl UnsignedIntTy {
             Self::Usize => "usize",
         }
     }
+}
+
+/// Floating-point primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum FloatTy {
+    F32,
+    F64,
 }
 
 impl FloatTy {

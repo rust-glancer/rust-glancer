@@ -2,6 +2,15 @@
 //! constructs of the Rust language.
 
 #[rustfmt::skip]
+#[cfg_attr(
+    dylint_lib = "rust_glancer_lints",
+    allow(
+        rust_glancer_impl_helpers,
+        rust_glancer_implicit_local_imports,
+        rust_glancer_non_adjacent_impls,
+        rust_glancer_pub_in
+    )
+)]
 mod generated;
 
 use crate::Edition;

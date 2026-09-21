@@ -57,101 +57,6 @@ pub(super) struct QueryRunner<'a> {
     memory_control: Arc<dyn MemoryControl>,
 }
 
-/// One way the target file appears in the saved project's crate graph.
-#[derive(Debug)]
-struct DocumentTarget {
-    context: FileContext,
-    crate_ref: rg_ir_model::CrateRef,
-}
-
-/// Editor coordinates used to choose the current bodies needed by one query.
-enum DocumentSelection {
-    Position(gen_lsp_types::Position),
-    Range(gen_lsp_types::Range),
-}
-
-impl DocumentSelection {
-    fn to_current_source_selection(
-        &self,
-        line_index: &LineIndex,
-    ) -> Option<CurrentSourceSelection> {
-        match self {
-            Self::Position(position) => line_index
-                .offset_from_utf16_position(crate::proto::position::parse_position(*position))
-                .map(CurrentSourceSelection::AtOffset),
-            Self::Range(range) => {
-                let start = line_index.offset_from_utf16_position(
-                    crate::proto::position::parse_position(range.start),
-                )?;
-                let end = line_index.offset_from_utf16_position(
-                    crate::proto::position::parse_position(range.end),
-                )?;
-                Some(CurrentSourceSelection::IntersectingRange(Span {
-                    start,
-                    end,
-                }))
-            }
-        }
-    }
-}
-
-/// Source coordinates retained after document analysis has been prepared.
-///
-/// `DocumentSourceView::Current` is consumed when it is attached to `Analysis`. The response still
-/// needs the captured line index, so this smaller value keeps exactly what protocol conversion
-/// needs. It does not make another saved/current source decision.
-enum DocumentAnalysisSource {
-    /// The captured text is identical to every saved file interpretation.
-    SavedExact(LineIndex),
-    /// The captured text differs, so matching bodies were rebuilt for this request.
-    Current(Arc<CurrentSource>),
-}
-
-impl DocumentAnalysisSource {
-    fn line_index(&self) -> &LineIndex {
-        match self {
-            Self::SavedExact(line_index) => line_index,
-            Self::Current(source) => source.line_index(),
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Self::SavedExact(_) => "saved_exact",
-            Self::Current(_) => "current",
-        }
-    }
-}
-
-/// Analysis, source selection, and crate contexts prepared for one document query.
-struct DocumentAnalysis<'project> {
-    snapshot: ProjectSnapshot<'project>,
-    analysis: Analysis<'project>,
-    targets: Vec<DocumentTarget>,
-    source: DocumentAnalysisSource,
-    selection: CurrentSourceSelection,
-}
-
-impl DocumentAnalysis<'_> {
-    fn offset(&self) -> u32 {
-        match self.selection {
-            CurrentSourceSelection::AtOffset(offset) => offset,
-            CurrentSourceSelection::IntersectingRange(_) => {
-                unreachable!("position query should retain a cursor selection")
-            }
-        }
-    }
-
-    fn range(&self) -> Span {
-        match self.selection {
-            CurrentSourceSelection::IntersectingRange(range) => range,
-            CurrentSourceSelection::AtOffset(_) => {
-                unreachable!("range query should retain a range selection")
-            }
-        }
-    }
-}
-
 impl<'a> QueryRunner<'a> {
     pub(super) fn new(
         project: &'a mut ProjectCoordinator,
@@ -891,5 +796,100 @@ impl<'a> QueryRunner<'a> {
         );
 
         Ok(lsp_symbols)
+    }
+}
+
+/// One way the target file appears in the saved project's crate graph.
+#[derive(Debug)]
+struct DocumentTarget {
+    context: FileContext,
+    crate_ref: rg_ir_model::CrateRef,
+}
+
+/// Editor coordinates used to choose the current bodies needed by one query.
+enum DocumentSelection {
+    Position(gen_lsp_types::Position),
+    Range(gen_lsp_types::Range),
+}
+
+impl DocumentSelection {
+    fn to_current_source_selection(
+        &self,
+        line_index: &LineIndex,
+    ) -> Option<CurrentSourceSelection> {
+        match self {
+            Self::Position(position) => line_index
+                .offset_from_utf16_position(crate::proto::position::parse_position(*position))
+                .map(CurrentSourceSelection::AtOffset),
+            Self::Range(range) => {
+                let start = line_index.offset_from_utf16_position(
+                    crate::proto::position::parse_position(range.start),
+                )?;
+                let end = line_index.offset_from_utf16_position(
+                    crate::proto::position::parse_position(range.end),
+                )?;
+                Some(CurrentSourceSelection::IntersectingRange(Span {
+                    start,
+                    end,
+                }))
+            }
+        }
+    }
+}
+
+/// Source coordinates retained after document analysis has been prepared.
+///
+/// `DocumentSourceView::Current` is consumed when it is attached to `Analysis`. The response still
+/// needs the captured line index, so this smaller value keeps exactly what protocol conversion
+/// needs. It does not make another saved/current source decision.
+enum DocumentAnalysisSource {
+    /// The captured text is identical to every saved file interpretation.
+    SavedExact(LineIndex),
+    /// The captured text differs, so matching bodies were rebuilt for this request.
+    Current(Arc<CurrentSource>),
+}
+
+impl DocumentAnalysisSource {
+    fn line_index(&self) -> &LineIndex {
+        match self {
+            Self::SavedExact(line_index) => line_index,
+            Self::Current(source) => source.line_index(),
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Self::SavedExact(_) => "saved_exact",
+            Self::Current(_) => "current",
+        }
+    }
+}
+
+/// Analysis, source selection, and crate contexts prepared for one document query.
+struct DocumentAnalysis<'project> {
+    snapshot: ProjectSnapshot<'project>,
+    analysis: Analysis<'project>,
+    targets: Vec<DocumentTarget>,
+    source: DocumentAnalysisSource,
+    selection: CurrentSourceSelection,
+}
+
+impl DocumentAnalysis<'_> {
+    fn offset(&self) -> u32 {
+        match self.selection {
+            CurrentSourceSelection::AtOffset(offset) => offset,
+            CurrentSourceSelection::IntersectingRange(_) => {
+                unreachable!("position query should retain a cursor selection")
+            }
+        }
+    }
+
+    fn range(&self) -> Span {
+        match self.selection {
+            CurrentSourceSelection::IntersectingRange(range) => range,
+            CurrentSourceSelection::AtOffset(_) => {
+                unreachable!("range query should retain a range selection")
+            }
+        }
     }
 }

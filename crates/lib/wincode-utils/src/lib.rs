@@ -53,8 +53,6 @@ where
 /// transient payload fail loudly.
 pub struct WincodeUnsupported<T>(PhantomData<T>);
 
-const WINCODE_UNSUPPORTED_ERROR: &str = "unsupported wincode field";
-
 unsafe impl<C, T> SchemaWrite<C> for WincodeUnsupported<T>
 where
     C: wincode::config::ConfigCore,
@@ -87,3 +85,5 @@ where
         Err(wincode::ReadError::Custom(WINCODE_UNSUPPORTED_ERROR))
     }
 }
+
+const WINCODE_UNSUPPORTED_ERROR: &str = "unsupported wincode field";

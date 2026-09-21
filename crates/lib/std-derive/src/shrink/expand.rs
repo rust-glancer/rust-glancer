@@ -79,7 +79,7 @@ impl DataExpansion {
             }
 
             let access = FieldAccess::from_field(index, field).struct_access();
-            statements.push(shrink_field(access, &attrs, crate_path));
+            statements.push(Self::shrink_field(access, &attrs, crate_path));
         }
 
         Ok(Self {
@@ -98,7 +98,7 @@ impl DataExpansion {
             let variant_ident = &variant.ident;
 
             if attrs.skip {
-                arms.push(skipped_variant_arm(variant_ident, &variant.fields));
+                arms.push(Self::skipped_variant_arm(variant_ident, &variant.fields));
                 continue;
             }
 
@@ -106,7 +106,7 @@ impl DataExpansion {
                 pattern,
                 body,
                 bound_field_types,
-            } = expand_variant_arm(&variant.fields, crate_path)?;
+            } = Self::expand_variant_arm(&variant.fields, crate_path)?;
 
             bound_types.extend(bound_field_types);
             arms.push(quote! {
@@ -125,6 +125,109 @@ impl DataExpansion {
             bound_types,
         })
     }
+
+    /// Builds the pattern and body for one enum variant.
+    fn expand_variant_arm(fields: &Fields, crate_path: &Path) -> syn::Result<VariantArmExpansion> {
+        match fields {
+            Fields::Unit => Ok(VariantArmExpansion {
+                pattern: TokenStream2::new(),
+                body: TokenStream2::new(),
+                bound_field_types: Vec::new(),
+            }),
+            Fields::Named(fields) => {
+                let mut patterns = Vec::new();
+                let mut statements = Vec::new();
+                let mut bound_field_types = Vec::new();
+                let mut omitted_field = false;
+
+                for field in &fields.named {
+                    let ident = field
+                        .ident
+                        .as_ref()
+                        .expect("named fields always have identifiers");
+                    let attrs = FieldAttrs::parse(&field.attrs)?;
+
+                    if attrs.skip {
+                        omitted_field = true;
+                        continue;
+                    }
+
+                    if attrs.needs_auto_bound() {
+                        bound_field_types.push(field.ty.clone());
+                    }
+
+                    patterns.push(quote! { #ident });
+                    statements.push(Self::shrink_field(quote! { #ident }, &attrs, crate_path));
+                }
+
+                // Skipped named fields still need a valid pattern. `..` keeps the generated arm from
+                // depending on fields it does not compact.
+                let pattern = if patterns.is_empty() {
+                    quote! { { .. } }
+                } else if omitted_field {
+                    quote! { { #(#patterns),*, .. } }
+                } else {
+                    quote! { { #(#patterns),* } }
+                };
+
+                Ok(VariantArmExpansion {
+                    pattern,
+                    body: quote! { #(#statements)* },
+                    bound_field_types,
+                })
+            }
+            Fields::Unnamed(fields) => {
+                let mut patterns = Vec::new();
+                let mut statements = Vec::new();
+                let mut bound_field_types = Vec::new();
+
+                for (index, field) in fields.unnamed.iter().enumerate() {
+                    let attrs = FieldAttrs::parse(&field.attrs)?;
+
+                    if attrs.skip {
+                        patterns.push(quote! { _ });
+                        continue;
+                    }
+
+                    if attrs.needs_auto_bound() {
+                        bound_field_types.push(field.ty.clone());
+                    }
+
+                    let binding = format_ident!("__shrink_field_{index}");
+                    patterns.push(quote! { #binding });
+                    statements.push(Self::shrink_field(quote! { #binding }, &attrs, crate_path));
+                }
+
+                Ok(VariantArmExpansion {
+                    pattern: quote! { ( #(#patterns),* ) },
+                    body: quote! { #(#statements)* },
+                    bound_field_types,
+                })
+            }
+        }
+    }
+
+    /// Generates a no-op arm for a skipped variant while still matching its shape.
+    fn skipped_variant_arm(variant_ident: &Ident, fields: &Fields) -> TokenStream2 {
+        match fields {
+            Fields::Unit => quote! { Self::#variant_ident => {} },
+            Fields::Named(_) => quote! { Self::#variant_ident { .. } => {} },
+            Fields::Unnamed(_) => quote! { Self::#variant_ident(..) => {} },
+        }
+    }
+
+    /// Generates the statement that compacts one field-like value.
+    fn shrink_field(access: TokenStream2, attrs: &FieldAttrs, crate_path: &Path) -> TokenStream2 {
+        if let Some(with) = &attrs.with {
+            quote! {
+                #with(#access);
+            }
+        } else {
+            quote! {
+                #crate_path::Shrink::shrink_to_fit(#access);
+            }
+        }
+    }
 }
 
 /// The generated pieces for one enum variant arm.
@@ -132,109 +235,6 @@ struct VariantArmExpansion {
     pattern: TokenStream2,
     body: TokenStream2,
     bound_field_types: Vec<Type>,
-}
-
-/// Builds the pattern and body for one enum variant.
-fn expand_variant_arm(fields: &Fields, crate_path: &Path) -> syn::Result<VariantArmExpansion> {
-    match fields {
-        Fields::Unit => Ok(VariantArmExpansion {
-            pattern: TokenStream2::new(),
-            body: TokenStream2::new(),
-            bound_field_types: Vec::new(),
-        }),
-        Fields::Named(fields) => {
-            let mut patterns = Vec::new();
-            let mut statements = Vec::new();
-            let mut bound_field_types = Vec::new();
-            let mut omitted_field = false;
-
-            for field in &fields.named {
-                let ident = field
-                    .ident
-                    .as_ref()
-                    .expect("named fields always have identifiers");
-                let attrs = FieldAttrs::parse(&field.attrs)?;
-
-                if attrs.skip {
-                    omitted_field = true;
-                    continue;
-                }
-
-                if attrs.needs_auto_bound() {
-                    bound_field_types.push(field.ty.clone());
-                }
-
-                patterns.push(quote! { #ident });
-                statements.push(shrink_field(quote! { #ident }, &attrs, crate_path));
-            }
-
-            // Skipped named fields still need a valid pattern. `..` keeps the generated arm from
-            // depending on fields it does not compact.
-            let pattern = if patterns.is_empty() {
-                quote! { { .. } }
-            } else if omitted_field {
-                quote! { { #(#patterns),*, .. } }
-            } else {
-                quote! { { #(#patterns),* } }
-            };
-
-            Ok(VariantArmExpansion {
-                pattern,
-                body: quote! { #(#statements)* },
-                bound_field_types,
-            })
-        }
-        Fields::Unnamed(fields) => {
-            let mut patterns = Vec::new();
-            let mut statements = Vec::new();
-            let mut bound_field_types = Vec::new();
-
-            for (index, field) in fields.unnamed.iter().enumerate() {
-                let attrs = FieldAttrs::parse(&field.attrs)?;
-
-                if attrs.skip {
-                    patterns.push(quote! { _ });
-                    continue;
-                }
-
-                if attrs.needs_auto_bound() {
-                    bound_field_types.push(field.ty.clone());
-                }
-
-                let binding = format_ident!("__shrink_field_{index}");
-                patterns.push(quote! { #binding });
-                statements.push(shrink_field(quote! { #binding }, &attrs, crate_path));
-            }
-
-            Ok(VariantArmExpansion {
-                pattern: quote! { ( #(#patterns),* ) },
-                body: quote! { #(#statements)* },
-                bound_field_types,
-            })
-        }
-    }
-}
-
-/// Generates a no-op arm for a skipped variant while still matching its shape.
-fn skipped_variant_arm(variant_ident: &Ident, fields: &Fields) -> TokenStream2 {
-    match fields {
-        Fields::Unit => quote! { Self::#variant_ident => {} },
-        Fields::Named(_) => quote! { Self::#variant_ident { .. } => {} },
-        Fields::Unnamed(_) => quote! { Self::#variant_ident(..) => {} },
-    }
-}
-
-/// Generates the statement that compacts one field-like value.
-fn shrink_field(access: TokenStream2, attrs: &FieldAttrs, crate_path: &Path) -> TokenStream2 {
-    if let Some(with) = &attrs.with {
-        quote! {
-            #with(#access);
-        }
-    } else {
-        quote! {
-            #crate_path::Shrink::shrink_to_fit(#access);
-        }
-    }
 }
 
 /// Access information for a struct field.

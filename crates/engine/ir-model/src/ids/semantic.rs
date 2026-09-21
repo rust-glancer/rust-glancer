@@ -184,6 +184,20 @@ impl GenericDefRef {
     }
 }
 
+impl From<SemanticItemRef> for GenericDefRef {
+    fn from(item: SemanticItemRef) -> Self {
+        match item {
+            SemanticItemRef::TypeDef(def) => Self::TypeDef(def),
+            SemanticItemRef::Trait(def) => Self::Trait(def),
+            SemanticItemRef::Impl(def) => Self::Impl(def),
+            SemanticItemRef::Function(def) => Self::Function(def),
+            SemanticItemRef::TypeAlias(def) => Self::TypeAlias(def),
+            SemanticItemRef::Const(def) => Self::Const(def),
+            SemanticItemRef::Static(def) => Self::Static(def),
+        }
+    }
+}
+
 /// Owner-scoped identity of a lifetime parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
@@ -321,20 +335,6 @@ impl From<GenericDefRef> for SemanticItemRef {
             GenericDefRef::TypeAlias(def) => Self::TypeAlias(def),
             GenericDefRef::Const(def) => Self::Const(def),
             GenericDefRef::Static(def) => Self::Static(def),
-        }
-    }
-}
-
-impl From<SemanticItemRef> for GenericDefRef {
-    fn from(item: SemanticItemRef) -> Self {
-        match item {
-            SemanticItemRef::TypeDef(def) => Self::TypeDef(def),
-            SemanticItemRef::Trait(def) => Self::Trait(def),
-            SemanticItemRef::Impl(def) => Self::Impl(def),
-            SemanticItemRef::Function(def) => Self::Function(def),
-            SemanticItemRef::TypeAlias(def) => Self::TypeAlias(def),
-            SemanticItemRef::Const(def) => Self::Const(def),
-            SemanticItemRef::Static(def) => Self::Static(def),
         }
     }
 }

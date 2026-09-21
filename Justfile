@@ -6,6 +6,7 @@ test:
 lint:
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
+    DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all --workspace -- --all-targets
 
 codegen:
     cargo run -p rg_codegen -- all

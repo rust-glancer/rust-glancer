@@ -62,6 +62,14 @@ description = "A Rust workspace for rust-glancer."
 [workspace.lints.clippy]
 multiple_inherent_impl = "warn"
 
+[workspace.lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values("rust_glancer_lints"))'] }
+
+[workspace.metadata.dylint]
+libraries = [
+  { git = "https://github.com/rust-glancer/rust-glancer-lints", rev = "b4879e3f25d70777a5af40bb8e1aaeeea46158bb", pattern = "crates/rust-glancer-lints" },
+]
+
 [workspace.dependencies]
 anyhow = "1.0.103"
 atomic-write-file = "0.3.0"

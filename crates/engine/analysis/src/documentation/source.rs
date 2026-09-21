@@ -35,18 +35,6 @@ pub(crate) struct SourceDocumentation {
     parts: Vec<DocumentationPart>,
 }
 
-/// One contribution to the joined Markdown, with the information needed to get back to its file.
-/// Its mappings use offsets in the part's own Markdown; `markdown` locates that text in the
-/// complete document. The text itself belongs to the complete document, so the part only keeps
-/// its mappings and the placement that selects a scope for its links.
-struct DocumentationPart {
-    file: FileId,
-    /// Complete byte range in `SourceDocumentation::text`, including any unmapped text.
-    markdown: Range<usize>,
-    placement: DocumentationPlacement,
-    mappings: TextRangeMap,
-}
-
 impl SourceDocumentation {
     /// Append a nonempty part and remember where its Markdown starts. The separating newline
     /// belongs only to the joined document, so it has no corresponding Rust source bytes.
@@ -139,6 +127,18 @@ impl SourceDocumentation {
                     .map(|offset| offset + part.markdown.start)
             })
     }
+}
+
+/// One contribution to the joined Markdown, with the information needed to get back to its file.
+/// Its mappings use offsets in the part's own Markdown; `markdown` locates that text in the
+/// complete document. The text itself belongs to the complete document, so the part only keeps
+/// its mappings and the placement that selects a scope for its links.
+struct DocumentationPart {
+    file: FileId,
+    /// Complete byte range in `SourceDocumentation::text`, including any unmapped text.
+    markdown: Range<usize>,
+    placement: DocumentationPlacement,
+    mappings: TextRangeMap,
 }
 
 /// A resolved declaration and the source fragment of its link under the cursor.

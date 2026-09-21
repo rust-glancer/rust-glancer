@@ -27,9 +27,6 @@ impl fmt::Debug for TtIter<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct TtIterSavepoint<'a>(TokenTreesView<'a>);
-
 impl<'a> TtIter<'a> {
     pub(crate) fn new(tt: TokenTreesView<'a>) -> TtIter<'a> {
         TtIter { inner: tt }
@@ -245,6 +242,22 @@ impl<'a> TtIter<'a> {
     }
 }
 
+impl<'a> Iterator for TtIter<'a> {
+    type Item = TtElement<'a>;
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.peek()?;
+        let skip = match &result {
+            TtElement::Leaf(_) => 1,
+            TtElement::Subtree(subtree, _) => subtree.usize_len() + 1,
+        };
+        self.inner.repr = self.inner.repr.get(skip..).unwrap();
+        Some(result)
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct TtIterSavepoint<'a>(TokenTreesView<'a>);
+
 #[derive(Clone)]
 pub enum TtElement<'a> {
     Leaf(Leaf),
@@ -271,18 +284,5 @@ impl TtElement<'_> {
             TtElement::Leaf(it) => *it.span(),
             TtElement::Subtree(it, _) => it.delimiter.open,
         }
-    }
-}
-
-impl<'a> Iterator for TtIter<'a> {
-    type Item = TtElement<'a>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let result = self.peek()?;
-        let skip = match &result {
-            TtElement::Leaf(_) => 1,
-            TtElement::Subtree(subtree, _) => subtree.usize_len() + 1,
-        };
-        self.inner.repr = self.inner.repr.get(skip..).unwrap();
-        Some(result)
     }
 }

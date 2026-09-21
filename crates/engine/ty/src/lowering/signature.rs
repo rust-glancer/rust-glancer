@@ -304,7 +304,7 @@ where
     }
 
     pub fn type_alias_ty(&self, alias: TypeAliasRef) -> Result<Option<Ty>, D::Error> {
-        type_alias_ty_with(&self.item_paths, &self.resolver, alias)
+        Self::type_alias_ty_with(&self.item_paths, &self.resolver, alias)
     }
 
     /// Returns the predicates declared by one opaque occurrence.
@@ -316,13 +316,13 @@ where
         &self,
         opaque: &OpaqueTy,
     ) -> Result<Option<Vec<TraitRefLowering>>, D::Error> {
-        let Some(bounds) =
-            opaque_bounds_for_owner_with(&self.item_paths, &self.resolver, opaque.opaque.owner)?
-                .into_iter()
-                .find_map(|(candidate, bounds)| {
-                    (candidate.opaque == opaque.opaque).then_some(bounds)
-                })
-        else {
+        let Some(bounds) = Self::opaque_bounds_for_owner_with(
+            &self.item_paths,
+            &self.resolver,
+            opaque.opaque.owner,
+        )?
+        .into_iter()
+        .find_map(|(candidate, bounds)| (candidate.opaque == opaque.opaque).then_some(bounds)) else {
             return Ok(None);
         };
         let generics = self.item_paths.generics().generics(opaque.opaque.owner)?;
@@ -379,6 +379,131 @@ where
             )
             .map(Some)
     }
+
+    fn trait_header_with(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        resolver: &R,
+        trait_ref: TraitDefRef,
+    ) -> Result<Option<TraitHeader>, D::Error> {
+        let Some(data) = item_paths.items().trait_data(trait_ref)? else {
+            return Ok(None);
+        };
+        let owner = GenericDefRef::Trait(trait_ref);
+        let generics = item_paths.generics().generics(owner)?;
+        let Some(self_param) = generics.iter().find_map(|param| {
+            matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
+        }) else {
+            return Ok(None);
+        };
+        let GenericParamRef::Type(self_param) = self_param else {
+            return Ok(None);
+        };
+        let self_ty = Ty::Param(self_param);
+        let lowering = TypeLoweringQuery::new(item_paths, resolver);
+        let mut session = lowering.session(TypeLoweringEnv::new(
+            owner,
+            TypeLoweringAnchor::Context(TypePathContext::module(data.owner)),
+        ))?;
+        let mut super_traits = Vec::new();
+        for bound in &data.super_traits {
+            let Some(trait_ty) = bound.required_trait_ty() else {
+                continue;
+            };
+            if let Some(super_trait) = session.lower_trait_ref(trait_ty, self_ty.clone())? {
+                super_traits.push(super_trait);
+            }
+        }
+        let mut clauses = session.lower_clauses()?;
+        for super_trait in &super_traits {
+            clauses.extend(super_trait.clone().into_clauses());
+        }
+
+        Ok(Some(TraitHeader {
+            owner: trait_ref,
+            self_ty,
+            clauses,
+        }))
+    }
+
+    fn type_alias_ty_with(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        resolver: &R,
+        alias: TypeAliasRef,
+    ) -> Result<Option<Ty>, D::Error> {
+        let Some(data) = item_paths.items().type_alias_data(alias)? else {
+            return Ok(None);
+        };
+        let Some(context) = item_paths
+            .items()
+            .type_path_context_for_owner(alias.origin, data.owner)?
+        else {
+            return Ok(None);
+        };
+        let lowering = TypeLoweringQuery::new(item_paths, resolver);
+        let mut session = lowering.session(TypeLoweringEnv::new(
+            GenericDefRef::TypeAlias(alias),
+            TypeLoweringAnchor::Context(context),
+        ))?;
+        session.lower_alias(alias, &[]).map(Some)
+    }
+
+    fn opaque_bounds_for_owner_with(
+        item_paths: &ItemPathQuery<'query, D, I>,
+        resolver: &R,
+        owner: GenericDefRef,
+    ) -> Result<Vec<(OpaqueTy, Vec<TraitRefLowering>)>, D::Error> {
+        let Some(context) = item_paths
+            .items()
+            .type_path_context_for_generic_def(owner)?
+        else {
+            return Ok(Vec::new());
+        };
+        let lowering = TypeLoweringQuery::new(item_paths, resolver);
+        let mut session = lowering.session(TypeLoweringEnv::new(
+            owner,
+            TypeLoweringAnchor::Context(context),
+        ))?;
+
+        match owner {
+            GenericDefRef::Function(function) => {
+                let Some(data) = item_paths.items().function_data(function)? else {
+                    return Ok(Vec::new());
+                };
+                for param in data.signature.params() {
+                    if let Some(ty) = &param.ty {
+                        session.lower_parameter_type(ty)?;
+                    }
+                }
+                if let Some(ret) = data.signature.ret_ty() {
+                    session.lower_type_ref(ret)?;
+                }
+            }
+            GenericDefRef::TypeAlias(alias) => {
+                session.lower_alias(alias, &[])?;
+            }
+            GenericDefRef::Const(konst) => {
+                if let Some(ty) = item_paths
+                    .items()
+                    .const_data(konst)?
+                    .and_then(|data| data.signature.ty())
+                {
+                    session.lower_type_ref(ty)?;
+                }
+            }
+            GenericDefRef::Static(static_ref) => {
+                if let Some(ty) = item_paths
+                    .items()
+                    .static_data(static_ref)?
+                    .and_then(|data| data.ty.as_ref())
+                {
+                    session.lower_type_ref(ty)?;
+                }
+            }
+            GenericDefRef::TypeDef(_) | GenericDefRef::Trait(_) | GenericDefRef::Impl(_) => {}
+        }
+
+        Ok(session.into_opaque_bounds())
+    }
 }
 
 impl<'query, D, I> SemanticSignatureQuery<'query, D, I>
@@ -390,7 +515,7 @@ where
         item_paths: &ItemPathQuery<'query, D, I>,
         trait_ref: TraitDefRef,
     ) -> Result<Option<TraitHeader>, D::Error> {
-        trait_header_with(item_paths, item_paths, trait_ref)
+        Self::trait_header_with(item_paths, item_paths, trait_ref)
     }
 
     pub(crate) fn function_from(
@@ -404,14 +529,14 @@ where
         item_paths: &ItemPathQuery<'query, D, I>,
         alias: TypeAliasRef,
     ) -> Result<Option<Ty>, D::Error> {
-        type_alias_ty_with(item_paths, item_paths, alias)
+        Self::type_alias_ty_with(item_paths, item_paths, alias)
     }
 
     pub(crate) fn opaque_bounds_for_owner_from(
         item_paths: &ItemPathQuery<'query, D, I>,
         owner: GenericDefRef,
     ) -> Result<Vec<(OpaqueTy, Vec<TraitRefLowering>)>, D::Error> {
-        opaque_bounds_for_owner_with(item_paths, item_paths, owner)
+        Self::opaque_bounds_for_owner_with(item_paths, item_paths, owner)
     }
 }
 
@@ -453,144 +578,4 @@ where
         trait_ref,
         clauses,
     }))
-}
-
-fn trait_header_with<'query, D, I, R>(
-    item_paths: &ItemPathQuery<'query, D, I>,
-    resolver: &R,
-    trait_ref: TraitDefRef,
-) -> Result<Option<TraitHeader>, D::Error>
-where
-    D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
-{
-    let Some(data) = item_paths.items().trait_data(trait_ref)? else {
-        return Ok(None);
-    };
-    let owner = GenericDefRef::Trait(trait_ref);
-    let generics = item_paths.generics().generics(owner)?;
-    let Some(self_param) = generics.iter().find_map(|param| {
-        matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
-    }) else {
-        return Ok(None);
-    };
-    let GenericParamRef::Type(self_param) = self_param else {
-        return Ok(None);
-    };
-    let self_ty = Ty::Param(self_param);
-    let lowering = TypeLoweringQuery::new(item_paths, resolver);
-    let mut session = lowering.session(TypeLoweringEnv::new(
-        owner,
-        TypeLoweringAnchor::Context(TypePathContext::module(data.owner)),
-    ))?;
-    let mut super_traits = Vec::new();
-    for bound in &data.super_traits {
-        let Some(trait_ty) = bound.required_trait_ty() else {
-            continue;
-        };
-        if let Some(super_trait) = session.lower_trait_ref(trait_ty, self_ty.clone())? {
-            super_traits.push(super_trait);
-        }
-    }
-    let mut clauses = session.lower_clauses()?;
-    for super_trait in &super_traits {
-        clauses.extend(super_trait.clone().into_clauses());
-    }
-
-    Ok(Some(TraitHeader {
-        owner: trait_ref,
-        self_ty,
-        clauses,
-    }))
-}
-
-fn type_alias_ty_with<'query, D, I, R>(
-    item_paths: &ItemPathQuery<'query, D, I>,
-    resolver: &R,
-    alias: TypeAliasRef,
-) -> Result<Option<Ty>, D::Error>
-where
-    D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
-{
-    let Some(data) = item_paths.items().type_alias_data(alias)? else {
-        return Ok(None);
-    };
-    let Some(context) = item_paths
-        .items()
-        .type_path_context_for_owner(alias.origin, data.owner)?
-    else {
-        return Ok(None);
-    };
-    let lowering = TypeLoweringQuery::new(item_paths, resolver);
-    let mut session = lowering.session(TypeLoweringEnv::new(
-        GenericDefRef::TypeAlias(alias),
-        TypeLoweringAnchor::Context(context),
-    ))?;
-    session.lower_alias(alias, &[]).map(Some)
-}
-
-fn opaque_bounds_for_owner_with<'query, D, I, R>(
-    item_paths: &ItemPathQuery<'query, D, I>,
-    resolver: &R,
-    owner: GenericDefRef,
-) -> Result<Vec<(OpaqueTy, Vec<TraitRefLowering>)>, D::Error>
-where
-    D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
-{
-    let Some(context) = item_paths
-        .items()
-        .type_path_context_for_generic_def(owner)?
-    else {
-        return Ok(Vec::new());
-    };
-    let lowering = TypeLoweringQuery::new(item_paths, resolver);
-    let mut session = lowering.session(TypeLoweringEnv::new(
-        owner,
-        TypeLoweringAnchor::Context(context),
-    ))?;
-
-    match owner {
-        GenericDefRef::Function(function) => {
-            let Some(data) = item_paths.items().function_data(function)? else {
-                return Ok(Vec::new());
-            };
-            for param in data.signature.params() {
-                if let Some(ty) = &param.ty {
-                    session.lower_parameter_type(ty)?;
-                }
-            }
-            if let Some(ret) = data.signature.ret_ty() {
-                session.lower_type_ref(ret)?;
-            }
-        }
-        GenericDefRef::TypeAlias(alias) => {
-            session.lower_alias(alias, &[])?;
-        }
-        GenericDefRef::Const(konst) => {
-            if let Some(ty) = item_paths
-                .items()
-                .const_data(konst)?
-                .and_then(|data| data.signature.ty())
-            {
-                session.lower_type_ref(ty)?;
-            }
-        }
-        GenericDefRef::Static(static_ref) => {
-            if let Some(ty) = item_paths
-                .items()
-                .static_data(static_ref)?
-                .and_then(|data| data.ty.as_ref())
-            {
-                session.lower_type_ref(ty)?;
-            }
-        }
-        GenericDefRef::TypeDef(_) | GenericDefRef::Trait(_) | GenericDefRef::Impl(_) => {}
-    }
-
-    Ok(session.into_opaque_bounds())
 }

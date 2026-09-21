@@ -166,6 +166,44 @@ pub enum ExprBlockKind {
     },
 }
 
+impl fmt::Display for ExprBlockKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Plain => f.write_str("plain"),
+            Self::Unsafe => f.write_str("unsafe"),
+            Self::Const => f.write_str("const"),
+            Self::Async {
+                move_capture: false,
+            } => f.write_str("async"),
+            Self::Async { move_capture: true } => f.write_str("async move"),
+            Self::Try {
+                bikeshed: false,
+                result_ty: None,
+            } => f.write_str("try"),
+            Self::Try {
+                bikeshed: true,
+                result_ty: None,
+            } => f.write_str("try bikeshed"),
+            Self::Try {
+                bikeshed: false,
+                result_ty: Some(result_ty),
+            } => write!(f, "try {result_ty}"),
+            Self::Try {
+                bikeshed: true,
+                result_ty: Some(result_ty),
+            } => write!(f, "try bikeshed {result_ty}"),
+            Self::Gen {
+                move_capture: false,
+            } => f.write_str("gen"),
+            Self::Gen { move_capture: true } => f.write_str("gen move"),
+            Self::AsyncGen {
+                move_capture: false,
+            } => f.write_str("async gen"),
+            Self::AsyncGen { move_capture: true } => f.write_str("async gen move"),
+        }
+    }
+}
+
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ExprKind {
@@ -394,42 +432,4 @@ pub struct RecordExprField {
 pub struct RecordExprSpread {
     pub source_span: Span,
     pub expr: Option<ExprId>,
-}
-
-impl fmt::Display for ExprBlockKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Plain => f.write_str("plain"),
-            Self::Unsafe => f.write_str("unsafe"),
-            Self::Const => f.write_str("const"),
-            Self::Async {
-                move_capture: false,
-            } => f.write_str("async"),
-            Self::Async { move_capture: true } => f.write_str("async move"),
-            Self::Try {
-                bikeshed: false,
-                result_ty: None,
-            } => f.write_str("try"),
-            Self::Try {
-                bikeshed: true,
-                result_ty: None,
-            } => f.write_str("try bikeshed"),
-            Self::Try {
-                bikeshed: false,
-                result_ty: Some(result_ty),
-            } => write!(f, "try {result_ty}"),
-            Self::Try {
-                bikeshed: true,
-                result_ty: Some(result_ty),
-            } => write!(f, "try bikeshed {result_ty}"),
-            Self::Gen {
-                move_capture: false,
-            } => f.write_str("gen"),
-            Self::Gen { move_capture: true } => f.write_str("gen move"),
-            Self::AsyncGen {
-                move_capture: false,
-            } => f.write_str("async gen"),
-            Self::AsyncGen { move_capture: true } => f.write_str("async gen move"),
-        }
-    }
 }

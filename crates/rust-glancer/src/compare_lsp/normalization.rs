@@ -803,8 +803,8 @@ impl NormalizedInlayHint {
         Self {
             line: hint.position.line,
             character: hint.position.character,
-            kind: hint.kind.map(inlay_hint_kind_code),
-            label: inlay_hint_label(hint.label),
+            kind: hint.kind.map(Self::inlay_hint_kind_code),
+            label: Self::inlay_hint_label(hint.label),
         }
     }
 
@@ -814,6 +814,22 @@ impl NormalizedInlayHint {
 
     pub(crate) fn label(&self) -> &str {
         &self.label
+    }
+
+    fn inlay_hint_kind_code(kind: InlayHintKind) -> i64 {
+        serde_json::to_value(kind)
+            .expect("InlayHintKind should serialize as an integer")
+            .as_i64()
+            .expect("InlayHintKind should serialize as an integer")
+    }
+
+    fn inlay_hint_label(label: Label) -> String {
+        match label {
+            Label::String(label) => label,
+            Label::InlayHintLabelPartList(parts) => {
+                parts.into_iter().map(|part| part.value).collect()
+            }
+        }
     }
 }
 
@@ -883,15 +899,15 @@ impl NormalizedSymbol {
         self.name == reference.name
             && self.path == reference.path
             && self.range == reference.range
-            && self.kind == symbol_kind_code(SymbolKind::Method)
-            && reference.kind == symbol_kind_code(SymbolKind::Function)
+            && self.kind == Self::symbol_kind_code(SymbolKind::Method)
+            && reference.kind == Self::symbol_kind_code(SymbolKind::Function)
     }
 
     fn push_document_symbol(symbol: DocumentSymbol, symbols: &mut BTreeSet<Self>) {
         let children = symbol.children.unwrap_or_default();
         symbols.insert(Self {
             name: symbol.name,
-            kind: symbol_kind_code(symbol.kind),
+            kind: Self::symbol_kind_code(symbol.kind),
             path: None,
             range: Some(NormalizedRange::from_lsp(symbol.selection_range)),
         });
@@ -911,7 +927,7 @@ impl NormalizedSymbol {
         )?;
         Ok(Self {
             name: symbol.base_symbol_information.name,
-            kind: symbol_kind_code(symbol.base_symbol_information.kind),
+            kind: Self::symbol_kind_code(symbol.base_symbol_information.kind),
             path: Some(location.path),
             range: Some(location.range),
         })
@@ -927,7 +943,7 @@ impl NormalizedSymbol {
         )?;
         Ok(Self {
             name: symbol.base_symbol_information.name,
-            kind: symbol_kind_code(symbol.base_symbol_information.kind),
+            kind: Self::symbol_kind_code(symbol.base_symbol_information.kind),
             path: None,
             range: Some(location.range),
         })
@@ -953,7 +969,7 @@ impl NormalizedSymbol {
 
         Ok(Self {
             name: symbol.base_symbol_information.name,
-            kind: symbol_kind_code(symbol.base_symbol_information.kind),
+            kind: Self::symbol_kind_code(symbol.base_symbol_information.kind),
             path,
             range,
         })
@@ -968,10 +984,17 @@ impl NormalizedSymbol {
     ) -> Self {
         Self {
             name: name.to_string(),
-            kind: symbol_kind_code(kind),
+            kind: Self::symbol_kind_code(kind),
             path: path.map(str::to_string),
             range,
         }
+    }
+
+    fn symbol_kind_code(kind: SymbolKind) -> i64 {
+        serde_json::to_value(kind)
+            .expect("SymbolKind should serialize as an integer")
+            .as_i64()
+            .expect("SymbolKind should serialize as an integer")
     }
 }
 
@@ -1138,27 +1161,6 @@ fn fixture_relative_file_uri(
         })?;
 
     Ok(fixture_relative_path(relative))
-}
-
-fn symbol_kind_code(kind: SymbolKind) -> i64 {
-    serde_json::to_value(kind)
-        .expect("SymbolKind should serialize as an integer")
-        .as_i64()
-        .expect("SymbolKind should serialize as an integer")
-}
-
-fn inlay_hint_kind_code(kind: InlayHintKind) -> i64 {
-    serde_json::to_value(kind)
-        .expect("InlayHintKind should serialize as an integer")
-        .as_i64()
-        .expect("InlayHintKind should serialize as an integer")
-}
-
-fn inlay_hint_label(label: Label) -> String {
-    match label {
-        Label::String(label) => label,
-        Label::InlayHintLabelPartList(parts) => parts.into_iter().map(|part| part.value).collect(),
-    }
 }
 
 fn json_shape(value: &Value) -> String {

@@ -146,12 +146,62 @@ impl Backend {
 
         Ok(Some(engine_client))
     }
+
+    fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<NormalizedPathBuf>> {
+        let workspace_folders = match &params.workspace_folders_initialize_params.workspace_folders
+        {
+            Some(WorkspaceFolders::WorkspaceFolderList(folders)) => folders.as_slice(),
+            Some(WorkspaceFolders::Null) | None => &[],
+        };
+        let mut folders = workspace_folders
+            .iter()
+            .map(|folder| {
+                let path = rg_lsp_proto::file_uri_to_path(&folder.uri).with_context(|| {
+                    format!("while converting workspace URI `{}`", folder.uri.as_str())
+                })?;
+                NormalizedPathBuf::from_absolute(&path).with_context(|| {
+                    format!("while normalizing workspace path `{}`", path.display())
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // Some clients advertise workspace-folder support but still send the project only through
+        // the deprecated single-root fields. Use those fields only when the modern list is empty.
+        #[allow(
+            deprecated,
+            reason = "support legacy single-root initialization fields"
+        )]
+        let fallback_root = if !folders.is_empty() {
+            None
+        } else if let Some(uri) = params.root_uri.as_ref() {
+            Some(
+                rg_lsp_proto::file_uri_to_path(uri)
+                    .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?,
+            )
+        } else {
+            match &params.root_path {
+                Some(RootPath::String(path)) => Some(std::path::PathBuf::from(path)),
+                Some(RootPath::Null) | None => None,
+            }
+        };
+
+        if let Some(path) = fallback_root {
+            folders
+                .push(NormalizedPathBuf::from_absolute(&path).with_context(|| {
+                    format!("while normalizing root path `{}`", path.display())
+                })?);
+        }
+
+        folders.sort();
+        folders.dedup();
+        Ok(folders)
+    }
 }
 
 impl LanguageServer for Backend {
     #[tracing::instrument(skip_all, fields(rg.method = "initialize"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let workspace_folders = workspace_folders(&params).map_err(|error| {
+        let workspace_folders = Self::workspace_folders(&params).map_err(|error| {
             Error::invalid_params(format!("invalid workspace folder: {error:#}"))
         })?;
         if workspace_folders.is_empty() {
@@ -528,54 +578,6 @@ impl LanguageServer for Backend {
     }
 }
 
-fn workspace_folders(params: &InitializeParams) -> anyhow::Result<Vec<NormalizedPathBuf>> {
-    let workspace_folders = match &params.workspace_folders_initialize_params.workspace_folders {
-        Some(WorkspaceFolders::WorkspaceFolderList(folders)) => folders.as_slice(),
-        Some(WorkspaceFolders::Null) | None => &[],
-    };
-    let mut folders = workspace_folders
-        .iter()
-        .map(|folder| {
-            let path = rg_lsp_proto::file_uri_to_path(&folder.uri).with_context(|| {
-                format!("while converting workspace URI `{}`", folder.uri.as_str())
-            })?;
-            NormalizedPathBuf::from_absolute(&path)
-                .with_context(|| format!("while normalizing workspace path `{}`", path.display()))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    // Some clients advertise workspace-folder support but still send the project only through
-    // the deprecated single-root fields. Use those fields only when the modern list is empty.
-    #[allow(
-        deprecated,
-        reason = "support legacy single-root initialization fields"
-    )]
-    let fallback_root = if !folders.is_empty() {
-        None
-    } else if let Some(uri) = params.root_uri.as_ref() {
-        Some(
-            rg_lsp_proto::file_uri_to_path(uri)
-                .with_context(|| format!("while converting root URI `{}`", uri.as_str()))?,
-        )
-    } else {
-        match &params.root_path {
-            Some(RootPath::String(path)) => Some(std::path::PathBuf::from(path)),
-            Some(RootPath::Null) | None => None,
-        }
-    };
-
-    if let Some(path) = fallback_root {
-        folders.push(
-            NormalizedPathBuf::from_absolute(&path)
-                .with_context(|| format!("while normalizing root path `{}`", path.display()))?,
-        );
-    }
-
-    folders.sort();
-    folders.dedup();
-    Ok(folders)
-}
-
 #[cfg(test)]
 mod tests {
     use std::{path::Path, str::FromStr};
@@ -585,7 +587,7 @@ mod tests {
         InitializeParams, Uri, WorkspaceFolder, WorkspaceFoldersInitializeParams,
     };
 
-    use super::workspace_folders;
+    use super::Backend;
 
     #[test]
     fn workspace_folders_keep_unique_filesystem_roots_in_stable_order() {
@@ -613,7 +615,7 @@ mod tests {
         let project_b =
             NormalizedPathBuf::from_absolute(project_b).expect("project B path should normalize");
         assert_eq!(
-            workspace_folders(&params).expect("workspace folders should normalize"),
+            Backend::workspace_folders(&params).expect("workspace folders should normalize"),
             vec![project_a, project_b],
         );
     }
@@ -636,7 +638,7 @@ mod tests {
 
         let root = NormalizedPathBuf::from_absolute(root).expect("test root should normalize");
         assert_eq!(
-            workspace_folders(&params).expect("root URI should be used as the workspace"),
+            Backend::workspace_folders(&params).expect("root URI should be used as the workspace"),
             vec![root],
         );
     }
@@ -657,7 +659,7 @@ mod tests {
             ..Default::default()
         };
 
-        let error = workspace_folders(&params)
+        let error = Backend::workspace_folders(&params)
             .expect_err("non-file workspace folder should be rejected explicitly");
         assert!(error.to_string().contains("converting workspace URI"));
     }

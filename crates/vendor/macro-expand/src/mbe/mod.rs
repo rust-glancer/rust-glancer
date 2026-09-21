@@ -50,15 +50,6 @@ impl fmt::Display for ParseError {
 pub struct ExpandError {
     pub inner: Arc<(Span, ExpandErrorKind)>,
 }
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub enum ExpandErrorKind {
-    BindingError(Box<Box<str>>),
-    UnresolvedBinding(Box<Box<str>>),
-    LeftoverTokens,
-    LimitExceeded,
-    NoMatchingRule,
-    UnexpectedToken,
-}
 
 impl ExpandError {
     fn new(span: Span, kind: ExpandErrorKind) -> ExpandError {
@@ -72,10 +63,20 @@ impl ExpandError {
         }
     }
 }
+
 impl fmt::Display for ExpandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.inner.1.fmt(f)
     }
+}
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum ExpandErrorKind {
+    BindingError(Box<Box<str>>),
+    UnresolvedBinding(Box<Box<str>>),
+    LeftoverTokens,
+    LimitExceeded,
+    NoMatchingRule,
+    UnexpectedToken,
 }
 
 impl fmt::Display for ExpandErrorKind {
@@ -104,14 +105,6 @@ pub type MatchedArmIndex = Option<u32>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeclarativeMacro {
     rules: Box<[Rule]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Rule {
-    /// Is this a normal fn-like rule, an `attr()` rule, or a `derive()` rule?
-    style: MacroCallStyle,
-    lhs: MetaTemplate,
-    rhs: MetaTemplate,
 }
 
 impl DeclarativeMacro {
@@ -201,6 +194,14 @@ impl DeclarativeMacro {
     ) -> ExpandResult<(tt::TopSubtree, MatchedArmIndex)> {
         expander::expand_rules(&self.rules, tt, marker, call_style, call_site, ctx_edition)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Rule {
+    /// Is this a normal fn-like rule, an `attr()` rule, or a `derive()` rule?
+    style: MacroCallStyle,
+    lhs: MetaTemplate,
+    rhs: MetaTemplate,
 }
 
 impl Rule {

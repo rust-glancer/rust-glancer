@@ -120,6 +120,10 @@ pub trait HasDocComments: HasAttrs {
     }
 }
 
+pub struct DocCommentIter {
+    iter: SyntaxElementChildren,
+}
+
 impl DocCommentIter {
     pub fn from_syntax_node(syntax_node: &ast::SyntaxNode) -> DocCommentIter {
         DocCommentIter {
@@ -135,10 +139,6 @@ impl DocCommentIter {
         );
         if docs.is_empty() { None } else { Some(docs) }
     }
-}
-
-pub struct DocCommentIter {
-    iter: SyntaxElementChildren,
 }
 
 impl Iterator for DocCommentIter {

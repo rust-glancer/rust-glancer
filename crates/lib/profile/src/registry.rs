@@ -30,7 +30,7 @@ impl ProfileRegistry {
     fn push(&mut self, descriptor: ProfileDescriptor) -> Result<(), ProfileRegistryError> {
         validate_profile_path(descriptor.path()).map_err(ProfileRegistryError::InvalidPath)?;
         validate_profile_path(descriptor.scope()).map_err(ProfileRegistryError::InvalidScope)?;
-        if !scope_matches_path(descriptor.scope(), descriptor.path()) {
+        if !Self::scope_matches_path(descriptor.scope(), descriptor.path()) {
             return Err(ProfileRegistryError::ScopeNotPathPrefix {
                 scope: descriptor.scope(),
                 path: descriptor.path(),
@@ -86,13 +86,13 @@ impl ProfileRegistry {
 
         Ok(())
     }
-}
 
-fn scope_matches_path(scope: &str, path: &str) -> bool {
-    path == scope
-        || path
-            .strip_prefix(scope)
-            .is_some_and(|remainder| remainder.starts_with('.'))
+    fn scope_matches_path(scope: &str, path: &str) -> bool {
+        path == scope
+            || path
+                .strip_prefix(scope)
+                .is_some_and(|remainder| remainder.starts_with('.'))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

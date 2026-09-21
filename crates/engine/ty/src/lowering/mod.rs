@@ -11,8 +11,8 @@ mod projection;
 mod signature;
 mod type_ref;
 
-pub use signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
-pub(crate) use signature::{TraitHeader, impl_header_with};
+pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
+pub(crate) use self::signature::{TraitHeader, impl_header_with};
 
 use crate::lookup::ItemPathQuery;
 use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty};

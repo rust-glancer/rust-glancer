@@ -56,6 +56,23 @@ struct SourceBurst {
     replacements: Vec<(std::path::PathBuf, &'static str)>,
 }
 
+impl ProjectMemoryHooks for SourceBurst {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        if point != ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction {
+            return;
+        }
+        self.attempts.fetch_add(1, Ordering::AcqRel);
+        if !self.armed.swap(false, Ordering::AcqRel) {
+            return;
+        }
+
+        for (path, replacement) in &self.replacements {
+            std::fs::write(path, replacement)
+                .expect("source burst hook should replace fixture source");
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct RecordingMemoryHooks {
     points: Mutex<Vec<ProjectMemoryPurgePoint>>,
@@ -78,23 +95,6 @@ impl ProjectMemoryHooks for RecordingMemoryHooks {
             .lock()
             .expect("recorded memory hook points should not be poisoned")
             .push(point);
-    }
-}
-
-impl ProjectMemoryHooks for SourceBurst {
-    fn purge(&self, point: ProjectMemoryPurgePoint) {
-        if point != ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction {
-            return;
-        }
-        self.attempts.fetch_add(1, Ordering::AcqRel);
-        if !self.armed.swap(false, Ordering::AcqRel) {
-            return;
-        }
-
-        for (path, replacement) in &self.replacements {
-            std::fs::write(path, replacement)
-                .expect("source burst hook should replace fixture source");
-        }
     }
 }
 

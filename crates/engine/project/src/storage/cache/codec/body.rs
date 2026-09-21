@@ -51,6 +51,38 @@ pub(crate) struct PackageBodyCacheIndex {
     payload_offset: u64,
 }
 
+impl PackageBodyCacheIndex {
+    pub(crate) fn manifest(&self) -> &PackageBodiesManifest {
+        &self.manifest
+    }
+
+    /// Return the section-relative range for one crate and source file.
+    pub(crate) fn file_range(
+        &self,
+        crate_id: CrateId,
+        file: FileId,
+    ) -> Option<PackageCacheSectionRange> {
+        self.crates.get(crate_id.0).and_then(|crate_layout| {
+            crate_layout
+                .files
+                .iter()
+                .find(|entry| entry.file == file)
+                .map(|entry| self.payload_range(entry.range))
+        })
+    }
+
+    /// Translate a validated payload-relative range into Body IR section coordinates.
+    fn payload_range(&self, range: PackageCacheSectionRange) -> PackageCacheSectionRange {
+        PackageCacheSectionRange {
+            offset: self
+                .payload_offset
+                .checked_add(range.offset)
+                .expect("validated Body IR payload range should not overflow"),
+            len: range.len,
+        }
+    }
+}
+
 /// Stores the body-to-file mapping and each file's encoded byte range in the cache file.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct PackageBodyCacheManifest {
@@ -90,38 +122,6 @@ impl EncodedBodyIr {
 
     pub(super) fn fragments(&self) -> [&[u8]; 3] {
         [&self.prefix, &self.manifest, &self.payload]
-    }
-}
-
-impl PackageBodyCacheIndex {
-    pub(crate) fn manifest(&self) -> &PackageBodiesManifest {
-        &self.manifest
-    }
-
-    /// Return the section-relative range for one crate and source file.
-    pub(crate) fn file_range(
-        &self,
-        crate_id: CrateId,
-        file: FileId,
-    ) -> Option<PackageCacheSectionRange> {
-        self.crates.get(crate_id.0).and_then(|crate_layout| {
-            crate_layout
-                .files
-                .iter()
-                .find(|entry| entry.file == file)
-                .map(|entry| self.payload_range(entry.range))
-        })
-    }
-
-    /// Translate a validated payload-relative range into Body IR section coordinates.
-    fn payload_range(&self, range: PackageCacheSectionRange) -> PackageCacheSectionRange {
-        PackageCacheSectionRange {
-            offset: self
-                .payload_offset
-                .checked_add(range.offset)
-                .expect("validated Body IR payload range should not overflow"),
-            len: range.len,
-        }
     }
 }
 

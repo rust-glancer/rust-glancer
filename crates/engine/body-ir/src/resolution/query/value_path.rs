@@ -25,24 +25,6 @@ pub struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// One declaration that can satisfy a value name inside a body scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BodyValueName {
-    Binding(BindingId),
-    Candidates(UniqueVec<BodyValueCandidate>),
-}
-
-/// Resolved value candidate after DefMap names have been projected through semantic item data.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum BodyValueCandidate {
-    Function(FunctionRef),
-    Const(ConstRef),
-    Static(StaticRef),
-    /// Unit or tuple struct selected through the value namespace.
-    TypeConstructor(TypeDefRef, AdtTy),
-    EnumVariant(EnumVariantRef, Ty),
-}
-
 impl<'query, D, I> BodyValuePathQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
@@ -534,4 +516,22 @@ where
             Ok(None)
         }
     }
+}
+
+/// One declaration that can satisfy a value name inside a body scope.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyValueName {
+    Binding(BindingId),
+    Candidates(UniqueVec<BodyValueCandidate>),
+}
+
+/// Resolved value candidate after DefMap names have been projected through semantic item data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyValueCandidate {
+    Function(FunctionRef),
+    Const(ConstRef),
+    Static(StaticRef),
+    /// Unit or tuple struct selected through the value namespace.
+    TypeConstructor(TypeDefRef, AdtTy),
+    EnumVariant(EnumVariantRef, Ty),
 }

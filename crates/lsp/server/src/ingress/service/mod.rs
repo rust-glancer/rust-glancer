@@ -96,7 +96,8 @@ impl<S> EditorIngress<S> {
     fn prepare_call(&self, request: &Request) -> IngressCall {
         match request.method() {
             "textDocument/didOpen" => {
-                let Some(params) = request_params::<DidOpenTextDocumentParams>(request) else {
+                let Some(params) = Self::request_params::<DidOpenTextDocumentParams>(request)
+                else {
                     return IngressCall::Other;
                 };
                 let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -109,7 +110,8 @@ impl<S> EditorIngress<S> {
                 ))
             }
             "textDocument/didChange" => {
-                let Some(params) = request_params::<DidChangeTextDocumentParams>(request) else {
+                let Some(params) = Self::request_params::<DidChangeTextDocumentParams>(request)
+                else {
                     return IngressCall::Other;
                 };
                 let Some(path) =
@@ -146,7 +148,8 @@ impl<S> EditorIngress<S> {
                 IngressCall::Other
             }
             "textDocument/didSave" => {
-                let Some(params) = request_params::<DidSaveTextDocumentParams>(request) else {
+                let Some(params) = Self::request_params::<DidSaveTextDocumentParams>(request)
+                else {
                     return IngressCall::Other;
                 };
                 let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -167,7 +170,8 @@ impl<S> EditorIngress<S> {
                 IngressCall::Lifecycle(sequenced)
             }
             "textDocument/didClose" => {
-                let Some(params) = request_params::<DidCloseTextDocumentParams>(request) else {
+                let Some(params) = Self::request_params::<DidCloseTextDocumentParams>(request)
+                else {
                     return IngressCall::Other;
                 };
                 let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -185,7 +189,7 @@ impl<S> EditorIngress<S> {
                     })
             }
             "textDocument/completion" => {
-                let Some(params) = request_params::<CompletionParams>(request) else {
+                let Some(params) = Self::request_params::<CompletionParams>(request) else {
                     return IngressCall::Other;
                 };
                 let Some(path) =
@@ -203,8 +207,9 @@ impl<S> EditorIngress<S> {
                     completion,
                 }
             }
-            method if is_document_request(method) => {
-                let path = request_document_uri(request).and_then(|uri| methods::uri_to_path(&uri));
+            method if Self::is_document_request(method) => {
+                let path =
+                    Self::request_document_uri(request).and_then(|uri| methods::uri_to_path(&uri));
                 IngressCall::Document {
                     document: Mutex::new(Some(self.editor.document(path))),
                     completion: None,
@@ -212,6 +217,47 @@ impl<S> EditorIngress<S> {
             }
             _ => IngressCall::Other,
         }
+    }
+
+    fn request_params<P>(request: &Request) -> Option<P>
+    where
+        (P,): FromParams,
+    {
+        <(P,) as FromParams>::from_params(request.params().cloned())
+            .ok()
+            .map(|(params,)| params)
+    }
+
+    fn request_document_uri(request: &Request) -> Option<Uri> {
+        request
+            .params()?
+            .get("textDocument")?
+            .get("uri")?
+            .as_str()?
+            .parse()
+            .ok()
+    }
+
+    fn is_document_request(method: &str) -> bool {
+        matches!(
+            method,
+            "textDocument/definition"
+                | "textDocument/typeDefinition"
+                | "textDocument/implementation"
+                | "textDocument/references"
+                | "textDocument/prepareRename"
+                | "textDocument/rename"
+                | "textDocument/documentHighlight"
+                | "textDocument/hover"
+                | "textDocument/codeAction"
+                | "textDocument/completion"
+                | "textDocument/formatting"
+                | "textDocument/documentSymbol"
+                | "textDocument/foldingRange"
+                | "textDocument/semanticTokens/full"
+                | "textDocument/semanticTokens/range"
+                | "textDocument/inlayHint"
+        )
     }
 }
 
@@ -315,47 +361,6 @@ pub(crate) fn completion_request() -> Option<CompletionRequest> {
         })
         .ok()
         .flatten()
-}
-
-fn request_params<P>(request: &Request) -> Option<P>
-where
-    (P,): FromParams,
-{
-    <(P,) as FromParams>::from_params(request.params().cloned())
-        .ok()
-        .map(|(params,)| params)
-}
-
-fn request_document_uri(request: &Request) -> Option<Uri> {
-    request
-        .params()?
-        .get("textDocument")?
-        .get("uri")?
-        .as_str()?
-        .parse()
-        .ok()
-}
-
-fn is_document_request(method: &str) -> bool {
-    matches!(
-        method,
-        "textDocument/definition"
-            | "textDocument/typeDefinition"
-            | "textDocument/implementation"
-            | "textDocument/references"
-            | "textDocument/prepareRename"
-            | "textDocument/rename"
-            | "textDocument/documentHighlight"
-            | "textDocument/hover"
-            | "textDocument/codeAction"
-            | "textDocument/completion"
-            | "textDocument/formatting"
-            | "textDocument/documentSymbol"
-            | "textDocument/foldingRange"
-            | "textDocument/semanticTokens/full"
-            | "textDocument/semanticTokens/range"
-            | "textDocument/inlayHint"
-    )
 }
 
 #[cfg(test)]

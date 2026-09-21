@@ -135,7 +135,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
         }
 
         let skip_self = matches!(call_completion, CallCompletionKind::MethodCall);
-        CompletionInsertText::Snippet(call_snippet(label, function, skip_self))
+        CompletionInsertText::Snippet(Self::call_snippet(label, function, skip_self))
     }
 
     fn call_parens_already_present(&self, edit: CompletionEdit) -> bool {
@@ -151,67 +151,67 @@ impl<'source> FunctionCompletionRenderer<'source> {
 
         after_completion.trim_start().starts_with('(')
     }
-}
 
-fn call_snippet(label: &str, function: MemberFunction<'_>, skip_self: bool) -> String {
-    let mut snippet = escape_lsp_snippet_text(label);
-    snippet.push('(');
+    fn call_snippet(label: &str, function: MemberFunction<'_>, skip_self: bool) -> String {
+        let mut snippet = escape_lsp_snippet_text(label);
+        snippet.push('(');
 
-    for (idx, param) in function
-        .parameters()
-        .filter(|param| !(skip_self && param.is_receiver()))
-        .enumerate()
-    {
-        if idx > 0 {
-            snippet.push_str(", ");
+        for (idx, param) in function
+            .parameters()
+            .filter(|param| !(skip_self && param.is_receiver()))
+            .enumerate()
+        {
+            if idx > 0 {
+                snippet.push_str(", ");
+            }
+            let placeholder = Self::param_placeholder(param, idx + 1);
+            snippet.push_str(&format!(
+                "${{{}:{}}}",
+                idx + 1,
+                escape_lsp_snippet_text(&placeholder)
+            ));
         }
-        let placeholder = param_placeholder(param, idx + 1);
-        snippet.push_str(&format!(
-            "${{{}:{}}}",
-            idx + 1,
-            escape_lsp_snippet_text(&placeholder)
-        ));
+
+        snippet.push(')');
+        snippet.push_str("$0");
+        snippet
     }
 
-    snippet.push(')');
-    snippet.push_str("$0");
-    snippet
-}
+    fn param_placeholder(param: FunctionParameterView<'_>, idx: usize) -> String {
+        let pat = param.pattern().trim();
+        Self::simple_binding_name(pat)
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("arg{idx}"))
+    }
 
-fn param_placeholder(param: FunctionParameterView<'_>, idx: usize) -> String {
-    let pat = param.pattern().trim();
-    simple_binding_name(pat)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| format!("arg{idx}"))
-}
+    fn simple_binding_name(mut pat: &str) -> Option<&str> {
+        loop {
+            if let Some(stripped) = pat.strip_prefix("mut ") {
+                pat = stripped.trim_start();
+            } else if let Some(stripped) = pat.strip_prefix("ref ") {
+                pat = stripped.trim_start();
+            } else {
+                break;
+            }
+        }
 
-fn simple_binding_name(mut pat: &str) -> Option<&str> {
-    loop {
-        if let Some(stripped) = pat.strip_prefix("mut ") {
-            pat = stripped.trim_start();
-        } else if let Some(stripped) = pat.strip_prefix("ref ") {
-            pat = stripped.trim_start();
+        if pat != "_" && Self::is_ident_like(pat) {
+            Some(pat)
         } else {
-            break;
+            None
         }
     }
 
-    if pat != "_" && is_ident_like(pat) {
-        Some(pat)
-    } else {
-        None
-    }
-}
+    fn is_ident_like(value: &str) -> bool {
+        let value = value.strip_prefix("r#").unwrap_or(value);
+        let mut chars = value.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first == '_' || first.is_ascii_alphabetic()) {
+            return false;
+        }
 
-fn is_ident_like(value: &str) -> bool {
-    let value = value.strip_prefix("r#").unwrap_or(value);
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return false;
+        chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
     }
-
-    chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }

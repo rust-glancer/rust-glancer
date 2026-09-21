@@ -10,6 +10,13 @@
 
 use rg_ir_model::{CrateRef, FileId};
 
+/// Options for a source reference lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceQuery<'a> {
+    search_scope: ReferenceSearchScope<'a>,
+    declaration_policy: ReferenceDeclarationPolicy,
+}
+
 impl<'a> ReferenceQuery<'a> {
     /// Returns a query for explicit find-references requests.
     pub fn find_references(search_crates: &'a [CrateRef], include_declarations: bool) -> Self {
@@ -94,13 +101,6 @@ impl<'a> ReferenceQuery<'a> {
             }
         }
     }
-}
-
-/// Options for a source reference lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReferenceQuery<'a> {
-    search_scope: ReferenceSearchScope<'a>,
-    declaration_policy: ReferenceDeclarationPolicy,
 }
 
 /// One crate/file pair whose source should be scanned for references.

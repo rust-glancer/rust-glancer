@@ -56,23 +56,6 @@ pub struct PackageCacheStore {
     generation: Fingerprint,
 }
 
-/// Holds a fully written replacement for a package cache file until the caller commits it.
-///
-/// [`Self::commit`] atomically replaces the old file; dropping this value discards the replacement.
-/// This lets the caller check cancellation after encoding and writing, before changing the cache
-/// that other readers will see.
-pub(crate) struct PreparedPackageArtifact {
-    file: AtomicWriteFile,
-}
-
-impl PreparedPackageArtifact {
-    pub(crate) fn commit(self) -> anyhow::Result<()> {
-        self.file
-            .commit()
-            .context("commit prepared package artifact")
-    }
-}
-
 impl PackageCacheStore {
     /// Bind a workspace cache plan and residency policy to the claimed instance directory.
     ///
@@ -359,6 +342,23 @@ impl PackageCacheStore {
 
     fn cache_update_marker_path(&self) -> PathBuf {
         self.generation_dir().join(CACHE_UPDATE_MARKER_FILE_NAME)
+    }
+}
+
+/// Holds a fully written replacement for a package cache file until the caller commits it.
+///
+/// [`Self::commit`] atomically replaces the old file; dropping this value discards the replacement.
+/// This lets the caller check cancellation after encoding and writing, before changing the cache
+/// that other readers will see.
+pub(crate) struct PreparedPackageArtifact {
+    file: AtomicWriteFile,
+}
+
+impl PreparedPackageArtifact {
+    pub(crate) fn commit(self) -> anyhow::Result<()> {
+        self.file
+            .commit()
+            .context("commit prepared package artifact")
     }
 }
 

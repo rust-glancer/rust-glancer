@@ -16,44 +16,6 @@ pub struct TextRangeMap {
     mappings: Vec<TextRangeMapping>,
 }
 
-/// One correspondence between transformed text and its original spelling.
-///
-/// Range projection returns the same shape so a caller can copy the projected text into another
-/// buffer, adjust `generated`, and retain how the original bytes should be selected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextRangeMapping {
-    pub generated: Range<usize>,
-    pub original: Range<usize>,
-    kind: MappingKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MappingKind {
-    Copied,
-    Transformed,
-}
-
-impl TextRangeMapping {
-    /// Copied text translates byte for byte; both ranges must have the same length.
-    pub fn copied(generated: Range<usize>, original: Range<usize>) -> Self {
-        Self {
-            generated,
-            original,
-            kind: MappingKind::Copied,
-        }
-    }
-
-    /// Any selection within transformed text selects its whole original spelling, even when
-    /// the two ranges happen to have the same length.
-    pub fn transformed(generated: Range<usize>, original: Range<usize>) -> Self {
-        Self {
-            generated,
-            original,
-            kind: MappingKind::Transformed,
-        }
-    }
-}
-
 impl TextRangeMap {
     /// Append a correspondence in transformed-text order. Empty sides have no positions to map.
     /// Touching copied fragments share an entry, while transformed fragments stay separate so
@@ -132,6 +94,44 @@ impl TextRangeMap {
             })
         })
     }
+}
+
+/// One correspondence between transformed text and its original spelling.
+///
+/// Range projection returns the same shape so a caller can copy the projected text into another
+/// buffer, adjust `generated`, and retain how the original bytes should be selected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRangeMapping {
+    pub generated: Range<usize>,
+    pub original: Range<usize>,
+    kind: MappingKind,
+}
+
+impl TextRangeMapping {
+    /// Copied text translates byte for byte; both ranges must have the same length.
+    pub fn copied(generated: Range<usize>, original: Range<usize>) -> Self {
+        Self {
+            generated,
+            original,
+            kind: MappingKind::Copied,
+        }
+    }
+
+    /// Any selection within transformed text selects its whole original spelling, even when
+    /// the two ranges happen to have the same length.
+    pub fn transformed(generated: Range<usize>, original: Range<usize>) -> Self {
+        Self {
+            generated,
+            original,
+            kind: MappingKind::Transformed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MappingKind {
+    Copied,
+    Transformed,
 }
 
 #[cfg(test)]

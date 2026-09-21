@@ -57,7 +57,7 @@ impl ExpansionParseKind {
 /// token-tree representation expected by that engine.
 #[derive(Debug, Clone)]
 pub struct DeclarativeMacro {
-    inner: mbe::DeclarativeMacro,
+    inner: self::mbe::DeclarativeMacro,
     edition: Edition,
 }
 

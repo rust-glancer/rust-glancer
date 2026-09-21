@@ -86,6 +86,30 @@ pub(super) struct CrateState {
     pub(super) macro_expansion_limit: Option<PendingMacroExpansionLimitReport>,
 }
 
+impl CrateState {
+    pub(super) fn push_macro_call(&mut self, call: MacroCallSite, origin: MacroCallOrigin) {
+        self.macro_directives.push(MacroDirective {
+            call,
+            origin,
+            state: MacroDirectiveState::Pending,
+        });
+    }
+
+    pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
+        CfgEvaluator::new(&self.cfg_options, self.target_kind.enables_test_cfg())
+    }
+
+    pub(super) fn resolve_module_file(
+        &self,
+        context: &ModuleFileContext,
+        module_name: &str,
+        path_override: Option<&str>,
+    ) -> Option<(FileId, Arc<ModuleFileContext>)> {
+        self.known_module_files
+            .resolve(context, module_name, path_override)
+    }
+}
+
 /// Mutable crate-wide extern prelude assembled while DefMap is built.
 ///
 /// Cargo dependency names provide the initial roots. A root declaration such as
@@ -130,30 +154,6 @@ impl ExternPreludeBuilder {
     pub(super) fn freeze(mut self) -> HashMap<Name, ModuleRef> {
         self.implicit_roots.extend(self.explicit_aliases);
         self.implicit_roots
-    }
-}
-
-impl CrateState {
-    pub(super) fn push_macro_call(&mut self, call: MacroCallSite, origin: MacroCallOrigin) {
-        self.macro_directives.push(MacroDirective {
-            call,
-            origin,
-            state: MacroDirectiveState::Pending,
-        });
-    }
-
-    pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
-        CfgEvaluator::new(&self.cfg_options, self.target_kind.enables_test_cfg())
-    }
-
-    pub(super) fn resolve_module_file(
-        &self,
-        context: &ModuleFileContext,
-        module_name: &str,
-        path_override: Option<&str>,
-    ) -> Option<(FileId, Arc<ModuleFileContext>)> {
-        self.known_module_files
-            .resolve(context, module_name, path_override)
     }
 }
 

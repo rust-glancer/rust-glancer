@@ -31,8 +31,8 @@ mod fulfill;
 mod pat;
 mod unify;
 
-use fulfill::Deferred;
-use unify::InferenceState;
+use self::fulfill::Deferred;
+use self::unify::InferenceState;
 
 /// One body's recursive inference operation. Structure and semantic query inputs are immutable;
 /// live types, selected calls, and pending work are owned until the final sidecar is published.

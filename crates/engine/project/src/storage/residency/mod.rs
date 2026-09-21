@@ -20,7 +20,7 @@ use crate::{
 
 use super::artifacts::{PackageArtifactPhases, PackageArtifactWriter};
 
-pub use policy::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+pub use self::policy::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {

@@ -78,11 +78,9 @@ where
             }
         }
 
-        Ok(unique_macro_definition(visible_macro_definitions(
-            macros,
-            self.state.crate_ref,
-            call,
-        )))
+        Ok(Self::unique_macro_definition(
+            Self::visible_macro_definitions(macros, self.state.crate_ref, call),
+        ))
     }
 
     /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
@@ -208,7 +206,7 @@ where
             }
         }
 
-        Ok(unique_macro_definition(macros))
+        Ok(Self::unique_macro_definition(macros))
     }
 
     fn resolve_scope_macro_bindings(
@@ -224,11 +222,9 @@ where
             }
         }
 
-        Ok(unique_macro_definition(visible_macro_definitions(
-            macros,
-            self.state.crate_ref,
-            call,
-        )))
+        Ok(Self::unique_macro_definition(
+            Self::visible_macro_definitions(macros, self.state.crate_ref, call),
+        ))
     }
 
     /// Converts a resolved macro binding into the payload needed by expansion.
@@ -262,45 +258,45 @@ where
             direct_only,
         }))
     }
-}
 
-fn visible_macro_definitions<'a, 'call, I>(
-    macros: I,
-    crate_ref: CrateRef,
-    call: &'call MacroCallSite,
-) -> impl Iterator<Item = ResolvedMacroDefinition<'a>> + 'call
-where
-    I: IntoIterator<Item = ResolvedMacroDefinition<'a>> + 'call,
-{
-    macros
-        .into_iter()
-        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, crate_ref, call))
-}
-
-fn unique_macro_definition<'a>(
-    macros: impl IntoIterator<Item = ResolvedMacroDefinition<'a>>,
-) -> ExpectedUnique<ResolvedMacroDefinition<'a>> {
-    let mut unique = ExpectedUnique::new();
-    for macro_ in macros {
-        // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
-        // root binding. That is still one resolved macro, not an ambiguity.
-        unique.push(macro_);
+    fn visible_macro_definitions<'definition, 'call, I>(
+        macros: I,
+        crate_ref: CrateRef,
+        call: &'call MacroCallSite,
+    ) -> impl Iterator<Item = ResolvedMacroDefinition<'definition>> + 'call
+    where
+        I: IntoIterator<Item = ResolvedMacroDefinition<'definition>> + 'call,
+    {
+        macros.into_iter().filter(move |macro_| {
+            Self::macro_definition_is_visible_by_order(macro_, crate_ref, call)
+        })
     }
 
-    unique
-}
+    fn unique_macro_definition<'definition>(
+        macros: impl IntoIterator<Item = ResolvedMacroDefinition<'definition>>,
+    ) -> ExpectedUnique<ResolvedMacroDefinition<'definition>> {
+        let mut unique = ExpectedUnique::new();
+        for macro_ in macros {
+            // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
+            // root binding. That is still one resolved macro, not an ambiguity.
+            unique.push(macro_);
+        }
 
-/// Filters ordinary namespace candidates that are textually later than the call site.
-fn macro_definition_is_visible_by_order(
-    macro_: &ResolvedMacroDefinition<'_>,
-    crate_ref: CrateRef,
-    call: &MacroCallSite,
-) -> bool {
-    if !macro_.direct_only {
-        return true;
+        unique
     }
 
-    !(macro_.definition.def_ref.origin == DefMapRef::Crate(crate_ref)
-        && macro_.definition.local_def.module == call.module
-        && macro_.order.is_some_and(|order| order > &call.order))
+    /// Filters ordinary namespace candidates that are textually later than the call site.
+    fn macro_definition_is_visible_by_order(
+        macro_: &ResolvedMacroDefinition<'_>,
+        crate_ref: CrateRef,
+        call: &MacroCallSite,
+    ) -> bool {
+        if !macro_.direct_only {
+            return true;
+        }
+
+        !(macro_.definition.def_ref.origin == DefMapRef::Crate(crate_ref)
+            && macro_.definition.local_def.module == call.module
+            && macro_.order.is_some_and(|order| order > &call.order))
+    }
 }

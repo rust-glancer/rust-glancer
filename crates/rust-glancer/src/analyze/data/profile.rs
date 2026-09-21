@@ -147,11 +147,11 @@ impl ProfileEntryReport {
         Self {
             path: descriptor.path().to_string(),
             scope: descriptor.scope().to_string(),
-            kind: instrument_kind(descriptor.kind()),
-            unit: unit(descriptor.unit()),
+            kind: Self::instrument_kind(descriptor.kind()),
+            unit: Self::unit(descriptor.unit()),
             title: descriptor.title_text().map(ToString::to_string),
-            description: descriptor.description_text().map(profile_description),
-            sort: descriptor.report_hints().sort.map(report_sort),
+            description: descriptor.description_text().map(Self::profile_description),
+            sort: descriptor.report_hints().sort.map(Self::report_sort),
             limit: descriptor.report_hints().limit,
             checkpoint_columns: descriptor
                 .checkpoint_columns_slice()
@@ -259,7 +259,8 @@ impl ProfileEntryReport {
                 .duration_column("phase")
                 .duration_column("elapsed");
 
-            let value_columns = checkpoint_value_columns(&self.checkpoint_columns, checkpoints);
+            let value_columns =
+                Self::checkpoint_value_columns(&self.checkpoint_columns, checkpoints);
             for column in &value_columns {
                 table.column_as(
                     column.key.clone(),
@@ -293,6 +294,78 @@ impl ProfileEntryReport {
             .unwrap_or(&self.path);
         profile_title(suffix)
     }
+
+    fn instrument_kind(kind: ProfileInstrumentKind) -> &'static str {
+        match kind {
+            ProfileInstrumentKind::Counter => "counter",
+            ProfileInstrumentKind::Gauge => "gauge",
+            ProfileInstrumentKind::Duration => "duration",
+            ProfileInstrumentKind::KeyedCounter => "keyed_counter",
+            ProfileInstrumentKind::KeyedDuration => "keyed_duration",
+            ProfileInstrumentKind::CheckpointStream => "checkpoint_stream",
+            ProfileInstrumentKind::MemorySnapshot => "memory_snapshot",
+        }
+    }
+
+    fn unit(unit: ProfileUnit) -> &'static str {
+        match unit {
+            ProfileUnit::None => "none",
+            ProfileUnit::Count => "count",
+            ProfileUnit::Bytes => "bytes",
+            ProfileUnit::Duration => "duration",
+            ProfileUnit::Percent => "percent",
+        }
+    }
+
+    fn report_sort(sort: ProfileReportSort) -> &'static str {
+        match sort {
+            ProfileReportSort::KeyAscending => "key_asc",
+            ProfileReportSort::CountDescending => "count_desc",
+            ProfileReportSort::TotalDurationDescending => "total_duration_desc",
+        }
+    }
+
+    fn profile_description(description: &str) -> String {
+        description
+            .lines()
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    }
+
+    fn checkpoint_value_columns(
+        declared_columns: &[ProfileCheckpointColumnReport],
+        checkpoints: &[ProfileCheckpointReport],
+    ) -> Vec<ProfileCheckpointColumnReport> {
+        let mut columns = declared_columns.to_vec();
+        let declared_keys = declared_columns
+            .iter()
+            .map(|column| column.key.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut inferred_columns = BTreeMap::<String, ProfileCheckpointColumnReport>::new();
+
+        for checkpoint in checkpoints {
+            for value in &checkpoint.values {
+                if declared_keys.contains(value.key.as_str()) {
+                    continue;
+                }
+
+                inferred_columns
+                    .entry(value.key.clone())
+                    .or_insert_with(|| {
+                        ProfileCheckpointColumnReport::inferred(
+                            value.key.clone(),
+                            value.value.report_unit(),
+                        )
+                    });
+            }
+        }
+
+        columns.extend(inferred_columns.into_values());
+        columns
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -310,7 +383,7 @@ impl ProfileCheckpointColumnReport {
         Self {
             key: column.key.to_string(),
             title: column.title.to_string(),
-            unit: report_unit(column.unit),
+            unit: Self::report_unit(column.unit),
         }
     }
 
@@ -320,6 +393,16 @@ impl ProfileCheckpointColumnReport {
             title: profile_title(&key),
             key,
             unit,
+        }
+    }
+
+    fn report_unit(unit: ProfileUnit) -> Option<ReportUnit> {
+        match unit {
+            ProfileUnit::None => None,
+            ProfileUnit::Count => Some(ReportUnit::Count),
+            ProfileUnit::Bytes => Some(ReportUnit::Bytes),
+            ProfileUnit::Duration => Some(ReportUnit::Duration),
+            ProfileUnit::Percent => Some(ReportUnit::Percent),
         }
     }
 }
@@ -550,94 +633,12 @@ impl ProfileMeasurementReport {
     }
 }
 
-fn instrument_kind(kind: ProfileInstrumentKind) -> &'static str {
-    match kind {
-        ProfileInstrumentKind::Counter => "counter",
-        ProfileInstrumentKind::Gauge => "gauge",
-        ProfileInstrumentKind::Duration => "duration",
-        ProfileInstrumentKind::KeyedCounter => "keyed_counter",
-        ProfileInstrumentKind::KeyedDuration => "keyed_duration",
-        ProfileInstrumentKind::CheckpointStream => "checkpoint_stream",
-        ProfileInstrumentKind::MemorySnapshot => "memory_snapshot",
-    }
-}
-
-fn unit(unit: ProfileUnit) -> &'static str {
-    match unit {
-        ProfileUnit::None => "none",
-        ProfileUnit::Count => "count",
-        ProfileUnit::Bytes => "bytes",
-        ProfileUnit::Duration => "duration",
-        ProfileUnit::Percent => "percent",
-    }
-}
-
-fn report_unit(unit: ProfileUnit) -> Option<ReportUnit> {
-    match unit {
-        ProfileUnit::None => None,
-        ProfileUnit::Count => Some(ReportUnit::Count),
-        ProfileUnit::Bytes => Some(ReportUnit::Bytes),
-        ProfileUnit::Duration => Some(ReportUnit::Duration),
-        ProfileUnit::Percent => Some(ReportUnit::Percent),
-    }
-}
-
-fn report_sort(sort: ProfileReportSort) -> &'static str {
-    match sort {
-        ProfileReportSort::KeyAscending => "key_asc",
-        ProfileReportSort::CountDescending => "count_desc",
-        ProfileReportSort::TotalDurationDescending => "total_duration_desc",
-    }
-}
-
 fn profile_key(path: &str) -> String {
     path.replace('.', "_")
 }
 
 fn profile_title(path: &str) -> String {
     path.replace(['.', '_'], " ")
-}
-
-fn profile_description(description: &str) -> String {
-    description
-        .lines()
-        .map(str::trim)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
-fn checkpoint_value_columns(
-    declared_columns: &[ProfileCheckpointColumnReport],
-    checkpoints: &[ProfileCheckpointReport],
-) -> Vec<ProfileCheckpointColumnReport> {
-    let mut columns = declared_columns.to_vec();
-    let declared_keys = declared_columns
-        .iter()
-        .map(|column| column.key.as_str())
-        .collect::<BTreeSet<_>>();
-    let mut inferred_columns = BTreeMap::<String, ProfileCheckpointColumnReport>::new();
-
-    for checkpoint in checkpoints {
-        for value in &checkpoint.values {
-            if declared_keys.contains(value.key.as_str()) {
-                continue;
-            }
-
-            inferred_columns
-                .entry(value.key.clone())
-                .or_insert_with(|| {
-                    ProfileCheckpointColumnReport::inferred(
-                        value.key.clone(),
-                        value.value.report_unit(),
-                    )
-                });
-        }
-    }
-
-    columns.extend(inferred_columns.into_values());
-    columns
 }
 
 #[cfg(test)]

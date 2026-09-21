@@ -25,15 +25,6 @@ pub(crate) struct PackageCacheInstance {
     inner: Arc<PackageCacheInstanceInner>,
 }
 
-/// Shared inner state keeps the OS lock alive across cloned cache state handles.
-#[derive(Debug)]
-struct PackageCacheInstanceInner {
-    root: PathBuf,
-    #[cfg(test)]
-    slot: u64,
-    _lock_file: fs::File,
-}
-
 impl PackageCacheInstance {
     /// Claim the first available cache instance under Cargo's target directory.
     pub(crate) fn for_workspace(workspace: &WorkspaceMetadata) -> anyhow::Result<Self> {
@@ -122,4 +113,13 @@ impl PackageCacheInstance {
             .join(workspace_name)
             .join(CACHE_INSTANCES_DIR_NAME)
     }
+}
+
+/// Shared inner state keeps the OS lock alive across cloned cache state handles.
+#[derive(Debug)]
+struct PackageCacheInstanceInner {
+    root: PathBuf,
+    #[cfg(test)]
+    slot: u64,
+    _lock_file: fs::File,
 }

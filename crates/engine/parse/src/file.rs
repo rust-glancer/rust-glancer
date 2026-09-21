@@ -67,6 +67,74 @@ pub(crate) struct ParsedFileData {
     pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
 }
 
+impl ParsedFileData {
+    fn record_syntax_memory(
+        syntax: &Option<SyntaxParse<SourceFile>>,
+        recorder: &mut rg_std::MemoryRecorder,
+    ) {
+        if let Some(syntax) = syntax {
+            // The parse cache owns one retained syntax tree per parsed file. Count it here
+            // explicitly so cloned parse handles and AST cursors do not look like owners.
+            let usage = syntax.retained_tree_memory_usage();
+
+            // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
+            // parse-cache boundary where those facts become retained-memory accounting.
+            recorder.scope("tree", |recorder| {
+                recorder.scope("source", |recorder| {
+                    recorder.record_heap::<str>(usage.source_bytes);
+                });
+                recorder.scope("nodes", |recorder| {
+                    recorder.record_type_name(
+                        rg_std::MemoryRecordKind::Heap,
+                        "rg_syntax::NodeData",
+                        usage.node_table_bytes,
+                    );
+                });
+                recorder.scope("tokens", |recorder| {
+                    recorder.record_type_name(
+                        rg_std::MemoryRecordKind::Heap,
+                        "rg_syntax::TokenData",
+                        usage.token_table_bytes,
+                    );
+                });
+                recorder.scope("children", |recorder| {
+                    recorder.record_type_name(
+                        rg_std::MemoryRecordKind::Heap,
+                        "rg_syntax::ElementId",
+                        usage.child_table_bytes,
+                    );
+                });
+                recorder.scope("errors", |recorder| {
+                    recorder.record_type_name(
+                        rg_std::MemoryRecordKind::Heap,
+                        "rg_syntax::SyntaxError",
+                        usage.error_bytes,
+                    );
+                });
+            });
+        }
+    }
+
+    fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
+        Ok(ParsedFileSnapshot {
+            source: self.source.descriptor().clone(),
+        })
+    }
+
+    fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
+        debug_assert_eq!(snapshot.source, *source.descriptor());
+        Self {
+            source,
+            line_index: LineIndexState::Offloaded(OnceLock::new()),
+            syntax: None,
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.line_index.shrink_to_fit();
+    }
+}
+
 /// Borrowed view over one cached source file.
 ///
 /// Later phases need syntax and source coordinates, but they should not know that parsing is backed
@@ -77,25 +145,6 @@ pub struct ParsedFile<'a> {
     file_id: FileId,
     edition: RustEdition,
     data: &'a ParsedFileData,
-}
-
-/// Serializable file metadata retained after syntax trees are evicted.
-///
-/// Cache-backed startup only needs the source identity that preserves package-local file ids.
-/// Line indexes are derived from revision-validated source and remain lazy after restoration.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct ParsedFileSnapshot {
-    pub(crate) source: SourceDescriptor,
-}
-
-impl ParsedFileSnapshot {
-    pub fn path(&self) -> &Path {
-        self.source.path()
-    }
-
-    pub fn source_descriptor(&self) -> &SourceDescriptor {
-        &self.source
-    }
 }
 
 impl<'a> ParsedFile<'a> {
@@ -167,6 +216,25 @@ impl<'a> ParsedFile<'a> {
     /// Returns the strong revision of the exact source bytes backing this parsed file.
     pub fn source_revision(&self) -> rg_source::SourceRevision {
         self.data.source.revision()
+    }
+}
+
+/// Serializable file metadata retained after syntax trees are evicted.
+///
+/// Cache-backed startup only needs the source identity that preserves package-local file ids.
+/// Line indexes are derived from revision-validated source and remain lazy after restoration.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+pub struct ParsedFileSnapshot {
+    pub(crate) source: SourceDescriptor,
+}
+
+impl ParsedFileSnapshot {
+    pub fn path(&self) -> &Path {
+        self.source.path()
+    }
+
+    pub fn source_descriptor(&self) -> &SourceDescriptor {
+        &self.source
     }
 }
 
@@ -339,74 +407,6 @@ impl FileDb {
             line_index: LineIndexState::resident(line_index),
             syntax: Some(parsed_file),
         }
-    }
-}
-
-impl ParsedFileData {
-    fn record_syntax_memory(
-        syntax: &Option<SyntaxParse<SourceFile>>,
-        recorder: &mut rg_std::MemoryRecorder,
-    ) {
-        if let Some(syntax) = syntax {
-            // The parse cache owns one retained syntax tree per parsed file. Count it here
-            // explicitly so cloned parse handles and AST cursors do not look like owners.
-            let usage = syntax.retained_tree_memory_usage();
-
-            // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
-            // parse-cache boundary where those facts become retained-memory accounting.
-            recorder.scope("tree", |recorder| {
-                recorder.scope("source", |recorder| {
-                    recorder.record_heap::<str>(usage.source_bytes);
-                });
-                recorder.scope("nodes", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::NodeData",
-                        usage.node_table_bytes,
-                    );
-                });
-                recorder.scope("tokens", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::TokenData",
-                        usage.token_table_bytes,
-                    );
-                });
-                recorder.scope("children", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::ElementId",
-                        usage.child_table_bytes,
-                    );
-                });
-                recorder.scope("errors", |recorder| {
-                    recorder.record_type_name(
-                        rg_std::MemoryRecordKind::Heap,
-                        "rg_syntax::SyntaxError",
-                        usage.error_bytes,
-                    );
-                });
-            });
-        }
-    }
-
-    fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
-        Ok(ParsedFileSnapshot {
-            source: self.source.descriptor().clone(),
-        })
-    }
-
-    fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
-        debug_assert_eq!(snapshot.source, *source.descriptor());
-        Self {
-            source,
-            line_index: LineIndexState::Offloaded(OnceLock::new()),
-            syntax: None,
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.line_index.shrink_to_fit();
     }
 }
 

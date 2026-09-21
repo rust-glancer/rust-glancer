@@ -99,27 +99,6 @@ pub enum ModuleOrigin {
     },
 }
 
-/// Source rule that selected an out-of-line module's definition file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum ModuleFileSelection {
-    /// Ordinary `name.rs` or `name/mod.rs` lookup.
-    Conventional,
-    /// A direct `#[path = "..."]` attribute.
-    PathAttribute,
-}
-
-impl ModuleFileSelection {
-    pub fn from_path_override(path_override: Option<&str>) -> Self {
-        if path_override.is_some() {
-            Self::PathAttribute
-        } else {
-            Self::Conventional
-        }
-    }
-}
-
 impl ModuleOrigin {
     /// Iterates every source file that participates in this module origin.
     ///
@@ -143,5 +122,26 @@ impl ModuleOrigin {
     /// Returns whether this module's source touches the requested file.
     pub fn contains_file(&self, file_id: FileId) -> bool {
         self.files().any(|candidate| candidate == file_id)
+    }
+}
+
+/// Source rule that selected an out-of-line module's definition file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum ModuleFileSelection {
+    /// Ordinary `name.rs` or `name/mod.rs` lookup.
+    Conventional,
+    /// A direct `#[path = "..."]` attribute.
+    PathAttribute,
+}
+
+impl ModuleFileSelection {
+    pub fn from_path_override(path_override: Option<&str>) -> Self {
+        if path_override.is_some() {
+            Self::PathAttribute
+        } else {
+            Self::Conventional
+        }
     }
 }

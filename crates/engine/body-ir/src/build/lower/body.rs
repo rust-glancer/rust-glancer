@@ -33,23 +33,6 @@ pub(super) struct BodyLowering<'a> {
     cancellation: &'a rg_std::CancellationToken,
 }
 
-/// Temporary context for syntax produced by one body macro expansion.
-///
-/// The macro call source is the stable fallback for generated syntax. When the expansion span map
-/// proves that a small token came from the invocation, the token gets its original argument span
-/// instead. For example, `make_expr!(input)` can expose `input` as the source of a generated path,
-/// while the surrounding binary expression still belongs to the macro call.
-struct GeneratedBodyMacroContext {
-    source: BodySource,
-    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
-}
-
-impl GeneratedBodyMacroContext {
-    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
-        Self { source, expanded }
-    }
-}
-
 impl<'a> BodyLowering<'a> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
@@ -345,5 +328,22 @@ impl BodyLowering<'_> {
                 ExprKind::BuiltinMacro { kind },
             )),
         }
+    }
+}
+
+/// Temporary context for syntax produced by one body macro expansion.
+///
+/// The macro call source is the stable fallback for generated syntax. When the expansion span map
+/// proves that a small token came from the invocation, the token gets its original argument span
+/// instead. For example, `make_expr!(input)` can expose `input` as the source of a generated path,
+/// while the surrounding binary expression still belongs to the macro call.
+struct GeneratedBodyMacroContext {
+    source: BodySource,
+    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
+}
+
+impl GeneratedBodyMacroContext {
+    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
+        Self { source, expanded }
     }
 }

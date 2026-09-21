@@ -15,7 +15,7 @@ mod tests;
 
 use std::{collections::HashMap, sync::Arc};
 
-pub use query::{
+pub use self::query::{
     code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
     completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
     references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
@@ -50,30 +50,6 @@ pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
     saved_source: SavedSourceView<'a>,
     current_source: Option<CurrentSourceView>,
-}
-
-/// One token range proven to name the same declaration in current and saved source.
-struct AssociatedSavedHeader {
-    current: Span,
-    saved: Span,
-}
-
-impl AssociatedSavedHeader {
-    fn current_span(&self) -> Span {
-        self.current
-    }
-
-    fn saved_span(&self) -> Span {
-        self.saved
-    }
-
-    /// Preserve the cursor's position within an associated header token.
-    fn saved_offset_for(&self, current_offset: u32) -> u32 {
-        let within_token = current_offset
-            .saturating_sub(self.current.start)
-            .min(self.current.len());
-        self.saved.start + within_token.min(self.saved.len())
-    }
 }
 
 impl rg_std::Cancelable for Analysis<'_> {
@@ -578,6 +554,30 @@ impl<'a> Analysis<'a> {
         self.run_query("workspace_symbols", || {
             query::symbols::SymbolCollector::new(self).workspace_symbols(query)
         })
+    }
+}
+
+/// One token range proven to name the same declaration in current and saved source.
+struct AssociatedSavedHeader {
+    current: Span,
+    saved: Span,
+}
+
+impl AssociatedSavedHeader {
+    fn current_span(&self) -> Span {
+        self.current
+    }
+
+    fn saved_span(&self) -> Span {
+        self.saved
+    }
+
+    /// Preserve the cursor's position within an associated header token.
+    fn saved_offset_for(&self, current_offset: u32) -> u32 {
+        let within_token = current_offset
+            .saturating_sub(self.current.start)
+            .min(self.current.len());
+        self.saved.start + within_token.min(self.saved.len())
     }
 }
 

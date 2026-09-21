@@ -4,11 +4,11 @@ use expect_test::Expect;
 
 use crate::{
     BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
-    ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
-    Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
+    ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource, ParamKind,
+    TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
 };
 use rg_ir_model::FileId;
-use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_parse::{CargoTarget, Package};
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let db = ItemTreeFixtureDb::build(fixture);
@@ -39,7 +39,8 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let package_dumps = sorted_packages(self.db.parse_db())
+        let package_dumps = self
+            .sorted_packages()
             .into_iter()
             .map(|(package_slot, package)| {
                 let item_trees = self
@@ -58,6 +59,18 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
 
         package_dumps.join("\n\n")
     }
+
+    fn sorted_packages(&self) -> Vec<(usize, &Package)> {
+        let mut packages = self
+            .db
+            .parse_db()
+            .packages()
+            .iter()
+            .enumerate()
+            .collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+        packages
+    }
 }
 
 /// Package-level item-tree snapshot context with file-label access.
@@ -70,7 +83,8 @@ struct PackageItemTreeSnapshot<'a> {
 
 impl<'a> PackageItemTreeSnapshot<'a> {
     fn render(&self) -> String {
-        let target_dumps = sorted_item_tree_target_roots(self.package, self.item_trees)
+        let target_dumps = self
+            .sorted_target_roots()
             .into_iter()
             .map(|target_root| {
                 let target = self
@@ -84,7 +98,8 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let file_dumps = sorted_item_tree_files(self.package, self.item_trees)
+        let file_dumps = self
+            .sorted_files()
             .into_iter()
             .map(|file_tree| {
                 self.render_file_item_tree(file_tree, &file_tree.top_level)
@@ -153,7 +168,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
         if let ItemKind::Module(module) = &item.kind {
             line.push_str(&format!(" [{}]", self.render_module_source(&module.source)));
             if let Some(macro_use) = &module.macro_use {
-                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+                line.push_str(&format!(" [{}]", Self::render_macro_use_attr(macro_use)));
             }
         }
 
@@ -161,7 +176,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             let name = extern_crate.name.as_deref().unwrap_or("<missing>");
             line.push_str(&format!(" [{name}{}]", extern_crate.alias));
             if let Some(macro_use) = &extern_crate.macro_use {
-                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+                line.push_str(&format!(" [{}]", Self::render_macro_use_attr(macro_use)));
             }
         }
 
@@ -254,7 +269,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 let params = fn_def
                     .params
                     .iter()
-                    .map(render_param)
+                    .map(Self::render_param)
                     .collect::<Vec<_>>()
                     .join(", ");
                 writeln!(dump, "{indent}  - params ({params})")
@@ -420,7 +435,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                         dump,
                         "{}- {}field #{idx}: {}",
                         "  ".repeat(depth),
-                        visibility_prefix(&field.visibility),
+                        Self::visibility_prefix(&field.visibility),
                         field.ty,
                     )
                     .expect("string writes should not fail");
@@ -436,7 +451,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 dump,
                 "{}- {}field {}: {}",
                 "  ".repeat(depth),
-                visibility_prefix(&field.visibility),
+                Self::visibility_prefix(&field.visibility),
                 field
                     .key_declaration_label()
                     .unwrap_or_else(|| "<missing>".to_string()),
@@ -454,7 +469,98 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     }
 
     fn file_label(&self, file_id: FileId) -> String {
-        file_label(self.package, file_id)
+        self.package
+            .file_path(file_id)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("<unknown>")
+            .to_string()
+    }
+
+    fn render_param(param: &crate::ParamItem) -> String {
+        match (param.kind, &param.ty) {
+            (ParamKind::SelfParam(_), _) => param.pat.clone(),
+            (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
+            (ParamKind::Normal, None) => param.pat.clone(),
+        }
+    }
+
+    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+        match visibility {
+            VisibilityLevel::Private => String::new(),
+            _ => format!("{visibility} "),
+        }
+    }
+
+    fn render_macro_use_attr(attr: &MacroUseAttr) -> String {
+        let mut parts = Vec::new();
+        if let Some(direct) = &attr.direct {
+            parts.push(Self::render_macro_use_selector(direct));
+        }
+        for cfg_attr in &attr.cfg_attr_macro_use {
+            parts.push(format!(
+                "cfg_attr({:?}, {})",
+                cfg_attr.predicate,
+                Self::render_macro_use_selector(&cfg_attr.selector)
+            ));
+        }
+        parts.join(", ")
+    }
+
+    fn sorted_target_roots(&self) -> Vec<&TargetRoot> {
+        let mut target_roots = self.item_trees.target_roots().iter().collect::<Vec<_>>();
+        target_roots.sort_by(|left, right| {
+            let left_target = self
+                .package
+                .target(left.target)
+                .expect("parsed target should exist while sorting item-tree target roots");
+            let right_target = self
+                .package
+                .target(right.target)
+                .expect("parsed target should exist while sorting item-tree target roots");
+
+            (
+                left_target.kind.sort_order(),
+                left_target.name.as_str(),
+                left_target.src_path.as_path(),
+            )
+                .cmp(&(
+                    right_target.kind.sort_order(),
+                    right_target.name.as_str(),
+                    right_target.src_path.as_path(),
+                ))
+        });
+        target_roots
+    }
+
+    fn sorted_files(&self) -> Vec<&FileTree> {
+        let mut files = self.item_trees.files().collect::<Vec<_>>();
+        files.sort_by(|left, right| {
+            let left_path = self
+                .package
+                .file_path(left.file)
+                .expect("item-tree file should exist while sorting");
+            let right_path = self
+                .package
+                .file_path(right.file)
+                .expect("item-tree file should exist while sorting");
+            left_path.cmp(right_path)
+        });
+        files
+    }
+
+    fn render_macro_use_selector(selector: &MacroUseSelector) -> String {
+        match &selector.names {
+            Some(names) => {
+                let names = names
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("macro_use({names})")
+            }
+            None => "macro_use".to_string(),
+        }
     }
 }
 
@@ -462,107 +568,4 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 enum SnapshotMode {
     Structure,
     Declarations,
-}
-
-fn render_param(param: &crate::ParamItem) -> String {
-    match (param.kind, &param.ty) {
-        (ParamKind::SelfParam(_), _) => param.pat.clone(),
-        (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
-        (ParamKind::Normal, None) => param.pat.clone(),
-    }
-}
-
-fn visibility_prefix(visibility: &VisibilityLevel) -> String {
-    match visibility {
-        VisibilityLevel::Private => String::new(),
-        _ => format!("{visibility} "),
-    }
-}
-
-fn render_macro_use_attr(attr: &MacroUseAttr) -> String {
-    let mut parts = Vec::new();
-    if let Some(direct) = &attr.direct {
-        parts.push(render_macro_use_selector(direct));
-    }
-    for cfg_attr in &attr.cfg_attr_macro_use {
-        parts.push(format!(
-            "cfg_attr({:?}, {})",
-            cfg_attr.predicate,
-            render_macro_use_selector(&cfg_attr.selector)
-        ));
-    }
-    parts.join(", ")
-}
-
-fn render_macro_use_selector(selector: &MacroUseSelector) -> String {
-    match &selector.names {
-        Some(names) => {
-            let names = names
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("macro_use({names})")
-        }
-        None => "macro_use".to_string(),
-    }
-}
-
-fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-    packages
-}
-
-fn sorted_item_tree_target_roots<'a>(
-    package: &Package,
-    item_trees: &'a ItemTreePackage,
-) -> Vec<&'a TargetRoot> {
-    let mut target_roots = item_trees.target_roots().iter().collect::<Vec<_>>();
-    target_roots.sort_by(|left, right| {
-        let left_target = package
-            .target(left.target)
-            .expect("parsed target should exist while sorting item-tree target roots");
-        let right_target = package
-            .target(right.target)
-            .expect("parsed target should exist while sorting item-tree target roots");
-
-        (
-            left_target.kind.sort_order(),
-            left_target.name.as_str(),
-            left_target.src_path.as_path(),
-        )
-            .cmp(&(
-                right_target.kind.sort_order(),
-                right_target.name.as_str(),
-                right_target.src_path.as_path(),
-            ))
-    });
-    target_roots
-}
-
-fn sorted_item_tree_files<'a>(
-    package: &Package,
-    item_trees: &'a ItemTreePackage,
-) -> Vec<&'a FileTree> {
-    let mut files = item_trees.files().collect::<Vec<_>>();
-    files.sort_by(|left, right| {
-        let left_path = package
-            .file_path(left.file)
-            .expect("item-tree file should exist while sorting");
-        let right_path = package
-            .file_path(right.file)
-            .expect("item-tree file should exist while sorting");
-        left_path.cmp(right_path)
-    });
-    files
-}
-
-fn file_label(package: &Package, file_id: FileId) -> String {
-    package
-        .file_path(file_id)
-        .and_then(|path| path.file_name())
-        .and_then(|name| name.to_str())
-        .unwrap_or("<unknown>")
-        .to_string()
 }

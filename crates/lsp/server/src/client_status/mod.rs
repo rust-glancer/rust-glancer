@@ -31,6 +31,7 @@ use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, gen_lsp_types::ClientCapabilities};
 
 pub(crate) use self::rust_glancer::{ActiveWorkspaceState, ActiveWorkspaceStatus};
+use self::work_done_progress::WorkspaceProgressState;
 
 /// Client presentation features negotiated during LSP initialization.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -348,50 +349,13 @@ impl ClientStatusPublisher {
 struct ClientStatusState {
     workspaces: BTreeMap<PathBuf, WorkspaceLifecycle>,
     deferred_indexing: BTreeMap<PathBuf, DeferredIndexingState>,
-    workspace_progress: work_done_progress::WorkspaceProgressState,
-    last_rust_analyzer_status: Option<rust_analyzer::StatusSnapshot>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum DeferredIndexingState {
-    Idle {
-        generation: u64,
-    },
-    Running {
-        generation: u64,
-        progress: Option<IndexingProgress>,
-    },
-    Failed {
-        generation: u64,
-        message: Arc<str>,
-    },
-}
-
-impl DeferredIndexingState {
-    fn generation(&self) -> u64 {
-        match self {
-            Self::Idle { generation }
-            | Self::Running { generation, .. }
-            | Self::Failed { generation, .. } => *generation,
-        }
-    }
-
-    fn is_failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
-
-    /// Preserve the distinction between no running operation and running without a first report.
-    fn running_progress(&self) -> Option<Option<IndexingProgress>> {
-        match self {
-            Self::Running { progress, .. } => Some(*progress),
-            Self::Idle { .. } | Self::Failed { .. } => None,
-        }
-    }
+    workspace_progress: WorkspaceProgressState,
+    last_rust_analyzer_status: Option<self::rust_analyzer::StatusSnapshot>,
 }
 
 impl ClientStatusState {
     /// Collapse per-workspace state into rust-analyzer's server-wide health vocabulary.
-    fn rust_analyzer_status(&self) -> rust_analyzer::StatusSnapshot {
+    fn rust_analyzer_status(&self) -> self::rust_analyzer::StatusSnapshot {
         let failures = self
             .workspaces
             .iter()
@@ -451,6 +415,43 @@ impl ClientStatusState {
             health,
             quiescent: !foreground_work && !deferred_work,
             message,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum DeferredIndexingState {
+    Idle {
+        generation: u64,
+    },
+    Running {
+        generation: u64,
+        progress: Option<IndexingProgress>,
+    },
+    Failed {
+        generation: u64,
+        message: Arc<str>,
+    },
+}
+
+impl DeferredIndexingState {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Idle { generation }
+            | Self::Running { generation, .. }
+            | Self::Failed { generation, .. } => *generation,
+        }
+    }
+
+    fn is_failed(&self) -> bool {
+        matches!(self, Self::Failed { .. })
+    }
+
+    /// Preserve the distinction between no running operation and running without a first report.
+    fn running_progress(&self) -> Option<Option<IndexingProgress>> {
+        match self {
+            Self::Running { progress, .. } => Some(*progress),
+            Self::Idle { .. } | Self::Failed { .. } => None,
         }
     }
 }

@@ -44,24 +44,6 @@ pub struct SavedBodyBuildInputs {
     worker_limit: Option<NonZeroUsize>,
 }
 
-/// Body analysis results ready to be installed in a [`Project`](crate::Project).
-///
-/// Each result pairs a [`CrateRef`] with its new [`CrateBodies`]. The batch also records the
-/// [`ProjectGenerationId`] of the source and declarations used by the build. Pass it to
-/// [`SplitIndexing::publish`](crate::SplitIndexing::publish), which rejects results from an older
-/// project version and checks for work completed by other requests since the build started.
-#[derive(Debug, MemorySize)]
-pub struct SavedBodyProducts {
-    pub(super) generation: ProjectGenerationId,
-    pub(super) crates: Vec<(CrateRef, CrateBodies)>,
-}
-
-impl SavedBodyProducts {
-    pub fn generation_id(&self) -> ProjectGenerationId {
-        self.generation
-    }
-}
-
 impl SavedBodyBuildInputs {
     pub(crate) fn deferred(state: &ProjectState) -> Self {
         let crates = state.unfinished_crates().collect::<Vec<_>>();
@@ -224,5 +206,23 @@ impl SavedBodyBuildInputs {
         // Names in a completed payload own their strings and need no interner publication.
         self.parse.evict_saved_source_text();
         result.context("construct saved body products")
+    }
+}
+
+/// Body analysis results ready to be installed in a [`Project`](crate::Project).
+///
+/// Each result pairs a [`CrateRef`] with its new [`CrateBodies`]. The batch also records the
+/// [`ProjectGenerationId`] of the source and declarations used by the build. Pass it to
+/// [`SplitIndexing::publish`](crate::SplitIndexing::publish), which rejects results from an older
+/// project version and checks for work completed by other requests since the build started.
+#[derive(Debug, MemorySize)]
+pub struct SavedBodyProducts {
+    pub(super) generation: ProjectGenerationId,
+    pub(super) crates: Vec<(CrateRef, CrateBodies)>,
+}
+
+impl SavedBodyProducts {
+    pub fn generation_id(&self) -> ProjectGenerationId {
+        self.generation
     }
 }

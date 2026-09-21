@@ -42,12 +42,12 @@ pub(super) struct WorkspaceProgressState {
 
 impl WorkspaceProgressState {
     pub(super) async fn begin_foreground(&mut self, lsp_client: &LspClient, root: &Path) {
-        self.begin(lsp_client, root, foreground_indexing_title(root))
+        self.begin(lsp_client, root, Self::foreground_indexing_title(root))
             .await;
     }
 
     pub(super) async fn begin_deferred(&mut self, lsp_client: &LspClient, root: &Path) {
-        self.begin(lsp_client, root, deferred_indexing_title(root))
+        self.begin(lsp_client, root, Self::deferred_indexing_title(root))
             .await;
     }
 
@@ -86,8 +86,37 @@ impl WorkspaceProgressState {
     /// Update one active workspace operation with an editor-facing package count.
     pub(super) async fn report(&self, root: &Path, progress: IndexingProgress) {
         if let Some(operation) = self.progress_by_root.get(root) {
-            operation.report(indexing_progress_message(progress)).await;
+            operation
+                .report(Self::indexing_progress_message(progress))
+                .await;
         }
+    }
+
+    fn foreground_indexing_title(root: &Path) -> String {
+        format!("Indexing {}", Self::workspace_name(root))
+    }
+
+    fn deferred_indexing_title(root: &Path) -> String {
+        format!("{} ready · background", Self::workspace_name(root))
+    }
+
+    fn indexing_progress_message(progress: IndexingProgress) -> String {
+        let stage = match progress.stage {
+            IndexingStage::LoweringBodies => "Lowering",
+            IndexingStage::ResolvingBodies => "Resolving",
+        };
+        format!(
+            "{stage} · {}/{}",
+            progress.completed_packages, progress.total_packages
+        )
+    }
+
+    fn workspace_name(root: &Path) -> String {
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| root.display().to_string())
     }
 }
 
@@ -134,31 +163,4 @@ pub(crate) async fn end_engine_progress(
                 .expect("work-done progress should serialize"),
         })
         .await;
-}
-
-fn workspace_name(root: &Path) -> String {
-    root.file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| root.display().to_string())
-}
-
-fn foreground_indexing_title(root: &Path) -> String {
-    format!("Indexing {}", workspace_name(root))
-}
-
-fn deferred_indexing_title(root: &Path) -> String {
-    format!("{} ready · background", workspace_name(root))
-}
-
-fn indexing_progress_message(progress: IndexingProgress) -> String {
-    let stage = match progress.stage {
-        IndexingStage::LoweringBodies => "Lowering",
-        IndexingStage::ResolvingBodies => "Resolving",
-    };
-    format!(
-        "{stage} · {}/{}",
-        progress.completed_packages, progress.total_packages
-    )
 }

@@ -12,6 +12,11 @@ mod report;
 mod start_engine;
 mod start_server;
 
+use self::{
+    analyze::{CliIndexingPreference, CliPackageResidencyPolicy},
+    compare_lsp::CliFixture,
+};
+
 /// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
 #[command(name = "rust-glancer")]
@@ -44,14 +49,14 @@ enum Command {
         load: bool,
         /// Which packages should remain resident after analysis is built.
         #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
-        package_residency: analyze::CliPackageResidencyPolicy,
+        package_residency: CliPackageResidencyPolicy,
         /// Which indexing performance trade-off rust-glancer should prioritize.
         #[clap(
             long = "indexing-preference",
             value_enum,
-            default_value_t = analyze::CliIndexingPreference::default()
+            default_value_t = CliIndexingPreference::default()
         )]
-        indexing_preference: analyze::CliIndexingPreference,
+        indexing_preference: CliIndexingPreference,
         /// Packages processed together by lower-peak-memory batch indexing.
         #[clap(long, default_value_t = PackageBatchSize::default())]
         package_batch_size: PackageBatchSize,
@@ -60,17 +65,17 @@ enum Command {
         target: Option<String>,
         /// Render the analysis report for humans or CI tooling.
         #[clap(long, value_enum, default_value = "text")]
-        format: analyze::OutputFormat,
+        format: self::analyze::OutputFormat,
     },
     /// Compare rust-glancer LSP query behavior against another LSP server.
     CompareLsp {
-        fixture: compare_lsp::CliFixture,
+        fixture: CliFixture,
         /// Override the fixture root. Defaults to the selected fixture's configured root.
         #[clap(long)]
         path: Option<PathBuf>,
         /// Render the comparison report for humans or CI tooling.
         #[clap(long, value_enum, default_value = "text")]
-        format: compare_lsp::OutputFormat,
+        format: self::compare_lsp::OutputFormat,
     },
     /// Start the language server over stdio.
     Lsp,

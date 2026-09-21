@@ -8,7 +8,7 @@
 
 mod edit;
 
-pub(crate) use edit::{ImportEditPlan, ImportEditPlanner};
+pub(crate) use self::edit::{ImportEditPlan, ImportEditPlanner};
 
 use anyhow::Context as _;
 use rg_ir_model::{BodyRef, CrateRef, FileId, ModuleRef};

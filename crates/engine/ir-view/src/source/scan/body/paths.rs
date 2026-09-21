@@ -133,26 +133,6 @@ pub(super) struct BodyPathSourceScanner<'a> {
     candidates: &'a mut Vec<BodySourceCandidate>,
 }
 
-/// Selects which source fact owns the final segment after qualifiers have been emitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BodyPathFinalSegment {
-    /// A lowered expression owns the final name.
-    ///
-    /// For `model::User { id }`, the record expression represents `User`; this scanner emits only
-    /// the `model` qualifier.
-    Expression,
-    /// The final name belongs to a type path.
-    ///
-    /// For `let model::User { id } = user`, this scanner emits both `model` and `User` because a
-    /// record pattern has no expression id.
-    TypePath,
-    /// The final name belongs to a value path.
-    ///
-    /// For `let action = Action::Start`, `Action` is a type-path qualifier and `Start` is the value
-    /// reference selected by this case.
-    ValuePath,
-}
-
 impl<'a> BodyPathSourceScanner<'a> {
     pub(super) fn at(
         body_ref: BodyRef,
@@ -362,4 +342,24 @@ impl<'a> BodyPathSourceScanner<'a> {
     fn offset_matches(&self, span: Span) -> bool {
         self.offset.is_none_or(|offset| span.touches(offset))
     }
+}
+
+/// Selects which source fact owns the final segment after qualifiers have been emitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyPathFinalSegment {
+    /// A lowered expression owns the final name.
+    ///
+    /// For `model::User { id }`, the record expression represents `User`; this scanner emits only
+    /// the `model` qualifier.
+    Expression,
+    /// The final name belongs to a type path.
+    ///
+    /// For `let model::User { id } = user`, this scanner emits both `model` and `User` because a
+    /// record pattern has no expression id.
+    TypePath,
+    /// The final name belongs to a value path.
+    ///
+    /// For `let action = Action::Start`, `Action` is a type-path qualifier and `Start` is the value
+    /// reference selected by this case.
+    ValuePath,
 }

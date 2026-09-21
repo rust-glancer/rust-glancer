@@ -48,15 +48,6 @@ pub(super) struct DeferredIndexingFinish {
     priority_paths: BTreeSet<PathBuf>,
 }
 
-/// Terminal lifecycle event produced while reconciling one worker result.
-///
-/// The generation belongs to the latest announced lifecycle. It can differ from both the worker
-/// that returned and the saved project that made that worker stale.
-pub(super) struct DeferredIndexingTerminal {
-    pub(super) generation: u64,
-    pub(super) outcome: DeferredIndexingOutcome,
-}
-
 impl DeferredIndexingFinish {
     pub(super) fn new(sender: Sender<QueuedEngineCommand>) -> Self {
         Self {
@@ -433,6 +424,15 @@ impl DeferredIndexingFinish {
     }
 }
 
+/// Terminal lifecycle event produced while reconciling one worker result.
+///
+/// The generation belongs to the latest announced lifecycle. It can differ from both the worker
+/// that returned and the saved project that made that worker stale.
+pub(super) struct DeferredIndexingTerminal {
+    pub(super) generation: u64,
+    pub(super) outcome: DeferredIndexingOutcome,
+}
+
 /// Reduces parallel package completions to a small ordered stream on the engine lane.
 ///
 /// Reporting stays synchronous and non-blocking from the Body IR workers' point of view: an
@@ -443,12 +443,6 @@ struct DeferredIndexingProgressReporter {
     sender: Sender<QueuedEngineCommand>,
     generation: u64,
     publication: Mutex<ProgressPublication>,
-}
-
-#[derive(Debug, Default)]
-struct ProgressPublication {
-    last_progress: Option<SplitIndexingProgress>,
-    last_published_at: Option<Instant>,
 }
 
 impl DeferredIndexingProgressReporter {
@@ -506,4 +500,10 @@ impl DeferredIndexingProgressReporter {
             );
         }
     }
+}
+
+#[derive(Debug, Default)]
+struct ProgressPublication {
+    last_progress: Option<SplitIndexingProgress>,
+    last_published_at: Option<Instant>,
 }

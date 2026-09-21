@@ -12,17 +12,17 @@ mod rename;
 mod symbol;
 mod symbols;
 
-pub use code_action::{CodeAction, CodeActionEdit, CodeActionKind};
-pub use completion::{
+pub use self::code_action::{CodeAction, CodeActionEdit, CodeActionKind};
+pub use self::completion::{
     CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
     CompletionItem, CompletionKind, CompletionTarget, KeywordCompletion, SyntheticCompletionTarget,
 };
-pub use folding::{Fold, FoldKind};
-pub use highlight::{Highlight, HighlightKind};
-pub use hover::{DocumentationLink, HoverBlock, HoverInfo};
-pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
-pub use navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
-pub use references::ReferenceLocation;
-pub use rename::{RenameEdit, RenameResult, RenameTarget};
-pub use symbol::SymbolAt;
-pub use symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol};
+pub use self::folding::{Fold, FoldKind};
+pub use self::highlight::{Highlight, HighlightKind};
+pub use self::hover::{DocumentationLink, HoverBlock, HoverInfo};
+pub use self::inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
+pub use self::navigation::{NavigationTarget, NavigationTargetKind, NavigationTargetSource};
+pub use self::references::ReferenceLocation;
+pub use self::rename::{RenameEdit, RenameResult, RenameTarget};
+pub use self::symbol::SymbolAt;
+pub use self::symbols::{DocumentOutline, DocumentSymbol, WorkspaceSymbol};

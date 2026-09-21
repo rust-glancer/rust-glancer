@@ -109,12 +109,18 @@ struct MemoryDelta {
 impl MemoryDelta {
     fn between(before: MemoryStats, after: MemoryStats) -> Self {
         Self {
-            allocated: byte_delta(after.allocated, before.allocated),
-            active: byte_delta(after.active, before.active),
-            resident: byte_delta(after.resident, before.resident),
-            mapped: byte_delta(after.mapped, before.mapped),
-            retained: byte_delta(after.retained, before.retained),
+            allocated: Self::byte_delta(after.allocated, before.allocated),
+            active: Self::byte_delta(after.active, before.active),
+            resident: Self::byte_delta(after.resident, before.resident),
+            mapped: Self::byte_delta(after.mapped, before.mapped),
+            retained: Self::byte_delta(after.retained, before.retained),
         }
+    }
+
+    fn byte_delta(after: Option<usize>, before: Option<usize>) -> Option<i64> {
+        let after = i64::try_from(after?).ok()?;
+        let before = i64::try_from(before?).ok()?;
+        Some(after - before)
     }
 }
 
@@ -183,12 +189,6 @@ fn format_bytes_compact(bytes: usize) -> String {
 #[allow(dead_code)]
 fn format_optional_bytes(bytes: Option<usize>) -> String {
     bytes.map(format_bytes).unwrap_or_else(|| "-".to_string())
-}
-
-fn byte_delta(after: Option<usize>, before: Option<usize>) -> Option<i64> {
-    let after = i64::try_from(after?).ok()?;
-    let before = i64::try_from(before?).ok()?;
-    Some(after - before)
 }
 
 // Used by `derive_more::Debug` field formatting above; dead-code analysis does not look inside

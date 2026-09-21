@@ -362,7 +362,7 @@ impl HostFixture {
 
         let marker = self.fixture.markers().position(marker);
         let path = self.fixture.path(&marker.path);
-        let mut names = nominal_type_names_at(project, package_name, &path, marker.offset);
+        let mut names = Self::nominal_type_names_at(project, package_name, &path, marker.offset);
         names.sort();
 
         if names.is_empty() {
@@ -447,6 +447,73 @@ impl HostFixture {
             .expect("project snapshot path should stay inside its fixture root");
         fixture_path_for_snapshot(relative)
     }
+
+    fn nominal_type_names_at(
+        host: &Project,
+        package_name: &str,
+        path: &Path,
+        offset: u32,
+    ) -> Vec<String> {
+        let snapshot = host.snapshot();
+        let package_slot =
+            ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
+        let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
+        let target = snapshot
+            .crates_for_file(package_slot, file_id)
+            .expect("fixture target lookup should start")
+            .into_iter()
+            .next()
+            .expect("fixture file should be owned by a target");
+        let analysis = snapshot
+            .analysis_for_crates(&[target], rg_std::CancellationToken::new())
+            .expect("fixture analysis should materialize");
+        let Some(ty) = analysis
+            .type_at(target, file_id, offset)
+            .expect("fixture type query should resolve")
+        else {
+            return Vec::new();
+        };
+
+        let semantic_ir =
+            host.state
+                .semantic_ir
+                .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
+                    "resident project fixture",
+                ));
+        let def_map = host
+            .state
+            .def_map
+            .read_txn(rg_def_map::DefMapLoader::resident_only(
+                "resident project fixture",
+            ));
+        let mut names = Vec::new();
+        for ty in ty.nominal_type_defs() {
+            let Some(crate_ref) = ty.origin.as_crate_ref() else {
+                continue;
+            };
+            let Some(local_def) = semantic_ir
+                .items(crate_ref)
+                .expect("fixture semantic IR should load while rendering nominal types")
+                .expect("Item store must exist")
+                .semantic_item_view(ty.into())
+                .and_then(|view| view.local_def())
+            else {
+                continue;
+            };
+            let Some(crate_ref) = local_def.origin.as_crate_ref() else {
+                continue;
+            };
+            let Some(local_def) = def_map
+                .def_map(crate_ref)
+                .expect("fixture def-map should load while rendering nominal types")
+                .and_then(|def_map| def_map.local_def(local_def.local_def))
+            else {
+                continue;
+            };
+            names.push(local_def.name.to_string());
+        }
+        names
+    }
 }
 
 pub(super) enum HostObservation<'a> {
@@ -490,72 +557,6 @@ impl<'a> HostObservation<'a> {
     pub(super) fn resident_stats(label: &'a str) -> Self {
         Self::ResidentStats { label }
     }
-}
-
-fn nominal_type_names_at(
-    host: &Project,
-    package_name: &str,
-    path: &Path,
-    offset: u32,
-) -> Vec<String> {
-    let snapshot = host.snapshot();
-    let package_slot = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
-    let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
-    let target = snapshot
-        .crates_for_file(package_slot, file_id)
-        .expect("fixture target lookup should start")
-        .into_iter()
-        .next()
-        .expect("fixture file should be owned by a target");
-    let analysis = snapshot
-        .analysis_for_crates(&[target], rg_std::CancellationToken::new())
-        .expect("fixture analysis should materialize");
-    let Some(ty) = analysis
-        .type_at(target, file_id, offset)
-        .expect("fixture type query should resolve")
-    else {
-        return Vec::new();
-    };
-
-    let semantic_ir =
-        host.state
-            .semantic_ir
-            .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
-                "resident project fixture",
-            ));
-    let def_map = host
-        .state
-        .def_map
-        .read_txn(rg_def_map::DefMapLoader::resident_only(
-            "resident project fixture",
-        ));
-    let mut names = Vec::new();
-    for ty in ty.nominal_type_defs() {
-        let Some(crate_ref) = ty.origin.as_crate_ref() else {
-            continue;
-        };
-        let Some(local_def) = semantic_ir
-            .items(crate_ref)
-            .expect("fixture semantic IR should load while rendering nominal types")
-            .expect("Item store must exist")
-            .semantic_item_view(ty.into())
-            .and_then(|view| view.local_def())
-        else {
-            continue;
-        };
-        let Some(crate_ref) = local_def.origin.as_crate_ref() else {
-            continue;
-        };
-        let Some(local_def) = def_map
-            .def_map(crate_ref)
-            .expect("fixture def-map should load while rendering nominal types")
-            .and_then(|def_map| def_map.local_def(local_def.local_def))
-        else {
-            continue;
-        };
-        names.push(local_def.name.to_string());
-    }
-    names
 }
 
 fn push_document_symbol_names(symbol: &rg_analysis::DocumentSymbol, names: &mut Vec<String>) {

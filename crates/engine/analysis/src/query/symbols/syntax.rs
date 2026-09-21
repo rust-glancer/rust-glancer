@@ -118,7 +118,7 @@ impl SyntaxDocumentSymbolCollector {
             .flat_map(|list| list.assoc_items())
             .filter_map(|item| self.associated_item(item))
             .collect();
-        let span = syntax_span(item.syntax());
+        let span = Self::syntax_span(item.syntax());
         Some(DocumentSymbol {
             name,
             kind: SymbolKind::Impl,
@@ -146,7 +146,7 @@ impl SyntaxDocumentSymbolCollector {
                 .fields()
                 .enumerate()
                 .map(|(index, field)| {
-                    let span = syntax_span(field.syntax());
+                    let span = Self::syntax_span(field.syntax());
                     DocumentSymbol {
                         name: format!("#{index}"),
                         kind: SymbolKind::Field,
@@ -192,15 +192,15 @@ impl SyntaxDocumentSymbolCollector {
         Some(DocumentSymbol {
             name: name.text().to_string(),
             kind,
-            span: syntax_span(node.syntax()),
-            selection_span: syntax_span(name.syntax()),
+            span: Self::syntax_span(node.syntax()),
+            selection_span: Self::syntax_span(name.syntax()),
             children,
         })
     }
-}
 
-fn syntax_span(node: &SyntaxNode) -> Span {
-    Span::from_text_range(node.text_range())
+    fn syntax_span(node: &SyntaxNode) -> Span {
+        Span::from_text_range(node.text_range())
+    }
 }
 
 #[cfg(test)]

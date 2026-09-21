@@ -14,7 +14,7 @@ mod scan;
 #[cfg(test)]
 mod tests;
 
-pub use completion::{
+pub use self::completion::{
     IndexedAssociatedPathQualifier, IndexedAssociatedTypeBindingScope,
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleFileBase,
     IndexedModuleSourceSite, IndexedPatternCompletionKind, IndexedQualifiedPathContext,
@@ -23,11 +23,11 @@ pub use completion::{
     IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, IndexedUnqualifiedNameSite,
     SourceCompletionView,
 };
-pub use documentation::{
+pub use self::documentation::{
     DocumentationDeclarationIndex, DocumentationPlacement, DocumentationSource,
     DocumentationSourceView, ModuleDocumentationSource,
 };
-pub use occurrence::{
+pub use self::occurrence::{
     IndexedSignatureTypeScope, IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole,
     IndexedSourceSurface, IndexedTypePath, IndexedTypePathScope, SourceOccurrenceView,
 };

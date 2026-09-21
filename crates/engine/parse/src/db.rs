@@ -21,28 +21,6 @@ pub struct ParseDb {
     pub(crate) packages: Vec<Package>,
 }
 
-/// One package-local file touched by a saved file update.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
-pub struct PackageFileRef {
-    pub package: usize,
-    pub file: FileId,
-}
-
-/// Result of refreshing one saved path against a parsed project generation.
-///
-/// A watcher notification does not necessarily mean that source bytes changed: rescan recovery
-/// can report a path already applied by an earlier batch. Unknown paths are kept separate because
-/// they may be newly created Rust modules that package-level discovery still needs to find.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SavedFileRefresh {
-    /// The saved bytes have the same strong source identity as the existing generation.
-    Unchanged,
-    /// The path has new bytes and was reparsed in every package that already owns it.
-    Reparsed(Vec<PackageFileRef>),
-    /// The path is not present in any package file table and needs module rediscovery.
-    Unknown,
-}
-
 impl ParseDb {
     /// Builds parsed packages for one normalized workspace metadata graph.
     pub fn build(workspace: &rg_workspace::WorkspaceMetadata) -> anyhow::Result<Self> {
@@ -400,4 +378,26 @@ impl fmt::Display for ParseDb {
 
         Ok(())
     }
+}
+
+/// One package-local file touched by a saved file update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
+pub struct PackageFileRef {
+    pub package: usize,
+    pub file: FileId,
+}
+
+/// Result of refreshing one saved path against a parsed project generation.
+///
+/// A watcher notification does not necessarily mean that source bytes changed: rescan recovery
+/// can report a path already applied by an earlier batch. Unknown paths are kept separate because
+/// they may be newly created Rust modules that package-level discovery still needs to find.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SavedFileRefresh {
+    /// The saved bytes have the same strong source identity as the existing generation.
+    Unchanged,
+    /// The path has new bytes and was reparsed in every package that already owns it.
+    Reparsed(Vec<PackageFileRef>),
+    /// The path is not present in any package file table and needs module rediscovery.
+    Unknown,
 }

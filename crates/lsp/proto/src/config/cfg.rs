@@ -49,7 +49,7 @@ impl AnalysisCfgConfig {
                 "rust-glancer cfg.atoms[{idx}] must not be empty",
             );
             anyhow::ensure!(
-                is_cfg_atom_name(atom),
+                Self::is_cfg_atom_name(atom),
                 "rust-glancer cfg.atoms[{idx}] must be a cfg atom name such as `tokio_unstable`; key-value cfgs are not supported here",
             );
             if !parsed.iter().any(|known| known == atom) {
@@ -59,15 +59,15 @@ impl AnalysisCfgConfig {
 
         Ok(parsed)
     }
-}
 
-fn is_cfg_atom_name(atom: &str) -> bool {
-    let mut chars = atom.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first == '_' || first.is_ascii_alphabetic())
-        && chars.all(|char| char == '_' || char.is_ascii_alphanumeric())
+    fn is_cfg_atom_name(atom: &str) -> bool {
+        let mut chars = atom.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first.is_ascii_alphabetic())
+            && chars.all(|char| char == '_' || char.is_ascii_alphanumeric())
+    }
 }
 
 impl Default for AnalysisCfgConfig {

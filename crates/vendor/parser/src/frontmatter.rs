@@ -92,7 +92,7 @@ impl<'s> ScriptSource<'s> {
         };
         let info = input.next_slice(info_nl.start);
         let info = info.strip_suffix('\r').unwrap_or(info); // already excludes `\n`
-        let info = info.trim_matches(is_horizontal_whitespace);
+        let info = info.trim_matches(Self::is_horizontal_whitespace);
         if !info.is_empty() {
             let info_start = info.offset_from(&raw);
             let info_end = info_start + info.len();
@@ -153,8 +153,9 @@ impl<'s> ScriptSource<'s> {
             )
             .push_visible_span(open_start..open_end));
         } else {
-            let after_closing_fence = strip_newline(after_closing_fence);
-            let after_closing_fence = after_closing_fence.trim_matches(is_horizontal_whitespace);
+            let after_closing_fence = Self::strip_newline(after_closing_fence);
+            let after_closing_fence =
+                after_closing_fence.trim_matches(Self::is_horizontal_whitespace);
             if !after_closing_fence.is_empty() {
                 // extra characters beyond the original fence pattern
                 let after_start = after_closing_fence.offset_from(&raw);
@@ -230,6 +231,27 @@ impl<'s> ScriptSource<'s> {
     pub fn content_span(&self) -> Span {
         self.content.clone()
     }
+
+    /// True if `c` is considered horizontal whitespace according to Rust language definition.
+    fn is_horizontal_whitespace(c: char) -> bool {
+        // This is Pattern_White_Space.
+        //
+        // Note that this set is stable (ie, it doesn't change with different
+        // Unicode versions), so it's ok to just hard-code the values.
+
+        matches!(
+            c,
+            // Horizontal space characters
+            '\u{0009}'   // tab (\t)
+        | '\u{0020}' // space
+        )
+    }
+
+    fn strip_newline(text: &str) -> &str {
+        text.strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix('\n'))
+            .unwrap_or(text)
+    }
 }
 
 /// Returns the index after the shebang line, if present
@@ -293,27 +315,6 @@ fn is_whitespace(c: char) -> bool {
         | '\u{0009}'   // tab (\t)
         | '\u{0020}' // space
     )
-}
-
-/// True if `c` is considered horizontal whitespace according to Rust language definition.
-fn is_horizontal_whitespace(c: char) -> bool {
-    // This is Pattern_White_Space.
-    //
-    // Note that this set is stable (ie, it doesn't change with different
-    // Unicode versions), so it's ok to just hard-code the values.
-
-    matches!(
-        c,
-        // Horizontal space characters
-        '\u{0009}'   // tab (\t)
-        | '\u{0020}' // space
-    )
-}
-
-fn strip_newline(text: &str) -> &str {
-    text.strip_suffix("\r\n")
-        .or_else(|| text.strip_suffix('\n'))
-        .unwrap_or(text)
 }
 
 #[derive(Debug)]

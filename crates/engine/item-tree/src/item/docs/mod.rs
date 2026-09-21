@@ -1,6 +1,6 @@
 mod source;
 
-pub use source::{DocumentationPlacement, DocumentationSource};
+pub use self::source::{DocumentationPlacement, DocumentationSource};
 
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};

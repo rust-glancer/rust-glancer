@@ -34,72 +34,6 @@ pub struct BodyPath {
     segments: Vec<BodyPathSegment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct BodyPathSegment {
-    kind: BodyPathSegmentKind,
-    span: Span,
-    args: Option<BodyPathSegmentArgs>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub enum BodyPathSegmentKind {
-    /// `name` in `module::name`.
-    Name(Name),
-    /// `$crate` in macro-generated syntax, resolved to the macro definition crate.
-    DollarCrate(CrateRef),
-    /// `Self` in type position.
-    SelfType,
-    /// `self` in value/module path position.
-    SelfKw,
-    /// `super`.
-    SuperKw,
-    /// `crate`.
-    CrateKw,
-    /// `<T>` or `<T as Trait>`.
-    ///
-    /// This is real path syntax, but it cannot be represented as a plain name-like DefMap segment
-    /// without losing the anchor semantics.
-    TypeAnchor {
-        ty: Option<TypeRef>,
-        trait_ref: Option<TypeRef>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub enum BodyPathSegmentArgs {
-    /// `<T>` or `::<T>`.
-    Angle {
-        colon_colon: bool,
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
-        args: Vec<GenericArg>,
-    },
-    /// `(A, B) -> C`.
-    Parenthesized(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BodyAssociatedPathPrefix {
-    /// `Type` in `Type::item`.
-    Type(TypeRef),
-    /// `<Self as Trait>` in `<Self as Trait>::item`.
-    QualifiedTrait {
-        self_ty: TypeRef,
-        trait_ref: TypeRef,
-    },
-}
-
-impl BodyAssociatedPathPrefix {
-    fn from_type_anchor(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> Self {
-        match trait_ref {
-            Some(trait_ref) => Self::QualifiedTrait {
-                self_ty: self_ty.clone(),
-                trait_ref: trait_ref.clone(),
-            },
-            None => Self::Type(self_ty.clone()),
-        }
-    }
-}
-
 impl BodyPath {
     pub fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
         Self {
@@ -304,6 +238,30 @@ impl BodyPath {
     }
 }
 
+impl fmt::Display for BodyPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.absolute {
+            write!(f, "::")?;
+        }
+
+        for (idx, segment) in self.segments.iter().enumerate() {
+            if idx > 0 {
+                write!(f, "::")?;
+            }
+            write!(f, "{segment}")?;
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct BodyPathSegment {
+    kind: BodyPathSegmentKind,
+    span: Span,
+    args: Option<BodyPathSegmentArgs>,
+}
+
 impl BodyPathSegment {
     pub fn new(kind: BodyPathSegmentKind, span: Span, args: Option<BodyPathSegmentArgs>) -> Self {
         Self { kind, span, args }
@@ -346,32 +304,6 @@ impl BodyPathSegment {
     }
 }
 
-impl BodyPathSegmentArgs {
-    pub fn angle_args(&self) -> Option<&[GenericArg]> {
-        match self {
-            Self::Angle { args, .. } => Some(args),
-            Self::Parenthesized(_) => None,
-        }
-    }
-}
-
-impl fmt::Display for BodyPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.absolute {
-            write!(f, "::")?;
-        }
-
-        for (idx, segment) in self.segments.iter().enumerate() {
-            if idx > 0 {
-                write!(f, "::")?;
-            }
-            write!(f, "{segment}")?;
-        }
-
-        Ok(())
-    }
-}
-
 impl fmt::Display for BodyPathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
@@ -402,6 +334,51 @@ impl fmt::Display for BodyPathSegment {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum BodyPathSegmentKind {
+    /// `name` in `module::name`.
+    Name(Name),
+    /// `$crate` in macro-generated syntax, resolved to the macro definition crate.
+    DollarCrate(CrateRef),
+    /// `Self` in type position.
+    SelfType,
+    /// `self` in value/module path position.
+    SelfKw,
+    /// `super`.
+    SuperKw,
+    /// `crate`.
+    CrateKw,
+    /// `<T>` or `<T as Trait>`.
+    ///
+    /// This is real path syntax, but it cannot be represented as a plain name-like DefMap segment
+    /// without losing the anchor semantics.
+    TypeAnchor {
+        ty: Option<TypeRef>,
+        trait_ref: Option<TypeRef>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum BodyPathSegmentArgs {
+    /// `<T>` or `::<T>`.
+    Angle {
+        colon_colon: bool,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
+        args: Vec<GenericArg>,
+    },
+    /// `(A, B) -> C`.
+    Parenthesized(String),
+}
+
+impl BodyPathSegmentArgs {
+    pub fn angle_args(&self) -> Option<&[GenericArg]> {
+        match self {
+            Self::Angle { args, .. } => Some(args),
+            Self::Parenthesized(_) => None,
+        }
+    }
+}
+
 impl fmt::Display for BodyPathSegmentArgs {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -419,6 +396,29 @@ impl fmt::Display for BodyPathSegmentArgs {
                 write!(f, ">")
             }
             Self::Parenthesized(text) => write!(f, "{text}"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyAssociatedPathPrefix {
+    /// `Type` in `Type::item`.
+    Type(TypeRef),
+    /// `<Self as Trait>` in `<Self as Trait>::item`.
+    QualifiedTrait {
+        self_ty: TypeRef,
+        trait_ref: TypeRef,
+    },
+}
+
+impl BodyAssociatedPathPrefix {
+    fn from_type_anchor(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> Self {
+        match trait_ref {
+            Some(trait_ref) => Self::QualifiedTrait {
+                self_ty: self_ty.clone(),
+                trait_ref: trait_ref.clone(),
+            },
+            None => Self::Type(self_ty.clone()),
         }
     }
 }

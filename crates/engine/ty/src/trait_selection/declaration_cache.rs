@@ -52,61 +52,6 @@ pub struct TraitSelectionDeclarationCache {
     shared: Arc<TraitSelectionDeclarations>,
 }
 
-/// Shared storage released after the last build or query owner drops its cache handle.
-#[derive(Default)]
-struct TraitSelectionDeclarations {
-    impl_headers: DeclarationMap<ImplRef, ImplHeader>,
-    trait_headers: DeclarationMap<TraitDefRef, TraitHeader>,
-    type_alias_tys: DeclarationMap<TypeAliasRef, Ty>,
-    function_signatures: DeclarationMap<FunctionRef, CallableSignature>,
-    opaque_bounds: DeclarationMap<GenericDefRef, OpaqueBounds>,
-}
-
-impl Drop for TraitSelectionDeclarations {
-    fn drop(&mut self) {
-        // Recording every lookup through the shared profiler would make profiling itself contend
-        // on hot declarations. Fold relaxed atomic counters into the profile once the snapshot
-        // cache dies.
-        self.impl_headers
-            .report("impl_header.hit", "impl_header.miss");
-        self.trait_headers
-            .report("trait_header.hit", "trait_header.miss");
-        self.type_alias_tys
-            .report("type_alias_ty.hit", "type_alias_ty.miss");
-        self.function_signatures
-            .report("function_signature.hit", "function_signature.miss");
-        self.opaque_bounds
-            .report("opaque_bounds.hit", "opaque_bounds.miss");
-    }
-}
-
-/// Concurrent declaration table with a separate initialization slot for each identity.
-///
-/// The map lock protects only identity-to-slot lookup. Declaration lowering happens after that
-/// lock is released, so unrelated missing declarations can be loaded in parallel.
-struct DeclarationMap<K, V> {
-    entries: RwLock<HashMap<K, Arc<DeclarationSlot<V>>>>,
-    hits: AtomicU64,
-    misses: AtomicU64,
-}
-
-impl<K, V> Default for DeclarationMap<K, V> {
-    fn default() -> Self {
-        Self {
-            entries: RwLock::new(HashMap::new()),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
-        }
-    }
-}
-
-/// Whether this request published a declaration result or reused an initialized slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DeclarationCacheAccess {
-    Hit,
-    Miss,
-}
-
 impl TraitSelectionDeclarationCache {
     /// Start an empty declaration cache for one semantic snapshot.
     ///
@@ -165,6 +110,54 @@ impl TraitSelectionDeclarationCache {
             .opaque_bounds
             .get_or_try_init(owner, || load().map(Some))?;
         Ok(bounds.expect("opaque-bounds cache loader always stores a value"))
+    }
+}
+
+/// Shared storage released after the last build or query owner drops its cache handle.
+#[derive(Default)]
+struct TraitSelectionDeclarations {
+    impl_headers: DeclarationMap<ImplRef, ImplHeader>,
+    trait_headers: DeclarationMap<TraitDefRef, TraitHeader>,
+    type_alias_tys: DeclarationMap<TypeAliasRef, Ty>,
+    function_signatures: DeclarationMap<FunctionRef, CallableSignature>,
+    opaque_bounds: DeclarationMap<GenericDefRef, OpaqueBounds>,
+}
+
+impl Drop for TraitSelectionDeclarations {
+    fn drop(&mut self) {
+        // Recording every lookup through the shared profiler would make profiling itself contend
+        // on hot declarations. Fold relaxed atomic counters into the profile once the snapshot
+        // cache dies.
+        self.impl_headers
+            .report("impl_header.hit", "impl_header.miss");
+        self.trait_headers
+            .report("trait_header.hit", "trait_header.miss");
+        self.type_alias_tys
+            .report("type_alias_ty.hit", "type_alias_ty.miss");
+        self.function_signatures
+            .report("function_signature.hit", "function_signature.miss");
+        self.opaque_bounds
+            .report("opaque_bounds.hit", "opaque_bounds.miss");
+    }
+}
+
+/// Concurrent declaration table with a separate initialization slot for each identity.
+///
+/// The map lock protects only identity-to-slot lookup. Declaration lowering happens after that
+/// lock is released, so unrelated missing declarations can be loaded in parallel.
+struct DeclarationMap<K, V> {
+    entries: RwLock<HashMap<K, Arc<DeclarationSlot<V>>>>,
+    hits: AtomicU64,
+    misses: AtomicU64,
+}
+
+impl<K, V> Default for DeclarationMap<K, V> {
+    fn default() -> Self {
+        Self {
+            entries: RwLock::new(HashMap::new()),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+        }
     }
 }
 
@@ -242,6 +235,13 @@ where
             crate::profile::metric::DECLARATION_CACHE_ACCESSES.add(miss_key, misses);
         }
     }
+}
+
+/// Whether this request published a declaration result or reused an initialized slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeclarationCacheAccess {
+    Hit,
+    Miss,
 }
 
 #[cfg(test)]

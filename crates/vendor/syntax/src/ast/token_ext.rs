@@ -68,28 +68,6 @@ pub struct CommentKind {
     pub doc: Option<CommentPlacement>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum CommentShape {
-    Line,
-    Block,
-}
-
-impl CommentShape {
-    pub fn is_line(self) -> bool {
-        self == CommentShape::Line
-    }
-
-    pub fn is_block(self) -> bool {
-        self == CommentShape::Block
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum CommentPlacement {
-    Inner,
-    Outer,
-}
-
 impl CommentKind {
     const BY_PREFIX: [(&'static str, CommentKind); 9] = [
         (
@@ -173,6 +151,28 @@ impl CommentKind {
             .unwrap();
         prefix
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CommentShape {
+    Line,
+    Block,
+}
+
+impl CommentShape {
+    pub fn is_line(self) -> bool {
+        self == CommentShape::Line
+    }
+
+    pub fn is_block(self) -> bool {
+        self == CommentShape::Block
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum CommentPlacement {
+    Inner,
+    Outer,
 }
 
 impl ast::Whitespace {

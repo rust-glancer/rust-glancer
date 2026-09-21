@@ -170,17 +170,33 @@ impl<T, OffloadedState> PackageStore<T, OffloadedState> {
     }
 }
 
+impl<T, OffloadedState> Shrink for PackageStore<T, OffloadedState>
+where
+    T: Shrink,
+    OffloadedState: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for entry in &mut self.packages {
+            Shrink::shrink_to_fit(entry);
+        }
+    }
+}
+
+impl<T, OffloadedState> MemorySize for PackageStore<T, OffloadedState>
+where
+    T: MemorySize,
+    OffloadedState: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.packages.record_memory_children(recorder);
+    }
+}
+
 /// Retained storage state for one package slot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageEntry<T, OffloadedState = ()> {
     state: PackageEntryState<T, OffloadedState>,
-}
-
-/// Internal representation for one package-store entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PackageEntryState<T, OffloadedState> {
-    Resident(Arc<T>),
-    Offloaded(OffloadedState),
 }
 
 impl<T> PackageEntry<T> {
@@ -253,19 +269,6 @@ impl<T, OffloadedState> PackageEntry<T, OffloadedState> {
     }
 }
 
-impl<T, OffloadedState> Shrink for PackageStore<T, OffloadedState>
-where
-    T: Shrink,
-    OffloadedState: Shrink,
-{
-    fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for entry in &mut self.packages {
-            Shrink::shrink_to_fit(entry);
-        }
-    }
-}
-
 impl<T, OffloadedState> Shrink for PackageEntry<T, OffloadedState>
 where
     T: Shrink,
@@ -286,16 +289,6 @@ where
     }
 }
 
-impl<T, OffloadedState> MemorySize for PackageStore<T, OffloadedState>
-where
-    T: MemorySize,
-    OffloadedState: MemorySize,
-{
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        self.packages.record_memory_children(recorder);
-    }
-}
-
 impl<T, OffloadedState> MemorySize for PackageEntry<T, OffloadedState>
 where
     T: MemorySize,
@@ -307,6 +300,13 @@ where
             PackageEntryState::Offloaded(state) => state.record_memory_children(recorder),
         }
     }
+}
+
+/// Internal representation for one package-store entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PackageEntryState<T, OffloadedState> {
+    Resident(Arc<T>),
+    Offloaded(OffloadedState),
 }
 
 #[cfg(test)]

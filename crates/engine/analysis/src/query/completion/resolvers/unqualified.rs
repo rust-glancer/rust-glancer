@@ -695,24 +695,6 @@ enum UnqualifiedCompletionFilter {
     All,
 }
 
-/// Whether visible module names retain their scope origin as a sorting signal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum VisibleScopeSort {
-    /// Keep import-root completions in their ordinary global order.
-    General,
-    /// Rank module-scope names after body-local names but before prelude and extern roots.
-    ByOrigin,
-}
-
-/// Rendering choices shared by one batch of visible module candidates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ModuleCompletionOptions {
-    filter: UnqualifiedCompletionFilter,
-    edit: CompletionEdit,
-    visible_scope_sort: VisibleScopeSort,
-    call_completion: CallCompletionKind,
-}
-
 impl UnqualifiedCompletionFilter {
     fn accepts_scope_candidate(self, namespace: NameNamespace, kind: CompletionKind) -> bool {
         match self {
@@ -760,4 +742,22 @@ impl From<NameCompletionContext> for UnqualifiedCompletionFilter {
             NameCompletionContext::Value | NameCompletionContext::Import => Self::All,
         }
     }
+}
+
+/// Whether visible module names retain their scope origin as a sorting signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VisibleScopeSort {
+    /// Keep import-root completions in their ordinary global order.
+    General,
+    /// Rank module-scope names after body-local names but before prelude and extern roots.
+    ByOrigin,
+}
+
+/// Rendering choices shared by one batch of visible module candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModuleCompletionOptions {
+    filter: UnqualifiedCompletionFilter,
+    edit: CompletionEdit,
+    visible_scope_sort: VisibleScopeSort,
+    call_completion: CallCompletionKind,
 }

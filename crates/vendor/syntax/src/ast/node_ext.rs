@@ -870,15 +870,6 @@ pub enum TypeOrConstParam {
     Const(ast::ConstParam),
 }
 
-impl From<TypeOrConstParam> for GenericParam {
-    fn from(value: TypeOrConstParam) -> Self {
-        match value {
-            TypeOrConstParam::Type(it) => GenericParam::TypeParam(it),
-            TypeOrConstParam::Const(it) => GenericParam::ConstParam(it),
-        }
-    }
-}
-
 impl TypeOrConstParam {
     pub fn name(&self) -> Option<ast::Name> {
         match self {
@@ -917,6 +908,15 @@ impl AstNode for TypeOrConstParam {
 }
 
 impl HasAttrs for TypeOrConstParam {}
+
+impl From<TypeOrConstParam> for GenericParam {
+    fn from(value: TypeOrConstParam) -> Self {
+        match value {
+            TypeOrConstParam::Type(it) => GenericParam::TypeParam(it),
+            TypeOrConstParam::Const(it) => GenericParam::ConstParam(it),
+        }
+    }
+}
 
 pub enum VisibilityKind {
     In(ast::Path),

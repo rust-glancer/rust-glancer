@@ -57,6 +57,24 @@ pub struct IndexedMemberAccessSite {
     member_prefix_span: Span,
 }
 
+impl IndexedMemberAccessSite {
+    pub fn receiver(self) -> ExprRef {
+        self.receiver
+    }
+
+    pub fn scope(self) -> LexicalScopeRef {
+        self.scope
+    }
+
+    pub fn receiver_span(self) -> Span {
+        self.receiver_span
+    }
+
+    pub fn member_prefix_span(self) -> Span {
+        self.member_prefix_span
+    }
+}
+
 /// Semantic module owning a module-scope source position, plus filesystem completion facts.
 ///
 /// For a cursor in the declaration below, `module` is `v1` and `inline_module_path` is
@@ -82,24 +100,6 @@ pub struct IndexedModuleSourceSite {
     declared_children: Vec<String>,
 }
 
-/// Filesystem lookup rule inherited from the nearest file-backed semantic module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexedModuleFileBase {
-    TargetRoot,
-    Conventional,
-    PathAttribute,
-}
-
-impl From<ModuleFileBase> for IndexedModuleFileBase {
-    fn from(file_base: ModuleFileBase) -> Self {
-        match file_base {
-            ModuleFileBase::TargetRoot => Self::TargetRoot,
-            ModuleFileBase::Conventional => Self::Conventional,
-            ModuleFileBase::PathAttribute => Self::PathAttribute,
-        }
-    }
-}
-
 impl IndexedModuleSourceSite {
     pub fn module(&self) -> ModuleRef {
         self.module
@@ -115,6 +115,24 @@ impl IndexedModuleSourceSite {
 
     pub fn declared_children(&self) -> &[String] {
         &self.declared_children
+    }
+}
+
+/// Filesystem lookup rule inherited from the nearest file-backed semantic module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedModuleFileBase {
+    TargetRoot,
+    Conventional,
+    PathAttribute,
+}
+
+impl From<ModuleFileBase> for IndexedModuleFileBase {
+    fn from(file_base: ModuleFileBase) -> Self {
+        match file_base {
+            ModuleFileBase::TargetRoot => Self::TargetRoot,
+            ModuleFileBase::Conventional => Self::Conventional,
+            ModuleFileBase::PathAttribute => Self::PathAttribute,
+        }
     }
 }
 
@@ -135,24 +153,6 @@ impl IndexedTraitImplSite {
 
     pub fn trait_ref(self) -> TraitDefRef {
         self.trait_ref
-    }
-}
-
-impl IndexedMemberAccessSite {
-    pub fn receiver(self) -> ExprRef {
-        self.receiver
-    }
-
-    pub fn scope(self) -> LexicalScopeRef {
-        self.scope
-    }
-
-    pub fn receiver_span(self) -> Span {
-        self.receiver_span
-    }
-
-    pub fn member_prefix_span(self) -> Span {
-        self.member_prefix_span
     }
 }
 
@@ -459,17 +459,6 @@ pub struct IndexedRecordFieldListSite {
     existing_fields: Vec<FieldKey>,
 }
 
-/// Resolved declaration that owns a record field list.
-///
-/// A record path can name either a struct-like type (`User { ... }`) or one selected enum variant
-/// (`Action::Stop { ... }`). Keeping that distinction here prevents candidate lookup from trying
-/// to reinterpret a variant as a type path later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IndexedRecordOwner {
-    Type(TypeDefRef),
-    EnumVariant(EnumVariantRef),
-}
-
 impl IndexedRecordFieldListSite {
     pub fn scope(&self) -> LexicalScopeRef {
         self.scope
@@ -486,6 +475,17 @@ impl IndexedRecordFieldListSite {
     pub fn existing_fields(&self) -> &[FieldKey] {
         &self.existing_fields
     }
+}
+
+/// Resolved declaration that owns a record field list.
+///
+/// A record path can name either a struct-like type (`User { ... }`) or one selected enum variant
+/// (`Action::Stop { ... }`). Keeping that distinction here prevents candidate lookup from trying
+/// to reinterpret a variant as a type path later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedRecordOwner {
+    Type(TypeDefRef),
+    EnumVariant(EnumVariantRef),
 }
 
 /// Finds normalized completion sites by interpreting indexed domain facts.

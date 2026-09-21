@@ -4,8 +4,10 @@ use crate::grammar::attributes::ATTRIBUTE_FIRST;
 
 use super::*;
 
-pub(super) use atom::{EXPR_RECOVERY_SET, LITERAL_FIRST, literal, parse_asm_expr};
-pub(crate) use atom::{block_expr, match_arm_list};
+pub(super) use self::atom::{LITERAL_FIRST, literal, parse_asm_expr};
+pub(crate) use self::atom::{block_expr, match_arm_list};
+
+pub(super) const EXPR_RECOVERY_SET: TokenSet = TokenSet::new(&[T!['}'], T![')'], T![']'], T![,]]);
 
 #[derive(PartialEq, Eq)]
 pub(super) enum Semicolon {
@@ -268,7 +270,7 @@ fn expr_bp(
     });
 
     if !p.at_ts(EXPR_FIRST) {
-        p.err_recover("expected expression", atom::EXPR_RECOVERY_SET);
+        p.err_recover("expected expression", EXPR_RECOVERY_SET);
         m.abandon(p);
         return None;
     }

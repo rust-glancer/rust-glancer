@@ -40,6 +40,16 @@ pub enum AnalysisSurface<'a> {
     },
 }
 
+impl<'a> AnalysisSurface<'a> {
+    fn parts(self) -> (&'a [(CrateRef, FileId)], &'a [CrateRef]) {
+        match self {
+            Self::Files(files) => (files, &[]),
+            Self::Crates(crates) => (&[], crates),
+            Self::FilesAndCrates { files, crates } => (files, crates),
+        }
+    }
+}
+
 /// Stage reported while analyzing bodies through [`SavedBodyBuildInputs`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitIndexingStage {
@@ -247,15 +257,5 @@ impl<'project> SplitIndexing<'project> {
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<BodyPublication> {
         publication::publish(&mut self.project.state, products, cancellation)
-    }
-}
-
-impl<'a> AnalysisSurface<'a> {
-    fn parts(self) -> (&'a [(CrateRef, FileId)], &'a [CrateRef]) {
-        match self {
-            Self::Files(files) => (files, &[]),
-            Self::Crates(crates) => (&[], crates),
-            Self::FilesAndCrates { files, crates } => (files, crates),
-        }
     }
 }

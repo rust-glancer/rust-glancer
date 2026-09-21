@@ -22,12 +22,12 @@ mod query;
 mod session;
 mod work;
 
-pub use declaration_cache::TraitSelectionDeclarationCache;
-pub use goal::TraitGoal;
-pub use projection::AssocProjectionResult;
-pub use query::{TraitProof, TraitSelection, TraitSelectionQuery};
-pub(crate) use session::CachedImplSelfMatch;
-pub use session::TraitSelectionSession;
+pub use self::declaration_cache::TraitSelectionDeclarationCache;
+pub use self::goal::TraitGoal;
+pub use self::projection::AssocProjectionResult;
+pub use self::query::{TraitProof, TraitSelection, TraitSelectionQuery};
+pub(crate) use self::session::CachedImplSelfMatch;
+pub use self::session::TraitSelectionSession;
 
 #[cfg(test)]
 mod tests;

@@ -1,6 +1,24 @@
 //! This file is actually hand-written, but the submodules are indeed generated.
+#[cfg_attr(
+    dylint_lib = "rust_glancer_lints",
+    allow(
+        rust_glancer_impl_helpers,
+        rust_glancer_implicit_local_imports,
+        rust_glancer_non_adjacent_impls,
+        rust_glancer_pub_in
+    )
+)]
 #[rustfmt::skip]
 pub(crate) mod nodes;
+#[cfg_attr(
+    dylint_lib = "rust_glancer_lints",
+    allow(
+        rust_glancer_impl_helpers,
+        rust_glancer_implicit_local_imports,
+        rust_glancer_non_adjacent_impls,
+        rust_glancer_pub_in
+    )
+)]
 #[rustfmt::skip]
 pub(crate) mod tokens;
 
@@ -10,7 +28,7 @@ use crate::{
     SyntaxNode,
 };
 
-pub(crate) use nodes::*;
+pub(crate) use self::nodes::*;
 
 // Stmt is the only nested enum, so it's easier to just hand-write it
 impl AstNode for Stmt {

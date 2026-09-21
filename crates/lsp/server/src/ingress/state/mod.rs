@@ -121,7 +121,7 @@ impl CapturedDocument {
         let mut documents = Vec::new();
         let mut text_by_source_path = HashMap::<&NormalizedPathBuf, &str>::new();
         for captured in self.open_documents.iter() {
-            if !is_rust_path(&captured.path) {
+            if !Self::is_rust_path(&captured.path) {
                 continue;
             }
             let route = captured.route.as_ref().map_err(|reason| {
@@ -229,6 +229,10 @@ impl CapturedDocument {
             .recapture_position(self, position)?;
         recaptured.0.editor = Arc::downgrade(&editor);
         Ok(recaptured)
+    }
+
+    fn is_rust_path(path: &Path) -> bool {
+        path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs")
     }
 }
 
@@ -947,10 +951,6 @@ struct OpenDocument {
     current: Option<Arc<EditorDocumentSnapshot>>,
     document_revision: Arc<DocumentRevisionNode>,
     route: SessionRoute,
-}
-
-fn is_rust_path(path: &Path) -> bool {
-    path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs")
 }
 
 #[cfg(test)]

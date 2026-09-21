@@ -20,19 +20,6 @@ pub struct SemanticItemView<'a> {
     data: SemanticItemData<'a>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum SemanticItemData<'a> {
-    Struct(&'a StructData),
-    Union(&'a UnionData),
-    Enum(&'a EnumData),
-    Trait(&'a TraitData),
-    Impl(&'a ImplData),
-    Function(&'a FunctionData),
-    TypeAlias(&'a TypeAliasData),
-    Const(&'a ConstData),
-    Static(&'a StaticData),
-}
-
 impl<'a> SemanticItemView<'a> {
     pub(crate) fn new(item: SemanticItemRef, data: SemanticItemData<'a>) -> Self {
         Self { item, data }
@@ -257,4 +244,17 @@ impl<'a> SemanticItemView<'a> {
             | SemanticItemData::Static(_) => None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SemanticItemData<'a> {
+    Struct(&'a StructData),
+    Union(&'a UnionData),
+    Enum(&'a EnumData),
+    Trait(&'a TraitData),
+    Impl(&'a ImplData),
+    Function(&'a FunctionData),
+    TypeAlias(&'a TypeAliasData),
+    Const(&'a ConstData),
+    Static(&'a StaticData),
 }

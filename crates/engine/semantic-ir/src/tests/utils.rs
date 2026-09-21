@@ -99,10 +99,10 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        sorted_packages(self.project.parse_db())
+        Self::sorted_packages(self.project.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
-                let crate_dumps = sorted_targets(package)
+                let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
                     .map(|target| {
                         CrateSemanticIrSnapshot {
@@ -123,6 +123,29 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
             })
             .collect::<Vec<_>>()
             .join("\n\n")
+    }
+
+    fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
+        let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+        packages
+    }
+
+    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
+        let mut targets = package.targets().iter().collect::<Vec<_>>();
+        targets.sort_by(|left, right| {
+            (
+                left.kind.sort_order(),
+                left.name.as_str(),
+                left.src_path.as_path(),
+            )
+                .cmp(&(
+                    right.kind.sort_order(),
+                    right.name.as_str(),
+                    right.src_path.as_path(),
+                ))
+        });
+        targets
     }
 }
 
@@ -568,10 +591,10 @@ impl CrateSemanticIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}- {}struct {}{}",
-                    indent(depth),
-                    visibility_prefix(&data.visibility),
+                    Self::indent(depth),
+                    Self::visibility_prefix(&data.visibility),
                     data.name,
-                    generic_params(&data.generics),
+                    Self::generic_params(&data.generics),
                 )
                 .expect("string writes should not fail");
                 self.render_fields(&data.fields, depth + 1, dump);
@@ -584,10 +607,10 @@ impl CrateSemanticIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}- {}union {}{}",
-                    indent(depth),
-                    visibility_prefix(&data.visibility),
+                    Self::indent(depth),
+                    Self::visibility_prefix(&data.visibility),
                     data.name,
-                    generic_params(&data.generics),
+                    Self::generic_params(&data.generics),
                 )
                 .expect("string writes should not fail");
                 self.render_named_fields(&data.fields, depth + 1, dump);
@@ -600,15 +623,20 @@ impl CrateSemanticIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}- {}enum {}{}",
-                    indent(depth),
-                    visibility_prefix(&data.visibility),
+                    Self::indent(depth),
+                    Self::visibility_prefix(&data.visibility),
                     data.name,
-                    generic_params(&data.generics),
+                    Self::generic_params(&data.generics),
                 )
                 .expect("string writes should not fail");
                 for variant in &data.variants {
-                    writeln!(dump, "{}- variant {}", indent(depth + 1), variant.name)
-                        .expect("string writes should not fail");
+                    writeln!(
+                        dump,
+                        "{}- variant {}",
+                        Self::indent(depth + 1),
+                        variant.name
+                    )
+                    .expect("string writes should not fail");
                     self.render_fields(&variant.fields, depth + 2, dump);
                 }
             }
@@ -632,12 +660,12 @@ impl CrateSemanticIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}- {}trait {}{}{}{}",
-                    indent(depth),
-                    visibility_prefix(&data.visibility),
+                    Self::indent(depth),
+                    Self::visibility_prefix(&data.visibility),
                     data.name,
-                    generic_params(&data.generics),
+                    Self::generic_params(&data.generics),
                     super_traits,
-                    where_clause(&data.generics),
+                    Self::where_clause(&data.generics),
                 )
                 .expect("string writes should not fail");
                 for assoc_item in &data.items {
@@ -664,8 +692,8 @@ impl CrateSemanticIrSnapshot<'_> {
                 writeln!(
                     dump,
                     "{}- {}static {mutability}{}: {ty}",
-                    indent(depth),
-                    visibility_prefix(&data.visibility),
+                    Self::indent(depth),
+                    Self::visibility_prefix(&data.visibility),
                     data.name,
                 )
                 .expect("string writes should not fail");
@@ -682,20 +710,20 @@ impl CrateSemanticIrSnapshot<'_> {
             Some(trait_ref) => writeln!(
                 dump,
                 "{}- impl{} {} for {}{}",
-                indent(depth),
-                generic_params(&data.generics),
+                Self::indent(depth),
+                Self::generic_params(&data.generics),
                 trait_ref,
                 data.self_ty,
-                where_clause(&data.generics),
+                Self::where_clause(&data.generics),
             )
             .expect("string writes should not fail"),
             None => writeln!(
                 dump,
                 "{}- impl{} {}{}",
-                indent(depth),
-                generic_params(&data.generics),
+                Self::indent(depth),
+                Self::generic_params(&data.generics),
                 data.self_ty,
-                where_clause(&data.generics),
+                Self::where_clause(&data.generics),
             )
             .expect("string writes should not fail"),
         }
@@ -721,7 +749,7 @@ impl CrateSemanticIrSnapshot<'_> {
             .signature
             .params()
             .iter()
-            .map(render_param)
+            .map(Self::render_param)
             .collect::<Vec<_>>()
             .join(", ");
         let ret_ty = data
@@ -733,11 +761,11 @@ impl CrateSemanticIrSnapshot<'_> {
         writeln!(
             dump,
             "{}- {}fn {}{}({params}){ret_ty}{}",
-            indent(depth),
-            visibility_prefix(&data.visibility),
+            Self::indent(depth),
+            Self::visibility_prefix(&data.visibility),
             data.name,
-            generic_params_opt(generics),
-            where_clause_opt(generics),
+            Self::generic_params_opt(generics),
+            Self::where_clause_opt(generics),
         )
         .expect("string writes should not fail");
     }
@@ -769,12 +797,12 @@ impl CrateSemanticIrSnapshot<'_> {
         writeln!(
             dump,
             "{}- {}type {}{}{}{}{}",
-            indent(depth),
-            visibility_prefix(&data.visibility),
+            Self::indent(depth),
+            Self::visibility_prefix(&data.visibility),
             data.name,
-            generic_params_opt(generics),
+            Self::generic_params_opt(generics),
             bounds,
-            where_clause_opt(generics),
+            Self::where_clause_opt(generics),
             aliased_ty,
         )
         .expect("string writes should not fail");
@@ -793,8 +821,8 @@ impl CrateSemanticIrSnapshot<'_> {
         writeln!(
             dump,
             "{}- {}const {}: {ty}",
-            indent(depth),
-            visibility_prefix(&data.visibility),
+            Self::indent(depth),
+            Self::visibility_prefix(&data.visibility),
             data.name,
         )
         .expect("string writes should not fail");
@@ -808,8 +836,8 @@ impl CrateSemanticIrSnapshot<'_> {
                     writeln!(
                         dump,
                         "{}- {}field #{idx}: {}",
-                        indent(depth),
-                        visibility_prefix(&field.visibility),
+                        Self::indent(depth),
+                        Self::visibility_prefix(&field.visibility),
                         field.ty,
                     )
                     .expect("string writes should not fail");
@@ -824,8 +852,8 @@ impl CrateSemanticIrSnapshot<'_> {
             writeln!(
                 dump,
                 "{}- {}field {}: {}",
-                indent(depth),
-                visibility_prefix(&field.visibility),
+                Self::indent(depth),
+                Self::visibility_prefix(&field.visibility),
                 field
                     .key_declaration_label()
                     .unwrap_or_else(|| "<missing>".to_string()),
@@ -879,76 +907,53 @@ impl CrateSemanticIrSnapshot<'_> {
             .resident_crate_ir(self.crate_ref)
             .expect("crate semantic IR should exist while rendering items")
     }
-}
 
-fn render_param(param: &rg_item_tree::ParamItem) -> String {
-    match (param.kind, &param.ty) {
-        (ParamKind::SelfParam(_), _) => param.pat.clone(),
-        (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
-        (ParamKind::Normal, None) => param.pat.clone(),
-    }
-}
-
-fn generic_params(generics: &rg_item_tree::GenericParams) -> String {
-    let mut generics = generics.clone();
-    generics.where_predicates.clear();
-    generics.to_string()
-}
-
-fn generic_params_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
-    generics.map(generic_params).unwrap_or_default()
-}
-
-fn where_clause(generics: &rg_item_tree::GenericParams) -> String {
-    if generics.where_predicates.is_empty() {
-        return String::new();
+    fn render_param(param: &rg_item_tree::ParamItem) -> String {
+        match (param.kind, &param.ty) {
+            (ParamKind::SelfParam(_), _) => param.pat.clone(),
+            (ParamKind::Normal, Some(ty)) => format!("{}: {ty}", param.pat),
+            (ParamKind::Normal, None) => param.pat.clone(),
+        }
     }
 
-    format!(
-        " where {}",
-        generics
-            .where_predicates
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    )
-}
-
-fn where_clause_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
-    generics.map(where_clause).unwrap_or_default()
-}
-
-fn visibility_prefix(visibility: &VisibilityLevel) -> String {
-    match visibility {
-        VisibilityLevel::Private => String::new(),
-        _ => format!("{visibility} "),
+    fn generic_params_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
+        generics.map(Self::generic_params).unwrap_or_default()
     }
-}
 
-fn indent(depth: usize) -> String {
-    "  ".repeat(depth)
-}
+    fn where_clause_opt(generics: Option<&rg_item_tree::GenericParams>) -> String {
+        generics.map(Self::where_clause).unwrap_or_default()
+    }
 
-fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-    let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-    packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
-    packages
-}
+    fn visibility_prefix(visibility: &VisibilityLevel) -> String {
+        match visibility {
+            VisibilityLevel::Private => String::new(),
+            _ => format!("{visibility} "),
+        }
+    }
 
-fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
-    let mut targets = package.targets().iter().collect::<Vec<_>>();
-    targets.sort_by(|left, right| {
-        (
-            left.kind.sort_order(),
-            left.name.as_str(),
-            left.src_path.as_path(),
+    fn indent(depth: usize) -> String {
+        "  ".repeat(depth)
+    }
+
+    fn generic_params(generics: &rg_item_tree::GenericParams) -> String {
+        let mut generics = generics.clone();
+        generics.where_predicates.clear();
+        generics.to_string()
+    }
+
+    fn where_clause(generics: &rg_item_tree::GenericParams) -> String {
+        if generics.where_predicates.is_empty() {
+            return String::new();
+        }
+
+        format!(
+            " where {}",
+            generics
+                .where_predicates
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         )
-            .cmp(&(
-                right.kind.sort_order(),
-                right.name.as_str(),
-                right.src_path.as_path(),
-            ))
-    });
-    targets
+    }
 }

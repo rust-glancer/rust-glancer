@@ -25,7 +25,7 @@ impl TextRenderer {
             };
 
             if let Some(description) = &section.description {
-                writeln!(out, "{}{description}", spaces(block_indent))?;
+                writeln!(out, "{}{description}", Self::spaces(block_indent))?;
             }
 
             for block in &section.blocks {
@@ -44,7 +44,7 @@ impl TextRenderer {
     ) -> std::fmt::Result {
         match block {
             ReportBlock::Paragraph { text } => {
-                writeln!(out, "{}{text}", spaces(indent))
+                writeln!(out, "{}{text}", Self::spaces(indent))
             }
             ReportBlock::Fields { title, fields, .. } => {
                 self.render_fields(title.as_deref(), fields, indent, out)
@@ -55,10 +55,12 @@ impl TextRenderer {
                 rows,
                 ..
             } => self.render_table(title.as_deref(), columns, rows, indent, out),
-            ReportBlock::Warning { text } => writeln!(out, "{}warning: {text}", spaces(indent)),
+            ReportBlock::Warning { text } => {
+                writeln!(out, "{}warning: {text}", Self::spaces(indent))
+            }
             ReportBlock::Code { text, .. } => {
                 for line in text.lines() {
-                    writeln!(out, "{}{line}", spaces(indent))?;
+                    writeln!(out, "{}{line}", Self::spaces(indent))?;
                 }
                 Ok(())
             }
@@ -73,7 +75,7 @@ impl TextRenderer {
         out: &mut String,
     ) -> std::fmt::Result {
         let field_indent = if let Some(title) = title {
-            writeln!(out, "{}{title}:", spaces(indent))?;
+            writeln!(out, "{}{title}:", Self::spaces(indent))?;
             indent + 2
         } else {
             indent
@@ -83,7 +85,7 @@ impl TextRenderer {
             writeln!(
                 out,
                 "{}{}: {}",
-                spaces(field_indent),
+                Self::spaces(field_indent),
                 field.title,
                 format_value(&field.value),
             )?;
@@ -101,24 +103,24 @@ impl TextRenderer {
         out: &mut String,
     ) -> std::fmt::Result {
         let table_indent = if let Some(title) = title {
-            writeln!(out, "{}{title}:", spaces(indent))?;
+            writeln!(out, "{}{title}:", Self::spaces(indent))?;
             indent + 2
         } else {
             indent
         };
 
-        let widths = column_widths(columns, rows);
-        write!(out, "{}", spaces(table_indent))?;
+        let widths = Self::column_widths(columns, rows);
+        write!(out, "{}", Self::spaces(table_indent))?;
         for (index, column) in columns.iter().enumerate() {
             if index > 0 {
                 write!(out, "  ")?;
             }
-            write_aligned(out, &column.title, widths[index], column.align)?;
+            Self::write_aligned(out, &column.title, widths[index], column.align)?;
         }
         writeln!(out)?;
 
         for row in rows {
-            write!(out, "{}", spaces(table_indent))?;
+            write!(out, "{}", Self::spaces(table_indent))?;
             for (index, column) in columns.iter().enumerate() {
                 if index > 0 {
                     write!(out, "  ")?;
@@ -128,48 +130,48 @@ impl TextRenderer {
                     .get(&column.key)
                     .map(format_value)
                     .unwrap_or_else(|| "-".to_string());
-                write_aligned(out, &value, widths[index], column.align)?;
+                Self::write_aligned(out, &value, widths[index], column.align)?;
             }
             writeln!(out)?;
         }
 
         Ok(())
     }
-}
 
-fn column_widths(columns: &[ReportColumn], rows: &[ReportRow]) -> Vec<usize> {
-    columns
-        .iter()
-        .map(|column| {
-            rows.iter()
-                .filter_map(|row| row.cells.get(&column.key))
-                .map(format_value)
-                .map(|value| value.len())
-                .chain([column.title.len()])
-                .max()
-                .unwrap_or(0)
-        })
-        .collect()
-}
+    fn column_widths(columns: &[ReportColumn], rows: &[ReportRow]) -> Vec<usize> {
+        columns
+            .iter()
+            .map(|column| {
+                rows.iter()
+                    .filter_map(|row| row.cells.get(&column.key))
+                    .map(format_value)
+                    .map(|value| value.len())
+                    .chain([column.title.len()])
+                    .max()
+                    .unwrap_or(0)
+            })
+            .collect()
+    }
 
-fn write_aligned(
-    out: &mut String,
-    value: &str,
-    width: usize,
-    align: ReportAlign,
-) -> std::fmt::Result {
-    match align {
-        ReportAlign::Left => write!(out, "{value:<width$}"),
-        ReportAlign::Right => write!(out, "{value:>width$}"),
-        ReportAlign::Center => {
-            let padding = width.saturating_sub(value.len());
-            let left = padding / 2;
-            let right = padding - left;
-            write!(out, "{}{value}{}", spaces(left), spaces(right))
+    fn write_aligned(
+        out: &mut String,
+        value: &str,
+        width: usize,
+        align: ReportAlign,
+    ) -> std::fmt::Result {
+        match align {
+            ReportAlign::Left => write!(out, "{value:<width$}"),
+            ReportAlign::Right => write!(out, "{value:>width$}"),
+            ReportAlign::Center => {
+                let padding = width.saturating_sub(value.len());
+                let left = padding / 2;
+                let right = padding - left;
+                write!(out, "{}{value}{}", Self::spaces(left), Self::spaces(right))
+            }
         }
     }
-}
 
-fn spaces(count: usize) -> String {
-    " ".repeat(count)
+    fn spaces(count: usize) -> String {
+        " ".repeat(count)
+    }
 }

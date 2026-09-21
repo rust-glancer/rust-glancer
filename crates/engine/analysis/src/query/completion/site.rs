@@ -524,6 +524,20 @@ pub(crate) struct RecordFieldCompletionSite {
     source: IndexedRecordFieldListSite,
 }
 
+impl RecordFieldCompletionSite {
+    fn new(source: IndexedRecordFieldListSite) -> Self {
+        Self { source }
+    }
+
+    pub(crate) fn replace_span(&self) -> Span {
+        self.source.member_prefix_span()
+    }
+
+    pub(crate) fn source(&self) -> &IndexedRecordFieldListSite {
+        &self.source
+    }
+}
+
 /// Request-local syntax contexts that do not need a semantic source site of their own.
 ///
 /// The syntax classifier is allowed to use parser nodes while discovering these contexts, but
@@ -818,20 +832,6 @@ pub(crate) enum SpecializedCompletionContext {
     MacroFragment,
     RestrictedVisibility(RestrictedVisibilityCompletionContext),
     String(SpecializedStringCompletionContext),
-}
-
-impl RecordFieldCompletionSite {
-    fn new(source: IndexedRecordFieldListSite) -> Self {
-        Self { source }
-    }
-
-    pub(crate) fn replace_span(&self) -> Span {
-        self.source.member_prefix_span()
-    }
-
-    pub(crate) fn source(&self) -> &IndexedRecordFieldListSite {
-        &self.source
-    }
 }
 
 /// Chooses the semantic owner to which recovered current completion syntax is attached.

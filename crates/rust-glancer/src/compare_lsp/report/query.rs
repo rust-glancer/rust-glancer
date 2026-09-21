@@ -615,6 +615,54 @@ impl QueryCounts {
     }
 }
 
+impl From<&LocationQueryReport> for QueryCounts {
+    fn from(report: &LocationQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
+    }
+}
+
+impl From<&RangeQueryReport> for QueryCounts {
+    fn from(report: &RangeQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
+    }
+}
+
+impl From<&SymbolQueryReport> for QueryCounts {
+    fn from(report: &SymbolQueryReport) -> Self {
+        Self {
+            rust_glancer_count: report.rust_glancer_count,
+            rust_analyzer_count: report.rust_analyzer_count,
+            matched_count: report.matched_count,
+            compatible_count: report.compatible_count,
+            missing_count: report.missing_count,
+            extra_count: report.extra_count,
+            match_score_percent: report.match_score_percent,
+            recall_percent: report.recall_percent,
+            precision_percent: report.precision_percent,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct LocationQueryReport {
     rust_glancer_count: usize,
@@ -639,22 +687,6 @@ struct LocationQueryReport {
 impl LocationQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
         QueryCounts::from(self).append_query_cells(row);
-    }
-}
-
-impl From<&LocationQueryReport> for QueryCounts {
-    fn from(report: &LocationQueryReport) -> Self {
-        Self {
-            rust_glancer_count: report.rust_glancer_count,
-            rust_analyzer_count: report.rust_analyzer_count,
-            matched_count: report.matched_count,
-            compatible_count: report.compatible_count,
-            missing_count: report.missing_count,
-            extra_count: report.extra_count,
-            match_score_percent: report.match_score_percent,
-            recall_percent: report.recall_percent,
-            precision_percent: report.precision_percent,
-        }
     }
 }
 
@@ -699,22 +731,6 @@ impl RangeQueryReport {
     }
 }
 
-impl From<&RangeQueryReport> for QueryCounts {
-    fn from(report: &RangeQueryReport) -> Self {
-        Self {
-            rust_glancer_count: report.rust_glancer_count,
-            rust_analyzer_count: report.rust_analyzer_count,
-            matched_count: report.matched_count,
-            compatible_count: report.compatible_count,
-            missing_count: report.missing_count,
-            extra_count: report.extra_count,
-            match_score_percent: report.match_score_percent,
-            recall_percent: report.recall_percent,
-            precision_percent: report.precision_percent,
-        }
-    }
-}
-
 impl From<SetComparisonMetrics> for RangeQueryReport {
     fn from(metrics: SetComparisonMetrics) -> Self {
         Self {
@@ -755,22 +771,6 @@ struct SymbolQueryReport {
 impl SymbolQueryReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
         QueryCounts::from(self).append_query_cells(row);
-    }
-}
-
-impl From<&SymbolQueryReport> for QueryCounts {
-    fn from(report: &SymbolQueryReport) -> Self {
-        Self {
-            rust_glancer_count: report.rust_glancer_count,
-            rust_analyzer_count: report.rust_analyzer_count,
-            matched_count: report.matched_count,
-            compatible_count: report.compatible_count,
-            missing_count: report.missing_count,
-            extra_count: report.extra_count,
-            match_score_percent: report.match_score_percent,
-            recall_percent: report.recall_percent,
-            precision_percent: report.precision_percent,
-        }
     }
 }
 
