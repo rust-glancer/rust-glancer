@@ -4,10 +4,6 @@
 //! concrete storage that owns them; this query object keeps the operations that compose those raw
 //! maps into language-shaped answers.
 
-use super::{
-    path_resolution::ScopeResolver,
-    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
-};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
     ModuleRef,
@@ -16,6 +12,10 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_hash::FxHashSet;
 
+use super::{
+    path_resolution::ScopeResolver,
+    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
+};
 use crate::{
     DefMap, ImportData, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
     LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScopeBuilder, Namespace,

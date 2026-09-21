@@ -2,15 +2,17 @@
 
 use std::sync::Arc;
 
-use crate::{DefMap, MacroExpansionLimitReport, PackageDefMaps, PackageDefMapsManifest};
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
-use rg_text::PackageNameInterners;
-
-use crate::{DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionPerformancePreference};
 use rg_std::{MemorySize, Shrink};
+use rg_text::PackageNameInterners;
 use rg_workspace::{PackageOrigin, WorkspaceMetadata};
+
+use crate::{
+    DefMap, DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionLimitReport,
+    MacroExpansionPerformancePreference, PackageDefMaps, PackageDefMapsManifest,
+};
 
 /// Frozen DefMaps for all parsed packages and semantic crates.
 ///
@@ -334,12 +336,12 @@ impl UnresolvedImportStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CrateData, DefMapBuilder};
     use rg_ir_model::CrateRef;
     use rg_package_store::PackageEntry;
     use rg_parse::CargoTargetId;
 
     use super::*;
+    use crate::{CrateData, DefMapBuilder};
 
     #[test]
     fn crate_maps_preserve_package_slots_when_middle_package_is_offloaded() {

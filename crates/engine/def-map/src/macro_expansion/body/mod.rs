@@ -5,8 +5,6 @@
 //! visibility and token conversion next to the def-map query it relies on.
 
 use anyhow::Context as _;
-
-use crate::{DefMapQuery, MacroDefinitionView, ScopeResolutionEnv};
 use rg_ir_model::{CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
@@ -14,7 +12,7 @@ use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
-use crate::DefMapReadTxn;
+use crate::{DefMapQuery, DefMapReadTxn, MacroDefinitionView, ScopeResolutionEnv};
 
 mod call;
 mod expanded;

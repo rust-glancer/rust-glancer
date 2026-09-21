@@ -650,9 +650,8 @@ mod tests {
         test_support::ProfileTest,
     };
 
-    use crate::report::{ReportBlock, ReportUnit};
-
     use super::*;
+    use crate::report::{ReportBlock, ReportUnit};
 
     #[test]
     fn captures_dynamic_profile_snapshot_for_json_report() {

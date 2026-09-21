@@ -6,12 +6,14 @@
 
 use std::sync::Arc;
 
-use crate::{ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource, SemanticCrate};
 use rg_ir_model::{CrateRef, DefMapRef, PackageSlot};
 use rg_package_store::PackageStoreError;
 
 use super::{SemanticIrLoader, lazy::PackageReadEntry};
-use crate::SemanticPackage;
+use crate::{
+    ItemLookupIndex, ItemLookupIndexSource, ItemStore, ItemStoreSource, SemanticCrate,
+    SemanticPackage,
+};
 
 /// Read-only Semantic IR access for one query transaction.
 ///

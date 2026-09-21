@@ -1,12 +1,13 @@
 //! Resolve associated type identities through parameter bounds and supertraits.
 
-use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
-use crate::{ProjectionTy, Substitution, TraitApplication, Ty};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeParamRef};
 use rg_item_tree::{TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
+
+use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
+use crate::{ProjectionTy, Substitution, TraitApplication, Ty};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where

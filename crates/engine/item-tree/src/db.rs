@@ -3,7 +3,6 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_ir_model::FileId;
-
 use rg_parse::ParseDb;
 use rg_std::{MemorySize, Shrink};
 use rg_text::PackageNameInterners;

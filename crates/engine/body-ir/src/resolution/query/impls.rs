@@ -20,9 +20,10 @@ use rg_ty::{
     lookup::{ReceiverFunctionCandidate, ReceiverImplMatches},
 };
 
-use crate::resolution::BodyResolutionContext;
-
-use crate::resolution::cache::{BodyLocalInherentItemNames, BodyTraitSurface};
+use crate::resolution::{
+    BodyResolutionContext,
+    cache::{BodyLocalInherentItemNames, BodyTraitSurface},
+};
 
 /// Selects which declaration families still need matching for one receiver probe.
 ///

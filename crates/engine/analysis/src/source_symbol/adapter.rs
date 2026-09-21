@@ -1,11 +1,10 @@
 //! Adapter from indexed source occurrences into analysis cursor symbols.
 
 use rg_ir_model::{CrateRef, FileId, Span, identity::DeclarationRef};
+pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 use rg_ir_view::source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface};
 
 use crate::model::SymbolAt;
-
-pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 
 /// One source span that can resolve to an analysis symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -4,11 +4,10 @@ use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_std::MemorySize;
 
+use super::reference_search::ReferenceSearchPlanner;
 use crate::{
     MacroExpansionLimitBuildSummary, ProjectStats, selection::subset, state::ProjectState,
 };
-
-use super::reference_search::ReferenceSearchPlanner;
 
 /// Immutable project view used to answer LSP-shaped queries.
 #[derive(Debug, Clone, Copy)]

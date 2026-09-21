@@ -23,14 +23,12 @@ use rg_ty::{
     trait_selection::TraitSelectionSession,
 };
 
+use super::lower::{LoweredBodyData, PendingBindingResolution};
 use crate::{
     BodyPath,
     body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind, facts::BodyResolution},
+    resolution::BodyResolutionContext,
 };
-
-use crate::resolution::BodyResolutionContext;
-
-use super::lower::{LoweredBodyData, PendingBindingResolution};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///

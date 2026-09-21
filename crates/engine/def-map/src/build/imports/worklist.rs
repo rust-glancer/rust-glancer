@@ -18,13 +18,12 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 
+use super::{ImportApplicationStats, ModuleSetShape, UnresolvedImports};
 use crate::{
     CrateResolutionEnv, ImportKind, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
     ModuleData, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    build::finalize::{FinalizeCrateStates, FinalizeResolutionEnv, ScopeMatrix},
 };
-
-use super::{ImportApplicationStats, ModuleSetShape, UnresolvedImports};
-use crate::build::finalize::{FinalizeCrateStates, FinalizeResolutionEnv, ScopeMatrix};
 
 // Below this size, dispatching module groups through a worker pool costs more than the import work.
 const PARALLEL_IMPORT_RESOLUTION_PACKAGE_THRESHOLD: usize = 32;

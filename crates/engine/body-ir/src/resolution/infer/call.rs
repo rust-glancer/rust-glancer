@@ -17,10 +17,8 @@ use rg_ty::{
     trait_selection::TraitProof,
 };
 
-use crate::{CallFacts, resolution::query::CallSelfSource};
-
 use super::{InferenceContext, fulfill::DeferredKind};
-use crate::body::ExprKind;
+use crate::{CallFacts, body::ExprKind, resolution::query::CallSelfSource};
 
 /// Call-owned signature projection and live generic slots.
 ///

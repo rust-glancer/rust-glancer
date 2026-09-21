@@ -1,6 +1,5 @@
-use crate::grammar::types::type_;
-
 use super::*;
+use crate::grammar::types::type_;
 
 // test expr_literals
 // fn foo() {

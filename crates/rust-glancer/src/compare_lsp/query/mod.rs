@@ -5,11 +5,9 @@ mod parser;
 
 use std::sync::LazyLock;
 
-use crate::compare_lsp::config::DIRTY_EDITOR_PREFIX_LINE_COUNT;
-
 pub(crate) use self::model::{QueryCase, QueryKind, QueryTarget, SourcePosition};
-
 use self::parser::parse_query_cases;
+use crate::compare_lsp::config::DIRTY_EDITOR_PREFIX_LINE_COUNT;
 
 pub(crate) fn rust_analyzer_cases() -> &'static [QueryCase] {
     RUST_ANALYZER_CASES.as_slice()

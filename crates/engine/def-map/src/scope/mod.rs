@@ -8,16 +8,16 @@
 
 mod namespace_bindings;
 
-use self::namespace_bindings::{
-    FrozenScopeBindings, MutableNamespaceBindingArena, ScopeEntryBuilder,
-};
-
 use rg_ir_model::{DefId, ImportRef, ModuleRef};
 use rg_item_tree::FieldList;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 use wincode::{SchemaRead, SchemaWrite};
+
+use self::namespace_bindings::{
+    FrozenScopeBindings, MutableNamespaceBindingArena, ScopeEntryBuilder,
+};
 
 /// The three independent meaning slots represented by a DefMap scope.
 ///

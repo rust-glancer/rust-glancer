@@ -1185,11 +1185,10 @@ mod tests {
     use rg_std::NormalizedPathBuf;
     use serde_json::{Value, json};
 
-    use crate::compare_lsp::query::{QueryTarget, SourcePosition};
-
     use super::{
         NormalizedLocationSet, NormalizedPrepareRenameSet, NormalizedRange, NormalizedRangeSet,
     };
+    use crate::compare_lsp::query::{QueryTarget, SourcePosition};
 
     #[test]
     fn normalizes_location_arrays_to_fixture_relative_sets() {

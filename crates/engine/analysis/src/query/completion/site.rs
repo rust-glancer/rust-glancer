@@ -12,7 +12,6 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Path, Span};
-
 use rg_ir_view::source::{
     IndexedAssociatedTypeBindingSite, IndexedMemberAccessSite, IndexedModuleSourceSite,
     IndexedPatternCompletionKind, IndexedQualifiedPathContext, IndexedQualifiedPathScope,
@@ -21,9 +20,8 @@ use rg_ir_view::source::{
     IndexedUnqualifiedNameSite, SourceCompletionView,
 };
 
-use crate::{Analysis, SavedSourceRelationship};
-
 use super::CompletionSource;
+use crate::{Analysis, SavedSourceRelationship};
 
 /// One normalized syntax family selected for the cursor.
 ///

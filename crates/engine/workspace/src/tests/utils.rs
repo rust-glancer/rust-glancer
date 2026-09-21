@@ -1,9 +1,9 @@
 use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
+use test_fixture::{fixture_crate, fixture_path_for_snapshot};
 
 use crate::{PackageOrigin, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
-use test_fixture::{fixture_crate, fixture_path_for_snapshot};
 
 pub(super) fn check_workspace_metadata(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);

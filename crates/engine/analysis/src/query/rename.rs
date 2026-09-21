@@ -11,13 +11,12 @@ use rg_ir_view::{
     source::{IndexedSourceSurface, SourceOccurrenceView},
 };
 
+use super::references::ReferenceResolver;
 use crate::{
     Analysis, ReferenceQuery, SymbolKind,
     model::{RenameEdit, RenameResult, RenameTarget, SymbolAt},
     source_symbol::{SourceSymbol, SourceSymbolResolver, SourceSymbolRole},
 };
-
-use super::references::ReferenceResolver;
 
 /// Plans semantic rename edits from the same source-symbol identity used by references.
 ///

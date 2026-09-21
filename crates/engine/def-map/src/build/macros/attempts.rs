@@ -7,8 +7,6 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
-
-use crate::{CrateResolutionEnv, MacroDefinitionEnv};
 use rg_ir_model::{CrateRef, FileId, Path};
 use rg_item_tree::{
     BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmPayload, IncludePathExpression, ItemTreeDb,
@@ -21,21 +19,20 @@ use rg_macro_runtime::{
 use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 
+use super::{
+    MacroCallSite, MacroDirectiveState,
+    generated::{GeneratedCollector, GeneratedOrigin, PendingGeneratedInclude},
+    resolve::ItemMacroResolver,
+    source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
+};
 use crate::{
-    MacroSourceFileRequest,
+    CrateResolutionEnv, MacroDefinitionEnv, MacroSourceFileRequest,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         collect::CrateState,
         finalize::{FinalizeCrateStates, ScopeMatrix},
     },
     profile::metric,
-};
-
-use super::{
-    MacroCallSite, MacroDirectiveState,
-    generated::{GeneratedCollector, GeneratedOrigin, PendingGeneratedInclude},
-    resolve::ItemMacroResolver,
-    source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
 /// Selects which part of the macro worklist one expansion pass should inspect.

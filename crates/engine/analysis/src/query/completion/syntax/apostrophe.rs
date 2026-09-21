@@ -3,11 +3,10 @@
 use rg_std::UniqueVec;
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
 
+use super::CompletionSyntaxContext;
 use crate::query::completion::site::{
     LabelCompletionContext, LifetimeCompletionContext, SpecializedCompletionContext,
 };
-
-use super::CompletionSyntaxContext;
 
 impl CompletionSyntaxContext<'_> {
     /// Distinguish loop labels from lifetime uses and declarations before scope lookup.

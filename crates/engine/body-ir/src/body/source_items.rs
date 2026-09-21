@@ -4,10 +4,9 @@
 //! body-local DefMap and ItemStore facts.
 
 use rg_arena::Arena;
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::BodySource;
 

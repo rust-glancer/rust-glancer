@@ -21,9 +21,8 @@ use rg_ty::{Ty, trait_selection::TraitSelectionSession};
 use crate::{
     BodyData, BodyFacts,
     body::{ExprKind, facts::BodyResolution},
+    resolution::BodyResolutionContext,
 };
-
-use crate::resolution::BodyResolutionContext;
 
 mod builtin_macro;
 mod call;

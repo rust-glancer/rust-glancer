@@ -19,7 +19,6 @@ mod search;
 mod subject;
 
 pub use self::search::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel};
-
 use self::{
     search::{ReferenceScanTarget, ReferenceSearchScope},
     subject::{ReferenceSearchHints, ReferenceSubject},

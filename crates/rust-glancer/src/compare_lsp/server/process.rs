@@ -25,9 +25,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 
-use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLspTransport};
-
 use super::{ServerReadiness, command::ServerKind, stderr::StderrCapture, uri::file_uri};
+use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLspTransport};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_TIMEOUT: Duration = Duration::from_secs(120);

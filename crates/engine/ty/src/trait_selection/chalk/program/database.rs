@@ -26,6 +26,7 @@ use chalk_solve::{
 };
 use rg_ir_model::{ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
 
+use super::ChalkProgram;
 use crate::trait_selection::chalk::{
     interner::{ChalkDefId, RgChalkInterner},
     lower::{
@@ -33,8 +34,6 @@ use crate::trait_selection::chalk::{
         unit_ty,
     },
 };
-
-use super::ChalkProgram;
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const UNKNOWN_ADT_VARIANCE_SLOTS: usize = 32;

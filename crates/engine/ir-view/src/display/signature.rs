@@ -8,7 +8,6 @@
 use std::fmt::Write as _;
 
 use anyhow::Context as _;
-
 use rg_body_ir::BindingData;
 use rg_ir_model::Mutability;
 use rg_item_tree::{

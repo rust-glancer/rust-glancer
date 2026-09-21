@@ -9,10 +9,10 @@
 //! memory may let the allocator free pages used during indexing. A package headed straight to
 //! the cache does not need a second copy of data that will soon be released.
 
-use rg_std::MemorySize;
 use std::collections::HashSet;
 
 use rg_ir_model::PackageSlot;
+use rg_std::MemorySize;
 use rg_workspace::{Package, PackageId, PackageSource, WorkspaceMetadata};
 use serde::{Deserialize, Serialize};
 
@@ -169,11 +169,11 @@ impl PackageResidencyPlan {
 #[cfg(test)]
 mod tests {
     use cargo_metadata::Source;
+    use rg_ir_model::PackageSlot;
+    use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
     use test_fixture::fixture_crate;
 
     use super::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
-    use rg_ir_model::PackageSlot;
-    use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 
     #[test]
     fn classifies_package_residency_by_policy() {

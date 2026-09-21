@@ -2,9 +2,8 @@
 
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
 
-use crate::query::completion::site::{AttributeCompletionContext, AttributeCompletionKind};
-
 use super::CompletionSyntaxContext;
+use crate::query::completion::site::{AttributeCompletionContext, AttributeCompletionKind};
 
 impl CompletionSyntaxContext<'_> {
     /// Select the small grammar owned by the attribute around the cursor.

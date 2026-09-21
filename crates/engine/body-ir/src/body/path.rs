@@ -16,11 +16,10 @@
 use std::fmt;
 
 use rg_ir_model::{CrateRef, Path, PathRoot, Span};
-use rg_text::Name;
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef};
 use rg_std::{MemorySize, Shrink};
+use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Body expression/pattern path together with body-specific syntax details.
 ///
@@ -426,9 +425,8 @@ impl BodyAssociatedPathPrefix {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::Span;
-    use rg_text::Name;
-
     use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};
+    use rg_text::Name;
 
     use super::{
         BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,

@@ -7,7 +7,6 @@
 use std::time::Duration;
 
 use anyhow::Context as _;
-
 use rg_ir_model::{FileId, LocalDefRef, Span};
 use rg_parse::syntax_edition;
 use rg_text::RustEdition;

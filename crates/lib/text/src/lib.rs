@@ -5,7 +5,6 @@
 //! allocation through `Arc<str>`, while the interner itself can prune names that no live analysis
 //! snapshot still references.
 
-use rg_std::{MemorySize, Shrink};
 use std::{
     borrow::{Borrow, Cow},
     cell::RefCell,
@@ -15,6 +14,8 @@ use std::{
     ops::Deref,
     sync::{Arc, Weak},
 };
+
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Rust language edition used to interpret and present source text.

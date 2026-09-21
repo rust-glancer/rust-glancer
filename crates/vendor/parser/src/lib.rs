@@ -44,11 +44,10 @@ pub use T_ as T;
 #[cfg(test)]
 mod tests;
 
-use self::parser::Parser;
-pub(crate) use self::token_set::TokenSet;
-
 pub use edition::Edition;
 
+use self::parser::Parser;
+pub(crate) use self::token_set::TokenSet;
 pub use crate::{
     input::Input,
     lexed_str::LexedStr,

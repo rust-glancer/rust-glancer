@@ -14,19 +14,6 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-
-use crate::{
-    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
-    ItemSource, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-    MacroSourceFileRequest, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
-    build::{
-        MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::CrateState,
-        finalize::{FinalizeCrateStates, ScopeMatrix},
-    },
-    profile::metric,
-};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Span,
 };
@@ -44,6 +31,18 @@ use super::{
     MacroExpansionApplyResult,
     generated_tree::GeneratedSourceLowering,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
+};
+use crate::{
+    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
+    ItemSource, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    MacroSourceFileRequest, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
+    build::{
+        MacroSourceFileResolution, MacroSourceFileResolutions,
+        collect::CrateState,
+        finalize::{FinalizeCrateStates, ScopeMatrix},
+    },
+    profile::metric,
 };
 
 /// Call-site identity used for every item produced by one macro expansion.

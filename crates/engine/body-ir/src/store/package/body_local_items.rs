@@ -2,7 +2,6 @@
 
 use rg_def_map::DefMap;
 use rg_ir_model::{ImplId, TraitDefRef, TypeDefRef};
-
 use rg_semantic_ir::ItemStore;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};

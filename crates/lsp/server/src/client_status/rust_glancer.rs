@@ -6,12 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
+use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
 use tower_lsp_server::{
     Client as LspClient,
     gen_lsp_types::{LspAny, LspNotificationMethod, LspObject, MessageDirection, Notification},
 };
-
-use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
 const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";

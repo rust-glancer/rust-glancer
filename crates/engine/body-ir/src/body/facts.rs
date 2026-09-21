@@ -1,11 +1,10 @@
-use rg_std::{MemorySize, Shrink, UniqueVec};
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyBindingRef, BodyRef, ExprId, FunctionRef, identity::DeclarationRef,
 };
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_ty::{GenericArgs, Ty};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyData, ExprKind};
 

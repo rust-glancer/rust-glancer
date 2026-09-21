@@ -11,7 +11,6 @@ use std::{
 };
 
 use anyhow::Context as _;
-
 use rg_ir_model::LocalDefRef;
 use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};

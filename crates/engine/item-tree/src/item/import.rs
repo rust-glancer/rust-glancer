@@ -1,9 +1,9 @@
-use rg_std::{MemorySize, Shrink};
 use std::fmt;
-use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::Span;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::MacroUseAttr;
 

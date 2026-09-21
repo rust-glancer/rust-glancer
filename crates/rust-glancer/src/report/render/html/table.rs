@@ -1,8 +1,7 @@
+use super::{html_id, render_tab_list, writer::HtmlWriter};
 use crate::report::{
     ReportAlign, ReportBlock, ReportColumn, ReportRow, ReportValue, render::value::format_value,
 };
-
-use super::{html_id, render_tab_list, writer::HtmlWriter};
 
 /// Borrowed view of a table block.
 ///

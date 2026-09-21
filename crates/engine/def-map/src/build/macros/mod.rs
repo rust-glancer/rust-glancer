@@ -24,9 +24,8 @@ use rg_parse::ModuleFileContext;
 use rg_text::Name;
 use rg_tt::TopSubtree;
 
-use crate::{MacroExpansionLimitGroup, profile::metric};
-
 use super::finalize::FinalizeCrateStates;
+use crate::{MacroExpansionLimitGroup, profile::metric};
 
 mod attempts;
 mod expand;

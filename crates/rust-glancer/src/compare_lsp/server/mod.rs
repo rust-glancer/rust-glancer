@@ -15,11 +15,9 @@ use std::time::Duration;
 use anyhow::Context as _;
 use serde_json::Value;
 
-use crate::compare_lsp::{fixture::Fixture, lsp_client::RequestOutcome, query::QueryCase};
-
-use self::{command::ServerKind, process::RunningServer};
-
 pub(crate) use self::uri::file_uri;
+use self::{command::ServerKind, process::RunningServer};
+use crate::compare_lsp::{fixture::Fixture, lsp_client::RequestOutcome, query::QueryCase};
 
 /// Two initialized servers that have opened the same fixture files.
 #[derive(Debug)]

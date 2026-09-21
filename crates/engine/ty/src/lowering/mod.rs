@@ -11,16 +11,16 @@ mod projection;
 mod signature;
 mod type_ref;
 
-pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
-pub(crate) use self::signature::{TraitHeader, impl_header_with};
-
-use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty, lookup::ItemPathQuery};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     GenericDefRef, GenericParamRef, Path, ScopeId, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
+
+pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
+pub(crate) use self::signature::{TraitHeader, impl_header_with};
+use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty, lookup::ItemPathQuery};
 
 // Source syntax can be deeply nested even without aliases or projections. This is an emergency
 // boundary for malformed/generated input; ordinary Rust types stay far below it.

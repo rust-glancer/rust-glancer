@@ -8,8 +8,6 @@
 
 mod edit;
 
-pub(crate) use self::edit::{ImportEditPlan, ImportEditPlanner};
-
 use anyhow::Context as _;
 use rg_ir_model::{BodyRef, CrateRef, FileId, ModuleRef};
 use rg_ir_view::{
@@ -24,6 +22,8 @@ use rg_ir_view::{
 };
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode as _, ast};
+
+pub(crate) use self::edit::{ImportEditPlan, ImportEditPlanner};
 
 /// The two semantic facts needed to search for and place an import.
 ///

@@ -16,12 +16,11 @@
 
 use rg_ir_view::{lookup::name::NameNamespace, member::ConstructorShape};
 
+use super::render::escape_lsp_snippet_text;
 use crate::{
     model::{CompletionInsertText, CompletionKind},
     query::completion::site::PatternCompletionKind,
 };
-
-use super::render::escape_lsp_snippet_text;
 
 /// Accepted role for one pattern candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]

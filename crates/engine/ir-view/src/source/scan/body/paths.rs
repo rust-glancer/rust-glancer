@@ -11,12 +11,11 @@
 //!               ^^^^ -> `crate::model::User`
 //! ```
 
-use rg_ir_model::{BodyRef, ExprId, FieldKey, FileId, Path, ScopeId, Span};
-use rg_item_tree::TypePath;
-
 use rg_body_ir::{
     BodyAssociatedPathPrefix, BodyPath, BodyView, ExprKind, PatData, RecordExprField,
 };
+use rg_ir_model::{BodyRef, ExprId, FieldKey, FileId, Path, ScopeId, Span};
+use rg_item_tree::TypePath;
 
 use super::{
     BodySourceCandidate, ValueReferenceSource, ValueReferenceSurface, sites::BodyScanSites,

@@ -22,16 +22,14 @@ use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
 use rg_ty::trait_selection::TraitSelectionSession;
 
+use self::body::CurrentBodyBuilder;
+pub use self::types::{
+    CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
+};
+use super::{local_items::LocalItemSource, lower::CurrentDeclarationBuilder};
 use crate::{
     BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData,
     store::current::{CurrentImplData, CurrentImplRole, SelectedImpl},
-};
-
-use self::body::CurrentBodyBuilder;
-use super::{local_items::LocalItemSource, lower::CurrentDeclarationBuilder};
-
-pub use self::types::{
-    CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
 };
 
 /// Unavailable crate interpretations and body spans rebuilt for one current-source request.

@@ -1,9 +1,9 @@
-pub use rg_std_derive::Shrink;
-
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
 };
+
+pub use rg_std_derive::Shrink;
 
 /// Releases spare heap capacity retained inside a value.
 ///

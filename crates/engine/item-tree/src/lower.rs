@@ -10,14 +10,13 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use rg_arena::Arena;
+use rg_ir_model::{FileId, Span};
 use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
+use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
-
-use rg_ir_model::{FileId, Span};
-use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_text::{Name, NameInterner};
 use rg_tt::{
     Span as TtSpan,

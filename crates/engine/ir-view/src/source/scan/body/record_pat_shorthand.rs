@@ -1,9 +1,8 @@
 //! Source helpers for colonless record pattern fields.
 
+use rg_body_ir::{BodyView, PatKind, RecordPatField};
 use rg_ir_model::{BindingId, FieldKey, FileId, PatId, Span};
 use rg_std::UniqueVec;
-
-use rg_body_ir::{BodyView, PatKind, RecordPatField};
 
 use super::sites::BodyScanSites;
 

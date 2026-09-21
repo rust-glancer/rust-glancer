@@ -3,9 +3,8 @@
 use anyhow::Context as _;
 use rg_ir_view::lookup::importable::ImportableNameSearch;
 
-use crate::query::{completion::site::UnqualifiedCompletionSite, import::ImportContext};
-
 use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
+use crate::query::{completion::site::UnqualifiedCompletionSite, import::ImportContext};
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     /// Discover request-local auto-import candidates for ordinary type and value positions.

@@ -20,7 +20,6 @@ use rg_ty::{
 };
 
 use super::{BodyCallableCandidate, BodyReceiverImplMatches, traits::BodyQualifiedTraitSelection};
-
 use crate::{
     BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,

@@ -202,27 +202,8 @@ macro_rules! __rg_profile_declare_metrics {
     };
 }
 
-/// Increments a registered counter by one, or by the provided amount.
-pub use crate::__rg_profile_increment_counter as increment_counter;
-
-/// Records a keyed counter increment.
-pub use crate::__rg_profile_increment_keyed_counter as increment_keyed_counter;
-
-/// Adds elapsed time to a registered duration.
-pub use crate::__rg_profile_record_duration as record_duration;
-
-/// Records the latest value for a registered gauge.
-pub use crate::__rg_profile_record_gauge as record_gauge;
-
-/// Adds elapsed time to a keyed duration aggregate.
-pub use crate::__rg_profile_record_keyed_duration as record_keyed_duration;
-
-/// Starts an RAII timer that records elapsed time when dropped.
-pub use crate::__rg_profile_timer as timer;
-
 /// Appends a row to a checkpoint stream.
 pub use crate::__rg_profile_checkpoint as checkpoint;
-
 /// Declares typed metric handles and a matching descriptor list for one module.
 ///
 /// The macro groups profile items by selector scope. Each item path is built by appending the
@@ -312,3 +293,15 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 /// }
 /// ```
 pub use crate::__rg_profile_declare_metrics as declare_metrics;
+/// Increments a registered counter by one, or by the provided amount.
+pub use crate::__rg_profile_increment_counter as increment_counter;
+/// Records a keyed counter increment.
+pub use crate::__rg_profile_increment_keyed_counter as increment_keyed_counter;
+/// Adds elapsed time to a registered duration.
+pub use crate::__rg_profile_record_duration as record_duration;
+/// Records the latest value for a registered gauge.
+pub use crate::__rg_profile_record_gauge as record_gauge;
+/// Adds elapsed time to a keyed duration aggregate.
+pub use crate::__rg_profile_record_keyed_duration as record_keyed_duration;
+/// Starts an RAII timer that records elapsed time when dropped.
+pub use crate::__rg_profile_timer as timer;

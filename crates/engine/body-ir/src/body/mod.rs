@@ -19,6 +19,8 @@ mod source_items;
 mod stmt;
 mod view;
 
+pub use rg_ir_model::{BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LiteralKind};
+
 pub use self::{
     binding::{BindingData, BindingKind},
     data::{BodyData, FunctionParamData},
@@ -41,5 +43,3 @@ pub use self::{
     stmt::{StmtData, StmtKind},
     view::BodyView,
 };
-
-pub use rg_ir_model::{BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LiteralKind};

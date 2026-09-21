@@ -17,16 +17,16 @@ use rg_ty::{
     trait_selection::{TraitSelectionQuery, TraitSelectionSession},
 };
 
-use crate::BodyData;
-
-use crate::resolution::query::{
-    BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-    BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeContextQuery,
-    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
-};
-
 use super::cache::{
     BodyLocalItemCache, BodyMethodCache, BodyResolutionCaches, BodyTraitLookupCache,
+};
+use crate::{
+    BodyData,
+    resolution::query::{
+        BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery,
+        BodyGenericsQuery, BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery,
+        BodyTypeContextQuery, BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
+    },
 };
 
 type BodySemanticSignatureQuery<'context, 'query, D, I> =

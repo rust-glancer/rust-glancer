@@ -14,13 +14,12 @@ use tower_lsp_server::{
     jsonrpc::{Request, Response},
 };
 
+use super::{EditorIngress, completion_request, document_request};
 use crate::{
     completion_scheduler::CompletionScheduler, ingress::EditorStateHandle,
     inlay_refresher::InlayRefresher, recent_editor_saves::RecentEditorSaves,
     tests::synthetic_test_path,
 };
-
-use super::{EditorIngress, completion_request, document_request};
 
 #[test]
 fn folding_range_is_a_document_request() {

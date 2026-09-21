@@ -4,15 +4,14 @@ use rg_lsp_proto::EngineServiceClient;
 use tarpc::client::Config as TarpcClientConfig;
 use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangeEvent};
 
+use super::{
+    DiagnosticsPublication, DocumentRevision, EditorStateHandle, LifecycleEvent,
+    PositionRecaptureError,
+};
 use crate::{
     engine_client::EngineClient,
     engine_registry::OpenDocumentRoute,
     tests::{normalized_test_path, synthetic_test_path},
-};
-
-use super::{
-    DiagnosticsPublication, DocumentRevision, EditorStateHandle, LifecycleEvent,
-    PositionRecaptureError,
 };
 
 #[test]

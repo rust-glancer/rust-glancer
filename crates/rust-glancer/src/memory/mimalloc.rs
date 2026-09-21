@@ -1,10 +1,9 @@
+#[cfg(feature = "mimalloc-stats")]
+use std::ptr;
 use std::{
     alloc::{GlobalAlloc, Layout},
     sync::Once,
 };
-
-#[cfg(feature = "mimalloc-stats")]
-use std::ptr;
 
 use rg_lsp_engine::AllocatorStats;
 

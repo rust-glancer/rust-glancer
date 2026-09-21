@@ -13,7 +13,6 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-
 use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionPerformancePreference;

@@ -18,11 +18,10 @@ use rg_semantic_ir::{
     ItemLookupIndex, ItemStore, LoadSemanticIr, SemanticIrLoader, SemanticPackageManifest,
 };
 
-use crate::storage::cache::{
-    Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan,
+use crate::{
+    state::ProjectState,
+    storage::cache::{Fingerprint, PackageArtifactReader, PackageCacheStore, WorkspaceCachePlan},
 };
-
-use crate::state::ProjectState;
 
 /// Gives a query or build loaders that share one open reader per package cache file.
 ///

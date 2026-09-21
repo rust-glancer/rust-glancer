@@ -4,9 +4,8 @@ use std::borrow::Cow;
 
 use rg_ir_model::{FileId, Span};
 
-use crate::item::declaration::Declaration;
-
 use super::SymbolKind;
+use crate::item::declaration::Declaration;
 
 /// One source outline declaration.
 ///

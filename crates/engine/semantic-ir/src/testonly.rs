@@ -1,10 +1,9 @@
-use crate::ItemStore;
 use rg_def_map::{DefMap, testonly::DefMapFixture};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 
-use crate::SemanticIrDb;
+use crate::{ItemStore, SemanticIrDb};
 
 /// End-to-end fixture for tests that need semantic item data.
 pub struct SemanticIrFixture {

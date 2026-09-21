@@ -13,11 +13,10 @@ use rg_ir_model::PackageSlot;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 
-use crate::storage::cache::{
-    Fingerprint, PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan,
+use crate::{
+    state::ProjectState,
+    storage::cache::{Fingerprint, PackageCacheUpdate, PackageCacheWriteInput, WorkspaceCachePlan},
 };
-
-use crate::state::ProjectState;
 
 /// Mutable view of the phase databases backed by one package artifact.
 ///

@@ -32,8 +32,6 @@ use std::{
 use rg_package_store::MalformedCacheError;
 use rg_text::NameInterner;
 
-use crate::profile::metric;
-
 pub(crate) use self::error::PackageCacheReadError;
 use super::{
     PackageCacheProbe,
@@ -42,6 +40,7 @@ use super::{
         PackageDefMapCacheIndex, PackageSemanticIrCacheIndex,
     },
 };
+use crate::profile::metric;
 
 /// One open package artifact revision shared by phase loaders in a read transaction.
 ///

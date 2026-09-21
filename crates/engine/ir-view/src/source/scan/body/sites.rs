@@ -16,13 +16,12 @@
 //! fn local<T>(value: T) -> Option<T> { ... }
 //! ```
 
+use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 use rg_ir_model::{BodySource, ExprId, FileId, PatId, ScopeId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeId,
     ModuleItem, ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
-
-use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 
 use super::walk::{
     PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,

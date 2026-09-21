@@ -10,17 +10,16 @@ use rg_ir_view::{
     member::{FunctionParameterView, MemberFunction},
 };
 
+use super::{
+    CallCompletionKind, escape_lsp_snippet_text,
+    sort::{CompletionSortPolicy, CompletionSortPriority},
+};
 use crate::{
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
     },
     query::completion::CompletionQuery,
-};
-
-use super::{
-    CallCompletionKind, escape_lsp_snippet_text,
-    sort::{CompletionSortPolicy, CompletionSortPriority},
 };
 
 /// Signature metadata and insertion text for one function completion.

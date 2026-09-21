@@ -1,9 +1,8 @@
 use rg_arena::Arena;
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
@@ -323,11 +322,10 @@ mod tests {
         PackageSlot, Span,
     };
 
+    use super::*;
     use crate::{
         BindingKind, BodyData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
     };
-
-    use super::*;
 
     fn source() -> BodySource {
         BodySource::written(FileId(0), Span { start: 0, end: 0 })

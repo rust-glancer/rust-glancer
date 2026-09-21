@@ -73,12 +73,11 @@ use rg_tt::{
 };
 use smallvec::{SmallVec, smallvec};
 
+use super::{Binding, Bindings, ExpandResult, Fragment, TokensOrigin};
 use crate::mbe::{
     ExpandError, ExpandErrorKind, MetaTemplate, ValueResult, expect_fragment,
     parser::{ExprKind, MetaVarKind, Op, RepeatKind, Separator},
 };
-
-use super::{Binding, Bindings, ExpandResult, Fragment, TokensOrigin};
 
 impl<'a> Bindings<'a> {
     fn push_optional(&mut self, name: Symbol) {

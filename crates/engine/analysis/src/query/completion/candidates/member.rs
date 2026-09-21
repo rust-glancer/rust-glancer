@@ -8,13 +8,12 @@ use rg_ir_view::{
     ty::locals::BodyView,
 };
 
+use super::{
+    CompletionCandidateSource, DotMethodCompletionCandidate, RecordFieldCompletionCandidate,
+};
 use crate::{
     model::{CompletionApplicability, CompletionKind},
     query::completion::site::{DotCompletionSite, RecordFieldCompletionSite},
-};
-
-use super::{
-    CompletionCandidateSource, DotMethodCompletionCandidate, RecordFieldCompletionCandidate,
 };
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {

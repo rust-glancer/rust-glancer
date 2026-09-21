@@ -7,11 +7,12 @@
 use std::fmt;
 
 use super::symbol::sym;
-use crate::span::Span;
-
-use crate::tt::{
-    Ident, Leaf, MAX_GLUED_PUNCT_LEN, Punct, Spacing, Subtree, TokenTree, TokenTreesReprRef,
-    TokenTreesView, dispatch_ref,
+use crate::{
+    span::Span,
+    tt::{
+        Ident, Leaf, MAX_GLUED_PUNCT_LEN, Punct, Spacing, Subtree, TokenTree, TokenTreesReprRef,
+        TokenTreesView, dispatch_ref,
+    },
 };
 
 #[derive(Clone)]

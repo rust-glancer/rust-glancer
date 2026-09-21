@@ -18,9 +18,8 @@ use rg_ir_view::{
 };
 use rg_std::UniqueVec;
 
-use crate::{model::SymbolAt, source_symbol::SourceSymbol};
-
 use super::search::{ReferenceScanTarget, ReferenceSearchLabel};
+use crate::{model::SymbolAt, source_symbol::SourceSymbol};
 
 /// Request-local declaration identity for one reference lookup.
 pub(super) struct ReferenceSubject {

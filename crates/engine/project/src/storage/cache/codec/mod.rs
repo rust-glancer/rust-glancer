@@ -43,7 +43,6 @@ pub(crate) use self::{
         PackageSemanticIrCacheIndex, SEMANTIC_IR_CRATE_PREFIX_BYTES, SemanticIrCrateCacheIndex,
     },
 };
-
 use super::{
     BodyIrWriteInput, CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheBodyUpdateInput,
     PackageCacheHeader, PackageCacheProbe, PackageCacheWriteInput,

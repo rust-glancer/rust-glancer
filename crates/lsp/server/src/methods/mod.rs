@@ -18,12 +18,11 @@ use std::path::PathBuf;
 
 use tower_lsp_server::gen_lsp_types::*;
 
-use crate::{capabilities, engine_client::EngineClient};
-
 pub(crate) use self::{
     context::{CompletionMethodContext, DocumentMethodContext},
     query_response::{internal_error, into_lsp_error, temporarily_unavailable},
 };
+use crate::{capabilities, engine_client::EngineClient};
 
 pub(crate) mod text_document;
 pub(crate) mod workspace;

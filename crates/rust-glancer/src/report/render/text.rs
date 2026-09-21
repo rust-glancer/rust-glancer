@@ -1,10 +1,9 @@
 use std::fmt::Write as _;
 
+use super::value::format_value;
 use crate::report::{
     ReportAlign, ReportBlock, ReportColumn, ReportDocument, ReportField, ReportRow,
 };
-
-use super::value::format_value;
 
 pub(crate) struct TextRenderer;
 

@@ -1,16 +1,12 @@
 //! Shared lowering context for expression bodies.
 
 use anyhow::Context as _;
-
-use rg_syntax::{AstNode as _, ast};
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
+use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
-
-use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::{
     CurrentDeclarationBuilder, CurrentRootItems,
@@ -18,6 +14,7 @@ use super::{
     macro_expansion::BodyMacroExpansionContext,
     syntax::source_for,
 };
+use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 pub(super) struct BodyLowering<'a> {
     owner: BodyOwner,

@@ -12,11 +12,6 @@ use std::marker::PhantomData;
 
 use either::Either;
 
-use crate::{
-    SyntaxKind,
-    syntax_node::{SyntaxNode, SyntaxNodeChildren, SyntaxToken},
-};
-
 pub use self::{
     expr_ext::{ArrayExprKind, BlockModifier, CallableExpr, ElseBranch, LiteralKind},
     generated::{nodes::*, tokens::*},
@@ -34,6 +29,10 @@ pub use self::{
         HasGenericParams, HasLoopBody, HasModuleItem, HasName, HasTypeBounds, HasVisibility,
         attrs_including_inner,
     },
+};
+use crate::{
+    SyntaxKind,
+    syntax_node::{SyntaxNode, SyntaxNodeChildren, SyntaxToken},
 };
 
 /// The main trait to go from untyped `SyntaxNode`  to a typed ast. The

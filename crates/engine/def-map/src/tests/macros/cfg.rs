@@ -1,5 +1,6 @@
-use crate::tests::utils;
 use rg_workspace::WorkspaceLoweringConfig;
+
+use crate::tests::utils;
 
 #[test]
 fn skips_cfg_disabled_macro_definitions_and_calls() {

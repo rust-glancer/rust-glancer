@@ -34,10 +34,12 @@ pub mod utils;
 
 use std::{marker::PhantomData, sync::Arc};
 
+pub use parser::{Edition, LexedStr, SyntaxKind, T};
+pub use rustc_literal_escaper as unescape;
+pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 use stdx::format_to;
 
 use self::syntax_node::{SyntaxTree, SyntaxTreeBuilder};
-
 pub use crate::{
     ast::{AstNode, AstToken},
     syntax_error::SyntaxError,
@@ -48,9 +50,6 @@ pub use crate::{
     },
     token_text::TokenText,
 };
-pub use parser::{Edition, LexedStr, SyntaxKind, T};
-pub use rustc_literal_escaper as unescape;
-pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 
 /// Builder used by token-tree parsers that already know the parser input and token text.
 ///

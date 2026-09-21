@@ -5,8 +5,6 @@
 //! without walking AST or module scopes again.
 
 use anyhow::Context as _;
-
-use crate::{ItemStore, SemanticPackage};
 use rg_def_map::{
     DefMapDb, DefMapReadTxn, GeneratedItemStore, GeneratedItemStores, ItemSource, ItemSourceKind,
 };
@@ -14,6 +12,7 @@ use rg_ir_model::{CrateId, CrateRef, PackageSlot};
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 
 use super::{ItemStoreLowerer, ItemStoreSourceReader};
+use crate::{ItemStore, SemanticPackage};
 
 pub(super) fn build_package(
     item_tree: &ItemTreeDb,

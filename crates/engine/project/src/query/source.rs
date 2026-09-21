@@ -14,9 +14,8 @@ use rg_parse::ParseDb;
 use rg_std::MemorySize;
 use rg_text::RustEdition;
 
-use crate::selection::subset;
-
 use super::ProjectSnapshot;
+use crate::selection::subset;
 
 /// Analysis-ready context for one filesystem path.
 ///

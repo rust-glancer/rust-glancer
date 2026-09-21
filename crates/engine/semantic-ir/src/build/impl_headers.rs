@@ -15,7 +15,6 @@
 
 use std::collections::HashMap;
 
-use crate::{ItemResolutionQuery, ItemStoreQuery};
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
     CrateId, CrateRef, ImplRef, ModuleRef, PackageSlot, PrimitiveTy, TraitDefRef, TypeDefRef,
@@ -25,8 +24,8 @@ use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 
 use crate::{
-    SelfTypeOwner, SemanticIrReadTxn, TraitImplSelfHead, TypePathContext,
-    store::SemanticIrDbMutator,
+    ItemResolutionQuery, ItemStoreQuery, SelfTypeOwner, SemanticIrReadTxn, TraitImplSelfHead,
+    TypePathContext, store::SemanticIrDbMutator,
 };
 
 /// Named identities and a conservative lookup key collected for one impl declaration.

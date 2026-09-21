@@ -28,12 +28,11 @@ use rg_body_ir::{BodyFileShard, CrateBodiesManifest, PackageBodiesManifest};
 use rg_ir_model::{CrateId, FileId};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::storage::cache::payload::{BodyIrWriteInput, CrateBodyWriteInput};
-
 use super::{
     PACKAGE_CACHE_DECODE_LIMIT_BYTES, PackageCacheCodec, PackageCacheProbe,
     PackageCacheSectionRange,
 };
+use crate::storage::cache::payload::{BodyIrWriteInput, CrateBodyWriteInput};
 
 const BODY_CACHE_CONTAINER_MAGIC: [u8; 8] = *b"RGBODY\0\x02";
 /// Bytes needed to discover the variable-size Body IR manifest.

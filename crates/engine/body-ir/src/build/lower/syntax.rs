@@ -1,20 +1,18 @@
 //! Syntax helpers shared by the function-body lowering modules.
 
+use rg_ir_model::{FileId, PrimitiveTy, Span, UnsignedIntTy};
+use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
-
-use rg_ir_model::{FileId, PrimitiveTy, Span, UnsignedIntTy};
-use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_text::Name;
 
+use super::body::BodyLowering;
 use crate::body::{
     BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource, LabelData,
     LiteralKind,
 };
-
-use super::body::BodyLowering;
 
 impl BodyLowering<'_> {
     pub(super) fn literal_kind_from_ast(literal: &ast::Literal) -> LiteralKind {
@@ -243,9 +241,8 @@ mod tests {
     use rg_ir_model::{FloatTy, PrimitiveTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
-    use crate::body::LiteralKind;
-
     use super::BodyLowering;
+    use crate::body::LiteralKind;
 
     #[test]
     fn classifies_rust_literal_tokens() {

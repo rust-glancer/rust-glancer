@@ -33,20 +33,18 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 
-use tokio::sync::watch;
-use tower_lsp_server::gen_lsp_types::{Position, TextDocumentContentChangeEvent};
-
 use rg_lsp_proto::{
     DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
     OpenDocumentsRevision, SaveProposal, TargetDocumentRevision,
 };
 use rg_std::NormalizedPathBuf;
-
-use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
+use tokio::sync::watch;
+use tower_lsp_server::gen_lsp_types::{Position, TextDocumentContentChangeEvent};
 
 use self::lifecycle::{ClosedDocumentCleanup, LifecycleBarrier};
 pub(crate) use self::lifecycle::{LifecycleEvent, SequencedLifecycleEvent, SessionRoute};
 use super::edit::{AppliedDocumentChanges, DocumentChangeError, PositionTransform};
+use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
 
 /// Editor state selected for one document request before its handler starts.
 ///

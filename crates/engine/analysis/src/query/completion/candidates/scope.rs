@@ -14,14 +14,13 @@ use rg_ir_view::{
     },
 };
 
-use crate::{
-    model::{CompletionKind, CompletionTarget},
-    query::completion::site::UnqualifiedCompletionSite,
-};
-
 use super::{
     CompletionCandidateSource, GenericScopeCompletionCandidate, LexicalCompletionCandidate,
     PrimitiveTypePathScope,
+};
+use crate::{
+    model::{CompletionKind, CompletionTarget},
+    query::completion::site::UnqualifiedCompletionSite,
 };
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {

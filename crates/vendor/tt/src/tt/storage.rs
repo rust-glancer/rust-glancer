@@ -26,14 +26,15 @@
 use std::fmt;
 
 use rg_std::{MemoryRecorder, MemorySize};
-
-use super::symbol::Symbol;
-use crate::span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::tt::{
-    DelimSpan, DelimiterKind, IdentIsRaw, LitKind, Spacing, SubtreeView, TokenTreesReprRef,
-    TokenTreesView, TtIter, dispatch_ref,
+use super::symbol::Symbol;
+use crate::{
+    span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize},
+    tt::{
+        DelimSpan, DelimiterKind, IdentIsRaw, LitKind, Spacing, SubtreeView, TokenTreesReprRef,
+        TokenTreesView, TtIter, dispatch_ref,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]

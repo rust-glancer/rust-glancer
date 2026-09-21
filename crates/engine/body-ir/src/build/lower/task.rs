@@ -8,21 +8,17 @@
 use std::collections::HashMap;
 
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, SyntaxKind, ast};
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, FileId, ModuleRef, Span};
 use rg_parse::CurrentSource;
+use rg_syntax::{AstNode as _, SyntaxKind, ast};
 use rg_text::NameInterner;
 
-use super::CurrentRootItems;
-
-use crate::BodyOwner;
-
 use super::{
-    LoweredCrateBodies, body::BodyLowering, macro_expansion::BodyMacroExpansionContext,
-    syntax::source_for,
+    CurrentRootItems, LoweredCrateBodies, body::BodyLowering,
+    macro_expansion::BodyMacroExpansionContext, syntax::source_for,
 };
+use crate::BodyOwner;
 
 /// A function body or item initializer that should become immutable `BodyData`.
 #[derive(Debug, Clone, Copy)]

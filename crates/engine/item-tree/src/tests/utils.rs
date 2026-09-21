@@ -1,14 +1,14 @@
 use std::fmt::Write as _;
 
 use expect_test::Expect;
+use rg_ir_model::FileId;
+use rg_parse::{CargoTarget, Package};
 
 use crate::{
     BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
     ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource, ParamKind,
     TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
 };
-use rg_ir_model::FileId;
-use rg_parse::{CargoTarget, Package};
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let db = ItemTreeFixtureDb::build(fixture);

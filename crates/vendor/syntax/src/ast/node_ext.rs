@@ -9,6 +9,7 @@ use itertools::Itertools;
 use parser::SyntaxKind;
 use smallvec::{SmallVec, smallvec};
 
+use super::{GenericParam, RangeItem, RangeOp};
 use crate::{
     NodeOrToken, SmolStr, SyntaxElement, SyntaxElementChildren, SyntaxToken, T, TokenText,
     ast::{
@@ -16,8 +17,6 @@ use crate::{
         HasTypeBounds, SyntaxNode, support,
     },
 };
-
-use super::{GenericParam, RangeItem, RangeOp};
 
 impl ast::Lifetime {
     pub fn text(&self) -> TokenText<'_> {

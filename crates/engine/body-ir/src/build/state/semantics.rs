@@ -9,15 +9,14 @@ use rg_semantic_ir::{ItemLookupQuery, SemanticIrReadTxn, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::trait_selection::TraitSelectionSession;
 
+use super::{
+    BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
+};
 use crate::{
     build::{
         pattern_binding::PatternBindingMaterializationPass, query_source::BodyBuildQuerySource,
     },
     resolution::{BodyResolutionContext, InferenceContext},
-};
-
-use super::{
-    BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
 };
 
 // Bodies are the highest-cardinality build unit. Construct their diagnostic record only after the

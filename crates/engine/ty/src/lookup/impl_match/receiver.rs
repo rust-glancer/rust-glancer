@@ -11,12 +11,11 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
+use super::ImplMatcher;
 use crate::{
     Clause, Substitution, Ty, inference::InferenceTable, lowering::TypePathResolver,
     trait_selection::TraitSelection,
 };
-
-use super::ImplMatcher;
 
 /// One inherent impl whose canonical `Self` header matched a receiver.
 ///

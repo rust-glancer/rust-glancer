@@ -4,12 +4,12 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
+use rg_std::MemorySize;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     RustcTarget, WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path,
 };
-use rg_std::MemorySize;
 
 /// Options used when asking Cargo for the workspace graph.
 ///

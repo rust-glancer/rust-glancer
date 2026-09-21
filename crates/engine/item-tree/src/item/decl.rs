@@ -3,12 +3,12 @@
 //! These types preserve what the user wrote in signatures and item headers. Name resolution,
 //! type solving, and semantic ownership are left to later IR layers.
 
-use rg_std::{MemorySize, Shrink};
 use std::fmt;
-use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{FieldKey, Mutability, Span};
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     ConstExpr, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,

@@ -1,11 +1,6 @@
 use std::fmt::Write as _;
 
 use expect_test::Expect;
-
-use crate::{
-    CrateItemQuery, ItemLookupQuery, ItemResolutionQuery, ItemStore, ItemStoreQuery,
-    SemanticIrReadTxn, testonly::SemanticIrFixture,
-};
 use rg_ir_model::{
     AssocItemId, ConstId, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId, ImplRef,
     ItemId, ModuleId, ModuleRef, PackageSlot, Path, TraitDefRef, TypeAliasId, TypeDefId,
@@ -15,6 +10,11 @@ use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
+
+use crate::{
+    CrateItemQuery, ItemLookupQuery, ItemResolutionQuery, ItemStore, ItemStoreQuery,
+    SemanticIrReadTxn, testonly::SemanticIrFixture,
+};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);

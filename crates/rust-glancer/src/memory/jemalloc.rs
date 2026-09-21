@@ -1,7 +1,6 @@
-use std::{ffi::CStr, ptr};
-
 #[cfg(feature = "jemalloc-stats")]
 use std::mem;
+use std::{ffi::CStr, ptr};
 
 use rg_lsp_engine::AllocatorStats;
 

@@ -23,7 +23,6 @@ mod task;
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
@@ -31,8 +30,6 @@ use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, PackageSlot, StaticRef};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
-
-use crate::CrateBodiesCoverage;
 
 use self::crate_lowering::CrateLowering;
 pub(super) use self::{
@@ -45,6 +42,7 @@ use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,
 };
+use crate::CrateBodiesCoverage;
 
 // These thresholds are diagnostic filters, not build budgets. Debug logging should identify
 // unusually expensive units without producing one record for every ordinary package or crate.

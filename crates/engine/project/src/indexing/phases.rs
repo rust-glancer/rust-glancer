@@ -7,7 +7,6 @@
 //! project finalized.
 
 use anyhow::Context as _;
-
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb};
 use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
@@ -18,6 +17,11 @@ use rg_std::Shrink;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
+use super::{
+    checkpoint_memory::{CheckpointMemory, checkpoint_memory},
+    macro_source_files,
+    plan::PackageBuildPlan,
+};
 use crate::{
     IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, SplitIndexingMode,
     StartupCacheLoad,
@@ -28,12 +32,6 @@ use crate::{
         cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
         loaders::PackageReadLoaders,
     },
-};
-
-use super::{
-    checkpoint_memory::{CheckpointMemory, checkpoint_memory},
-    macro_source_files,
-    plan::PackageBuildPlan,
 };
 
 /// Phase payloads built for one project snapshot.

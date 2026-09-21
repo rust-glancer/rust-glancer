@@ -15,6 +15,7 @@
 use anyhow::Context as _;
 use rg_ir_view::source::{IndexedUnqualifiedNameContext, SourceCompletionView};
 
+use super::unqualified::UnqualifiedCompletionResolver;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind, SyntheticCompletionTarget},
@@ -31,8 +32,6 @@ use crate::{
         syntax::CompletionSyntaxContext,
     },
 };
-
-use super::unqualified::UnqualifiedCompletionResolver;
 
 /// Reuses ordinary name lookup under const-expression restrictions.
 ///

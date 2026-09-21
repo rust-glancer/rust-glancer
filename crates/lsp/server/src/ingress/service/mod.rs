@@ -25,15 +25,14 @@ use tower_lsp_server::{
     jsonrpc::{FromParams, Request},
 };
 
+use super::state::{
+    CapturedDocument, DocumentUnavailable, EditorStateHandle, SequencedLifecycleEvent,
+};
 use crate::{
     completion_scheduler::{CompletionRequest, CompletionScheduler},
     inlay_refresher::InlayRefresher,
     methods,
     recent_editor_saves::RecentEditorSaves,
-};
-
-use super::state::{
-    CapturedDocument, DocumentUnavailable, EditorStateHandle, SequencedLifecycleEvent,
 };
 
 tokio::task_local! {

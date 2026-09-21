@@ -8,9 +8,8 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
 use syn::{Data, DataEnum, DataStruct, DeriveInput, Field, Fields, Ident, LitStr, Path, Type};
 
-use crate::generics::{add_auto_bounds, add_configured_bounds};
-
 use super::attrs::{ContainerAttrs, FieldAttrs, VariantAttrs};
+use crate::generics::{add_auto_bounds, add_configured_bounds};
 
 /// Expands one derive input into an implementation of `MemorySize`.
 pub(crate) fn expand_memory_size(input: DeriveInput) -> syn::Result<TokenStream2> {

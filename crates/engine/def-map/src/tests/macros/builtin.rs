@@ -1,5 +1,6 @@
-use crate::tests::utils;
 use expect_test::expect;
+
+use crate::tests::utils;
 
 fn build_builtin_macro_fixture(fixture: &str) -> utils::DefMapFixtureDb {
     utils::DefMapFixtureDb::build_with_fake_sysroot(fixture)

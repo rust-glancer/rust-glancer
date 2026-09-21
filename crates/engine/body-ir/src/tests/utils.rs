@@ -1,13 +1,6 @@
 use std::fmt::Write as _;
 
 use expect_test::Expect;
-
-use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
-    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
-    testonly::BodyIrFixture,
-};
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
@@ -21,6 +14,13 @@ use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
     lowering::SemanticSignatureQuery,
+};
+
+use crate::{
+    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
+    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
+    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
+    testonly::BodyIrFixture,
 };
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {

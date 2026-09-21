@@ -4,9 +4,8 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::report::{ReportDocumentBuilder, ReportTableBuilder};
-
 use super::duration_ms;
+use crate::report::{ReportDocumentBuilder, ReportTableBuilder};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ServerReport {

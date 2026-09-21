@@ -18,13 +18,6 @@ use std::{
 };
 
 use anyhow::Context as _;
-
-use crate::{
-    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
-    LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
-    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding,
-    ScopeBindingProvenance, Visibility,
-};
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef,
@@ -39,12 +32,16 @@ use rg_parse::{CargoTarget, ModuleFileContext, Package};
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
-use crate::MacroSourceFileRequest;
-
 use super::macros::{
     ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite, MacroDefinitionRecord,
     MacroDirective, MacroDirectiveState, MacroUseImport, PendingGeneratedInclude,
     PendingGeneratedModule, PendingMacroExpansionLimitReport, TextualMacroScopes,
+};
+use crate::{
+    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
+    LocalImplData, MacroDefinitionData, MacroSourceFileRequest, ModuleData, ModuleDocumentation,
+    ModuleFileSelection, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet,
+    ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 
 /// Collected state for one crate before fixed-point import resolution.

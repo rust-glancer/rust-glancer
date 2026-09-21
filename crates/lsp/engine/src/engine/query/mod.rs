@@ -14,12 +14,6 @@ mod references;
 mod semantic_tokens;
 mod source;
 
-pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
-use self::{
-    lifecycle::QueryRunError,
-    navigation::{CapturedNavigationDocuments, CapturedTargetLocation},
-};
-
 use std::{path::Path, sync::Arc, time::Instant};
 
 use anyhow::Context as _;
@@ -40,6 +34,11 @@ use rg_project::{
 };
 use rg_std::UniqueVec;
 
+pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
+use self::{
+    lifecycle::QueryRunError,
+    navigation::{CapturedNavigationDocuments, CapturedTargetLocation},
+};
 use crate::{
     engine::project::ProjectCoordinator,
     memory::MemoryControl,

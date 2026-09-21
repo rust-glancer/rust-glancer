@@ -14,13 +14,6 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-
-use crate::{
-    CrateData, CrateResolutionEnv, GeneratedItemStores, LocalDefData, LocalEnumVariantData,
-    LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView, MacroExpansionLimitReport,
-    ModuleData, ModuleScopeBuilder, Namespace, PackageDefMaps as DefMapPackage,
-    ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
-};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef, PackageSlot,
     Path,
@@ -32,14 +25,8 @@ use rg_std::UniqueVec;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 
-use crate::{
-    DefMapReadTxn, MacroSourceFileRequest,
-    profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
-};
-
-use super::MacroSourceFileResolutions;
-
 use super::{
+    MacroSourceFileResolutions,
     collect::{CrateState, KnownModuleFiles},
     imports::{ImportResolutionExecutor, ImportWorklist, UnresolvedImports},
     macros::{
@@ -47,6 +34,14 @@ use super::{
         apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
         expand_expansion_attempts, mark_retryable_macros_skipped_by_limit,
     },
+};
+use crate::{
+    CrateData, CrateResolutionEnv, DefMapReadTxn, GeneratedItemStores, LocalDefData,
+    LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView,
+    MacroExpansionLimitReport, MacroSourceFileRequest, ModuleData, ModuleScopeBuilder, Namespace,
+    PackageDefMaps as DefMapPackage, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv,
+    ScopeResolver,
+    profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
 };
 
 /// Mutable crate states for every crate inside one package.

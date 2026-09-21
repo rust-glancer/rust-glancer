@@ -1,5 +1,6 @@
-use crate::{MemoryRecorder, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::{MemoryRecorder, MemorySize, Shrink};
 
 /// Candidate accumulator for values that are expected to be unique.
 ///

@@ -20,9 +20,8 @@ mod worklist;
 
 use rg_ir_model::{CrateRef, ImportId, ModuleRef};
 
-use super::finalize::FinalizeCrateStates;
-
 pub(super) use self::worklist::{ImportResolutionExecutor, ImportWorklist};
+use super::finalize::FinalizeCrateStates;
 
 /// Unresolved import ids for one module.
 type ModuleUnresolvedImports = Vec<ImportId>;

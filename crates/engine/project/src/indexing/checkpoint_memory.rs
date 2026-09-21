@@ -7,12 +7,11 @@ use rg_semantic_ir::SemanticIrDb;
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use rg_text::PackageNameInterners;
 
+use super::plan::PackageBuildPlan;
 use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
     storage::cache::Fingerprint,
 };
-
-use super::plan::PackageBuildPlan;
 
 /// Snapshot of the phase locals that are still alive at a build checkpoint.
 ///

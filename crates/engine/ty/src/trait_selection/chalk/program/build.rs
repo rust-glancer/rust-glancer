@@ -14,6 +14,7 @@ use rg_ir_model::{AssocItemId, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::UniqueVec;
 
+use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 use crate::{
     lookup::ItemPathQuery,
     trait_selection::{
@@ -27,8 +28,6 @@ use crate::{
         },
     },
 };
-
-use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 

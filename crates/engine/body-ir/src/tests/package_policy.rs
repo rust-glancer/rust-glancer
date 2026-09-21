@@ -1,7 +1,7 @@
-use crate::BodyIrBuildPolicy;
 use expect_test::expect;
 
 use super::utils::{check_project_body_ir, check_project_body_ir_with_policy};
+use crate::BodyIrBuildPolicy;
 
 const PACKAGE_POLICY_FIXTURE: &str = r#"
 //- /Cargo.toml

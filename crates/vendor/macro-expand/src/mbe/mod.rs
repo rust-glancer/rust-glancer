@@ -8,13 +8,13 @@ mod expander;
 mod macro_call_style;
 mod parser;
 
+use std::{fmt, sync::Arc};
+
 use rg_tt::{
     span::{Edition, Span, SyntaxContext},
     tt,
     tt::{DelimSpan, iter::TtIter},
 };
-
-use std::{fmt, sync::Arc};
 
 pub use self::macro_call_style::MacroCallStyle;
 use self::parser::MetaTemplate;

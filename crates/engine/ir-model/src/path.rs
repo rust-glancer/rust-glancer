@@ -16,10 +16,9 @@
 
 use std::fmt;
 
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_std::{MemorySize, Shrink};
 use rg_text::{Name, NameInterner, RustEdition};
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::CrateRef;
 

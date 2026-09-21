@@ -1,6 +1,5 @@
-use crate::{profile::metric, profile_descriptors};
-
 use super::utils;
+use crate::{profile::metric, profile_descriptors};
 
 #[test]
 fn profile_snapshot_records_macro_finalization_metrics() {

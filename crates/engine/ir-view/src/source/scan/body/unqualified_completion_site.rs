@@ -14,13 +14,12 @@
 //! module::it$0;          not handled here: candidates come from `module`
 //! ```
 
+use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatKind, StmtKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{BindingId, BodyRef, CrateRef, FileId, GenericDefRef, ScopeId, Span};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStore;
-
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatKind, StmtKind};
 
 use super::{
     BodyUnqualifiedNameContext, PatternCompletionKind, UnqualifiedCompletionSite,

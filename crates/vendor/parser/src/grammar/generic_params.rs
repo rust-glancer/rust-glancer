@@ -1,6 +1,5 @@
-use crate::grammar::attributes::ATTRIBUTE_FIRST;
-
 use super::*;
+use crate::grammar::attributes::ATTRIBUTE_FIRST;
 
 pub(super) fn opt_generic_param_list(p: &mut Parser<'_>) {
     if p.at(T![<]) {

@@ -32,6 +32,7 @@ use rg_ir_view::{
 };
 use rg_syntax::{AstNode as _, ast};
 
+use super::syntax::{CodeActionSyntax, PathNameSyntax};
 use crate::{
     Analysis, CodeAction, CodeActionEdit, CodeActionKind, CodeActionQuery, CodeActionTrigger,
     query::{
@@ -40,8 +41,6 @@ use crate::{
     },
     source_symbol::{SourceSymbolResolver, SourceSymbolRole},
 };
-
-use super::syntax::{CodeActionSyntax, PathNameSyntax};
 
 /// What the last name of a qualified path would mean after its qualifier is removed.
 ///

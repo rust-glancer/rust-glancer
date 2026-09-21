@@ -22,13 +22,12 @@ pub(crate) mod nodes;
 #[rustfmt::skip]
 pub(crate) mod tokens;
 
+pub(crate) use self::nodes::*;
 use crate::{
     AstNode,
     SyntaxKind::{self, *},
     SyntaxNode,
 };
-
-pub(crate) use self::nodes::*;
 
 // Stmt is the only nested enum, so it's easier to just hand-write it
 impl AstNode for Stmt {

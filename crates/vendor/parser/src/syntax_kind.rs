@@ -13,10 +13,9 @@
 )]
 mod generated;
 
-use crate::Edition;
-
 #[allow(unreachable_pub)]
 pub use self::generated::SyntaxKind;
+use crate::Edition;
 
 impl From<u16> for SyntaxKind {
     #[inline]

@@ -19,6 +19,9 @@ mod string;
 use std::sync::OnceLock;
 
 use rg_ir_model::Span;
+use rg_ir_view::source::{
+    IndexedPatternCompletionKind, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
+};
 use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{
     AstNode as _, AstToken as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextRange, TextSize,
@@ -29,9 +32,6 @@ use crate::query::completion::site::{
     CompletionSiteSyntax, EmptyPathCompletionContext, ItemListCompletionKind,
     ModuleNameCompletionSyntax, PatternCompletionKind, SpecializedCompletionContext,
     StandaloneCompletionSiteSyntax, SyntaxCompletionContext,
-};
-use rg_ir_view::source::{
-    IndexedPatternCompletionKind, IndexedTypeNamePosition, IndexedUnqualifiedNameContext,
 };
 
 /// Speculatively parsed request buffer centered on one completion offset.
@@ -582,6 +582,7 @@ impl<'source> CompletionPrefix<'source> {
 mod tests {
     use rg_ir_model::Path;
 
+    use super::CompletionSyntaxContext;
     use crate::query::completion::site::{
         BodyMacroCompletionContext, EmptyPathCompletionContext, ItemListCompletionContext,
         ItemListCompletionKind, ItemQualifierContext, ModuleDeclarationCompletionContext,
@@ -589,8 +590,6 @@ mod tests {
         SpecializedCompletionContext, SpecializedStringCompletionContext, SyntaxCompletionContext,
         TraitImplMemberKind, TypeCompletionContext,
     };
-
-    use super::CompletionSyntaxContext;
 
     #[test]
     fn computes_prefix_and_replacement_span() {

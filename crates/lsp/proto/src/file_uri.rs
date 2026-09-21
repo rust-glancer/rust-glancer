@@ -108,8 +108,9 @@ fn platform_path_for_editor(path: &Path) -> Result<PathBuf, FileUriError> {
 mod tests {
     use std::str::FromStr as _;
 
-    use super::{FileUriError, file_uri_to_path, path_to_file_uri};
     use gen_lsp_types::Uri;
+
+    use super::{FileUriError, file_uri_to_path, path_to_file_uri};
 
     #[test]
     fn host_native_file_path_round_trips() {

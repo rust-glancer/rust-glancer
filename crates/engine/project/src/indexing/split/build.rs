@@ -1,11 +1,11 @@
 //! Captures saved source and declarations so body analysis can run outside the live project.
 
-use super::{AnalysisSurface, SplitIndexingProgress};
-use crate::{
-    selection::PhasePackageSet,
-    state::{ProjectGenerationId, ProjectState},
-    storage::loaders::PackageReadLoaders,
+use std::{
+    num::NonZeroUsize,
+    path::Path,
+    sync::{Arc, Mutex},
 };
+
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuilder, BodyIrFile, CrateBodies, CrateBodiesCoverage};
 use rg_def_map::{DefMapDb, DefMapLoader};
@@ -15,10 +15,12 @@ use rg_parse::ParseDb;
 use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{MemorySize, UniqueVec};
 use rg_text::PackageNameInterners;
-use std::{
-    num::NonZeroUsize,
-    path::Path,
-    sync::{Arc, Mutex},
+
+use super::{AnalysisSurface, SplitIndexingProgress};
+use crate::{
+    selection::PhasePackageSet,
+    state::{ProjectGenerationId, ProjectState},
+    storage::loaders::PackageReadLoaders,
 };
 
 /// Owned inputs for analyzing selected bodies from one saved version of [`Project`](crate::Project).

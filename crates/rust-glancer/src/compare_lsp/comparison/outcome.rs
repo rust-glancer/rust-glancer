@@ -1,8 +1,7 @@
 //! Shared comparison outcome helpers.
 
-use crate::compare_lsp::normalization::NormalizedOutcome;
-
 use super::metrics::NonComparableMetrics;
+use crate::compare_lsp::normalization::NormalizedOutcome;
 
 #[derive(Debug)]
 pub(crate) struct NonComparableComparison {

@@ -1,10 +1,9 @@
 use std::fmt;
 
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{Mutability, Path, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Source-backed const-expression syntax retained by the item tree.
 ///

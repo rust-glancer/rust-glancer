@@ -22,9 +22,8 @@ use rg_ty::{
     lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
 };
 
-use crate::resolution::BodyResolutionContext;
-
 use super::{BodyCallableCandidate, BodyReceiverImplMatches};
+use crate::resolution::BodyResolutionContext;
 
 /// Resolves method declarations while preserving the evidence needed by body inference.
 ///

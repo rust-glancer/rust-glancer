@@ -36,9 +36,9 @@ use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{ProjectMemoryHooks, ProjectMemoryPurgePoint, profile::metric};
-
-use crate::selection::PhasePackageSet;
+use crate::{
+    ProjectMemoryHooks, ProjectMemoryPurgePoint, profile::metric, selection::PhasePackageSet,
+};
 
 // The DefMap session retains its own macro-expansion bound across pauses. This second bound limits
 // a valid but pathological chain that discovers one real file per project-owned source wave.

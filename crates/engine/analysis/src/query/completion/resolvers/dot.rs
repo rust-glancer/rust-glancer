@@ -7,6 +7,7 @@
 use anyhow::Context as _;
 use rg_ir_view::{display::syntax::SyntaxRenderer, member::MemberView};
 
+use super::postfix::PostfixCompletionResolver;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionTarget},
@@ -21,8 +22,6 @@ use crate::{
         syntax::CompletionSyntaxContext,
     },
 };
-
-use super::postfix::PostfixCompletionResolver;
 
 /// Combines the three result families that can follow a dot.
 ///

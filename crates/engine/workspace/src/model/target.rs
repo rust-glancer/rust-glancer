@@ -1,5 +1,6 @@
-use rg_std::{MemorySize, Shrink};
 use std::path::PathBuf;
+
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Normalized target metadata with one target kind per target.

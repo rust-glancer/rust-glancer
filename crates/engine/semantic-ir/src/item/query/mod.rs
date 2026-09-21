@@ -11,8 +11,6 @@ mod resolution;
 
 use rg_ir_model::{CrateRef, DefMapRef};
 
-use crate::{ItemLookupIndex, ItemStore};
-
 pub use self::{
     crate_item::CrateItemQuery,
     generics::GenericsQuery,
@@ -20,6 +18,7 @@ pub use self::{
     lookup::{ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats},
     resolution::ItemResolutionQuery,
 };
+use crate::{ItemLookupIndex, ItemStore};
 
 /// Provides the stores that semantic-shaped item refs can point into.
 ///

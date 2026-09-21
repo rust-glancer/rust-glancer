@@ -1,9 +1,9 @@
 use std::fmt;
 
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::PrimitiveTy;
-use rg_std::{MemorySize, Shrink};
 
 /// Literal category plus the primitive type implied by suffix/default heuristics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

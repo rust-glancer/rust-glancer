@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use serde::Serialize;
 
+use super::{duration_ms, optional_percent};
 use crate::{
     compare_lsp::comparison::{
         MappedSetComparisonMetrics, NonComparableMetrics, QueryComparison, QueryComparisonResult,
@@ -14,8 +15,6 @@ use crate::{
         ReportValue,
     },
 };
-
-use super::{duration_ms, optional_percent};
 
 const HIGHLIGHT_LIMIT: usize = 10;
 

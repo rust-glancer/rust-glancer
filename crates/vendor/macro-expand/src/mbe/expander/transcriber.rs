@@ -13,12 +13,11 @@ use rg_tt::{
 };
 use stdx::itertools::Itertools;
 
+use super::{Binding, Bindings, Fragment, TokensOrigin};
 use crate::mbe::{
     ExpandError, ExpandErrorKind, ExpandResult, MetaTemplate,
     parser::{ConcatMetaVarExprElem, MetaVarKind, Op, RepeatKind, Separator},
 };
-
-use super::{Binding, Bindings, Fragment, TokensOrigin};
 
 impl<'t> Bindings<'t> {
     fn get(&self, name: &Symbol, span: Span) -> Result<&Binding<'t>, ExpandError> {

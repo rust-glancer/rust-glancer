@@ -137,9 +137,8 @@ mod tests {
     use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
     use test_fixture::fixture_crate;
 
-    use crate::{PackageBatchSize, selection::PhasePackageSet};
-
     use super::PackageBatchSchedule;
+    use crate::{PackageBatchSize, selection::PhasePackageSet};
 
     #[test]
     fn caps_batch_reservation_to_the_source_package_count() {

@@ -6,13 +6,12 @@ use rg_syntax::{
     ast::{self, HasAttrs as _, HasName as _},
 };
 
+use super::CompletionSyntaxContext;
 use crate::query::completion::site::{
     BodyMacroCompletionContext, ItemListCompletionContext, ItemListCompletionKind,
     ItemQualifierContext, ModuleDeclarationCompletionContext, ModuleMacroCompletionContext,
     SyntaxCompletionContext, TraitImplCompletionSyntax, TraitImplMemberKind, TypeCompletionContext,
 };
-
-use super::CompletionSyntaxContext;
 
 impl CompletionSyntaxContext<'_> {
     /// Recognize the name slot of an out-of-line `mod name;` declaration.

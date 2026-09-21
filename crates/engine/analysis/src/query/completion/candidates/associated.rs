@@ -12,12 +12,11 @@ use rg_ir_view::{
     ty::{TyView, locals::BodyView},
 };
 
+use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
 use crate::{
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
     query::completion::site::{PathCompletionSite, UnqualifiedCompletionSite},
 };
-
-use super::{CompletionCandidateSource, DefinitionCompletionCandidate};
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     /// Resolve the qualifier as a type/trait and return its associated declarations.

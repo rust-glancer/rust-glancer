@@ -4,12 +4,13 @@
 //! has no complete source tree. A usable tree must contain every compiler-provided crate that
 //! rust-glancer models.
 
-use rg_std::MemorySize;
 use std::{
     fmt,
     path::{Path, PathBuf},
     process::Command,
 };
+
+use rg_std::MemorySize;
 
 /// Sysroot crates that rust-glancer can model as ordinary library roots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, MemorySize)]

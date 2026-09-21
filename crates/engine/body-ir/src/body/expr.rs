@@ -1,12 +1,10 @@
 use std::fmt;
 
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span, StmtId};
-use rg_text::Name;
-
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_std::{MemorySize, Shrink};
+use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     BodyPath, BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LabelData, LiteralKind,

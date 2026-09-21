@@ -15,31 +15,32 @@ mod tests;
 
 use std::{collections::HashMap, sync::Arc};
 
-pub use self::query::{
-    code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
-    completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
-    references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
-};
-pub use rg_ir_view::SymbolKind;
-
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
+pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
 };
 use rg_syntax::SourceFile;
 
-use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
-
-pub use self::model::{
-    CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit, CompletionApplicability,
-    CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind, CompletionTarget,
-    DocumentOutline, DocumentSymbol, DocumentationLink, Fold, FoldKind, Highlight, HighlightKind,
-    HoverBlock, HoverInfo, InlayHint, InlayHintKind, InlayHintPosition, KeywordCompletion,
-    NavigationTarget, NavigationTargetKind, NavigationTargetSource, ReferenceLocation, RenameEdit,
-    RenameResult, RenameTarget, SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+pub use self::{
+    model::{
+        CodeAction, CodeActionEdit, CodeActionKind, CompletionAdditionalEdit,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, DocumentationLink, Fold,
+        FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+        InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+        NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget,
+        SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+    },
+    query::{
+        code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
+        completion::{CompletionClientCapabilities, CompletionQuery, CompletionSource},
+        references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
+    },
 };
+use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
 /// Request-scoped façade for editor queries over one frozen project view.
 ///

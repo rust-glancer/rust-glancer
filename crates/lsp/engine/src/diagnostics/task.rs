@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::service::ServiceNotificationsSink;
-
 use super::{
     CurrentDiagnostics, DiagnosticsHandleInner, DiagnosticsSnapshot,
     command::CargoDiagnosticsCommand,
     progress::{DiagnosticsProgress, ProgressFinish},
     publish::WorkspaceDiagnostics,
 };
+use crate::service::ServiceNotificationsSink;
 
 /// Owns the shared handles needed by the spawned diagnostics task.
 ///

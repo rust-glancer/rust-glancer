@@ -12,9 +12,8 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{ExpectedAdtTyExt, Ty};
 
-use crate::body::{BindingKind, BodyPath, PatKind, RecordPatField};
-
 use super::{InferenceContext, fulfill::DeferredKind};
+use crate::body::{BindingKind, BodyPath, PatKind, RecordPatField};
 
 impl<'query, D, I> InferenceContext<'query, D, I>
 where

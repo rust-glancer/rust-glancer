@@ -5,14 +5,14 @@ use std::{
 };
 
 use rg_arena::Arena;
+use rg_ir_model::{FileId, Span};
 use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
+use rg_std::MemorySize;
 use rg_syntax::{Edition, LexedStr, Parse as SyntaxParse, SourceFile, SyntaxKind};
 use rg_text::RustEdition;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{fs, line_index::LineIndex};
-use rg_ir_model::{FileId, Span};
-use rg_std::MemorySize;
-use wincode::{SchemaRead, SchemaWrite};
 
 /// Parse source text with the Rust edition of its owning package.
 ///

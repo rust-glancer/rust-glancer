@@ -17,7 +17,6 @@ mod state;
 use std::{num::NonZeroUsize, sync::Mutex};
 
 use anyhow::Context as _;
-
 use rg_def_map::{DefMapDb, DefMapLoader};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_package_store::PackageSubset;
@@ -26,16 +25,15 @@ use rg_semantic_ir::{SemanticIrDb, SemanticIrLoader};
 use rg_std::{Shrink, UniqueVec};
 use rg_text::PackageNameInterners;
 
-use crate::{CrateBodies, PackageBodies};
-
-pub use self::policy::{BodyIrBuildPolicy, BodyIrFile};
-
 use self::materialization::BodyIrMaterializationPlan;
-
-pub use self::current::{
-    CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
-    CurrentSourceSelection, CurrentSourceUnavailable,
+pub use self::{
+    current::{
+        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
+        CurrentSourceSelection, CurrentSourceUnavailable,
+    },
+    policy::{BodyIrBuildPolicy, BodyIrFile},
 };
+use crate::{CrateBodies, PackageBodies};
 
 /// Package-local stage of one Body IR build.
 ///

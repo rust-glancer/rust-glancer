@@ -202,7 +202,6 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_running_query_releases_the_lane_for_the_next_request() {
-        use crate::memory::{AllocatorStats, MemoryControl};
         use std::{
             sync::{
                 Arc, Mutex,
@@ -210,6 +209,8 @@ mod tests {
             },
             time::Duration,
         };
+
+        use crate::memory::{AllocatorStats, MemoryControl};
 
         #[derive(Debug, Default)]
         struct QueryBarrier {

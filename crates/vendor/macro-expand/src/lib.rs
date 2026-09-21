@@ -12,14 +12,13 @@ mod mbe;
 
 use anyhow::Context as _;
 use rg_syntax::{AstNode as _, Parse, SyntaxNode, ast};
+pub use rg_tt::{span::Edition, tt::TopSubtree};
 use rg_tt::{
     span::SyntaxContext,
     syntax_bridge::{
         ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree, token_tree_to_syntax_node,
     },
 };
-
-pub use rg_tt::{span::Edition, tt::TopSubtree};
 
 pub use self::builtins::{CfgSelect, CfgSelectArm};
 

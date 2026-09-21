@@ -1,7 +1,7 @@
-use crate::item::VisibilityLevel;
 use rg_syntax::{AstNode as _, ast};
 
 use super::FromAst;
+use crate::item::VisibilityLevel;
 
 impl FromAst for VisibilityLevel {
     type AstNode = Option<ast::Visibility>;

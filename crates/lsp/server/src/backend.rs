@@ -12,15 +12,14 @@
 use std::{borrow::Cow, path::Path};
 
 use anyhow::Context as _;
+use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
+use rg_std::NormalizedPathBuf;
+use tokio::sync::OnceCell;
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
     gen_lsp_types::*,
     jsonrpc::{Error, ErrorCode, Result},
 };
-
-use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
-use rg_std::NormalizedPathBuf;
-use tokio::sync::OnceCell;
 
 use crate::{
     client_status::ClientStatusCapabilities,

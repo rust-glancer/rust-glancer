@@ -1,8 +1,7 @@
-use wincode::{SchemaRead, SchemaWrite};
-
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::BodySource;
 

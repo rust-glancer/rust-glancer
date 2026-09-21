@@ -10,10 +10,10 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::UniqueVec;
 
 use self::deref::DerefResolver;
 use crate::{Mutability, Ty, TyContext};
-use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
 

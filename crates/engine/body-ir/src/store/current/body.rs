@@ -5,9 +5,7 @@
 
 use rg_ir_model::{BodyRef, Span};
 
-use crate::{BodyData, BodyFacts, BodyView};
-
-use crate::BodyLocalItems;
+use crate::{BodyData, BodyFacts, BodyLocalItems, BodyView};
 
 /// One function, const, or static body rebuilt from the current editor text.
 ///

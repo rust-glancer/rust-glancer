@@ -213,8 +213,9 @@ impl DocumentationSource {
 
 #[cfg(test)]
 mod tests {
-    use super::{DocumentationPlacement, DocumentationSource};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
+
+    use super::{DocumentationPlacement, DocumentationSource};
 
     #[test]
     fn maps_normalized_comments_and_decoded_attributes() {

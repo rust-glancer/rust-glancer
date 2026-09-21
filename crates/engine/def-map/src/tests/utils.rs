@@ -1,16 +1,16 @@
 use expect_test::Expect;
-
-use crate::{
-    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
-    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
-    ScopeResolutionRef, Visibility, testonly::DefMapFixture,
-};
 use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, FileId, ModuleId, ModuleRef, PackageSlot, Path,
 };
 use rg_item_tree::VisibilityLevel;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
+
+use crate::{
+    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
+    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
+    ScopeResolutionRef, Visibility, testonly::DefMapFixture,
+};
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     let db = DefMapFixtureDb::build(fixture);

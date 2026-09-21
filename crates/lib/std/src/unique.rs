@@ -1,7 +1,8 @@
 use std::slice;
 
-use crate::{MemoryRecorder, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::{MemoryRecorder, MemorySize, Shrink};
 
 /// Vec-backed ordered set for small candidate lists.
 ///

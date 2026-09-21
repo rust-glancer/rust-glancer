@@ -6,7 +6,6 @@ mod package;
 mod txn;
 
 pub(crate) use self::current::CurrentBody;
-
 pub use self::{
     current::CurrentSourceStore,
     db::{BodyIrDb, BodyIrStats},

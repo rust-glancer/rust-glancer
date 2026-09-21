@@ -11,8 +11,6 @@ mod primitive;
 mod sort;
 mod synthetic;
 
-use crate::model::CompletionKind;
-
 pub(super) use self::{
     definition::{DefinitionCompletionRenderer, DefinitionCompletionRequest},
     field::FieldCompletionRenderer,
@@ -21,6 +19,7 @@ pub(super) use self::{
     sort::{CompletionSortPolicy, CompletionSortPriority},
     synthetic::{SyntheticCompletionCandidate, SyntheticCompletionRenderer},
 };
+use crate::model::CompletionKind;
 
 /// Controls whether accepting a callable candidate inserts syntax around the completed name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

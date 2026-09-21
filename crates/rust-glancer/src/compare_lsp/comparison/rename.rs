@@ -306,11 +306,10 @@ impl RenameEditAggregate {
 
 #[cfg(test)]
 mod tests {
+    use super::PrepareRenameComparison;
     use crate::compare_lsp::normalization::{
         NormalizedPrepareRenameSet, NormalizedPrepareRenameTarget, NormalizedRange,
     };
-
-    use super::PrepareRenameComparison;
 
     #[test]
     fn accepts_a_valid_placeholder_when_the_reference_returns_only_a_range() {

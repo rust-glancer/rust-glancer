@@ -1,7 +1,7 @@
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{CrateRef, declare_id};
-use rg_std::{MemorySize, Shrink};
 
 declare_id! {
     /// Stable identifier for one lowered body inside a crate.

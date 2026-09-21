@@ -1,7 +1,7 @@
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ModuleRef, declare_id, ids::def_map::DefMapRef};
-use rg_std::{MemorySize, Shrink};
 
 declare_id! {
     pub struct StructId;

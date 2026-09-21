@@ -6,8 +6,6 @@
 //! real parsed file.
 
 use anyhow::{Context as _, Result};
-
-use crate::source::GeneratedSourceData;
 use rg_arena::Arena;
 use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
@@ -31,6 +29,7 @@ use rg_tt::{
 };
 
 use super::generated::GeneratedOrigin;
+use crate::source::GeneratedSourceData;
 
 /// Lowers one parsed macro expansion into retained generated item payloads.
 pub(super) struct GeneratedSourceLowering<'a> {

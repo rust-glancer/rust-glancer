@@ -29,7 +29,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::PackageResidencyPolicy;
 use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
 use rg_ir_model::PackageSlot;
@@ -39,6 +38,7 @@ use super::{
     PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
     codec::EncodedPackageCacheArtifact, reader::PackageArtifactReader,
 };
+use crate::PackageResidencyPolicy;
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";

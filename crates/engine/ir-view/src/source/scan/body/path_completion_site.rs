@@ -13,11 +13,10 @@
 //! model::$0                  qualifier `model`, empty replacement span
 //! ```
 
+use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
 use rg_ir_model::{BodyRef, CrateRef, FileId, ScopeId, Span};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
-
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind};
 
 use super::{
     BodyAssociatedTypeBindingSite, BodyQualifiedPathContext, PathCompletionSite,

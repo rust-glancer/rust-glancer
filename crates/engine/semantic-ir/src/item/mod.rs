@@ -16,6 +16,7 @@ mod store;
 mod type_path_resolution;
 mod view;
 
+pub(crate) use self::lookup_index::TraitItemTraitRefs;
 pub use self::{
     context::{SelfTypeOwner, TypePathContext},
     data::{
@@ -34,5 +35,3 @@ pub use self::{
     type_path_resolution::TypePathResolution,
     view::SemanticItemView,
 };
-
-pub(crate) use self::lookup_index::TraitItemTraitRefs;

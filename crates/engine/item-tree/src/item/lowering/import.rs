@@ -1,7 +1,3 @@
-use crate::item::{
-    ExternCrateItem, ImportAlias, MacroUseAttr, UseImport, UseImportKind, UseItem, UsePath,
-    UsePathSegment, UsePathSegmentKind,
-};
 use rg_ir_model::Span;
 use rg_syntax::{
     AstNode as _, SyntaxKind, algo,
@@ -10,6 +6,10 @@ use rg_syntax::{
 use rg_text::NameInterner;
 
 use super::{FromAst, MaybeFromAst as _};
+use crate::item::{
+    ExternCrateItem, ImportAlias, MacroUseAttr, UseImport, UseImportKind, UseItem, UsePath,
+    UsePathSegment, UsePathSegmentKind,
+};
 
 impl FromAst for ExternCrateItem {
     type AstNode = ast::ExternCrate;

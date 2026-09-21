@@ -1,11 +1,12 @@
 //! Trait goals and the identities used to route and reuse their proofs.
 
+use rg_ir_model::{CrateRef, TypeAliasRef};
+use rg_std::UniqueVec;
+
 use crate::{
     AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty,
     inference::InferenceTable,
 };
-use rg_ir_model::{CrateRef, TypeAliasRef};
-use rg_std::UniqueVec;
 
 /// A canonical trait application plus any associated-type equality constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

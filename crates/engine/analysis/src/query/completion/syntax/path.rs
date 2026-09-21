@@ -3,13 +3,12 @@
 use rg_ir_model::Path;
 use rg_syntax::{AstNode as _, ast};
 
+use super::CompletionSyntaxContext;
 use crate::query::completion::site::{
     ConstExpressionCompletionContext, EmptyPathCompletionContext, ImportCompletionSyntax,
     NameCompletionContext, PatternCompletionKind, QualifiedPathCompletionSyntax,
     RestrictedVisibilityCompletionContext,
 };
-
-use super::CompletionSyntaxContext;
 
 impl CompletionSyntaxContext<'_> {
     /// Read a `use` path from current syntax without requiring the import to be saved first.

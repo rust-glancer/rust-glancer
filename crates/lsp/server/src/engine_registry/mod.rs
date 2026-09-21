@@ -647,9 +647,8 @@ mod tests {
         jsonrpc::Result,
     };
 
-    use crate::client_status::ActiveWorkspaceState;
-
     use super::{document_owner::DocumentOwnerSource, *};
+    use crate::client_status::ActiveWorkspaceState;
 
     const WORKSPACE_FIXTURE: &str = r#"
 //- /workspace/Cargo.toml

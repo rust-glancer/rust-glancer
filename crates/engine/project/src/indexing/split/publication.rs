@@ -5,18 +5,20 @@
 //! write is needed, prepare the bytes first, then replace the file and update the project while
 //! holding exclusive mutable access.
 
+use std::sync::Arc;
+
+use anyhow::Context as _;
+use rg_body_ir::{CrateBodies, PackageBodiesCoverage};
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_package_store::PackageStoreError;
+use rg_std::Shrink;
+
 use super::SavedBodyProducts;
 use crate::{
     PackageResidency,
     state::ProjectState,
     storage::cache::{BodyIrWriteInput, PackageCacheBodyUpdateInput, PackageCacheWriteInput},
 };
-use anyhow::Context as _;
-use rg_body_ir::{CrateBodies, PackageBodiesCoverage};
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_package_store::PackageStoreError;
-use rg_std::Shrink;
-use std::sync::Arc;
 
 /// How [`crate::SplitIndexing::publish`] handled one crate's body analysis results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

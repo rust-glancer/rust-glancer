@@ -1,11 +1,9 @@
 mod atom;
 
-use crate::grammar::attributes::ATTRIBUTE_FIRST;
-
-use super::*;
-
 pub(super) use self::atom::{LITERAL_FIRST, literal, parse_asm_expr};
 pub(crate) use self::atom::{block_expr, match_arm_list};
+use super::*;
+use crate::grammar::attributes::ATTRIBUTE_FIRST;
 
 pub(super) const EXPR_RECOVERY_SET: TokenSet = TokenSet::new(&[T!['}'], T![')'], T![']'], T![,]]);
 

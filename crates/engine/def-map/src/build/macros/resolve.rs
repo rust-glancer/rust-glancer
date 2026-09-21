@@ -4,16 +4,15 @@
 //! macro-namespace lookup so locally imported macros can shadow builtin names.
 
 use anyhow::Result;
-
-use crate::{
-    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
-};
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleRef, Path};
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::{ItemOrder, MacroCallSite};
-use crate::build::{collect::CrateState, finalize::FinalizeCrateStates};
+use crate::{
+    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
+    build::{collect::CrateState, finalize::FinalizeCrateStates},
+};
 
 /// Macro definition resolved through the ordinary macro namespace.
 pub(super) struct ResolvedMacroDefinition<'a> {
