@@ -10,12 +10,14 @@ use rg_ir_view::{
     member::{FunctionParameterView, MemberFunction},
 };
 
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget,
+use crate::{
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
+    },
+    query::completion::CompletionQuery,
 };
 
-use super::super::CompletionQuery;
 use super::{
     CallCompletionKind, escape_lsp_snippet_text,
     sort::{CompletionSortPolicy, CompletionSortPriority},

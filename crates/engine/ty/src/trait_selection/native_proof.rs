@@ -15,8 +15,7 @@ use super::{
     TraitGoal, TraitProof, TraitSelectionQuery, candidate::TraitCandidate, matcher::TraitSelfHead,
     work::TraitWorkKind,
 };
-use crate::inference::InferenceTable;
-use crate::{Clause, GenericArg, TraitApplication, Ty};
+use crate::{Clause, GenericArg, TraitApplication, Ty, inference::InferenceTable};
 
 // Native proof is only a shortcut around the bounded solver. Keep recursive impl chains bounded so
 // a long or cyclic declaration graph can decline the shortcut instead of monopolizing the query.

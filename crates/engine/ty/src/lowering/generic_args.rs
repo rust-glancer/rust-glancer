@@ -1,8 +1,9 @@
 //! Fill semantic generic arguments in declaration order, including inherited and defaulted values.
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::inference::InferenceTable;
-use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty};
+use crate::{
+    ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty, inference::InferenceTable,
+};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};

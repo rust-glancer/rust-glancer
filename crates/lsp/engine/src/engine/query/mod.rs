@@ -14,9 +14,11 @@ mod references;
 mod semantic_tokens;
 mod source;
 
-use self::lifecycle::QueryRunError;
 pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
-use self::navigation::{CapturedNavigationDocuments, CapturedTargetLocation};
+use self::{
+    lifecycle::QueryRunError,
+    navigation::{CapturedNavigationDocuments, CapturedTargetLocation},
+};
 
 use std::{path::Path, sync::Arc, time::Instant};
 

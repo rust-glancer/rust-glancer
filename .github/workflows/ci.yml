@@ -25,18 +25,20 @@ jobs:
         run: python3 .github/scripts/check_release_versions.py
       - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
         with:
-          tool: cargo-dylint@6.0.4,dylint-link@6.0.4
+          tool: cargo-dylint@6.0.4,dylint-link@6.0.4,just@1.48.1
       - uses: ./.github/actions/cargo-cache
         with:
           scope: ci-${{ github.job }}
           target-dir: target
-          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml', '.github/workflows/ci.yml') }}
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml', 'Justfile', '.github/workflows/ci.yml') }}
           extra-paths: |
             ~/.dylint_drivers
             ~/.rustup/toolchains/nightly-*
             target/dylint/libraries/**/release/*@*
+      - name: Install rustfmt toolchain
+        run: rustup toolchain install "$(just --evaluate rustfmt_toolchain)" --profile minimal --component rustfmt
       - name: Check formatting
-        run: cargo fmt --check
+        run: just fmt --check
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run Dylint

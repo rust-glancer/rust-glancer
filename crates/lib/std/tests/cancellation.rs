@@ -1,4 +1,9 @@
-use std::{error::Error, future::Future, pin::pin, task::Context, task::Poll, task::Waker};
+use std::{
+    error::Error,
+    future::Future,
+    pin::pin,
+    task::{Context, Poll, Waker},
+};
 
 use rg_std::{Cancelable, CancellationToken, Cancelled, OperationError};
 

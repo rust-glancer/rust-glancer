@@ -14,8 +14,11 @@ use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::lookup::{ReceiverFunctionCandidate, ReceiverImplMatches};
-use rg_ty::{Ty, inference::InferenceTable};
+use rg_ty::{
+    Ty,
+    inference::InferenceTable,
+    lookup::{ReceiverFunctionCandidate, ReceiverImplMatches},
+};
 
 use crate::resolution::BodyResolutionContext;
 

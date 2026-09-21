@@ -1,7 +1,9 @@
 //! Trait goals and the identities used to route and reuse their proofs.
 
-use crate::inference::InferenceTable;
-use crate::{AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty};
+use crate::{
+    AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty,
+    inference::InferenceTable,
+};
 use rg_ir_model::{CrateRef, TypeAliasRef};
 use rg_std::UniqueVec;
 

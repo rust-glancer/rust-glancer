@@ -12,14 +12,15 @@ use rg_ir_model::{
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
 
-use super::chalk::ChalkOutcome;
-use super::matcher::TraitSelfHead;
-use super::work::{TraitWorkKind, TraitWorkLimit};
-use super::{TraitGoal, TraitSelection, TraitSelectionQuery};
-use crate::inference::InferenceTable;
+use super::{
+    TraitGoal, TraitSelection, TraitSelectionQuery,
+    chalk::ChalkOutcome,
+    matcher::TraitSelfHead,
+    work::{TraitWorkKind, TraitWorkLimit},
+};
 use crate::{
     AdtTy, AliasTy, ClosureTy, FnDefTy, GenericArg, GenericArgs, OpaqueTy, ProjectionTy,
-    Substitution, TraitApplication, Ty,
+    Substitution, TraitApplication, Ty, inference::InferenceTable,
 };
 
 // Projection results can keep producing a different, larger projection without repeating an

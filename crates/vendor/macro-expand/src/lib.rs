@@ -19,8 +19,7 @@ use rg_tt::{
     },
 };
 
-pub use rg_tt::span::Edition;
-pub use rg_tt::tt::TopSubtree;
+pub use rg_tt::{span::Edition, tt::TopSubtree};
 
 pub use self::builtins::{CfgSelect, CfgSelectArm};
 

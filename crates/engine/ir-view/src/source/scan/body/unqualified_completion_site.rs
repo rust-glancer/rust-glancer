@@ -22,12 +22,14 @@ use rg_semantic_ir::ItemStore;
 
 use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatKind, StmtKind};
 
-use super::super::{
-    NarrowestSourceSite,
+use super::{
+    BodyUnqualifiedNameContext, PatternCompletionKind, UnqualifiedCompletionSite,
+    sites::BodyScanSites,
+};
+use crate::source::scan::{
+    NarrowestSourceSite, TypeNamePosition,
     type_path::{TypePathCompletionSite, identifier_prefix_at},
 };
-use super::sites::BodyScanSites;
-use super::{BodyUnqualifiedNameContext, PatternCompletionKind, UnqualifiedCompletionSite};
 
 /// Finds the source site that belongs to an unqualified completion offset.
 ///
@@ -351,7 +353,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         visible_bindings: usize,
         generic_owner: Option<GenericDefRef>,
         path: &TypePath,
-        position: super::super::TypeNamePosition,
+        position: TypeNamePosition,
     ) -> Option<UnqualifiedCompletionSite> {
         // This scanner owns only complete unqualified paths. The first segment of a longer path
         // needs qualified-path recovery policy before it can safely use lexical candidates.

@@ -22,19 +22,16 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{
-        AttributeCompletionContext, AttributeCompletionKind, CompletionSourceAttachment,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+        },
+        site::{AttributeCompletionContext, AttributeCompletionKind, CompletionSourceAttachment},
+        syntax::CompletionSyntaxContext,
     },
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
-    },
-    syntax::CompletionSyntaxContext,
 };
 
 /// Selects the candidate vocabulary owned by one recognized attribute grammar.

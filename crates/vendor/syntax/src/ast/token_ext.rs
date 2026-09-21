@@ -1,7 +1,6 @@
 //! There are many AstNodes, but only a few tokens, so we hand-write them here.
 
-use std::ops::Range;
-use std::{borrow::Cow, num::ParseIntError};
+use std::{borrow::Cow, num::ParseIntError, ops::Range};
 
 use rustc_literal_escaper::{
     EscapeError, MixedUnit, unescape_byte, unescape_byte_str, unescape_c_str, unescape_char,

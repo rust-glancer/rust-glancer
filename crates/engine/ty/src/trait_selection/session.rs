@@ -30,16 +30,22 @@ use rg_ir_model::{
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
 
-use super::chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver};
-use super::declaration_cache::{OpaqueBounds, TraitSelectionDeclarationCache};
-use super::matcher::TraitSelfHead;
-use super::work::{BODY_TRAIT_WORK_LIMIT, TraitWorkKind, TraitWorkLimit, TraitWorkTracker};
-use super::{AssocProjectionResult, TraitGoal, TraitSelection};
-use crate::inference::{InferenceSubstitution, InferenceTable};
-use crate::lookup::ItemPathQuery;
-use crate::lowering::impl_header_with as lower_impl_header;
-use crate::lowering::{CallableSignature, SemanticSignatureQuery, TypePathResolver};
-use crate::{Clause, Ty};
+use super::{
+    AssocProjectionResult, TraitGoal, TraitSelection,
+    chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+    declaration_cache::{OpaqueBounds, TraitSelectionDeclarationCache},
+    matcher::TraitSelfHead,
+    work::{BODY_TRAIT_WORK_LIMIT, TraitWorkKind, TraitWorkLimit, TraitWorkTracker},
+};
+use crate::{
+    Clause, Ty,
+    inference::{InferenceSubstitution, InferenceTable},
+    lookup::ItemPathQuery,
+    lowering::{
+        CallableSignature, SemanticSignatureQuery, TypePathResolver,
+        impl_header_with as lower_impl_header,
+    },
+};
 
 /// Cross-body part of a cached selection.
 ///

@@ -5,11 +5,14 @@ use rg_ir_model::PackageSlot;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::storage::cache::{
-    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPath, CachedTarget,
-    WorkspaceCachePlan,
+use crate::{
+    PackageResidencyPolicy,
+    storage::cache::{
+        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPath, CachedTarget,
+        WorkspaceCachePlan,
+    },
+    testonly::ProjectSourceFixture,
 };
-use crate::{PackageResidencyPolicy, testonly::ProjectSourceFixture};
 
 #[test]
 fn cache_identity_uses_structure_instead_of_checkout_or_cargo_id_text() {

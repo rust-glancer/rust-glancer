@@ -9,11 +9,13 @@ use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathResolution};
-use rg_ty::autoderef::Autoderef;
-use rg_ty::lookup::{AssociatedItemCandidateRef, ImplMatcher, ItemPathQuery};
-use rg_ty::lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolver};
-use rg_ty::trait_selection::{TraitSelectionQuery, TraitSelectionSession};
-use rg_ty::{Ty, TyContext};
+use rg_ty::{
+    Ty, TyContext,
+    autoderef::Autoderef,
+    lookup::{AssociatedItemCandidateRef, ImplMatcher, ItemPathQuery},
+    lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolver},
+    trait_selection::{TraitSelectionQuery, TraitSelectionSession},
+};
 
 use crate::BodyData;
 

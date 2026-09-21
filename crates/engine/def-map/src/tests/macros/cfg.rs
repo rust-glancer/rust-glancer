@@ -1,4 +1,4 @@
-use super::super::utils;
+use crate::tests::utils;
 use rg_workspace::WorkspaceLoweringConfig;
 
 #[test]

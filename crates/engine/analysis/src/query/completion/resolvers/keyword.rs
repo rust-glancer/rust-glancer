@@ -10,16 +10,20 @@
 //! such as `return`, `dyn`, or `mut` available without letting them outrank declarations found in
 //! the actual scope.
 
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, KeywordCompletion,
+use crate::{
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget, KeywordCompletion,
+    },
+    query::completion::{
+        CompletionClientCapabilities,
+        site::{
+            ItemListCompletionContext, ItemListCompletionKind, SyntaxCompletionContext,
+            TypeCompletionContext,
+        },
+        syntax::CompletionSyntaxContext,
+    },
 };
-use crate::query::completion::site::{
-    ItemListCompletionContext, ItemListCompletionKind, SyntaxCompletionContext,
-    TypeCompletionContext,
-};
-
-use super::super::{CompletionClientCapabilities, syntax::CompletionSyntaxContext};
 
 /// Builds the language-owned rows that can be selected from request syntax alone.
 ///

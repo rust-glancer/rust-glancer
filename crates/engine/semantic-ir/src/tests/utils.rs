@@ -2,9 +2,10 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::ItemResolutionQuery;
-use crate::{CrateItemQuery, ItemLookupQuery, ItemStore, ItemStoreQuery};
-use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
+use crate::{
+    CrateItemQuery, ItemLookupQuery, ItemResolutionQuery, ItemStore, ItemStoreQuery,
+    SemanticIrReadTxn, testonly::SemanticIrFixture,
+};
 use rg_ir_model::{
     AssocItemId, ConstId, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId, ImplRef,
     ItemId, ModuleId, ModuleRef, PackageSlot, Path, TraitDefRef, TypeAliasId, TypeDefId,

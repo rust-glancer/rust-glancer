@@ -10,15 +10,14 @@ use anyhow::Context as _;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem},
-    query::completion::site::ModuleMacroCompletionSite,
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest,
+        },
+        site::ModuleMacroCompletionSite,
     },
 };
 

@@ -13,9 +13,11 @@ use chalk_ir::{
 };
 
 use super::interner::RgChalkInterner;
-use crate::inference::{InferVarId, InferVarKind, InferenceTable};
-use crate::trait_selection::TraitGoal;
-use crate::{Clause, GenericArg as RgGenericArg, Ty as RgTy};
+use crate::{
+    Clause, GenericArg as RgGenericArg, Ty as RgTy,
+    inference::{InferVarId, InferVarKind, InferenceTable},
+    trait_selection::TraitGoal,
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 

@@ -35,14 +35,15 @@ mod generated_tree;
 mod resolve;
 mod source_fragment;
 
-pub(super) use self::generated::{PendingGeneratedInclude, PendingGeneratedModule};
 pub(super) use self::{
     attempts::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
     },
     expand::expand_expansion_attempts,
-    generated::apply_pending_macro_source_files,
+    generated::{
+        PendingGeneratedInclude, PendingGeneratedModule, apply_pending_macro_source_files,
+    },
 };
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the

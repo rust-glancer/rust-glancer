@@ -36,11 +36,14 @@ use rg_parse::LineIndex;
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 use rg_text::NameInterner;
 
-use super::occurrence::IndexedSignatureTypeScope;
-use super::scan::{
-    AssociatedPathQualifier, BodyQualifiedPathContext, ModuleFileBase, ModuleSourceSiteScanner,
-    PathCompletionSiteScanner, PatternCompletionKind, SignatureCompletionSite,
-    SignatureSourceScanner, SignatureTypePathScope, TraitImplSourceSiteScanner, TypeNamePosition,
+use super::{
+    occurrence::IndexedSignatureTypeScope,
+    scan::{
+        AssociatedPathQualifier, BodyQualifiedPathContext, ModuleFileBase, ModuleSourceSiteScanner,
+        PathCompletionSiteScanner, PatternCompletionKind, SignatureCompletionSite,
+        SignatureSourceScanner, SignatureTypePathScope, TraitImplSourceSiteScanner,
+        TypeNamePosition,
+    },
 };
 use crate::IndexedViewDb;
 

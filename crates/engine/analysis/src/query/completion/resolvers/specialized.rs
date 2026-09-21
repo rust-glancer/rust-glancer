@@ -29,18 +29,17 @@ use crate::{
         CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{SpecializedStringCompletionContext, UnqualifiedCompletionSite},
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-        DefinitionCompletionRenderer, DefinitionCompletionRequest, SyntheticCompletionCandidate,
-        SyntheticCompletionRenderer,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
+            DefinitionCompletionRenderer, DefinitionCompletionRequest,
+            SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+        },
+        site::{SpecializedStringCompletionContext, UnqualifiedCompletionSite},
+        syntax::CompletionSyntaxContext,
     },
-    syntax::CompletionSyntaxContext,
 };
 
 /// Builds completion rows for syntax-owned mini-languages.

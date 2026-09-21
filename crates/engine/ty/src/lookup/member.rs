@@ -13,8 +13,10 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
 
-use crate::autoderef::{Autoderef, AutoderefMode};
-use crate::{Ty, TyContext};
+use crate::{
+    Ty, TyContext,
+    autoderef::{Autoderef, AutoderefMode},
+};
 
 /// One callable member selected for a receiver type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

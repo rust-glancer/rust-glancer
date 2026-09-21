@@ -9,17 +9,20 @@ pub mod locals;
 use anyhow::Context as _;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId, SemanticItemRef,
-    TypeDefRef, identity::DeclarationRef, identity::ExprRef,
+    TypeDefRef,
+    identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
-use rg_ty::autoderef::ReferencePeelingCandidates;
-use rg_ty::lookup::ItemPathQuery;
-use rg_ty::lowering::{
-    SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
-    TypePathResolver as _,
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Ty,
+    autoderef::ReferencePeelingCandidates,
+    lookup::ItemPathQuery,
+    lowering::{
+        SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
+        TypePathResolver as _,
+    },
 };
-use rg_ty::{AdtTy, AliasTy, GenericArg, Ty};
 
 use crate::{
     IndexedViewDb,

@@ -16,8 +16,8 @@ use rg_package_store::PackageStoreError;
 
 use rg_body_ir::{BodyIrReadTxn, BodyView, ExprData, ExprKind};
 
-use super::super::NarrowestSourceSite;
 use super::DotCompletionSite;
+use crate::source::scan::NarrowestSourceSite;
 
 /// Finds the source site that belongs to a dot-completion offset.
 ///

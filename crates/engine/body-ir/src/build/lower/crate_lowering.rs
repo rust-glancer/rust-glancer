@@ -12,15 +12,14 @@ use rg_ir_model::{
     ConstRef, CrateRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef,
     TraitDefRef,
 };
-use rg_semantic_ir::ItemStoreQuery;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::NameInterner;
 
 use crate::BodyOwner;
 
 use super::{
-    BodyMacroExpansion, LoweredCrateBodies, task::BodyLoweringTask, task::BodyTaskLowering,
-    task::BodyTaskSource,
+    BodyMacroExpansion, LoweredCrateBodies,
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource},
 };
 use crate::build::materialization::BodyIrMaterialization;
 

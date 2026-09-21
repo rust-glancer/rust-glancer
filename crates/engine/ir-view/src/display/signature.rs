@@ -20,8 +20,7 @@ use rg_semantic_ir::{
     UnionData,
 };
 use rg_text::RustEdition;
-use rg_ty::lowering::CallableSignature;
-use rg_ty::{Substitution, TraitApplication, Ty};
+use rg_ty::{Substitution, TraitApplication, Ty, lowering::CallableSignature};
 
 use crate::{
     IndexedViewDb,

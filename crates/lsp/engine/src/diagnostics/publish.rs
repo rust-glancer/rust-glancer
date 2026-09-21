@@ -95,7 +95,9 @@ mod tests {
     use rg_std::NormalizedPathBuf;
     use test_fixture::synthetic_test_path;
 
-    use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
+    use crate::diagnostics::cargo::CargoDiagnostics;
+
+    use super::WorkspaceDiagnostics;
 
     #[test]
     fn current_results_and_known_stale_paths_are_both_emitted() {

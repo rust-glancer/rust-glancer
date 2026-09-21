@@ -12,10 +12,12 @@ use rg_ir_model::{AssocItemId, ItemOwner, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
 use super::{ChalkProgram, ChalkProgramRoots, ChalkProgramScope};
-use crate::inference::InferenceTable;
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::{TraitSelectionSession, work::TraitWorkKind};
-use crate::{Clause, TraitRefLowering};
+use crate::{
+    Clause, TraitRefLowering,
+    inference::InferenceTable,
+    lookup::ItemPathQuery,
+    trait_selection::{TraitSelectionSession, work::TraitWorkKind},
+};
 
 impl ChalkProgramRoots {
     pub(super) fn is_empty(&self) -> bool {

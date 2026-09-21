@@ -16,8 +16,7 @@ use rg_syntax::{
 };
 use rg_text::NameInterner;
 
-use crate::build::local_items::LocalItemLowering;
-use crate::{BodySource, BodySourceItems};
+use crate::{BodySource, BodySourceItems, build::local_items::LocalItemLowering};
 
 /// Which current declaration supplies a selected body's inherited context.
 #[derive(Debug, Clone, Copy)]

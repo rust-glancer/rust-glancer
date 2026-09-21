@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use super::super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 
 /// Empty paths commonly occur before the parser has seen any closing punctuation.
 #[test]

@@ -1,7 +1,6 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::CrateRef;
-use crate::declare_id;
+use crate::{CrateRef, declare_id};
 use rg_std::{MemorySize, Shrink};
 
 declare_id! {

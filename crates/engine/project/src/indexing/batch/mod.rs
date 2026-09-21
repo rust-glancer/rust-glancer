@@ -32,9 +32,9 @@ use crate::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     stats::MacroExpansionLimitBuildSummary,
-    storage::cache::{PackageCacheStore, WorkspaceCachePlan},
     storage::{
         artifacts::{PackageArtifactPhases, PackageArtifactWriter},
+        cache::{PackageCacheStore, WorkspaceCachePlan},
         loaders::PackageReadLoaders,
     },
 };

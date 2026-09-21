@@ -13,8 +13,8 @@ use rg_body_ir::{
     BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 
-use super::super::NarrowestSourceSite;
 use super::{RecordFieldCompletionSite, sites::BodyScanSites};
+use crate::source::scan::NarrowestSourceSite;
 
 /// Finds the record field-list site that belongs to a completion offset.
 ///

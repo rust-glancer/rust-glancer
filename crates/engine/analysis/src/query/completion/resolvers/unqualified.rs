@@ -26,25 +26,25 @@ use crate::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
     },
-    query::completion::site::{
-        NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite,
+    query::{
+        completion::{
+            CompletionQuery,
+            candidates::{
+                CompletionCandidateSource, DefinitionCompletionCandidate,
+                GenericScopeCompletionCandidate, LexicalCompletionCandidate,
+            },
+            pattern::{PatternCandidateRole, PatternCompletionPolicy},
+            render::{
+                CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
+                DefinitionCompletionRenderer, DefinitionCompletionRequest,
+                FunctionCompletionRenderer, FunctionCompletionRequest,
+                PrimitiveTypeCompletionRenderer,
+            },
+            site::{NameCompletionContext, PatternCompletionKind, UnqualifiedCompletionSite},
+            syntax::CompletionSyntaxContext,
+        },
+        import::{ImportEditPlan, ImportEditPlanner},
     },
-    query::import::{ImportEditPlan, ImportEditPlanner},
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::{
-        CompletionCandidateSource, DefinitionCompletionCandidate, GenericScopeCompletionCandidate,
-        LexicalCompletionCandidate,
-    },
-    pattern::{PatternCandidateRole, PatternCompletionPolicy},
-    render::{
-        CallCompletionKind, CompletionSortPolicy, CompletionSortPriority,
-        DefinitionCompletionRenderer, DefinitionCompletionRequest, FunctionCompletionRenderer,
-        FunctionCompletionRequest, PrimitiveTypeCompletionRenderer,
-    },
-    syntax::CompletionSyntaxContext,
 };
 
 // TODO(#160): Expose import discovery as an explicit code action before returning it to ordinary

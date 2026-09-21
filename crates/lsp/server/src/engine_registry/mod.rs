@@ -649,8 +649,7 @@ mod tests {
 
     use crate::client_status::ActiveWorkspaceState;
 
-    use super::document_owner::DocumentOwnerSource;
-    use super::*;
+    use super::{document_owner::DocumentOwnerSource, *};
 
     const WORKSPACE_FIXTURE: &str = r#"
 //- /workspace/Cargo.toml

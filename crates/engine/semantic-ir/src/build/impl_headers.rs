@@ -15,8 +15,7 @@
 
 use std::collections::HashMap;
 
-use crate::ItemResolutionQuery;
-use crate::ItemStoreQuery;
+use crate::{ItemResolutionQuery, ItemStoreQuery};
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
     CrateId, CrateRef, ImplRef, ModuleRef, PackageSlot, PrimitiveTy, TraitDefRef, TypeDefRef,

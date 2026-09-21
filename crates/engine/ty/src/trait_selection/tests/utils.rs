@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::fmt::{Debug, Write as _};
+use std::{
+    collections::HashMap,
+    convert::Infallible,
+    fmt::{Debug, Write as _},
+};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin,
-    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
-use rg_def_map::{GeneratedItemRef, GeneratedSourceId, ItemSource, ItemSourceKind};
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
@@ -27,15 +29,17 @@ use rg_semantic_ir::{
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
-use super::super::{
-    TraitGoal, TraitSelectionQuery, TraitSelectionSession,
-    candidate::TraitCandidate,
-    chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+use crate::{
+    AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
+    inference::{InferVarKind, InferenceTable},
+    lookup::ItemPathQuery,
+    lowering::SemanticSignatureQuery,
+    trait_selection::{
+        TraitGoal, TraitSelectionQuery, TraitSelectionSession,
+        candidate::TraitCandidate,
+        chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
+    },
 };
-use crate::inference::{InferVarKind, InferenceTable};
-use crate::lookup::ItemPathQuery;
-use crate::lowering::SemanticSignatureQuery;
-use crate::{AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext};
 
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,

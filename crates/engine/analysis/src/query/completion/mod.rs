@@ -22,9 +22,11 @@ use std::fmt;
 
 use rg_ir_model::{CrateRef, FileId};
 
-pub(crate) use self::resolvers::CompletionResolver;
-pub(crate) use self::site::{CompletionSiteDetector, PathCompletionSite};
-pub(crate) use self::syntax::CompletionSyntaxContext;
+pub(crate) use self::{
+    resolvers::CompletionResolver,
+    site::{CompletionSiteDetector, PathCompletionSite},
+    syntax::CompletionSyntaxContext,
+};
 
 /// One parsed and classified editor buffer shared across semantic crate interpretations.
 ///

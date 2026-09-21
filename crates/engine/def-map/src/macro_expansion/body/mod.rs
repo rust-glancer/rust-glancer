@@ -19,12 +19,14 @@ use crate::DefMapReadTxn;
 mod call;
 mod expanded;
 
-pub use self::call::{BodyMacroCallOrigin, BodyMacroCallSite};
 use self::call::{BodyMacroCallee, BodyMacroInvocation, ResolvedBodyMacroCall};
-pub use self::expanded::{
-    BodyMacroExpansionOutcome, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
-    BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-    ExpandedBodyMacro,
+pub use self::{
+    call::{BodyMacroCallOrigin, BodyMacroCallSite},
+    expanded::{
+        BodyMacroExpansionOutcome, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
+        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
+        ExpandedBodyMacro,
+    },
 };
 
 /// Expands body macro calls using frozen def-map visibility.

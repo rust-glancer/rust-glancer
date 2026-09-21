@@ -18,14 +18,14 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::autoderef::ReferencePeelingCandidates;
-use rg_ty::trait_selection::TraitSelectionSession;
-use rg_ty::{ExpectedAdtTyExt, Ty};
+use rg_ty::{
+    ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates,
+    trait_selection::TraitSelectionSession,
+};
 
 use crate::{
     BodyPath,
-    body::facts::BodyResolution,
-    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind},
+    body::{BindingKind, ExprKind, PatKind, RecordPatField, StmtKind, facts::BodyResolution},
 };
 
 use crate::resolution::BodyResolutionContext;

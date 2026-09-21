@@ -21,14 +21,13 @@ use rg_ir_view::source::IndexedAssociatedTypeBindingSite;
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem},
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest,
+        },
     },
 };
 

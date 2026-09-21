@@ -15,31 +15,32 @@ pub mod path;
 mod primitive;
 mod span;
 
-pub use self::ids::{
-    body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
-    def_map::{
-        CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef,
-        LocalEnumVariantId, LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
-    },
-    identity,
-    package::{FileId, PackageSlot},
-    semantic::{
-        AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantFieldRef, EnumVariantRef,
-        FieldRef, FunctionId, FunctionRef, GenericDefRef, GenericParamRef, ImplId, ImplRef, ItemId,
-        ItemOwner, LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, OpaqueTyId,
-        OpaqueTyRef, SemanticItemKind, SemanticItemRef, StaticId, StaticRef, StructId,
-        TraitApplicability, TraitDefRef, TraitId, TraitImplRef, TypeAliasId, TypeAliasRef,
-        TypeDefId, TypeDefRef, TypeParamRef, UnionId,
-    },
-};
-pub use self::mutability::Mutability;
-pub use self::path::{Path, PathRoot};
 pub use self::{
     body_source::BodySource,
     builtin_macro::BuiltinMacroExprKind,
     field::FieldKey,
+    ids::{
+        body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
+        def_map::{
+            CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef,
+            LocalEnumVariantId, LocalEnumVariantRef, LocalImplId, LocalImplRef, ModuleId,
+            ModuleRef,
+        },
+        identity,
+        package::{FileId, PackageSlot},
+        semantic::{
+            AssocItemId, ConstId, ConstParamRef, ConstRef, EnumId, EnumVariantFieldRef,
+            EnumVariantRef, FieldRef, FunctionId, FunctionRef, GenericDefRef, GenericParamRef,
+            ImplId, ImplRef, ItemId, ItemOwner, LifetimeParamRef, LocalLifetimeParamId,
+            LocalTypeOrConstParamId, OpaqueTyId, OpaqueTyRef, SemanticItemKind, SemanticItemRef,
+            StaticId, StaticRef, StructId, TraitApplicability, TraitDefRef, TraitId, TraitImplRef,
+            TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, TypeParamRef, UnionId,
+        },
+    },
     literal::LiteralKind,
+    mutability::Mutability,
     operator::{ExprBinaryOp, ExprUnaryOp},
+    path::{Path, PathRoot},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
     span::Span,
 };

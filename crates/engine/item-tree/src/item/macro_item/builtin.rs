@@ -9,7 +9,7 @@ use rg_ir_model::{BuiltinMacroExprKind, FileId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::super::ItemTreeId;
+use crate::ItemTreeId;
 
 /// Compiler-provided macro definition selected through normal macro resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

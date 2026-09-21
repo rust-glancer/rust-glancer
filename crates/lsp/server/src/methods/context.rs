@@ -15,9 +15,9 @@ use rg_lsp_proto::{
     EditorDocumentSnapshot, GlobalPositionSnapshot, QueryError, QueryValue,
 };
 
-use crate::completion_scheduler::CompletionRequest;
-use crate::engine_client::EngineClient;
-use crate::ingress::CapturedDocument;
+use crate::{
+    completion_scheduler::CompletionRequest, engine_client::EngineClient, ingress::CapturedDocument,
+};
 
 use super::query_response::{self, into_lsp_error, temporarily_unavailable};
 

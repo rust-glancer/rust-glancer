@@ -6,12 +6,10 @@ mod implementation;
 mod item_path;
 mod member;
 
-pub use self::associated_item::{
-    AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef,
+pub use self::{
+    associated_item::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
+    impl_match::{ImplMatcher, InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches},
+    implementation::ImplementationQuery,
+    item_path::ItemPathQuery,
+    member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
 };
-pub use self::impl_match::{
-    ImplMatcher, InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches,
-};
-pub use self::implementation::ImplementationQuery;
-pub use self::item_path::ItemPathQuery;
-pub use self::member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery};

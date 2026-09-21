@@ -1,11 +1,10 @@
 use expect_test::Expect;
 
 use crate::{
-    DefMap, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
+    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
     NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
-    ScopeResolutionRef, Visibility,
+    ScopeResolutionRef, Visibility, testonly::DefMapFixture,
 };
-use crate::{DefMapDb, testonly::DefMapFixture};
 use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, FileId, ModuleId, ModuleRef, PackageSlot, Path,
 };

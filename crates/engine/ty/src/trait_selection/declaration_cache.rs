@@ -16,9 +16,10 @@ use std::{
 
 use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, TraitDefRef, TypeAliasRef};
 
-use crate::lowering::TraitHeader;
-use crate::lowering::{CallableSignature, ImplHeader};
-use crate::{OpaqueTy, TraitRefLowering, Ty};
+use crate::{
+    OpaqueTy, TraitRefLowering, Ty,
+    lowering::{CallableSignature, ImplHeader, TraitHeader},
+};
 
 /// Opaque identities declared by one owner together with each identity's lowered bounds.
 pub(super) type OpaqueBounds = Vec<(OpaqueTy, Vec<TraitRefLowering>)>;
@@ -246,8 +247,10 @@ enum DeclarationCacheAccess {
 
 #[cfg(test)]
 mod tests {
-    use std::convert::Infallible;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        convert::Infallible,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use super::*;
 

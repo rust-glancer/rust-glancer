@@ -12,35 +12,39 @@
 //! evidence to prefer the selected impl's value while retaining the solver path for defaults,
 //! opaque bounds, and other cases that need the complete program.
 
-use std::cell::Cell;
-use std::collections::HashMap;
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    cell::Cell,
+    collections::HashMap,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 
 use chalk_engine::solve::SLGSolver;
-use chalk_ir::cast::Cast;
 use chalk_ir::{
     Binders, Canonical, ConstrainedSubst, DomainGoal, GenericArgData, GoalData, Normalize,
-    QuantifierKind,
+    QuantifierKind, cast::Cast,
 };
-use chalk_solve::Solver;
-use chalk_solve::ext::GoalExt;
+use chalk_solve::{Solver, ext::GoalExt};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ImplRef, TraitApplicability};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
-use super::super::{candidate::TraitCandidate, matcher::TraitSelfHead};
-use super::evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv};
-use super::interner::RgChalkInterner;
-use super::lower::{ChalkLowerer, GenericBinderEnv};
-use super::program::{ChalkProgramState, ProgramAvailability};
-use super::raise;
-use crate::inference::{InferVarKind, InferenceSubstitution, InferenceTable};
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::{
-    AssocProjectionResult, TraitGoal, TraitSelectionSession, work::TraitWorkKind,
+use super::{
+    evidence::{ProjectionAliasLowering, SolverAnswerVars, SolverVariableEnv},
+    interner::RgChalkInterner,
+    lower::{ChalkLowerer, GenericBinderEnv},
+    program::{ChalkProgramState, ProgramAvailability},
+    raise,
 };
-use crate::{Clause, GenericArg, GenericArgs, TraitApplication};
+use crate::{
+    Clause, GenericArg, GenericArgs, TraitApplication,
+    inference::{InferVarKind, InferenceSubstitution, InferenceTable},
+    lookup::ItemPathQuery,
+    trait_selection::{
+        AssocProjectionResult, TraitGoal, TraitSelectionSession, candidate::TraitCandidate,
+        matcher::TraitSelfHead, work::TraitWorkKind,
+    },
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 const SOLVER_MAX_SIZE: usize = 32;

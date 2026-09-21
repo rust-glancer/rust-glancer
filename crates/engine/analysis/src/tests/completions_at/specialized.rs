@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 #[test]
 fn completes_specialized_strings_macro_fragments_and_postfix_transforms() {
     check_analysis_queries(

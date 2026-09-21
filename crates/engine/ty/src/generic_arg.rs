@@ -10,8 +10,10 @@ use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef, TypeAliasRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::inference::{InferVarId, InferVarKind};
-use crate::{ProjectionTy, Ty};
+use crate::{
+    ProjectionTy, Ty,
+    inference::{InferVarId, InferVarKind},
+};
 
 /// Lifetime argument retained by the semantic type model.
 ///

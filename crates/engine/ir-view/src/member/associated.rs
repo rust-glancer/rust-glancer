@@ -8,13 +8,11 @@ use rg_ir_model::{
 };
 use rg_item_tree::Documentation;
 use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
-use rg_ty::lookup::{
-    AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery,
+use rg_ty::{
+    GenericArgs, TraitApplication, Ty, TyContext,
+    lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery},
+    lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
 };
-use rg_ty::lowering::{
-    SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
-};
-use rg_ty::{GenericArgs, TraitApplication, Ty, TyContext};
 
 use super::{
     MemberAssociatedItem, MemberAssociatedItemCandidate, MemberAssociatedItemDefinition, MemberView,

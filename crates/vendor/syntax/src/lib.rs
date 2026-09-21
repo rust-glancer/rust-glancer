@@ -32,8 +32,7 @@ pub mod fuzz;
 pub mod hacks;
 pub mod utils;
 
-use std::marker::PhantomData;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use stdx::format_to;
 

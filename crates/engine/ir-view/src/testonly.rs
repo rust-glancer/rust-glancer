@@ -1,6 +1,5 @@
 use rg_body_ir::{BodyIrLoader, BodyOwner, BodyView, ExprData, testonly::BodyIrFixture};
-use rg_def_map::DefMap;
-use rg_def_map::DefMapDb;
+use rg_def_map::{DefMap, DefMapDb};
 use rg_ir_model::{
     BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId, FunctionRef, GenericParamRef,
     ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
@@ -10,8 +9,10 @@ use rg_semantic_ir::{
     GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery, SemanticIrDb,
     testonly::SemanticIrFixture,
 };
-use rg_ty::lowering::SemanticSignatureQuery;
-use rg_ty::{AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
+    lowering::SemanticSignatureQuery,
+};
 
 use crate::{IndexedViewDb, ty::IndexedType};
 

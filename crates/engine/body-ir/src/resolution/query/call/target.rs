@@ -3,8 +3,7 @@
 use rg_ir_model::{FunctionRef, ScopeId, identity::DeclarationRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::trait_selection::TraitSelection;
-use rg_ty::{Substitution, Ty};
+use rg_ty::{Substitution, Ty, trait_selection::TraitSelection};
 
 use crate::body::facts::BodyResolution;
 

@@ -20,10 +20,11 @@ use crate::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget, SyntheticCompletionTarget,
     },
-    query::completion::site::ModuleDeclarationCompletionSite,
+    query::completion::{
+        render::{CompletionSortPolicy, definition_detail},
+        site::ModuleDeclarationCompletionSite,
+    },
 };
-
-use super::super::render::{CompletionSortPolicy, definition_detail};
 
 /// Discovers conventional sibling module files and renders their stem as `mod name` candidates.
 pub(super) struct ModuleDeclarationCompletionResolver<'a, 'db> {

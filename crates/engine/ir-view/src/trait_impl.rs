@@ -31,8 +31,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::Documentation;
 use rg_semantic_ir::{GenericsQuery, ItemStoreQuery};
-use rg_ty::lowering::SemanticSignatureQuery;
-use rg_ty::{Substitution, TraitApplication};
+use rg_ty::{Substitution, TraitApplication, lowering::SemanticSignatureQuery};
 
 use crate::{
     IndexedViewDb,

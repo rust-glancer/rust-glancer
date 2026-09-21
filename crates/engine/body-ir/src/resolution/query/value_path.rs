@@ -17,8 +17,7 @@ use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Substitution, Ty};
 
-use crate::resolution::BodyResolutionContext;
-use crate::{BodyPath, body::facts::BodyResolution};
+use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Resolves paths used by expressions without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {

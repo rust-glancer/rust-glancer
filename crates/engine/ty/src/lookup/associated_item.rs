@@ -39,9 +39,12 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::ItemStoreSource;
 
-use crate::lookup::{ImplMatcher, ItemPathQuery, ReceiverImplMatches};
-use crate::lowering::TypePathResolver;
-use crate::{AdtTy, Clause, TraitApplication, Ty, TyContext, inference::InferenceTable};
+use crate::{
+    AdtTy, Clause, TraitApplication, Ty, TyContext,
+    inference::InferenceTable,
+    lookup::{ImplMatcher, ItemPathQuery, ReceiverImplMatches},
+    lowering::TypePathResolver,
+};
 
 /// Stable declaration identity returned by associated-item discovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

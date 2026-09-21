@@ -7,13 +7,17 @@
 mod matcher;
 mod transcriber;
 
-use rg_tt::span::{Edition, Span, SyntaxContext};
-use rg_tt::tt;
-use rg_tt::tt::symbol::Symbol;
+use rg_tt::{
+    span::{Edition, Span, SyntaxContext},
+    tt,
+    tt::symbol::Symbol,
+};
 use rustc_hash::FxHashMap;
 
-use super::parser::MetaVarKind;
-use super::{ExpandError, ExpandErrorKind, ExpandResult, MacroCallStyle, MatchedArmIndex, Rule};
+use super::{
+    ExpandError, ExpandErrorKind, ExpandResult, MacroCallStyle, MatchedArmIndex, Rule,
+    parser::MetaVarKind,
+};
 
 pub(crate) fn expand_rules(
     rules: &[Rule],

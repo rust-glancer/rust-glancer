@@ -36,8 +36,7 @@ use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use crate::profile::metric;
-use crate::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
+use crate::{ProjectMemoryHooks, ProjectMemoryPurgePoint, profile::metric};
 
 use crate::selection::PhasePackageSet;
 

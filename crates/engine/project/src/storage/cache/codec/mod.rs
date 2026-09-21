@@ -34,10 +34,9 @@ mod crate_shards;
 mod def_map;
 mod semantic_ir;
 
-use self::body::EncodedBodyIr;
-pub(crate) use self::body::{BODY_CACHE_CONTAINER_PREFIX_BYTES, PackageBodyCacheIndex};
-use self::crate_shards::EncodedCrateShards;
+use self::{body::EncodedBodyIr, crate_shards::EncodedCrateShards};
 pub(crate) use self::{
+    body::{BODY_CACHE_CONTAINER_PREFIX_BYTES, PackageBodyCacheIndex},
     crate_shards::CRATE_SHARD_CONTAINER_PREFIX_BYTES,
     def_map::PackageDefMapCacheIndex,
     semantic_ir::{

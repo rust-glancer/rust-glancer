@@ -1,8 +1,11 @@
 use expect_test::expect;
 use rg_workspace::TargetKind;
 
-use super::super::utils::{self, PathResolutionQuery};
-use crate::{LocalDefKind, testonly::DefMapFixture};
+use crate::{
+    LocalDefKind,
+    testonly::DefMapFixture,
+    tests::utils::{self, PathResolutionQuery},
+};
 
 const PROC_MACRO_FIXTURE: &str = r#"
 //- /Cargo.toml

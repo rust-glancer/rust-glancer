@@ -1,5 +1,5 @@
-use super::super::utils;
-use crate::{profile::metric, profile_descriptors};
+use crate::{profile::metric, profile_descriptors, tests::utils};
+
 use expect_test::expect;
 use rg_ir_model::PackageSlot;
 

@@ -1,10 +1,15 @@
 mod client "editors/code"
 
+rustfmt_toolchain := "nightly-2026-05-28"
+
 test:
     cargo nextest run --workspace
 
-lint:
-    cargo fmt --check
+[positional-arguments]
+fmt *args:
+    cargo +{{rustfmt_toolchain}} fmt --all "$@"
+
+lint: (fmt "--check")
     cargo clippy --workspace --all-targets -- -D warnings
     DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all --workspace -- --all-targets
 

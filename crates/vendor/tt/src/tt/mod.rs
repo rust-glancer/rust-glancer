@@ -13,16 +13,17 @@ pub mod symbol;
 
 use std::{fmt, slice::SliceIndex};
 
-use self::buffer::Cursor;
-use self::symbol::Symbol;
+use self::{buffer::Cursor, symbol::Symbol};
 use stdx::{impl_from, itertools::Itertools as _};
 
 pub use crate::span::Span;
 
 use self::storage::{CompressedSpanPart, SpanStorage};
 
-pub use self::iter::{TtElement, TtIter};
-pub use self::storage::{TopSubtree, TopSubtreeBuilder};
+pub use self::{
+    iter::{TtElement, TtIter},
+    storage::{TopSubtree, TopSubtreeBuilder},
+};
 
 pub const MAX_GLUED_PUNCT_LEN: usize = 3;
 

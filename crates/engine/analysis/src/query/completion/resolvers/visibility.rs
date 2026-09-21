@@ -18,17 +18,16 @@ use crate::{
         CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
         SyntheticCompletionTarget,
     },
-    query::completion::site::{CompletionSourceAttachment, RestrictedVisibilityCompletionContext},
-};
-
-use super::super::{
-    CompletionQuery,
-    candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+    query::completion::{
+        CompletionQuery,
+        candidates::{CompletionCandidateSource, DefinitionCompletionCandidate},
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+        },
+        site::{CompletionSourceAttachment, RestrictedVisibilityCompletionContext},
+        syntax::CompletionSyntaxContext,
     },
-    syntax::CompletionSyntaxContext,
 };
 
 /// Resolves the two narrow declaration grammars that use module-shaped names.

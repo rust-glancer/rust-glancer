@@ -8,6 +8,8 @@ mod kind;
 mod model;
 mod view;
 
-pub use self::kind::SymbolKind;
-pub use self::model::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode};
-pub use self::view::SymbolView;
+pub use self::{
+    kind::SymbolKind,
+    model::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode},
+    view::SymbolView,
+};

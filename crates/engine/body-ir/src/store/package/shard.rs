@@ -24,8 +24,7 @@ use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{BodyLocalItems, CrateBodies, CrateBodiesCoverage, PackageBodies};
-use crate::BodyData;
-use crate::{BodyFacts, BodyView};
+use crate::{BodyData, BodyFacts, BodyView};
 
 impl PackageBodies {
     /// Record each crate's file list and body-to-file mapping for cache reads.

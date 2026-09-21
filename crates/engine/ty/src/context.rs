@@ -3,8 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
 
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::TraitSelectionSession;
+use crate::{lookup::ItemPathQuery, trait_selection::TraitSelectionSession};
 
 /// Shared query environment for type reasoning at one crate use site.
 ///

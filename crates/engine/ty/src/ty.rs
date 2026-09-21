@@ -13,8 +13,10 @@ use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::inference::{InferVarId, InferVarKind};
-use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
+use crate::{
+    ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy,
+    inference::{InferVarId, InferVarKind},
+};
 
 /// Identity of one anonymous closure type.
 ///

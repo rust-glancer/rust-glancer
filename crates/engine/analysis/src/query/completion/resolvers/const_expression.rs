@@ -18,20 +18,20 @@ use rg_ir_view::source::{IndexedUnqualifiedNameContext, SourceCompletionView};
 use crate::{
     Analysis,
     model::{CompletionEdit, CompletionItem, CompletionKind, SyntheticCompletionTarget},
-    query::completion::site::{
-        CompletionSourceAttachment, ConstExpressionCompletionContext, UnqualifiedCompletionSite,
+    query::completion::{
+        CompletionQuery,
+        candidates::CompletionCandidateSource,
+        render::{
+            CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
+            DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
+        },
+        site::{
+            CompletionSourceAttachment, ConstExpressionCompletionContext, UnqualifiedCompletionSite,
+        },
+        syntax::CompletionSyntaxContext,
     },
 };
 
-use super::super::{
-    CompletionQuery,
-    candidates::CompletionCandidateSource,
-    render::{
-        CallCompletionKind, CompletionSortPolicy, DefinitionCompletionRenderer,
-        DefinitionCompletionRequest, SyntheticCompletionCandidate, SyntheticCompletionRenderer,
-    },
-    syntax::CompletionSyntaxContext,
-};
 use super::unqualified::UnqualifiedCompletionResolver;
 
 /// Reuses ordinary name lookup under const-expression restrictions.

@@ -34,11 +34,13 @@ use rg_text::{NameInterner, PackageNameInterners};
 
 use crate::CrateBodiesCoverage;
 
-pub(super) use self::builder::{LoweredBodyData, PendingBindingResolution};
 use self::crate_lowering::CrateLowering;
-pub(super) use self::declaration::{CurrentDeclarationBuilder, CurrentRootItems};
-pub(super) use self::macro_expansion::BodyMacroExpansion;
-pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask};
+pub(super) use self::{
+    builder::{LoweredBodyData, PendingBindingResolution},
+    declaration::{CurrentDeclarationBuilder, CurrentRootItems},
+    macro_expansion::BodyMacroExpansion,
+    task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
+};
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool,
     materialization::BodyIrMaterialization,

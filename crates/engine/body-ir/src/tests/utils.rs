@@ -2,11 +2,11 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::body::facts::BodyResolution;
 use crate::{
     BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
     ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, testonly::BodyIrFixture,
+    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
+    testonly::BodyIrFixture,
 };
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
@@ -18,8 +18,10 @@ use rg_ir_model::{
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
-use rg_ty::lowering::SemanticSignatureQuery;
-use rg_ty::{AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty};
+use rg_ty::{
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
+    lowering::SemanticSignatureQuery,
+};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);

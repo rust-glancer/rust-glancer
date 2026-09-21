@@ -7,20 +7,20 @@ use std::{
 
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrReadTxn, CurrentSourceBuilder, CurrentSourceStore};
-use rg_def_map::DefMapReadTxn;
-use rg_def_map::{DefMap, DefMapSource};
+use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, Span};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
 use rg_semantic_ir::{
     CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
-    TypePathContext, TypePathResolution,
+    SemanticIrReadTxn, TypePathContext, TypePathResolution,
 };
 use rg_std::{CancellationToken, UniqueVec};
 use rg_text::RustEdition;
-use rg_ty::lookup::ItemPathQuery;
-use rg_ty::lowering::{TypeLoweringAnchor, TypePathResolver};
-use rg_ty::trait_selection::TraitSelectionSession;
+use rg_ty::{
+    lookup::ItemPathQuery,
+    lowering::{TypeLoweringAnchor, TypePathResolver},
+    trait_selection::TraitSelectionSession,
+};
 
 /// Read-only database handle used by all indexed-data views.
 ///

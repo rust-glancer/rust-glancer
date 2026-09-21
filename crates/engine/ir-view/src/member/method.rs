@@ -2,8 +2,7 @@
 
 use anyhow::Context as _;
 use rg_ir_model::identity::LexicalScopeRef;
-use rg_ty::Ty;
-use rg_ty::lookup::MemberMethodCandidateRef;
+use rg_ty::{Ty, lookup::MemberMethodCandidateRef};
 
 use super::{MemberFunction, MemberMethodCandidate, MemberView};
 use crate::{body::BodyResolutionView, ty::IndexedType};

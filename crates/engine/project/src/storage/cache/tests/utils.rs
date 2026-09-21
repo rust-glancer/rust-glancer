@@ -1,10 +1,13 @@
 use rg_body_ir::PackageBodies;
 use rg_ir_model::{CrateId, PackageSlot};
 
-use crate::storage::cache::{
-    PackageArtifactReader, PackageCacheHeader, PackageCacheUpdate, PackageCacheWriteInput,
+use crate::{
+    Project,
+    storage::cache::{
+        PackageArtifactReader, PackageCacheHeader, PackageCacheUpdate, PackageCacheWriteInput,
+    },
+    testonly::ProjectFixture,
 };
-use crate::{Project, testonly::ProjectFixture};
 
 pub(super) fn package_cache_header(project: &Project, package: PackageSlot) -> PackageCacheHeader {
     let state = &project.state;

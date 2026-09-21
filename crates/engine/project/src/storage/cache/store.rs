@@ -34,11 +34,10 @@ use anyhow::Context as _;
 use atomic_write_file::AtomicWriteFile;
 use rg_ir_model::PackageSlot;
 
-use super::reader::PackageArtifactReader;
 use super::{
     CachedPackage, Fingerprint, PackageCacheBodyUpdateInput, PackageCacheCodec, PackageCacheHeader,
     PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
-    codec::EncodedPackageCacheArtifact,
+    codec::EncodedPackageCacheArtifact, reader::PackageArtifactReader,
 };
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";

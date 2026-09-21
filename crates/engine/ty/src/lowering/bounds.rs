@@ -1,9 +1,9 @@
 //! Lower trait bounds and associated equalities into semantic applications and clauses.
 
 use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
-use crate::inference::InferenceTable;
 use crate::{
     AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TraitRefLowering, Ty,
+    inference::InferenceTable,
 };
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef};

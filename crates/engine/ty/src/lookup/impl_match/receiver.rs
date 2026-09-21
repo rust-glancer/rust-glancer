@@ -11,9 +11,10 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use crate::lowering::TypePathResolver;
-use crate::trait_selection::TraitSelection;
-use crate::{Clause, Substitution, Ty, inference::InferenceTable};
+use crate::{
+    Clause, Substitution, Ty, inference::InferenceTable, lowering::TypePathResolver,
+    trait_selection::TraitSelection,
+};
 
 use super::ImplMatcher;
 

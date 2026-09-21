@@ -26,10 +26,7 @@ pub struct ScriptSource<'s> {
 
 impl<'s> ScriptSource<'s> {
     pub fn parse(raw: &'s str) -> Result<Self, FrontmatterError> {
-        use winnow::stream::FindSlice as _;
-        use winnow::stream::Location as _;
-        use winnow::stream::Offset as _;
-        use winnow::stream::Stream as _;
+        use winnow::stream::{FindSlice as _, Location as _, Offset as _, Stream as _};
 
         let content_end = raw.len();
         let mut source = Self {

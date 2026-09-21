@@ -14,8 +14,7 @@ mod type_ref;
 pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
 pub(crate) use self::signature::{TraitHeader, impl_header_with};
 
-use crate::lookup::ItemPathQuery;
-use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty};
+use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty, lookup::ItemPathQuery};
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     GenericDefRef, GenericParamRef, Path, ScopeId, TraitDefRef, TypeAliasRef, TypeParamRef,

@@ -11,8 +11,10 @@ pub mod syntax_bridge;
 pub mod tt;
 mod wincode_adapters;
 
-pub use self::span::{Edition, Span};
-pub use self::tt::TopSubtree;
+pub use self::{
+    span::{Edition, Span},
+    tt::TopSubtree,
+};
 
 #[cfg(test)]
 mod tests {

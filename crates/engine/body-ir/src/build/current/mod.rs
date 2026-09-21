@@ -22,12 +22,13 @@ use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
 use rg_ty::trait_selection::TraitSelectionSession;
 
-use crate::store::current::{CurrentImplData, CurrentImplRole, SelectedImpl};
-use crate::{BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData};
+use crate::{
+    BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData,
+    store::current::{CurrentImplData, CurrentImplRole, SelectedImpl},
+};
 
 use self::body::CurrentBodyBuilder;
-use super::local_items::LocalItemSource;
-use super::lower::CurrentDeclarationBuilder;
+use super::{local_items::LocalItemSource, lower::CurrentDeclarationBuilder};
 
 pub use self::types::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,

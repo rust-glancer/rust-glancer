@@ -4,9 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::lookup::ReceiverFunctionCandidate;
-use rg_ty::trait_selection::TraitSelection;
-use rg_ty::{Substitution, Ty};
+use rg_ty::{Substitution, Ty, lookup::ReceiverFunctionCandidate, trait_selection::TraitSelection};
 
 use crate::resolution::BodyResolutionContext;
 

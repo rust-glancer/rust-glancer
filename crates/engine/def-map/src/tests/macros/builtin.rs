@@ -1,4 +1,4 @@
-use super::super::utils;
+use crate::tests::utils;
 use expect_test::expect;
 
 fn build_builtin_macro_fixture(fixture: &str) -> utils::DefMapFixtureDb {

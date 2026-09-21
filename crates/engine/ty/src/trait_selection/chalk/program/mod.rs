@@ -15,9 +15,11 @@ mod build;
 mod database;
 mod roots;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use chalk_ir::{
     AliasTy as ChalkAliasTy, GenericArgData, Substitution as ChalkSubstitution, TyKind, Variances,
@@ -37,10 +39,12 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::interner::RgChalkInterner;
-use crate::inference::InferenceTable;
-use crate::lookup::ItemPathQuery;
-use crate::trait_selection::{TraitGoal, TraitSelectionSession};
-use crate::{Clause, TraitRefLowering};
+use crate::{
+    Clause, TraitRefLowering,
+    inference::InferenceTable,
+    lookup::ItemPathQuery,
+    trait_selection::{TraitGoal, TraitSelectionSession},
+};
 
 const INTER: RgChalkInterner = RgChalkInterner;
 // Program extensions are relatively rare; a subsecond threshold still filters ordinary root

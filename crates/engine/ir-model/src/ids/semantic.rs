@@ -1,8 +1,6 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::ModuleRef;
-use crate::declare_id;
-use crate::ids::def_map::DefMapRef;
+use crate::{ModuleRef, declare_id, ids::def_map::DefMapRef};
 use rg_std::{MemorySize, Shrink};
 
 declare_id! {

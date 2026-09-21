@@ -24,11 +24,11 @@ use rg_item_tree::{
 
 use rg_body_ir::{BodyPath, BodyView, ExprKind, StmtKind};
 
-use super::super::{TypeNamePosition, type_path::walk_type_ref_paths};
 use super::walk::{
     PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
     walk_generic_args_type_refs, walk_pat,
 };
+use crate::source::scan::{TypeNamePosition, type_path::walk_type_ref_paths};
 
 /// A source-owned pattern root together with the scope where its bindings live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

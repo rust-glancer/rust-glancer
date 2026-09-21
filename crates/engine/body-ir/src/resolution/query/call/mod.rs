@@ -13,9 +13,8 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{Ty, inference::InferenceTable};
 
-use crate::body::facts::BodyResolution;
 use crate::{
-    body::{ExprData, ExprKind},
+    body::{ExprData, ExprKind, facts::BodyResolution},
     resolution::BodyResolutionContext,
 };
 

@@ -8,17 +8,18 @@
 mod build;
 mod publication;
 
-use crate::Project;
 use crate::{
-    ProjectMemoryPurgePoint,
+    Project, ProjectMemoryPurgePoint,
     profile::{BuildMemorySampler, BuildProcessMemory, record_build_checkpoint},
 };
 use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildProgress, BodyIrBuildStage, CrateBodiesCoverage};
 use rg_ir_model::{CrateRef, FileId};
 
-pub use self::build::{SavedBodyBuildInputs, SavedBodyProducts};
-pub use self::publication::{BodyPublication, BodyPublicationOutcome};
+pub use self::{
+    build::{SavedBodyBuildInputs, SavedBodyProducts},
+    publication::{BodyPublication, BodyPublicationOutcome},
+};
 
 /// Files and crates whose body analysis a query needs before it can run.
 ///

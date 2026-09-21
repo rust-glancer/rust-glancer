@@ -9,25 +9,31 @@
 
 use std::sync::Arc;
 
-use chalk_ir::fold::Shift;
 use chalk_ir::{
     AdtId, AssocTypeId, Binders, CanonicalVarKinds, ClosureId, CoroutineId, FnDefId, GenericArg,
     GenericArgData, OpaqueTyId, ProgramClause, ProgramClauses, Substitution, Ty, TyKind,
-    UnificationDatabase, Variance, Variances,
+    UnificationDatabase, Variance, Variances, fold::Shift,
 };
-use chalk_solve::RustIrDatabase;
-use chalk_solve::rust_ir::{
-    AdtRepr, AdtSizeAlign, AssociatedTyDatum, AssociatedTyValue, AssociatedTyValueBound,
-    AssociatedTyValueId, ClosureKind, CoroutineDatum, CoroutineInputOutputDatum,
-    CoroutineWitnessDatum, FnDefDatum, FnDefInputsAndOutputDatum, ImplDatum, Movability,
-    OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum, WellKnownAssocType, WellKnownTrait,
+use chalk_solve::{
+    RustIrDatabase,
+    rust_ir::{
+        AdtRepr, AdtSizeAlign, AssociatedTyDatum, AssociatedTyValue, AssociatedTyValueBound,
+        AssociatedTyValueId, ClosureKind, CoroutineDatum, CoroutineInputOutputDatum,
+        CoroutineWitnessDatum, FnDefDatum, FnDefInputsAndOutputDatum, ImplDatum, Movability,
+        OpaqueTyDatum, OpaqueTyDatumBound, Polarity, TraitDatum, WellKnownAssocType,
+        WellKnownTrait,
+    },
 };
 use rg_ir_model::{ImplRef, TraitDefRef, TypeAliasRef, TypeDefRef};
 
-use super::super::interner::{ChalkDefId, RgChalkInterner};
-use super::super::lower::{
-    adt_datum, chalk_assoc_type_value_id, chalk_impl_id, chalk_trait_id, stub_trait_datum, unit_ty,
+use crate::trait_selection::chalk::{
+    interner::{ChalkDefId, RgChalkInterner},
+    lower::{
+        adt_datum, chalk_assoc_type_value_id, chalk_impl_id, chalk_trait_id, stub_trait_datum,
+        unit_ty,
+    },
 };
+
 use super::ChalkProgram;
 
 const INTER: RgChalkInterner = RgChalkInterner;

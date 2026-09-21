@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use super::super::super::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 
 /// Delimited and transform-like completions need both sides of the editor-state split.
 #[test]

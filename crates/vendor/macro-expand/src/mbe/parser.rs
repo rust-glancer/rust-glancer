@@ -5,11 +5,13 @@
 
 use std::sync::Arc;
 
-use rg_tt::span::{Edition, Span, SyntaxContext};
-use rg_tt::tt::{
-    self, MAX_GLUED_PUNCT_LEN,
-    iter::{TtElement, TtIter},
-    symbol::{Symbol, sym},
+use rg_tt::{
+    span::{Edition, Span, SyntaxContext},
+    tt::{
+        self, MAX_GLUED_PUNCT_LEN,
+        iter::{TtElement, TtIter},
+        symbol::{Symbol, sym},
+    },
 };
 
 use super::{MacroCallStyle, ParseError};

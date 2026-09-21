@@ -6,8 +6,10 @@ use rg_macro_runtime::{DeclarativeMacroDefinition, ExpansionParseKind, MacroExpa
 use rg_parse::syntax_edition;
 use rg_syntax::{ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
-use rg_tt::TopSubtree;
-use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span};
+use rg_tt::{
+    TopSubtree,
+    syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span},
+};
 
 /// Tells body macro lookup whether the call came from user-written syntax or generated syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
