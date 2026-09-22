@@ -1,5 +1,5 @@
 use super::*;
-use crate::grammar::attributes::ATTRIBUTE_FIRST;
+use crate::grammar::attributes::OUTER_ATTR_FIRST;
 
 // test struct_item
 // struct S {}
@@ -90,24 +90,27 @@ pub(crate) fn variant_list(p: &mut Parser<'_>) {
         attributes::outer_attrs(p);
         if p.at(IDENT) {
             name(p);
-            match p.current() {
-                T!['{'] => record_field_list(p),
-                T!['('] => tuple_field_list(p),
-                _ => (),
-            }
-
-            // test variant_discriminant
-            // enum E { X(i32) = 10 }
-            if p.eat(T![=]) {
-                let m = p.start();
-                expressions::expr(p);
-                m.complete(p, CONST_ARG);
-            }
-            m.complete(p, VARIANT);
+        } else if p.at(T![_]) {
+            p.bump(T![_]);
         } else {
             m.abandon(p);
             p.err_and_bump("expected enum variant");
+            return;
         }
+        match p.current() {
+            T!['{'] => record_field_list(p),
+            T!['('] => tuple_field_list(p),
+            _ => (),
+        }
+
+        // test variant_discriminant
+        // enum E { X(i32) = 10 }
+        if p.eat(T![=]) {
+            let m = p.start();
+            expressions::expr(p);
+            m.complete(p, CONST_ARG);
+        }
+        m.complete(p, VARIANT);
     }
 }
 
@@ -180,7 +183,7 @@ pub(crate) fn record_field_list(p: &mut Parser<'_>) {
 }
 
 const TUPLE_FIELD_FIRST: TokenSet = types::TYPE_FIRST
-    .union(ATTRIBUTE_FIRST)
+    .union(OUTER_ATTR_FIRST)
     .union(VISIBILITY_FIRST);
 
 // test_err tuple_field_list_recovery

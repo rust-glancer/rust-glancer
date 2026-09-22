@@ -66,6 +66,9 @@ impl FromAst for TypeRef {
             )),
             ast::Type::InferType(_) => Self::Infer,
             ast::Type::MacroType(ty) => Self::unknown_from_text(normalized_syntax(&ty)),
+            // TODO: Consider supporting std's pattern_type! uses if their unknown types
+            // prevent useful analysis of stable APIs (e.g. NonNull).
+            ast::Type::PatternType(ty) => Self::unknown_from_text(normalized_syntax(&ty)),
             ast::Type::NeverType(_) => Self::Never,
             ast::Type::ParenType(ty) => ty
                 .ty()

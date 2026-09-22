@@ -2,7 +2,7 @@
 
 use rg_ir_model::{Path, Span};
 use rg_syntax::{
-    AstNode as _, SyntaxKind, SyntaxNode, SyntaxToken,
+    AstNode as _, AstToken as _, SyntaxKind, SyntaxNode, SyntaxToken,
     ast::{self, HasAttrs as _, HasName as _},
 };
 
@@ -119,7 +119,7 @@ impl CompletionSyntaxContext<'_> {
         let mut expects_colon = true;
         while let Some(previous) = token {
             token = previous.prev_token();
-            if previous.kind().is_trivia() {
+            if previous.kind().is_trivia() || ast::AnyComment::can_cast(previous.kind()) {
                 continue;
             }
             if expects_colon {
@@ -373,7 +373,7 @@ impl CompletionSyntaxContext<'_> {
         let mut token = self.marker.prev_token();
         while let Some(previous) = token {
             token = previous.prev_token();
-            if previous.kind().is_trivia() {
+            if previous.kind().is_trivia() || ast::AnyComment::can_cast(previous.kind()) {
                 continue;
             }
 

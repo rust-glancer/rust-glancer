@@ -18,6 +18,7 @@ doctest = false
 [dependencies]
 either.workspace = true
 itertools.workspace = true
+ra-ap-rustc_lexer.workspace = true
 rustc-hash.workspace = true
 rustc-literal-escaper.workspace = true
 smol_str.workspace = true

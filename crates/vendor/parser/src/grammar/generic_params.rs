@@ -1,5 +1,5 @@
 use super::*;
-use crate::grammar::attributes::ATTRIBUTE_FIRST;
+use crate::grammar::attributes::OUTER_ATTR_FIRST;
 
 pub(super) fn opt_generic_param_list(p: &mut Parser<'_>) {
     if p.at(T![<]) {
@@ -21,7 +21,7 @@ pub(super) fn generic_param_list(p: &mut Parser<'_>) {
         T![>],
         T![,],
         || "expected generic parameter".into(),
-        GENERIC_PARAM_FIRST.union(ATTRIBUTE_FIRST),
+        GENERIC_PARAM_FIRST.union(OUTER_ATTR_FIRST),
         |p| {
             // test generic_param_attribute
             // fn foo<#[lt_attr] 'a, #[t_attr] T>() {}

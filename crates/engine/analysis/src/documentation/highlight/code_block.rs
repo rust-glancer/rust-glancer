@@ -155,15 +155,15 @@ impl CodeBlock {
     /// `profile`. Examples can therefore be colored even when their names have no indexed owners.
     fn token_kind(token: &SyntaxToken) -> Option<HighlightKind> {
         use SyntaxKind::{
-            BYTE, BYTE_STRING, C_STRING, CHAR, COMMENT, FLOAT_NUMBER, IDENT, INT_NUMBER,
-            LIFETIME_IDENT, STRING,
+            BYTE, BYTE_STRING, C_STRING, CHAR, COMMENT, FLOAT_NUMBER, IDENT, INNER_DOC_COMMENT,
+            INT_NUMBER, LIFETIME_IDENT, OUTER_DOC_COMMENT, STRING,
         };
         let kind = token.kind();
         if kind.is_keyword(Edition::CURRENT) {
             return Some(HighlightKind::Keyword);
         }
         Some(match kind {
-            COMMENT => HighlightKind::Comment,
+            COMMENT | INNER_DOC_COMMENT | OUTER_DOC_COMMENT => HighlightKind::Comment,
             STRING | BYTE_STRING | C_STRING | CHAR | BYTE => HighlightKind::String,
             INT_NUMBER | FLOAT_NUMBER => HighlightKind::Number,
             LIFETIME_IDENT => HighlightKind::TypeParameter,

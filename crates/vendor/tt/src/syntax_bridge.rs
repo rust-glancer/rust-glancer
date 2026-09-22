@@ -289,7 +289,19 @@ impl<'a> TtTreeSink<'a> {
         };
 
         let Some((left, right)) = text.split_once('.') else {
-            unreachable!();
+            // `value.1e3` looks like field access to the parser, but the float has no dot to
+            // split. Preserve it as an error and close the nodes the parser expected us to fill.
+            self.error("illegal float literal".to_owned());
+            self.inner.start_node(SyntaxKind::ERROR);
+            self.inner.token(SyntaxKind::FLOAT_NUMBER, &text);
+            self.token_map.push(self.inner.current_offset(), span);
+            self.inner.finish_node();
+            self.inner.finish_node();
+            if !has_pseudo_dot {
+                self.inner.finish_node();
+            }
+            self.cursor.bump();
+            return;
         };
         assert!(!left.is_empty());
 
@@ -539,7 +551,52 @@ fn push_token(
         return;
     }
 
-    if kind == SyntaxKind::LIFETIME_IDENT {
+    if matches!(
+        kind,
+        SyntaxKind::INNER_DOC_COMMENT | SyntaxKind::OUTER_DOC_COMMENT
+    ) {
+        // Macro input sees doc comments as attributes. Keep one source span for the desugared
+        // tokens so expanded documentation still maps back to the original comment.
+        let span = span_for_range(token.text_range());
+        let text = &token.text()[3..];
+        let text = if token.text().starts_with("/*") {
+            text.strip_suffix("*/").unwrap_or(text)
+        } else {
+            text
+        };
+        let punct = |char| {
+            Leaf::Punct(tt::Punct {
+                char,
+                spacing: Spacing::Alone,
+                span,
+            })
+        };
+        builder.push(punct('#'));
+        if kind == SyntaxKind::INNER_DOC_COMMENT {
+            builder.push(punct('!'));
+        }
+        builder.open(DelimiterKind::Bracket, span);
+        builder.push(Leaf::Ident(tt::Ident::new("doc", span)));
+        builder.push(punct('='));
+        // Macro matchers compare literal spelling, so keep doc text raw. Choose enough delimiter
+        // hashes to allow quotes and hashes inside the comment.
+        let mut num_of_hashes = 0;
+        let mut count = 0;
+        for ch in text.chars() {
+            count = match ch {
+                '"' => 1,
+                '#' if count > 0 => count + 1,
+                _ => 0,
+            };
+            num_of_hashes = num_of_hashes.max(count);
+        }
+        builder.push(Leaf::Literal(tt::Literal::new_no_suffix(
+            text,
+            span,
+            tt::LitKind::StrRaw(num_of_hashes),
+        )));
+        builder.close(span);
+    } else if kind == SyntaxKind::LIFETIME_IDENT {
         push_lifetime(builder, token, span_for_range);
     } else if kind.is_any_identifier() || kind == T![_] {
         builder.push(Leaf::Ident(tt::Ident::new(

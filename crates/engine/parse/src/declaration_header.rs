@@ -225,12 +225,7 @@ impl HeaderFingerprint {
                 .filter(|token| token.text_range().end() <= boundary && !token.kind().is_trivia())
                 // Editing documentation does not change the declaration's identity. Treat
                 // literal doc attributes like doc comments when pairing current and saved headers.
-                .filter(|token| {
-                    !token
-                        .parent_ancestors()
-                        .filter_map(ast::Attr::cast)
-                        .any(|attr| attr.simple_name().as_deref() == Some("doc"))
-                })
+                .filter(|token| !crate::is_documentation_token(token))
                 .collect(),
         )
     }

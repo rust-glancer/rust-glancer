@@ -38,8 +38,10 @@ aliases, and cross-crate use sites.
 ## rust-analyzer
 
 The `rust-analyzer/` checkout is used as a large, mature real-world benchmark target.
-It is pinned to revision `b8458013c217be4fccefc4e4f194026fa04ab4ca` so benchmark
-changes are not mixed with upstream project drift.
+Its source is pinned in `fetch-rust-analyzer.sh` to release `v0.3.3057`,
+tag `2026-09-21`, revision
+`aaddfb73fd95f2c0bf001b474dca91ae28bcce3a`. This release requires Rust 1.98 or newer.
+Change the Cargo git pins, vendored code, and LSP query corpus together when updating it.
 
 Prepare it with:
 
@@ -82,3 +84,32 @@ To run all configured targets:
 ```sh
 cargo bench -p rg_project --bench analysis_pipeline
 ```
+
+## LSP comparisons
+
+Comparisons use the rust-analyzer available on PATH. Install rust-src before
+either server indexes the fixture so both can resolve standard-library types.
+To use the Rust toolchain's rust-analyzer:
+
+```sh
+rustup component add rust-analyzer rust-src
+just agent-debug --isolated-cache compare-clean \
+  --rust-analyzer "$(rustup which rust-analyzer)" \
+  compare-lsp rust_analyzer --format json
+just agent-debug --isolated-cache compare-dirty \
+  --rust-analyzer "$(rustup which rust-analyzer)" \
+  compare-lsp rust_analyzer_dirty --format json
+```
+
+On Windows, use `RUST_GLANCER_COMPARE_LSP_RUST_ANALYZER` with
+`rust-glancer compare-lsp`; the managed agent-debug runner is for macOS/Linux.
+Linux and Windows CI install rust-analyzer and rust-src through rustup.
+
+CI compares results with the latest available main-branch baseline. A fixture
+upgrade can affect that PR's deltas; after merging, the next successful main run
+publishes the updated baseline for subsequent PRs.
+
+When updating this fixture, audit query tokens and whole-file/workspace cases in
+`crates/rust-glancer/src/compare_lsp/query/mod.rs`. Numeric positions can remain
+valid while targeting the wrong symbol. Preserve coverage; comparison scores
+still include real gaps in supported behavior.

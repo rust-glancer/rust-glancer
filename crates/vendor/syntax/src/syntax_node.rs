@@ -256,6 +256,12 @@ impl SyntaxNode {
         self.first_child_or_token()?.first_token()
     }
 
+    // Borrow through the node's tree so AST text accessors do not borrow a temporary token handle.
+    pub(crate) fn first_token_text(&self) -> Option<&str> {
+        let token = self.first_token()?;
+        Some(&self.tree.source[token.text_range()])
+    }
+
     pub fn last_token(&self) -> Option<SyntaxToken> {
         self.last_child_or_token()?.last_token()
     }
