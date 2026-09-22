@@ -13,7 +13,7 @@ use rg_ir_view::{
         DocumentationSourceView,
     },
 };
-use rg_parse::{TextRangeMap, lexical_token_kind_at, parse_source_file};
+use rg_parse::{TextRangeMap, is_documentation_token, lexical_token_kind_at, parse_source_file};
 use rg_syntax::{
     AstNode as _, SourceFile, SyntaxKind, SyntaxNode, TextRange, TextSize,
     ast::{self, HasAttrs as _},
@@ -177,13 +177,7 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
             .syntax()
             .token_at_offset(offset.into())
             .into_iter()
-            .any(|token| {
-                token.kind() == SyntaxKind::COMMENT
-                    || token
-                        .parent_ancestors()
-                        .filter_map(ast::Attr::cast)
-                        .any(|attr| attr.simple_name().as_deref() == Some("doc"))
-            })
+            .any(|token| is_documentation_token(&token))
         {
             return Ok(None);
         }
@@ -275,7 +269,14 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         // still decides whether a string belongs to a doc attribute.
         if let Some(offset) = link_offset {
             let kind = lexical_token_kind_at(&text, edition, offset);
-            if !matches!(kind, Some(SyntaxKind::COMMENT | SyntaxKind::STRING)) {
+            if !matches!(
+                kind,
+                Some(
+                    SyntaxKind::INNER_DOC_COMMENT
+                        | SyntaxKind::OUTER_DOC_COMMENT
+                        | SyntaxKind::STRING
+                )
+            ) {
                 return Ok(None);
             }
         }

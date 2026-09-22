@@ -334,9 +334,9 @@ impl MetaTemplate {
                 args_iter.expect_dollar()?;
                 let ident = args_iter.expect_ident()?;
                 let depth = if Self::try_eat_comma(&mut args_iter) {
-                    Some(Self::parse_depth(&mut args_iter)?)
+                    Self::parse_depth(&mut args_iter)?
                 } else {
-                    None
+                    0
                 };
                 Op::Count {
                     name: ident.sym.clone(),
@@ -432,8 +432,7 @@ pub(crate) enum Op {
     },
     Count {
         name: Symbol,
-        // FIXME: `usize`` once we drop support for 1.76
-        depth: Option<usize>,
+        depth: usize,
     },
     Concat {
         elements: Box<[ConcatMetaVarExprElem]>,

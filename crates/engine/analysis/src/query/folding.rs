@@ -24,7 +24,7 @@ use crate::{Fold, FoldKind};
 #[derive(Default)]
 pub(crate) struct SyntaxFoldCollector {
     folds: Vec<Fold>,
-    visited_comments: HashSet<ast::Comment>,
+    visited_comments: HashSet<ast::AnyComment>,
     visited_imports: HashSet<ast::Use>,
 }
 
@@ -52,7 +52,7 @@ impl SyntaxFoldCollector {
     }
 
     fn comment(&mut self, token: rg_syntax::SyntaxToken) {
-        let Some(comment) = ast::Comment::cast(token) else {
+        let Some(comment) = ast::AnyComment::cast(token) else {
             return;
         };
         if self.visited_comments.contains(&comment) {
@@ -61,7 +61,7 @@ impl SyntaxFoldCollector {
 
         // Multiline comment tokens already contain their entire block. Line comments are
         // separate tokens and are grouped below only when their flavor stays the same.
-        if comment.text().contains('\n') {
+        if comment.text_with_markers().contains('\n') {
             self.push(comment.syntax().text_range(), FoldKind::Comment);
             return;
         }
@@ -116,34 +116,32 @@ impl SyntaxFoldCollector {
         }
     }
 
-    fn contiguous_comment_range(&mut self, first: ast::Comment) -> Option<TextRange> {
+    fn contiguous_comment_range(&mut self, first: ast::AnyComment) -> Option<TextRange> {
         self.visited_comments.insert(first.clone());
 
-        let group_kind = first.kind();
-        if !group_kind.shape.is_line() {
+        let group_kind = (first.shape(), first.doc_kind());
+        if !group_kind.0.is_line() {
             return None;
         }
 
         let mut last = first.clone();
-        for element in first.syntax().siblings_with_tokens(Direction::Next) {
-            match element {
-                NodeOrToken::Token(token) => {
-                    if let Some(whitespace) = ast::Whitespace::cast(token.clone())
-                        && !whitespace.spans_multiple_lines()
-                    {
-                        continue;
-                    }
-                    if let Some(comment) = ast::Comment::cast(token)
-                        && comment.kind() == group_kind
-                    {
-                        self.visited_comments.insert(comment.clone());
-                        last = comment;
-                        continue;
-                    }
-                    break;
-                }
-                NodeOrToken::Node(_) => break,
+        // Doc comments have their own AST nodes, so walk adjacent tokens across those nodes.
+        // Any non-comment token or blank line still ends the group.
+        for token in std::iter::successors(Some(first.syntax().clone()), |token| token.next_token())
+        {
+            if let Some(whitespace) = ast::Whitespace::cast(token.clone())
+                && !whitespace.spans_multiple_lines()
+            {
+                continue;
             }
+            if let Some(comment) = ast::AnyComment::cast(token)
+                && (comment.shape(), comment.doc_kind()) == group_kind
+            {
+                self.visited_comments.insert(comment.clone());
+                last = comment;
+                continue;
+            }
+            break;
         }
 
         (first != last).then(|| {

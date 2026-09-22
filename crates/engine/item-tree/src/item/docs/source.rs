@@ -46,34 +46,35 @@ impl DocumentationSource {
         // Even an empty comment contributes a separator. Checking the accumulated text would
         // lose leading blank lines, so track whether a fragment was encountered separately.
         let mut has_fragment = false;
-        for comment in ast::DocCommentIter::from_syntax_node(node).filter(|comment| {
-            if inner {
-                comment.is_inner()
-            } else {
-                comment.is_outer()
-            }
-        }) {
-            let Some((text, prefix)) = comment.doc_comment() else {
-                continue;
-            };
-            if has_fragment {
-                docs.text.push('\n');
-            }
-            has_fragment = true;
-            let start = usize::from(comment.syntax().text_range().start() + prefix);
-            docs.append_comment(text, start);
-        }
-        let attributes = node
+        // Doc comments and explicit doc attributes are both AST children. Reading them together
+        // keeps their Markdown in source order, including empty comments between attributes.
+        for attr in node
             .children()
-            .filter_map(ast::Attr::cast)
+            .filter_map(ast::AnyAttr::cast)
             .filter(|attr| attr.kind().is_inner() == inner)
-            .filter_map(|attr| Self::from_attribute(&attr));
-        for source in attributes {
-            if has_fragment {
-                docs.text.push('\n');
+        {
+            match attr {
+                ast::AnyAttr::DocComment(comment) => {
+                    if has_fragment {
+                        docs.text.push('\n');
+                    }
+                    has_fragment = true;
+                    let start = usize::from(
+                        comment.syntax().text_range().start() + ast::DocComment::PREFIX_LEN,
+                    );
+                    docs.append_comment(comment.text(), start);
+                }
+                ast::AnyAttr::Attr(attr) => {
+                    let Some(source) = Self::from_attribute(&attr) else {
+                        continue;
+                    };
+                    if has_fragment {
+                        docs.text.push('\n');
+                    }
+                    has_fragment = true;
+                    docs.append_normalized(source);
+                }
             }
-            has_fragment = true;
-            docs.append_normalized(source);
         }
         docs
     }

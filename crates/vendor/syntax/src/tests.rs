@@ -56,6 +56,34 @@ fn main() {
 }
 
 #[test]
+fn normalized_syntax_text_omits_doc_comments() {
+    for comment in [
+        "/// Length docs.",
+        "/** Length docs. */",
+        "//! Length docs.",
+        "/*! Length docs. */",
+    ] {
+        let source =
+            format!("type Bytes = [u8; {{\n    {comment}\n    const N: usize = 4;\n    N\n}}];");
+        let file = SourceFile::parse(&source, Edition::CURRENT)
+            .ok()
+            .expect("documented array length should parse");
+        let length = file
+            .syntax()
+            .descendants()
+            .find_map(ast::ArrayType::cast)
+            .and_then(|array| array.const_arg())
+            .expect("fixture contains an array length");
+
+        assert_eq!(
+            normalized_syntax_text(&length),
+            "{ const N: usize = 4; N }",
+            "{comment}",
+        );
+    }
+}
+
+#[test]
 fn benchmark_parser() {
     if std::env::var("RUN_SLOW_BENCHES").is_err() {
         return;
@@ -162,6 +190,12 @@ fn self_hosting_parsing() {
             });
         panic!("Parsing errors:\n{errors}\n");
     }
+}
+
+#[test]
+fn doc_comment_on_literal_expr() {
+    let parse = SourceFile::parse("fn f() { ///\n0..0; }", parser::Edition::CURRENT);
+    assert!(parse.errors().is_empty());
 }
 
 fn test_data_dir() -> PathBuf {

@@ -400,7 +400,7 @@ impl<'source> CompletionSyntaxContext<'source> {
     pub(super) fn previous_non_trivia_token(&self) -> Option<SyntaxToken> {
         let mut token = self.marker.prev_token();
         while let Some(previous) = token {
-            if !previous.kind().is_trivia() {
+            if !previous.kind().is_trivia() && !ast::AnyComment::can_cast(previous.kind()) {
                 return Some(previous);
             }
             token = previous.prev_token();

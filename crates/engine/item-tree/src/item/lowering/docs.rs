@@ -7,7 +7,7 @@ pub struct OuterDocs;
 pub struct InnerDocs;
 
 impl MaybeFromAst<OuterDocs> for Documentation {
-    type AstNode = dyn ast::HasDocComments;
+    type AstNode = dyn ast::HasAttrs;
     type Context<'a> = OuterDocs;
 
     fn maybe_from_ast(item: &Self::AstNode, _ctx: Self::Context<'_>) -> Option<Self> {

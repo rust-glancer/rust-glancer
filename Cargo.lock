@@ -595,7 +595,7 @@ checksum = "9bda8e21c04aca2ae33ffc2fd8c23134f3cac46db123ba97bd9d3f3b8a4a85e1"
 [[package]]
 name = "edition"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=aaddfb73fd95f2c0bf001b474dca91ae28bcce3a#aaddfb73fd95f2c0bf001b474dca91ae28bcce3a"
 
 [[package]]
 name = "educe"
@@ -1119,6 +1119,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "itertools"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b4baf93f58d4425749ca49a51c50ebab072c5df6994d08fed93541c331481dc"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1433,7 +1442,7 @@ checksum = "c5a797f0e07bdf071d15742978fc3128ec6c22891c31a3a931513263904c982a"
 [[package]]
 name = "paths"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=aaddfb73fd95f2c0bf001b474dca91ae28bcce3a#aaddfb73fd95f2c0bf001b474dca91ae28bcce3a"
 dependencies = [
  "camino",
 ]
@@ -1548,12 +1557,11 @@ dependencies = [
 [[package]]
 name = "profile"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=aaddfb73fd95f2c0bf001b474dca91ae28bcce3a#aaddfb73fd95f2c0bf001b474dca91ae28bcce3a"
 dependencies = [
- "cfg-if",
  "libc",
  "perf-event",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1590,9 +1598,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "ra-ap-rustc_lexer"
-version = "0.160.0"
+version = "0.166.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34b50f19d5856b8e2b36150e89b53a6102ab096e8044e1f55fd6fef977b10d85"
+checksum = "527c12b3731b7d0692498012810b85b2b8dfdb8b514321ed6afc434bd1c70191"
 dependencies = [
  "memchr",
  "unicode-ident",
@@ -2107,6 +2115,7 @@ dependencies = [
  "either",
  "expect-test",
  "itertools 0.14.0",
+ "ra-ap-rustc_lexer",
  "rayon",
  "rg_parser",
  "rustc-hash 2.1.2",
@@ -2136,6 +2145,7 @@ dependencies = [
  "rg_parser",
  "rg_std",
  "rg_syntax",
+ "rustc-hash 2.1.2",
  "smol_str",
  "stdx",
  "text-size",
@@ -2235,9 +2245,9 @@ checksum = "94300abf3f1ae2e2b8ffb7b58043de3d399c73fa6f4b73826402a5c457614dbe"
 
 [[package]]
 name = "rustc-literal-escaper"
-version = "0.0.4"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab03008eb631b703dd16978282ae36c73282e7922fe101a4bd072a40ecea7b8b"
+checksum = "8be87abb9e40db7466e0681dc8ecd9dcfd40360cb10b4c8fe24a7c4c3669b198"
 
 [[package]]
 name = "rustc_apfloat"
@@ -2442,16 +2452,16 @@ dependencies = [
 [[package]]
 name = "stdx"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=aaddfb73fd95f2c0bf001b474dca91ae28bcce3a#aaddfb73fd95f2c0bf001b474dca91ae28bcce3a"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
- "itertools 0.14.0",
+ "itertools 0.15.0",
  "jod-thread",
  "libc",
  "miow",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2561,7 +2571,7 @@ dependencies = [
 [[package]]
 name = "test-utils"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=aaddfb73fd95f2c0bf001b474dca91ae28bcce3a#aaddfb73fd95f2c0bf001b474dca91ae28bcce3a"
 dependencies = [
  "dissimilar",
  "paths",

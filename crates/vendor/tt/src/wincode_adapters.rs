@@ -39,6 +39,9 @@ unsafe impl<'de, C: ConfigCore> SchemaRead<'de, C> for TextRangeCodec {
     ) -> ReadResult<()> {
         let start = <u32 as SchemaRead<'de, C>>::get(reader.by_ref())?;
         let end = <u32 as SchemaRead<'de, C>>::get(reader)?;
+        if start > end {
+            return Err(ReadError::InvalidValue("invalid text range"));
+        }
         dst.write(TextRange::new(TextSize::new(start), TextSize::new(end)));
         Ok(())
     }

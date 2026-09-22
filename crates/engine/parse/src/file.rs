@@ -8,7 +8,9 @@ use rg_arena::Arena;
 use rg_ir_model::{FileId, Span};
 use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_std::MemorySize;
-use rg_syntax::{Edition, LexedStr, Parse as SyntaxParse, SourceFile, SyntaxKind};
+use rg_syntax::{
+    AstNode as _, Edition, LexedStr, Parse as SyntaxParse, SourceFile, SyntaxKind, SyntaxToken, ast,
+};
 use rg_text::RustEdition;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -35,6 +37,27 @@ pub fn lexical_token_kind_at(
     (0..tokens.len())
         .find(|&index| tokens.text_range(index).contains(&(offset as usize)))
         .map(|index| tokens.kind(index))
+}
+
+/// Recognize doc comments and every token inside a `doc` attribute through the same AST view.
+/// This includes attribute punctuation and escapes, whose spelling is not documentation text.
+pub fn is_documentation_token(token: &SyntaxToken) -> bool {
+    if token
+        .parent_ancestors()
+        .filter_map(ast::AnyAttr::cast)
+        .any(|attr| match attr {
+            ast::AnyAttr::DocComment(_) => true,
+            ast::AnyAttr::Attr(attr) => attr.simple_name().as_deref() == Some("doc"),
+        })
+    {
+        return true;
+    }
+
+    // Inside macro token trees, doc comments are still bare tokens without attribute nodes.
+    matches!(
+        token.kind(),
+        SyntaxKind::INNER_DOC_COMMENT | SyntaxKind::OUTER_DOC_COMMENT
+    )
 }
 
 /// Translate the project edition into the parser's edition vocabulary.

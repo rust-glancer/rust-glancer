@@ -108,8 +108,8 @@ jobs:
       - name: Fetch rust-analyzer fixture
         shell: bash
         run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
-      - name: Install rust-analyzer server
-        run: rustup component add rust-analyzer
+      - name: Install rust-analyzer and standard-library sources
+        run: rustup component add rust-analyzer rust-src
       - name: Run LSP comparison
         shell: pwsh
         run: |

@@ -201,6 +201,139 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preserves_doc_attributes_and_their_spans_through_item_expansion() {
+        use rg_syntax::{AstToken as _, ast::HasAttrs as _};
+
+        let source = r##"
+macro_rules! forward { ($item:item) => { $item }; }
+forward! {
+    /// Outer "quoted" café.
+    #[doc = "Explicit attribute."]
+    pub mod generated {
+        /*! Inner block docs. */
+        pub struct Item;
+    }
+}
+"##;
+        let file = ast::SourceFile::parse(source, Edition::CURRENT).tree();
+        let definition = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroRules::cast)
+            .expect("fixture contains macro definition");
+        let call = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroCall::cast)
+            .expect("fixture contains macro call");
+        let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0)
+            .expect("macro should compile");
+        let expansion = mac
+            .expand_call(&call, 0, ExpansionParseKind::Items)
+            .expect("documented item should expand");
+        assert!(expansion.parse.errors().is_empty());
+        let module = expansion
+            .parse
+            .syntax_node()
+            .descendants()
+            .find_map(ast::Module::cast)
+            .expect("expanded module should exist");
+        assert_eq!(module.attrs().count(), 2, "outer docs stay on the module");
+        let strings = expansion
+            .parse
+            .syntax_node()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter_map(ast::String::cast)
+            .collect::<Vec<_>>();
+        let values = strings
+            .iter()
+            .map(|string| string.value().expect("valid doc literal").into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            values,
+            [
+                " Outer \"quoted\" café.",
+                "Explicit attribute.",
+                " Inner block docs. "
+            ]
+        );
+        let span = expansion
+            .span_map
+            .span_for_range_in_file(strings[0].syntax().text_range(), 0)
+            .expect("generated doc attribute should map to its comment");
+        assert_eq!(&source[span.range], "/// Outer \"quoted\" café.");
+    }
+
+    #[test]
+    fn doc_comments_match_raw_attributes() {
+        check_expansion(
+            r####"
+macro_rules! documented {
+    (#[doc = r###" Path C:\docs includes "quotes"##."###]) => {
+        struct Matched;
+    };
+}
+
+documented! {
+    /// Path C:\docs includes "quotes"##.
+}
+"####,
+            expect!["struct Matched ;"],
+        );
+    }
+
+    #[test]
+    fn recovers_exponent_field_access_in_macro_output() {
+        for expression in ["value.1e3", "{ value.1e3; value.0.1 }"] {
+            let source = format!(
+                "macro_rules! identity {{ ($($tokens:tt)*) => {{ $($tokens)* }}; }}\n\
+                 identity!({expression});"
+            );
+            let file = ast::SourceFile::parse(&source, Edition::CURRENT)
+                .ok()
+                .expect("fixture macro invocation should parse");
+            let definition = file
+                .syntax()
+                .descendants()
+                .find_map(ast::MacroRules::cast)
+                .expect("fixture contains macro definition");
+            let call = file
+                .syntax()
+                .descendants()
+                .find_map(ast::MacroCall::cast)
+                .expect("fixture contains macro call");
+            let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0)
+                .expect("identity macro should compile");
+            let expanded = mac
+                .expand_call(&call, 0, ExpansionParseKind::Expr)
+                .expect("identity macro should retain malformed expression tokens");
+
+            assert!(
+                expanded
+                    .parse
+                    .errors()
+                    .iter()
+                    .any(|error| error.to_string() == "illegal float literal"),
+                "expected a syntax diagnostic for {expression}",
+            );
+            let literal = expanded
+                .parse
+                .syntax_node()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.kind() == rg_syntax::SyntaxKind::FLOAT_NUMBER)
+                .expect("recovery should retain the float token");
+            assert_eq!(literal.text(), "1e3", "{expression}");
+            let span = expanded
+                .span_map
+                .span_for_range_in_file(literal.text_range(), 0)
+                .expect("recovered token should map to macro input");
+            assert_eq!(&source[span.range], "1e3", "{expression}");
+        }
+    }
+
+    #[test]
     fn expands_simple_item_macro_to_syntax() {
         check_expansion(
             r#"

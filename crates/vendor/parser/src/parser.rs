@@ -1,6 +1,6 @@
 //! See [`Parser`].
 
-use std::cell::Cell;
+use std::{cell::Cell, num::NonZeroU32};
 
 use drop_bomb::DropBomb;
 
@@ -11,6 +11,14 @@ use crate::{
     event::Event,
     input::Input,
 };
+
+/// Build a forward-parent offset. The offset is always ≥ 1 because the
+/// forward-parent event is created *after* the event it forwards to, so
+/// `NonZeroU32` is always valid here. Panics only on a parser bug.
+#[inline]
+fn fwd_parent(offset: u32) -> NonZeroU32 {
+    NonZeroU32::new(offset).expect("forward-parent offset must be non-zero")
+}
 
 /// `Parser` struct provides the low-level API for
 /// navigating through the stream of tokens and
@@ -25,6 +33,9 @@ pub(crate) struct Parser<'t> {
     inp: &'t Input,
     pos: usize,
     events: Vec<Event>,
+    /// Side table of error messages. `Event::Error { err }` carries an index
+    /// into this vec, keeping `Event` itself a flat 8-byte enum.
+    errors: Vec<String>,
     steps: Cell<u32>,
 }
 
@@ -34,12 +45,13 @@ impl<'t> Parser<'t> {
             inp,
             pos: 0,
             events: Vec::with_capacity(2 * inp.len()),
+            errors: Vec::new(),
             steps: Cell::new(0),
         }
     }
 
-    pub(crate) fn finish(self) -> Vec<Event> {
-        self.events
+    pub(crate) fn finish(self) -> (Vec<Event>, Vec<String>) {
+        (self.events, self.errors)
     }
 
     /// Returns the kind of the current token.
@@ -143,6 +155,12 @@ impl<'t> Parser<'t> {
         true
     }
 
+    /// This consumes the next token as an identifier, even if it is a strict keyword.
+    pub(crate) fn bump_remap_any_ident(&mut self) {
+        assert!(self.current().is_any_identifier());
+        self.bump_remap(T![ident]);
+    }
+
     fn at_composite2(&self, n: usize, k1: SyntaxKind, k2: SyntaxKind) -> bool {
         self.inp.kind(self.pos + n) == k1
             && self.inp.kind(self.pos + n + 1) == k2
@@ -215,7 +233,7 @@ impl<'t> Parser<'t> {
                     kind,
                 } => {
                     *kind = SyntaxKind::FIELD_EXPR;
-                    *forward_parent = Some(new_marker.pos - marker.pos);
+                    *forward_parent = Some(fwd_parent(new_marker.pos - marker.pos));
                 }
                 _ => unreachable!(),
             }
@@ -246,8 +264,9 @@ impl<'t> Parser<'t> {
     /// structured errors with spans and notes, like rustc
     /// does.
     pub(crate) fn error<T: Into<String>>(&mut self, message: T) {
-        let msg = message.into();
-        self.push_event(Event::Error { msg });
+        let err = self.errors.len() as u32;
+        self.errors.push(message.into());
+        self.push_event(Event::Error { err });
     }
 
     /// Consume the next token if it is `kind` or emit an error
@@ -391,7 +410,7 @@ impl CompletedMarker {
         let idx = self.start_pos as usize;
         match &mut p.events[idx] {
             Event::Start { forward_parent, .. } => {
-                *forward_parent = Some(new_pos.pos - self.start_pos);
+                *forward_parent = Some(fwd_parent(new_pos.pos - self.start_pos));
             }
             _ => unreachable!(),
         }
@@ -404,7 +423,7 @@ impl CompletedMarker {
         let idx = m.pos as usize;
         match &mut p.events[idx] {
             Event::Start { forward_parent, .. } => {
-                *forward_parent = Some(self.start_pos - m.pos);
+                *forward_parent = Some(fwd_parent(self.start_pos - m.pos));
             }
             _ => unreachable!(),
         }

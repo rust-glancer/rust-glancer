@@ -1852,6 +1852,58 @@ pub struct User;
 }
 
 #[test]
+fn reexpands_items_from_a_cached_dependency_macro() {
+    let mut fixture = ProjectFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[package]
+name = "macro_cache_app"
+version = "0.1.0"
+edition = "2024"
+[dependencies]
+macro_cache_dep = { path = "dep" }
+//- /src/lib.rs
+macro_cache_dep::make!(Before);
+//- /dep/Cargo.toml
+[package]
+name = "macro_cache_dep"
+version = "0.1.0"
+edition = "2024"
+//- /dep/src/lib.rs
+#[macro_export]
+macro_rules! make {
+    ($name:ident) => {
+        /// Generated documentation.
+        pub struct $name;
+    };
+}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let app = fixture.package_slot_by_name("macro_cache_app");
+    let summary = fixture.apply_saved_fixture("//- /src/lib.rs\nmacro_cache_dep::make!(After);\n");
+    assert_eq!(summary.affected_packages, vec![app]);
+    let analysis = fixture
+        .project()
+        .snapshot()
+        .full_analysis(rg_std::CancellationToken::new())
+        .expect("reloaded macro expansion should be queryable");
+    assert_eq!(
+        analysis
+            .workspace_symbols("After")
+            .expect("symbol query should succeed")
+            .len(),
+        1
+    );
+    assert!(
+        analysis
+            .workspace_symbols("Before")
+            .expect("symbol query should succeed")
+            .is_empty()
+    );
+}
+
+#[test]
 fn project_build_records_def_map_profile_when_profile_run_is_active() {
     let fixture = ProjectSourceFixture::build(
         r#"

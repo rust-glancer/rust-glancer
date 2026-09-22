@@ -134,7 +134,9 @@ pub fn precedence(expr: &ast::Expr) -> ExprPrecedence {
         | Expr::RecordExpr(_)
         | Expr::TupleExpr(_)
         | Expr::UnderscoreExpr(_)
-        | Expr::WhileExpr(_) => ExprPrecedence::Unambiguous,
+        | Expr::WhileExpr(_)
+        | Expr::IncludeBytesExpr(_)
+        | Expr::CfgPredExpr(_) => ExprPrecedence::Unambiguous,
     }
 }
 
@@ -273,6 +275,14 @@ impl Expr {
             return false;
         }
 
+        // Special-case `cond && <let-chain>`
+        if let ast::Expr::BinExpr(parent) = parent
+            && parent.op_kind() == Some(ast::BinaryOp::LogicOp(ast::LogicOp::And))
+            && self.contains_let_expr()
+        {
+            return false;
+        }
+
         let (left, right, inv) = match self.is_ordered_before_parent_in_place_of(parent, place_of) {
             true => (self, parent, false),
             false => (parent, self, true),
@@ -385,7 +395,7 @@ impl Expr {
 
             ArrayExpr(_) | TupleExpr(_) | Literal(_) | PathExpr(_) | ParenExpr(_) | IfExpr(_)
             | WhileExpr(_) | ForExpr(_) | LoopExpr(_) | MatchExpr(_) | BlockExpr(_)
-            | RecordExpr(_) | UnderscoreExpr(_) => (0, 0),
+            | RecordExpr(_) | UnderscoreExpr(_) | IncludeBytesExpr(_) | CfgPredExpr(_) => (0, 0),
         }
     }
 
@@ -532,7 +542,8 @@ impl Expr {
                 AsmExpr(e) => e.builtin_token(),
                 ArrayExpr(_) | TupleExpr(_) | Literal(_) | PathExpr(_) | ParenExpr(_)
                 | IfExpr(_) | WhileExpr(_) | ForExpr(_) | LoopExpr(_) | MatchExpr(_)
-                | BlockExpr(_) | RecordExpr(_) | UnderscoreExpr(_) | MacroExpr(_) => None,
+                | BlockExpr(_) | RecordExpr(_) | UnderscoreExpr(_) | MacroExpr(_)
+                | IncludeBytesExpr(_) | CfgPredExpr(_) => None,
             };
 
             token
@@ -550,7 +561,7 @@ impl Expr {
             | ClosureExpr(_) | FieldExpr(_) | IndexExpr(_) | Literal(_) | LoopExpr(_)
             | MacroExpr(_) | MethodCallExpr(_) | ParenExpr(_) | PathExpr(_) | RecordExpr(_)
             | TryExpr(_) | TupleExpr(_) | UnderscoreExpr(_) | OffsetOfExpr(_)
-            | FormatArgsExpr(_) | AsmExpr(_) => false,
+            | FormatArgsExpr(_) | AsmExpr(_) | CfgPredExpr(_) => false,
 
             // For BinExpr and RangeExpr this is technically wrong -- the child can be on the left...
             BinExpr(_) | RangeExpr(_) | BreakExpr(_) | ContinueExpr(_) | PrefixExpr(_)
@@ -562,7 +573,37 @@ impl Expr {
                 .map(|e| e.child_is_followed_by_a_block())
                 .unwrap_or(false),
 
-            ForExpr(_) | IfExpr(_) | MatchExpr(_) | WhileExpr(_) => true,
+            ForExpr(_) | IfExpr(_) | MatchExpr(_) | WhileExpr(_) | IncludeBytesExpr(_) => true,
         }
+    }
+
+    fn contains_let_expr(&self) -> bool {
+        use Expr::*;
+
+        match self {
+            LetExpr(_) => true,
+            BinExpr(e) => {
+                // if we find something other than a `&&`, then this can't be a let chain
+                e.op_kind() == Some(ast::BinaryOp::LogicOp(ast::LogicOp::And))
+                    && (e.lhs().is_none_or(|it| it.contains_let_expr())
+                        || e.rhs().is_none_or(|it| it.contains_let_expr()))
+            }
+            _ => false,
+        }
+    }
+}
+
+impl ast::Type {
+    pub fn needs_parens_in(&self, parent: &SyntaxNode) -> bool {
+        if !matches!(
+            self,
+            ast::Type::DynTraitType(_) | ast::Type::ImplTraitType(_)
+        ) {
+            return false;
+        }
+        let kind = parent.kind();
+        ast::CastExpr::can_cast(kind)
+            || ast::RefType::can_cast(kind)
+            || ast::PtrType::can_cast(kind)
     }
 }

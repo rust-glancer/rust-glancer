@@ -20,7 +20,7 @@ use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{LineIndex, syntax_edition};
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
 use rg_text::{Name, NameInterner, RustEdition};
 use rg_tt::{
@@ -531,7 +531,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         item: &T,
     ) -> ItemTreeId
     where
-        T: HasDocComments + 'static,
+        T: HasAttrs + 'static,
     {
         let item_id = self.alloc_item_with_docs(
             kind,

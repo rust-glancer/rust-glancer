@@ -102,6 +102,10 @@ impl BodyLowering<'_> {
         let alloc_bindings = options.alloc_bindings;
         let ident_binding = options.ident_binding;
         let pat_kind = match pat {
+            // Internal patterns stay unsupported unless needed to analyze stable code or std.
+            ast::Pat::CfgPredPat(_) | ast::Pat::DerefPat(_) | ast::Pat::NotNull(_) => {
+                PatKind::Unsupported
+            }
             ast::Pat::BoxPat(pat) => {
                 let Some(inner) = pat.pat() else {
                     return self.alloc_unsupported_pat(pat.syntax());

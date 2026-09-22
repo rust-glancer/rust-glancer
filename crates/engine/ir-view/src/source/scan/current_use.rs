@@ -9,7 +9,7 @@ use rg_ir_model::{CrateRef, FileId};
 use rg_item_tree::{FromAst as _, ImportAlias, UseItem};
 use rg_package_store::PackageStoreError;
 use rg_parse::enclosing_inline_module_path;
-use rg_syntax::{AstNode as _, SourceFile, TextSize, ast};
+use rg_syntax::{AstNode as _, AstToken as _, SourceFile, TextSize, ast};
 use rg_text::NameInterner;
 
 use super::{DefinitionSourceCandidate, ModuleSourceSiteScanner};
@@ -114,7 +114,7 @@ impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
         self.source
             .syntax()
             .token_at_offset(TextSize::from(self.offset))
-            .filter(|token| !token.kind().is_trivia())
+            .filter(|token| !token.kind().is_trivia() && !ast::AnyComment::can_cast(token.kind()))
             .filter_map(|token| token.parent_ancestors().find_map(ast::Use::cast))
             .filter(|use_item| {
                 use_item.syntax().parent().is_some_and(|parent| {

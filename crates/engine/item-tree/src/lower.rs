@@ -15,7 +15,7 @@ use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
 use rg_text::{Name, NameInterner};
 use rg_tt::{
@@ -1052,7 +1052,7 @@ impl<'a> FileTreeBuilder<'a> {
         item: &T,
     ) -> ItemTreeId
     where
-        T: HasDocComments + 'static,
+        T: HasAttrs + 'static,
     {
         let item_id = self.alloc_item_with_docs(
             kind,
