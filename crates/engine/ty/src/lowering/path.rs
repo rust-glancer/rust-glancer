@@ -6,10 +6,7 @@ use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathAnchor, TypeR
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathResolution};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::{
-    AdtTy, AliasTy, PrimitiveTy, ProjectionTy, Substitution, TraitApplication, Ty,
-    inference::InferenceTable,
-};
+use crate::{AdtTy, AliasTy, PrimitiveTy, ProjectionTy, Substitution, TraitApplication, Ty};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where
@@ -21,7 +18,7 @@ where
         &mut self,
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Ty, D::Error> {
         if path.anchor.is_some() {
             return self.lower_anchored_type_path(path, impl_trait_mode, inference);
@@ -42,11 +39,8 @@ where
                 .map(|name| self.param_by_name(name.as_str()))
                 .transpose()?
                 .flatten();
-            let prefix_ty = self.lower_type_ref_with_mode(
-                &TypeRef::Path(prefix),
-                impl_trait_mode,
-                inference.as_deref_mut(),
-            )?;
+            let prefix_ty =
+                self.lower_type_ref_with_mode(&TypeRef::Path(prefix), impl_trait_mode, inference)?;
             if let Some(GenericParamRef::Type(param)) = prefix_param
                 && let Some(name) = path.segments.last().map(|segment| &segment.name)
             {
@@ -136,7 +130,7 @@ where
                     syntax_args,
                     &Substitution::new(),
                     impl_trait_mode,
-                    inference.as_deref_mut(),
+                    inference,
                 )?;
                 Ok(Ty::adt(AdtTy { def, args }))
             }
@@ -151,7 +145,7 @@ where
                     syntax_args,
                     &Substitution::new(),
                     impl_trait_mode,
-                    inference.as_deref_mut(),
+                    inference,
                 )?;
                 Ok(Ty::adt(AdtTy { def, args }))
             }
@@ -206,7 +200,7 @@ where
         &mut self,
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Ty, D::Error> {
         let Some(anchor) = &path.anchor else {
             return Ok(Ty::Unknown);
@@ -225,22 +219,15 @@ where
                         .flatten(),
                     _ => None,
                 };
-                let self_ty = self.lower_type_ref_with_mode(
-                    self_ty_ref,
-                    impl_trait_mode,
-                    inference.as_deref_mut(),
-                )?;
+                let self_ty =
+                    self.lower_type_ref_with_mode(self_ty_ref, impl_trait_mode, inference)?;
                 let Some(GenericParamRef::Type(param)) = param else {
                     return Ok(Ty::Unknown);
                 };
                 self.param_associated_projection(param, self_ty, name)?
             }
             TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
-                let self_ty = self.lower_type_ref_with_mode(
-                    self_ty,
-                    impl_trait_mode,
-                    inference.as_deref_mut(),
-                )?;
+                let self_ty = self.lower_type_ref_with_mode(self_ty, impl_trait_mode, inference)?;
                 let Some(trait_ref) =
                     self.lower_trait_ref_with_mode(trait_ty, self_ty, impl_trait_mode, inference)?
                 else {
@@ -269,7 +256,7 @@ where
         alias: TypeAliasRef,
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Ty, D::Error> {
         if self.alias_stack.contains(&alias) {
             return Ok(Ty::Unknown);

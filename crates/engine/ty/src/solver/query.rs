@@ -1,0 +1,284 @@
+//! Semantic operations on a body's live inference values.
+//!
+//! Lookup supplies visible declarations. This layer checks whether they fit the caller's types
+//! and tries to prove their bounds. For example, matching `impl<T> Trait for Vec<T>` against
+//! `Vec<?Item>` connects the impl's `T` to the body's still-unknown `?Item`.
+//!
+//! A candidate keeps its own trial table. Looking at another candidate must not inherit the
+//! assignments made while checking the first one. The caller can adopt the chosen table, or
+//! convert its result to owned types before dropping the solver.
+
+use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef, TypeAliasRef};
+use rg_std::ExpectedUnique;
+use rustc_type_ir::{self as ir, Upcast};
+
+use super::{
+    Clause, DeclarationKind, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List,
+    Outcome, ProjectionTy, SolverInterner, Ty,
+};
+
+/// A trait together with its live arguments. `args[0]` is `Self`: for `Vec<?T>: IntoIterator`,
+/// it holds `Vec<?T>`. Associated-type equalities such as `Item = u8` are separate clauses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TraitApplication<'s> {
+    pub def: TraitDefRef,
+    pub args: GenericArgs<'s>,
+}
+
+impl<'s> TraitApplication<'s> {
+    pub fn clause(self, cx: SolverInterner<'s>) -> Clause<'s> {
+        let def = DefId::Trait(self.def);
+        ir::TraitRef::new_from_args(cx, def, cx.complete_args(def, self.args)).upcast(cx)
+    }
+
+    /// Turn a binding such as `Iterator<Item = u8>` into `<Self as Iterator>::Item = u8`.
+    pub fn associated_type_eq(
+        self,
+        cx: SolverInterner<'s>,
+        associated_ty: TypeAliasRef,
+        ty: Ty<'s>,
+    ) -> Clause<'s> {
+        let def_id = DefId::TypeAlias(associated_ty);
+        ir::ProjectionPredicate {
+            projection_term: ir::AliasTerm::new_from_args(
+                cx,
+                ir::AliasTermKind::ProjectionTy { def_id },
+                cx.complete_args(def_id, self.args),
+            ),
+            term: ty.into(),
+        }
+        .upcast(cx)
+    }
+}
+
+/// A signature with declaration parameters replaced by the caller's live arguments.
+/// For `fn id<T>(x: T) -> T`, the parameter and return can both hold the same `?T`.
+pub struct CallableSignature<'s> {
+    pub params: List<'s, Ty<'s>>,
+    pub ret: Ty<'s>,
+    pub clauses: List<'s, Clause<'s>>,
+    pub qualifiers: rg_item_tree::FunctionQualifiers,
+}
+
+/// Everything learned while checking one impl, including the trial table that owns its variables.
+/// A result can still have pending or unsupported bounds; `outcome` says how much was proved.
+/// Dropping this value rejects the trial. Adopting its table keeps its assignments in the caller.
+#[derive(Clone)]
+pub struct ImplSelection<'s> {
+    pub impl_ref: ImplRef,
+    pub application: Option<TraitApplication<'s>>,
+    pub subst: InferenceSubstitution<'s>,
+    pub outcome: Outcome,
+    pub table: InferenceTable<'s>,
+}
+
+impl<'s> InferenceTable<'s> {
+    /// Give each declaration parameter a fresh variable for this use of the declaration.
+    /// Two calls to `id<T>` need separate `?T`s so their argument types can differ.
+    pub fn fresh_substitution(&self, owner: DefId) -> InferenceSubstitution<'s> {
+        let mut subst = InferenceSubstitution::new();
+        subst.fresh_for(self, self.params(owner).iter().copied());
+        subst
+    }
+
+    /// Apply one substitution to parameters, return type, and bounds together. A later argument
+    /// can then constrain both the return type and a bound such as `T: Clone` through the same `?T`.
+    pub fn signature(
+        &self,
+        function: FunctionRef,
+        subst: &InferenceSubstitution<'s>,
+    ) -> Option<CallableSignature<'s>> {
+        let cx = self.interner();
+        let owner = DefId::Function(function);
+        let declaration = cx.declaration(owner);
+        let DeclarationKind::Function(signature) = &declaration.kind else {
+            return None;
+        };
+        let lower = |ty| subst.apply(cx, self.lower(ty, owner));
+        Some(CallableSignature {
+            params: List::new(cx, &signature.params.iter().map(lower).collect::<Vec<_>>()),
+            ret: lower(&signature.ret),
+            clauses: List::new(
+                cx,
+                &signature
+                    .clauses
+                    .iter()
+                    .map(|clause| subst.apply(cx, cx.lower_clause(clause, &declaration.generics)))
+                    .collect::<Vec<_>>(),
+            ),
+            qualifiers: signature.qualifiers,
+        })
+    }
+
+    /// Match a declaration header before proving its predicates. Source-name discovery needs
+    /// this stage while it is still lowering the very bounds that will form the environment.
+    ///
+    /// For `impl<T: Clone> Trait for Vec<T>` and receiver `Vec<u8>`, matching learns `T = u8`
+    /// and queues `u8: Clone`. A successful header match alone does not prove that bound.
+    pub fn match_impl(
+        &self,
+        impl_ref: ImplRef,
+        receiver: Ty<'s>,
+        expected: Option<TraitApplication<'s>>,
+    ) -> Option<ImplSelection<'s>> {
+        let cx = self.interner();
+        let declaration = cx.declaration(DefId::Impl(impl_ref));
+        let DeclarationKind::Impl { header, .. } = &declaration.kind else {
+            return None;
+        };
+        // Instantiate the impl in a separate trial. Its generic parameters must be free to learn
+        // from the receiver without changing the body if this candidate is later rejected.
+        let table = self.probe();
+        let subst = table.fresh_substitution(DefId::Impl(impl_ref));
+        let self_ty = subst.apply(cx, cx.lower_ty(&header.self_ty, &declaration.generics));
+        if table.try_unify(receiver, self_ty).is_err() {
+            return None;
+        }
+        let application = header.trait_ref.as_ref().map(|tr| TraitApplication {
+            def: tr.application.def,
+            args: subst.apply(
+                cx,
+                cx.lower_args(&tr.application.args, &declaration.generics),
+            ),
+        });
+        // A receiver match is enough for inherent lookup. A named trait goal also supplies
+        // arguments: matching `Convert<u8>` must not accept an impl of `Convert<u16>`.
+        if let Some(expected) = expected {
+            let actual = application?;
+            if actual.def != expected.def
+                || table.try_unify_args(actual.args, expected.args).is_err()
+            {
+                return None;
+            }
+        }
+        let clauses = declaration
+            .predicates
+            .iter()
+            .map(|c| subst.apply(cx, cx.lower_clause(c, &declaration.generics)));
+        for clause in clauses {
+            table.register(clause);
+        }
+        let mut outcome = Outcome::Proven;
+        if receiver.has_unknown() || self_ty.has_unknown() {
+            outcome = Outcome::Unavailable;
+        }
+        Some(ImplSelection {
+            impl_ref,
+            application,
+            subst,
+            outcome,
+            table,
+        })
+    }
+
+    /// Match one impl and try its queued bounds. A proved failure rejects the impl; an unfinished
+    /// proof remains a possible candidate so editor lookup can still use its declarations.
+    pub fn select_impl(
+        &self,
+        impl_ref: ImplRef,
+        receiver: Ty<'s>,
+        expected: Option<TraitApplication<'s>>,
+    ) -> Option<ImplSelection<'s>> {
+        let mut selected = self.match_impl(impl_ref, receiver, expected)?;
+        let outcome = selected.table.fulfill();
+        if outcome == Outcome::NoSolution {
+            return None;
+        }
+        if selected.outcome == Outcome::Proven {
+            selected.outcome = outcome;
+        }
+        Some(selected)
+    }
+
+    /// Try each source impl in its own table so competing candidates cannot constrain each
+    /// other. Proven candidates take precedence over possible ones, but distinct impls remain
+    /// ambiguous even if they infer the same types.
+    pub fn select_trait_impl(
+        &self,
+        application: TraitApplication<'s>,
+        bindings: &[Clause<'s>],
+        candidates: impl IntoIterator<Item = ImplRef>,
+    ) -> ExpectedUnique<ImplSelection<'s>> {
+        let receiver = application.args[0].as_ty().expect("Self is a type");
+        let mut proven = ExpectedUnique::new();
+        let mut possible = ExpectedUnique::new();
+        for candidate in candidates {
+            let Some(mut selected) = self.select_impl(candidate, receiver, Some(application))
+            else {
+                continue;
+            };
+            for &binding in bindings {
+                selected.table.register(binding);
+            }
+            let outcome = selected.table.fulfill();
+            if outcome == Outcome::NoSolution {
+                continue;
+            }
+            if selected.outcome == Outcome::Proven {
+                selected.outcome = outcome;
+            }
+            let rank = if selected.outcome == Outcome::Proven {
+                &mut proven
+            } else {
+                &mut possible
+            };
+            match rank {
+                ExpectedUnique::Empty => *rank = ExpectedUnique::One(selected),
+                ExpectedUnique::One(previous) if previous.impl_ref == selected.impl_ref => {}
+                ExpectedUnique::One(_) | ExpectedUnique::Ambiguous => {
+                    *rank = ExpectedUnique::Ambiguous;
+                }
+            }
+        }
+        if proven.is_empty() { possible } else { proven }
+    }
+
+    /// Normalize the projection together with its trait and associated-type requirements.
+    /// Keep the assignments in this table so callers can inspect inference variables afterward.
+    /// For `<Iter<?T> as Iterator>::Item`, the answer can still be the live variable `?T`.
+    pub fn normalize_assoc_type(
+        &self,
+        application: TraitApplication<'s>,
+        bindings: &[Clause<'s>],
+        associated_ty: TypeAliasRef,
+    ) -> Option<(Ty<'s>, Outcome)> {
+        let cx = self.interner();
+        self.register(application.clause(cx));
+        for &binding in bindings {
+            self.register(binding);
+        }
+        let ty = self.normalize(cx.projection(ProjectionTy {
+            associated_ty,
+            args: application.args,
+        }));
+        match self.fulfill() {
+            outcome @ (Outcome::Proven | Outcome::Ambiguous) => Some((ty, outcome)),
+            Outcome::NoSolution | Outcome::Unavailable => None,
+        }
+    }
+
+    /// The caller has selected exactly one candidate. Keep body obligations while adopting the
+    /// candidate's assignments; its fresh variables were allocated after the body's existing IDs.
+    pub fn adopt(&mut self, mut candidate: Self) {
+        let obligations = std::mem::take(self.pending.get_mut());
+        candidate.pending.get_mut().extend(obligations);
+        *self = candidate;
+    }
+}
+
+impl<'s> InferenceSubstitution<'s> {
+    pub fn from_args(
+        params: impl IntoIterator<Item = GenericParamRef>,
+        args: GenericArgs<'s>,
+    ) -> Self {
+        let mut subst = Self::new();
+        for (param, arg) in params.into_iter().zip(args) {
+            subst.insert(param, arg);
+        }
+        subst
+    }
+
+    pub fn extend(&mut self, other: Self) {
+        self.args.extend(other.args);
+    }
+}

@@ -1,5 +1,10 @@
 //! Pending semantic operations have live inputs and a stable destination. Syntax is never queued:
 //! retries only perform the lookup, projection, obligation, or coercion that could not finish earlier.
+//!
+//! There are two kinds of waiting. Looking up `value.field` needs enough receiver shape to find
+//! the field; that work stays here. Once we can express a question such as `Iterator::Item = ?T`,
+//! the inference table's goal queue can solve it. Each checkpoint runs the solver first, then
+//! retries body operations whose inputs gained evidence.
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
@@ -8,9 +13,9 @@ use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{ExpectedTyExt, GenericArgs, Ty, autoderef::AutoderefMode, trait_selection::TraitGoal};
+use rg_ty::solver::{Ty, TyShape};
 
-use super::{InferenceContext, InferenceState};
+use super::{BodyInference, InferenceState};
 use crate::{
     ExprUnaryOp,
     body::{ExprKind, PatKind},
@@ -18,13 +23,13 @@ use crate::{
 
 /// One unfinished operation and the input against which it last ran or was queued.
 /// The operation reads live slots; the stored input is only a snapshot for deciding when to retry.
-pub(super) struct Deferred {
-    kind: DeferredKind,
+pub(super) struct Deferred<'s> {
+    kind: DeferredKind<'s>,
     // `None` requests an attempt at the next checkpoint, even without an outer input change.
-    input: Option<Ty>,
+    input: Option<Ty<'s>>,
 }
 
-pub(super) enum DeferredKind {
+pub(super) enum DeferredKind<'s> {
     Call {
         call: ExprId,
     },
@@ -33,12 +38,12 @@ pub(super) enum DeferredKind {
     },
     Pattern {
         pat: PatId,
-        expected: Ty,
+        expected: Ty<'s>,
         default_ref: Option<Mutability>,
     },
     IteratorItem {
         iterable: ExprId,
-        item: Ty,
+        item: Ty<'s>,
     },
     TryOutput {
         expr: ExprId,
@@ -48,15 +53,15 @@ pub(super) enum DeferredKind {
     },
     Coerce {
         expr: ExprId,
-        expected: Ty,
+        expected: Ty<'s>,
     },
     BranchResult {
         expr: ExprId,
-        branches: Vec<Ty>,
+        branches: Vec<Ty<'s>>,
     },
 }
 
-impl<'query, D, I> InferenceContext<'query, D, I>
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -64,12 +69,12 @@ where
     /// Apply an expression expectation without equating a possible `!` to the expected type.
     /// Other supported cases use ordinary unification, but an unfinished producer needs to
     /// determine its result before we can choose between these two cases.
-    pub(super) fn coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty) {
+    pub(super) fn coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) {
         if !self.try_coerce_expr_ty(expr, expected) {
             self.defer(
                 DeferredKind::Coerce {
                     expr,
-                    expected: expected.clone(),
+                    expected: *expected,
                 },
                 None,
             );
@@ -81,7 +86,7 @@ where
     /// despite incomplete conversion lookup. Only do this after semantic work has stopped:
     /// until then, a pending producer may still turn out to return `!`.
     /// Consume the context so these fallback equalities cannot feed another lookup attempt.
-    pub(super) fn finish_coercions(mut self) -> InferenceState {
+    pub(super) fn finish_coercions(mut self) -> InferenceState<'s> {
         for operation in self.deferred {
             match operation.kind {
                 DeferredKind::Coerce { expr, expected } => {
@@ -91,7 +96,7 @@ where
                     let result = self.inference.expr_slot(expr);
                     for branch in branches {
                         let branch = self.inference.root_resolved_ty(&branch);
-                        if !matches!(branch, Ty::Never) {
+                        if !matches!((branch).shape(), TyShape::Never) {
                             self.inference.constrain_infer_tys(&result, &branch);
                         }
                     }
@@ -102,8 +107,8 @@ where
         self.inference
     }
 
-    fn try_coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty) -> bool {
-        if matches!(expected, Ty::Unknown) {
+    fn try_coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) -> bool {
+        if matches!((expected).shape(), TyShape::Unknown) {
             return true;
         }
         if !self.can_coerce_ty(&self.inference.expr_ty(expr)) {
@@ -116,12 +121,15 @@ where
     /// Ordinary generic variables can learn from an expectation. Slots awaiting a lookup or
     /// projection need that operation's answer first: it may be `!`, which coerces without equality.
     /// Compare live roots so this also protects a pending result read through a binding or block.
-    fn can_coerce_ty(&self, ty: &Ty) -> bool {
+    fn can_coerce_ty(&self, ty: &Ty<'s>) -> bool {
         let ty = self.inference.root_resolved_ty(ty);
+        if self.inference.table().has_pending_projection(ty) {
+            return false;
+        }
         if !matches!(
-            ty,
-            Ty::InferVar {
-                kind: rg_ty::inference::InferVarKind::Type,
+            (ty).shape(),
+            TyShape::InferVar {
+                kind: rg_ty::solver::InferVarKind::Type,
                 ..
             }
         ) {
@@ -166,35 +174,28 @@ where
 
     /// A supplied previous input keeps changes made during an attempt visible to the retry loop.
     /// Without one, queue against the current input.
-    pub(super) fn defer(&mut self, kind: DeferredKind, previous_input: Option<Ty>) {
-        if matches!(&kind, DeferredKind::Call { call, .. } if self.inference.call_is_complete(*call))
+    pub(super) fn defer(&mut self, kind: DeferredKind<'s>, previous_input: Option<Ty<'s>>) {
+        if matches!(&kind, DeferredKind::Call { call, .. } if self.inference.call_is_selected(*call))
         {
             return;
         }
         let input = self.deferred_input(&kind);
-        let needs_fulfillment = matches!(&kind, DeferredKind::Call { call, .. } if self.inference.call_needs_fulfillment(*call));
         let input_changed = previous_input
             .as_ref()
             .is_some_and(|previous| previous != &input);
         // Variables can gain evidence later. A failed operation on a fully known, unchanged
-        // input has nothing left to wait for, unless the call's own solver inputs changed.
-        if input.has_var() || input_changed || needs_fulfillment {
+        // input has nothing left to wait for. Solver obligations have their own shared queue.
+        if input.has_var() || input_changed {
             self.deferred.push_back(Deferred {
                 kind,
-                // Calls also track obligation and projection inputs. A change there requests a
-                // retry even if the outer call input stayed the same.
-                input: if needs_fulfillment {
-                    None
-                } else {
-                    Some(previous_input.unwrap_or(input))
-                },
+                input: Some(previous_input.unwrap_or(input)),
             });
         }
     }
 
     /// Try with the evidence available now. Keep the pre-attempt input if unfinished: the attempt
     /// itself may commit guidance that makes its next question different.
-    pub(super) fn run_or_defer(&mut self, kind: DeferredKind) -> anyhow::Result<()> {
+    pub(super) fn run_or_defer(&mut self, kind: DeferredKind<'s>) -> anyhow::Result<()> {
         let input = self.deferred_input(&kind);
         if !self
             .try_deferred(&kind)
@@ -214,6 +215,7 @@ where
         // place for body completion to publish.
         for _ in 0..128 {
             rg_std::check_cancel!(self.context, "fulfill pending inference");
+            let _ = self.inference.table().fulfill();
             let mut attempted = false;
             // Keep the other operations visible while retrying one: a coercion must know whether
             // its source still has an unfinished producer. New work waits for the next round.
@@ -260,7 +262,7 @@ where
 
     /// Snapshot the types this operation depends on, expanding solved variables for comparison.
     /// Tuples here group dependencies into a key; they are not types of source expressions.
-    fn deferred_input(&self, kind: &DeferredKind) -> Ty {
+    fn deferred_input(&self, kind: &DeferredKind<'s>) -> Ty<'s> {
         let expr_ty = |expr| self.inference.expr_ty(expr);
         let input = match kind {
             DeferredKind::Call { call } => {
@@ -273,46 +275,50 @@ where
                 // signature is selected, arguments, the result, and its generic bindings can
                 // all change the remaining proof or projection work.
                 if self.inference.selected_call_function(*call).is_none() {
-                    receiver.map(expr_ty).unwrap_or(Ty::Unknown)
+                    receiver.map(expr_ty).unwrap_or(self.cx.unknown())
                 } else {
-                    Ty::tuple(
+                    self.cx.tuple(
                         receiver
                             .into_iter()
                             .chain(args.iter().copied())
                             .chain([*call])
                             .map(expr_ty)
                             .chain([self.inference.call_input(*call)])
-                            .collect(),
+                            .collect::<Vec<_>>(),
                     )
                 }
             }
             DeferredKind::Member { expr } => match self.body.expr_unchecked(*expr).kind {
                 ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
-                    base.map(expr_ty).unwrap_or(Ty::Unknown)
+                    base.map(expr_ty).unwrap_or(self.cx.unknown())
                 }
                 _ => unreachable!("pending member owns a field or index expression"),
             },
-            DeferredKind::Pattern { expected, .. } => expected.clone(),
+            DeferredKind::Pattern { expected, .. } => *expected,
             DeferredKind::IteratorItem { iterable, .. } => expr_ty(*iterable),
             DeferredKind::TryOutput { expr } => match self.body.expr_unchecked(*expr).kind {
-                ExprKind::Wrapper { inner, .. } => inner.map(expr_ty).unwrap_or(Ty::Unknown),
+                ExprKind::Wrapper { inner, .. } => inner.map(expr_ty).unwrap_or(self.cx.unknown()),
                 _ => unreachable!("pending try owns a wrapper expression"),
             },
             DeferredKind::Operator { expr } => match self.body.expr_unchecked(*expr).kind {
-                ExprKind::Unary { expr: inner, .. } => {
-                    Ty::tuple(inner.into_iter().map(expr_ty).collect())
-                }
-                ExprKind::Binary { lhs, rhs, .. } => {
-                    Ty::tuple(lhs.into_iter().chain(rhs).map(expr_ty).collect())
-                }
+                ExprKind::Unary { expr: inner, .. } => self
+                    .cx
+                    .tuple(inner.into_iter().map(expr_ty).collect::<Vec<_>>()),
+                ExprKind::Binary { lhs, rhs, .. } => self
+                    .cx
+                    .tuple(lhs.into_iter().chain(rhs).map(expr_ty).collect::<Vec<_>>()),
                 _ => unreachable!("pending operator owns a unary or binary expression"),
             },
             DeferredKind::Coerce { expr, expected } => {
-                Ty::tuple(vec![expr_ty(*expr), expected.clone()])
+                self.cx.tuple(vec![expr_ty(*expr), *expected])
             }
-            DeferredKind::BranchResult { expr, branches } => {
-                Ty::tuple(branches.iter().cloned().chain([expr_ty(*expr)]).collect())
-            }
+            DeferredKind::BranchResult { expr, branches } => self.cx.tuple(
+                branches
+                    .iter()
+                    .cloned()
+                    .chain([expr_ty(*expr)])
+                    .collect::<Vec<_>>(),
+            ),
         };
         self.inference.table().canonicalize(&input)
     }
@@ -320,16 +326,17 @@ where
     /// Perform semantic work using already-visited expressions. A true result means no more work
     /// is needed here, including when syntax or declarations are unavailable; it is not a claim
     /// that the source type-checks. A false result lets the enqueue policy decide whether to wait.
-    fn try_deferred(&mut self, kind: &DeferredKind) -> anyhow::Result<bool> {
+    fn try_deferred(&mut self, kind: &DeferredKind<'s>) -> anyhow::Result<bool> {
         match kind {
             DeferredKind::Coerce { expr, expected } => Ok(self.try_coerce_expr_ty(*expr, expected)),
             DeferredKind::BranchResult { expr, branches } => {
                 if branches.is_empty() {
                     // This is missing syntax, such as a match with no arms. An actual empty block
                     // is a branch expression with type `()`, handled by the expression walker.
-                    self.inference.set_expr_ty(*expr, Ty::Unknown);
+                    self.inference.set_expr_ty(*expr, self.cx.unknown());
                     return Ok(true);
                 }
+
                 // In `if flag { user.abort() } else { 1 }`, the integer branch can supply the
                 // result immediately. Leave the pending method result separate: discovering `!`
                 // later must not turn that integer into a conflict.
@@ -338,7 +345,7 @@ where
                 let mut complete = true;
                 for branch in branches {
                     let branch = self.inference.root_resolved_ty(branch);
-                    if matches!(branch, Ty::Never) {
+                    if matches!((branch).shape(), TyShape::Never) {
                         continue;
                     }
                     has_value_result = true;
@@ -346,12 +353,13 @@ where
                         complete = false;
                         continue;
                     }
+
                     // Root resolution keeps already-detected cycles as unknown, as in
                     // `value = match state { Keep => value, Change => next }`.
                     self.inference.constrain_infer_tys(&result_ty, &branch);
                 }
                 if !has_value_result {
-                    self.inference.set_expr_ty(*expr, Ty::Never);
+                    self.inference.set_expr_ty(*expr, self.cx.never());
                 }
                 Ok(complete)
             }
@@ -369,7 +377,7 @@ where
                     self.finish_call(transfer, args)
                         .context("complete pending call")?;
                 }
-                Ok(self.inference.call_is_complete(*call))
+                Ok(self.inference.call_is_selected(*call))
             }
             DeferredKind::Pattern {
                 pat,
@@ -397,24 +405,23 @@ where
                     ExprKind::Field {
                         field: Some(field), ..
                     } => {
-                        let targets = self
+                        let target = self
                             .context
-                            .fields()
-                            .resolve_for_ty(&base_ty, field)
+                            .live()
+                            .field(base_ty, field, self.inference.table())
                             .context("project field")?;
-                        self.inference
-                            .set_expr_resolution(*expr, targets.resolution());
-                        targets.single_ty().cloned()
+                        target.map(|(resolution, ty)| {
+                            self.inference.set_expr_resolution(*expr, resolution);
+                            ty
+                        })
                     }
                     ExprKind::Index { .. } => {
-                        let mut ty = &base_ty;
-                        while let Ty::Reference { inner, .. } = ty {
+                        let mut ty = base_ty;
+                        while let TyShape::Reference { inner, .. } = ty.shape() {
                             ty = inner;
                         }
-                        match ty {
-                            Ty::Array { inner, .. } | Ty::Slice(inner) => {
-                                Some(inner.as_ref().clone())
-                            }
+                        match ty.shape() {
+                            TyShape::Array { inner, .. } | TyShape::Slice(inner) => Some(inner),
                             _ => None,
                         }
                     }
@@ -424,7 +431,7 @@ where
                     // A projected `?T` is already useful: linking it to the destination carries
                     // future evidence without another lookup. Unknowns and associated types can
                     // still need another projection after the base type changes.
-                    self.inference.set_expr_infer_ty(*expr, ty.clone());
+                    self.inference.set_expr_ty(*expr, ty);
                     return Ok(!ty.has_unknown() && !ty.has_projection());
                 }
                 Ok(false)
@@ -451,22 +458,18 @@ where
                     return Ok(true);
                 };
                 let ty = self.inference.root_resolved_expr_ty(*iterable);
-                let goal = TraitGoal::new(
-                    ty,
-                    TraitDefRef::new(function.origin, trait_id),
-                    GenericArgs::empty(),
-                );
+                let trait_ref = TraitDefRef::new(function.origin, trait_id);
                 let Some(projection) = self
                     .context
-                    .trait_selection()
-                    .normalize_assoc_type(&goal, "Item", self.inference.table())
+                    .live()
+                    .projection(ty, trait_ref, "Item", self.inference.table())
                     .context("project iterator item")?
                 else {
                     return Ok(false);
                 };
-                *self.inference.table_mut() = projection.table;
-                self.inference.constrain_infer_tys(item, &projection.ty);
-                Ok(!projection.ty.has_unknown() && !projection.ty.has_projection())
+                self.inference.constrain_infer_tys(item, &projection);
+                // Fulfillment now owns the equality, including any later changes to the iterable.
+                Ok(true)
             }
             DeferredKind::TryOutput { expr } => {
                 let ExprKind::Wrapper {
@@ -480,20 +483,18 @@ where
                 let inner_ty = self.inference.root_resolved_expr_ty(inner);
                 let mut outputs = ExpectedUnique::new();
                 let item_query = self.context.item_query();
-                for nominal in inner_ty.as_adts() {
-                    let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
-                        continue;
-                    };
-                    if matches!(name, "Result" | "Option")
-                        && let Some(output) =
-                            nominal.args.iter().find_map(|arg| arg.as_ty().cloned())
-                    {
-                        outputs.push(output);
-                    }
+                if let Some(nominal) = inner_ty.as_adt()
+                    && let Some(name) = item_query
+                        .type_def_name(nominal.def)
+                        .context("resolve try operand type")?
+                    && matches!(name, "Result" | "Option")
+                    && let Some(output) = nominal.args.iter().find_map(|arg| arg.as_ty())
+                {
+                    outputs.push(output);
                 }
-                let ty = outputs.into_ty();
-                self.inference.set_expr_infer_ty(*expr, ty.clone());
-                Ok(!matches!(ty, Ty::Unknown))
+                let ty = outputs.into_option().unwrap_or(self.cx.unknown());
+                self.inference.set_expr_ty(*expr, ty);
+                Ok(!matches!((ty).shape(), TyShape::Unknown))
             }
             DeferredKind::Operator { expr, .. } => {
                 match self.body.expr_unchecked(*expr).kind {
@@ -503,16 +504,15 @@ where
                     } => {
                         // Retain a dereference result only when candidate types agree.
                         let inner_ty = self.inference.root_resolved_expr_ty(inner);
-                        let mut candidates = ExpectedUnique::new();
-                        for candidate in self
+                        let ty = self
                             .context
-                            .autoderef()
-                            .candidates(AutoderefMode::ExplicitDeref, &inner_ty)
-                        {
-                            candidates.push(candidate.context("project dereference")?.ty().clone());
-                        }
-                        self.inference
-                            .set_expr_infer_ty(*expr, candidates.into_ty());
+                            .live()
+                            .receivers(inner_ty, self.inference.table(), false)
+                            .context("resolve dereference target")?
+                            .get(1)
+                            .copied()
+                            .unwrap_or(self.cx.unknown());
+                        self.inference.set_expr_ty(*expr, ty);
                     }
                     ExprKind::Unary {
                         op: Some(op),
@@ -531,10 +531,10 @@ where
                     _ => return Ok(true),
                 }
                 Ok(!matches!(
-                    self.inference.root_resolved_expr_ty(*expr),
-                    Ty::Unknown
-                        | Ty::InferVar {
-                            kind: rg_ty::inference::InferVarKind::Type,
+                    (self.inference.root_resolved_expr_ty(*expr)).shape(),
+                    TyShape::Unknown
+                        | TyShape::InferVar {
+                            kind: rg_ty::solver::InferVarKind::Type,
                             ..
                         }
                 ))

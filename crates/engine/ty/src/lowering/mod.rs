@@ -18,8 +18,8 @@ use rg_ir_model::{
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
 
+pub(crate) use self::signature::impl_header_with;
 pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
-pub(crate) use self::signature::{TraitHeader, impl_header_with};
 use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty, lookup::ItemPathQuery};
 
 // Source syntax can be deeply nested even without aliases or projections. This is an emergency

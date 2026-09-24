@@ -1,36 +1,34 @@
 //! Best-effort trait impl selection.
 //!
-//! Header compatibility goes through native candidate discovery, then the shared selection query
-//! proves the exact candidate's predicates. A definite rejection removes the impl; ambiguity or
+//! The declaration index provides a cheap rejection before the shared solver query matches the
+//! header and proves its predicates. A definite rejection removes the impl; ambiguity or
 //! unsupported current-body evidence remains a useful editor-facing `Maybe` match.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{TraitApplicability, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
 
-use super::ImplMatcher;
+use super::ImplQuery;
 use crate::{
     AdtTy, Ty,
-    inference::InferenceTable,
-    lowering::TypePathResolver,
+    solver::SolverScope,
     trait_selection::{TraitSelection, TraitSelectionQuery},
 };
 
-impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
+impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    R: SolverScope<Error = D::Error>,
 {
     /// Return only the yes/maybe/no part of exact trait impl selection.
     pub(crate) fn trait_impl_applicability(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &AdtTy,
-        table: &InferenceTable,
     ) -> Result<TraitApplicability, D::Error> {
         Ok(self
-            .trait_impl_selection_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()), table)?
+            .trait_impl_selection_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()))?
             .map(|selection| selection.applicability)
             .unwrap_or(TraitApplicability::No))
     }
@@ -44,7 +42,6 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &Ty,
-        table: &InferenceTable,
     ) -> Result<Option<TraitSelection>, D::Error> {
         let item_query = self.context.item_paths().items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
@@ -65,21 +62,20 @@ where
             return Ok(None);
         }
 
-        // Fixed-point retries see the same receiver representation many times. The conservative
-        // fallback lane also presents impls such as `impl<T> Trait for T` to many receiver shapes.
-        // Cache this table-independent header comparison, including a negative result. Its
-        // inference-scope owner keeps live variables and closure identities request-local.
-        let Some(header_match) = self.impl_self_match_for_impl(trait_impl.impl_ref, receiver_ty)?
+        let Some(selected) =
+            TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
+                .select_impl(trait_impl.impl_ref, receiver_ty)?
         else {
             return Ok(None);
         };
-        let Some(mut selection) = TraitSelectionQuery::new(self.context.clone())
-            .probe_instantiated_impl(trait_impl, &header_match.header, header_match.subst, table)?
-        else {
+        let Some(application) = selected.application else {
             return Ok(None);
         };
-
-        selection.applicability = header_match.applicability.and(selection.applicability);
-        Ok(selection.applicability.is_applicable().then_some(selection))
+        Ok(Some(TraitSelection {
+            trait_impl,
+            application,
+            subst: selected.subst,
+            applicability: selected.applicability,
+        }))
     }
 }

@@ -13,16 +13,13 @@ use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{
-    ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy,
-    inference::{InferVarId, InferVarKind},
-};
+use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
 
 /// Identity of one anonymous closure type.
 ///
 /// Expression indices are only unique inside one body. The body identity is therefore part of the
-/// type identity before a closure enters the crate-scoped trait solver; otherwise two bodies whose
-/// first closure is `e0` could reuse the same cached Chalk answer.
+/// type identity when a closure enters a type query; otherwise two bodies whose
+/// first closure is `e0` could be mistaken for the same closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureTyId {
     body: BodyRef,
@@ -43,9 +40,8 @@ impl fmt::Display for ClosureTyId {
 
 /// Anonymous closure type together with the callable signature inferred for that expression.
 ///
-/// The signature types may contain body inference variables. Keeping them in the closure type is
-/// intentional: expected `Fn*` bounds, the closure patterns/body, and Chalk all constrain the same
-/// slots instead of exchanging a separate body-only witness.
+/// The scoped solver keeps signature components connected during inference, then publishes this
+/// owned signature with every remaining variable finalized.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureTy {
     pub id: ClosureTyId,
@@ -53,6 +49,21 @@ pub struct ClosureTy {
     pub params: Vec<Ty>,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
     pub ret: Box<Ty>,
+}
+
+/// Source lowering can allocate named holes before constructing an interned solver type. The
+/// corresponding scoped allocator owns their meaning; persisted types never contain these tokens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
+pub struct SourceTypeHole(u32);
+
+impl SourceTypeHole {
+    pub(crate) fn new(index: usize) -> Self {
+        Self(index.try_into().expect("source type hole fits u32"))
+    }
+
+    pub(crate) fn index(self) -> usize {
+        self.0 as usize
+    }
 }
 
 /// Owned semantic types shared by indexing and body analysis.
@@ -96,13 +107,11 @@ pub enum Ty {
     // of identity even when it consists entirely of unknown or inferred positions.
     FnDef(FnDefTy),
     Unknown,
-    /// Transient inference variable. It must be finalized before persistence.
-    InferVar {
-        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarKind>")]
-        kind: InferVarKind,
-        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarId>")]
-        id: InferVarId,
-    },
+    /// Token allocated during source lowering and consumed when that type enters the solver.
+    /// It is not an inference variable and cannot be persisted.
+    SourceHole(
+        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<SourceTypeHole>")] SourceTypeHole,
+    ),
 }
 
 impl Ty {
@@ -178,10 +187,6 @@ impl Ty {
         Self::Adt(ty)
     }
 
-    pub(crate) fn var_for_kind(kind: InferVarKind, id: InferVarId) -> Self {
-        Self::InferVar { kind, id }
-    }
-
     /// Projects the identity result of a path lookup into a semantic type.
     ///
     /// Transparent aliases require recursive lowering and traits are not types, so those cases are
@@ -217,21 +222,23 @@ impl Ty {
         }
     }
 
-    pub fn has_var(&self) -> bool {
+    pub fn has_source_hole(&self) -> bool {
         match self {
-            Self::InferVar { .. } => true,
-            Self::Tuple(fields) => fields.iter().any(Self::has_var),
+            Self::SourceHole(_) => true,
+            Self::Tuple(fields) => fields.iter().any(Self::has_source_hole),
             Self::Array { inner, .. }
             | Self::Slice(inner)
             | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.has_var(),
-            Self::FnPointer { params, ret } => params.iter().any(Self::has_var) || ret.has_var(),
-            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_var),
-            Self::Alias(alias) => alias.has_var(),
-            Self::Closure(closure) => {
-                closure.params.iter().any(Self::has_var) || closure.ret.has_var()
+            | Self::RawPointer { inner, .. } => inner.has_source_hole(),
+            Self::FnPointer { params, ret } => {
+                params.iter().any(Self::has_source_hole) || ret.has_source_hole()
             }
-            Self::FnDef(function) => function.args.iter().any(GenericArg::has_var),
+            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_source_hole),
+            Self::Alias(alias) => alias.has_source_hole(),
+            Self::Closure(closure) => {
+                closure.params.iter().any(Self::has_source_hole) || closure.ret.has_source_hole()
+            }
+            Self::FnDef(function) => function.args.iter().any(GenericArg::has_source_hole),
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
@@ -257,7 +264,7 @@ impl Ty {
             | Self::Never
             | Self::Primitive(_)
             | Self::Param(_)
-            | Self::InferVar { .. } => false,
+            | Self::SourceHole(_) => false,
         }
     }
 
@@ -286,7 +293,7 @@ impl Ty {
             | Self::Primitive(_)
             | Self::Param(_)
             | Self::Unknown
-            | Self::InferVar { .. } => false,
+            | Self::SourceHole(_) => false,
         }
     }
 
@@ -310,13 +317,13 @@ impl Ty {
             | Self::Primitive(_)
             | Self::Param(_)
             | Self::Unknown
-            | Self::InferVar { .. } => false,
+            | Self::SourceHole(_) => false,
         }
     }
 
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
-            Self::Unknown | Self::InferVar { .. } => false,
+            Self::Unknown | Self::SourceHole(_) => false,
             Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
             Self::Array { inner, .. }
             | Self::Slice(inner)
@@ -357,7 +364,7 @@ impl Shrink for Ty {
             | Self::Primitive(_)
             | Self::Param(_)
             | Self::Unknown
-            | Self::InferVar { .. } => {}
+            | Self::SourceHole(_) => {}
         }
     }
 }
@@ -400,20 +407,8 @@ impl AliasTy {
         }
     }
 
-    pub(crate) fn same_definition(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Projection(lhs), Self::Projection(rhs)) => {
-                lhs.associated_ty == rhs.associated_ty
-            }
-            (Self::Opaque(lhs), Self::Opaque(rhs)) => lhs.opaque == rhs.opaque,
-            (Self::Projection(_), Self::Opaque(_)) | (Self::Opaque(_), Self::Projection(_)) => {
-                false
-            }
-        }
-    }
-
-    fn has_var(&self) -> bool {
-        self.args().iter().any(GenericArg::has_var)
+    fn has_source_hole(&self) -> bool {
+        self.args().iter().any(GenericArg::has_source_hole)
     }
 
     fn has_unknown(&self) -> bool {
@@ -434,14 +429,6 @@ impl AliasTy {
 pub struct ProjectionTy {
     pub associated_ty: TypeAliasRef,
     pub args: GenericArgs,
-}
-
-impl ProjectionTy {
-    /// Compare projections after bijectively renaming transient inference-variable IDs.
-    pub(crate) fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
-        self.associated_ty == other.associated_ty
-            && self.args.equivalent_modulo_inference_ids(&other.args)
-    }
 }
 
 /// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.

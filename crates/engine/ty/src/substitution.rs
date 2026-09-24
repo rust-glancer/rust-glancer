@@ -166,9 +166,7 @@ impl Substitution {
                     .collect(),
                 ret: Box::new(self.apply(&closure.ret)),
             }),
-            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Unknown | Ty::InferVar { .. } => {
-                ty.clone()
-            }
+            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Unknown | Ty::SourceHole(_) => ty.clone(),
         }
     }
 

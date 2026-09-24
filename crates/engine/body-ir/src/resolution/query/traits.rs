@@ -245,12 +245,12 @@ where
         receiver_ty: &AdtTy,
         written: &TraitApplication,
     ) -> Result<bool, PackageStoreError> {
-        let matcher = self.context.impl_matcher();
-        let Some(header) = matcher.impl_header(trait_impl.impl_ref)? else {
+        let impl_query = self.context.impl_query();
+        let Some(header) = impl_query.impl_header(trait_impl.impl_ref)? else {
             return Ok(false);
         };
-        let Some((impl_subst, _applicability)) =
-            matcher.impl_self_subst_for_impl(trait_impl.impl_ref, &Ty::adt(receiver_ty.clone()))?
+        let Some((impl_subst, _applicability)) = impl_query
+            .impl_self_subst_for_impl(trait_impl.impl_ref, &Ty::adt(receiver_ty.clone()))?
         else {
             return Ok(false);
         };

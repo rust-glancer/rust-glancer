@@ -2,7 +2,7 @@
 //!
 //! The item store remains useful for display because it keeps names, bounds, and defaults. This
 //! query adds the owner relationships and implicit parameters needed by semantic types, then
-//! exposes one canonical order to type lowering, substitutions, inference, and Chalk.
+//! exposes one canonical order to type lowering, substitutions, inference, and trait solving.
 
 use rg_ir_model::{
     ConstParamRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, LifetimeParamRef,

@@ -1,12 +1,10 @@
 //! Lookup results reused by semantic queries for one body.
 
 mod body_items;
-mod method;
 mod traits;
 
 pub(crate) use self::{
     body_items::{BodyLocalInherentItemNames, BodyLocalItemCache, BodyLocalItemIndex},
-    method::BodyMethodCache,
     traits::{BodyTraitLookupCache, BodyTraitSurface},
 };
 
@@ -18,13 +16,13 @@ pub(crate) use self::{
 ///
 /// - `traits` retains lexical trait sets and name-filtered declaration surfaces;
 /// - `body_local_items` indexes active-overlay and body-local declarations once;
-/// - `methods` remembers receiver/name combinations with no extension method.
+/// - `solver_declarations` shares lowered source declarations between solver operations;
 ///
-/// Receiver-specific positive proofs stay in the inference-owned trait-selection scope instead.
+/// Receiver-specific proofs stay in the body's live solver context instead.
 /// A new body receives a new cache group, so none of these body identities escape their request.
 #[derive(Clone, Default)]
 pub(crate) struct BodyResolutionCaches {
     pub(crate) traits: BodyTraitLookupCache,
     pub(crate) body_local_items: BodyLocalItemCache,
-    pub(crate) methods: BodyMethodCache,
+    pub(crate) solver_declarations: rg_ty::solver::DeclarationCache,
 }

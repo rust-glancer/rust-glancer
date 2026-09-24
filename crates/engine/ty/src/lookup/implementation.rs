@@ -12,8 +12,7 @@ use rg_std::{OperationError, UniqueVec};
 use crate::{
     Ty, TyContext,
     autoderef::{Autoderef, AutoderefMode, ReferencePeelingCandidates},
-    inference::InferenceTable,
-    lookup::ImplMatcher,
+    lookup::ImplQuery,
 };
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
@@ -130,8 +129,7 @@ where
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
         let autoderef = Autoderef::new(self.context.clone());
-        let matcher = ImplMatcher::new(self.context.clone());
-        let table = InferenceTable::new();
+        let impl_query = ImplQuery::new(self.context.clone());
         let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
@@ -145,11 +143,12 @@ where
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }
+
                     // The nominal type match can still include generic impls for other concrete
                     // args. Reuse method lookup's applicability check so implementation lookup
                     // follows the receiver the user actually called the method on.
-                    if !matcher
-                        .trait_impl_applicability(trait_impl, ty, &table)
+                    if !impl_query
+                        .trait_impl_applicability(trait_impl, ty)
                         .map_err(OperationError::Source)?
                         .is_applicable()
                     {

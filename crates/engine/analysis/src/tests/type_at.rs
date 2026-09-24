@@ -2027,7 +2027,7 @@ pub fn use_it(builder: Builder, user: User, project: Project) {
             - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
 
             conflicting inferred params
-            - <unknown>
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
         "#]],
     );
 }

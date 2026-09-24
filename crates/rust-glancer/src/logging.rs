@@ -22,7 +22,7 @@ const LOG_SCHEMA: &str = "rust-glancer-log/v1";
 const RUST_GLANCER_SPAN_FIELD_PREFIX: &str = "rg.";
 const DEFAULT_LOG_FILTER: &str = "info";
 const DEPENDENCY_LOG_GUARDS: &str =
-    "tarpc=warn,chalk_engine=warn,chalk_solve=warn,chalk_ir=warn,log=warn";
+    "tarpc=warn,ra_ap_rustc_next_trait_solver=warn,ra_ap_rustc_type_ir=warn,log=warn";
 
 /// Identifies which process emitted an LSP-mode log line.
 ///
@@ -86,7 +86,7 @@ fn log_filter_directives(env_filter: Option<&str>) -> String {
         .unwrap_or(DEFAULT_LOG_FILTER);
 
     // A blanket `debug`/`trace` is useful when debugging rust-glancer itself, but it also turns on
-    // solver and `log`-crate records from dependencies. Chalk and Ena both log inside very hot
+    // solver and `log`-crate records from dependencies. The compiler solver and Ena both log inside very hot
     // paths, often formatting large clauses/types, so keep those targets guarded unless the user
     // names them explicitly later in the filter string.
     format!("{DEPENDENCY_LOG_GUARDS},{user_filter}")
@@ -356,7 +356,7 @@ mod tests {
         let records = capture_lsp_logs(rust_glancer_log_filter_from(None), || {
             tracing::info!(target: "rg_lsp_engine", "rust-glancer info should pass");
             tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should not pass");
-            tracing::info!(target: "chalk_engine", "chalk info should not pass");
+            tracing::info!(target: "ra_ap_rustc_next_trait_solver", "solver info should not pass");
             tracing::debug!(target: "log", "ena debug should not pass");
         });
 
@@ -367,8 +367,8 @@ mod tests {
     fn blanket_log_filter_keeps_noisy_dependencies_guarded() {
         let records = capture_lsp_logs(rust_glancer_log_filter_from(Some("debug")), || {
             tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should pass");
-            tracing::info!(target: "chalk_engine", "chalk info should not pass");
-            tracing::debug!(target: "chalk_solve", "chalk debug should not pass");
+            tracing::info!(target: "ra_ap_rustc_next_trait_solver", "solver info should not pass");
+            tracing::debug!(target: "ra_ap_rustc_type_ir", "solver debug should not pass");
             tracing::debug!(target: "log", "ena debug should not pass");
         });
 
@@ -378,11 +378,13 @@ mod tests {
     #[test]
     fn explicit_dependency_filter_can_override_dependency_guard() {
         let records = capture_lsp_logs(
-            rust_glancer_log_filter_from(Some("debug,chalk_engine=info,log=debug")),
+            rust_glancer_log_filter_from(Some(
+                "debug,ra_ap_rustc_next_trait_solver=info,log=debug",
+            )),
             || {
                 tracing::debug!(target: "rg_lsp_engine", "rust-glancer debug should pass");
-                tracing::info!(target: "chalk_engine", "explicit chalk info should pass");
-                tracing::debug!(target: "chalk_engine", "chalk debug should not pass");
+                tracing::info!(target: "ra_ap_rustc_next_trait_solver", "explicit solver info should pass");
+                tracing::debug!(target: "ra_ap_rustc_next_trait_solver", "solver debug should not pass");
                 tracing::debug!(target: "log", "explicit bridged log debug should pass");
             },
         );
@@ -391,7 +393,7 @@ mod tests {
             log_messages(&records),
             [
                 "rust-glancer debug should pass",
-                "explicit chalk info should pass",
+                "explicit solver info should pass",
                 "explicit bridged log debug should pass"
             ]
         );

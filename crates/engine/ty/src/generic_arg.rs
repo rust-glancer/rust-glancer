@@ -2,7 +2,7 @@
 //!
 //! Every instantiated item carries a full argument list in [`Generics`](rg_semantic_ir::Generics)
 //! order. Trait applications keep positional inputs in that list and associated-type equalities
-//! beside it, so both inference and Chalk read the same unambiguous shape.
+//! beside it, so inference and trait solving read the same unambiguous shape.
 
 use std::fmt;
 
@@ -10,10 +10,7 @@ use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef, TypeAliasRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{
-    ProjectionTy, Ty,
-    inference::{InferVarId, InferVarKind},
-};
+use crate::{ProjectionTy, Ty};
 
 /// Lifetime argument retained by the semantic type model.
 ///
@@ -119,11 +116,6 @@ impl GenericArgs {
     pub(crate) fn into_vec(self) -> Vec<GenericArg> {
         self.0
     }
-
-    /// Compare argument lists after bijectively renaming transient inference-variable IDs.
-    pub fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
-        InferenceIdEquivalence::default().same_args(self, other)
-    }
 }
 
 impl From<Vec<GenericArg>> for GenericArgs {
@@ -172,9 +164,9 @@ impl GenericArg {
     }
 
     /// Returns whether this generic argument still carries inference variables.
-    pub fn has_var(&self) -> bool {
+    pub fn has_source_hole(&self) -> bool {
         match self {
-            Self::Type(ty) => ty.has_var(),
+            Self::Type(ty) => ty.has_source_hole(),
             Self::Lifetime(_) | Self::Const(_) => false,
         }
     }
@@ -223,154 +215,6 @@ impl TraitApplication {
     pub fn self_ty(&self) -> Option<&Ty> {
         self.args.first()?.as_ty()
     }
-
-    /// Compare two applications while treating inference-variable IDs as local binder names.
-    ///
-    /// Trial impl selection can instantiate the same logical obligation with fresh slots on each
-    /// pass. Raw equality misses that cycle because `?0 != ?1`; erasing every variable would lose
-    /// relationships such as `Pair<?0, ?0>` versus `Pair<?1, ?2>`. This comparison renames slots
-    /// bijectively, so only allocation identity is ignored.
-    pub fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
-        self.def == other.def && self.args.equivalent_modulo_inference_ids(&other.args)
-    }
-}
-
-#[derive(Default)]
-struct InferenceIdEquivalence {
-    mappings: Vec<(InferVarKind, InferVarId, InferVarId)>,
-}
-
-impl InferenceIdEquivalence {
-    fn same_args(&mut self, lhs: &[GenericArg], rhs: &[GenericArg]) -> bool {
-        lhs.len() == rhs.len()
-            && lhs
-                .iter()
-                .zip(rhs)
-                .all(|(lhs, rhs)| self.same_arg(lhs, rhs))
-    }
-
-    fn same_arg(&mut self, lhs: &GenericArg, rhs: &GenericArg) -> bool {
-        match (lhs, rhs) {
-            (GenericArg::Type(lhs), GenericArg::Type(rhs)) => self.same_ty(lhs, rhs),
-            (GenericArg::Lifetime(lhs), GenericArg::Lifetime(rhs)) => lhs == rhs,
-            (GenericArg::Const(lhs), GenericArg::Const(rhs)) => lhs == rhs,
-            _ => false,
-        }
-    }
-
-    fn same_ty(&mut self, lhs: &Ty, rhs: &Ty) -> bool {
-        match (lhs, rhs) {
-            (
-                Ty::InferVar {
-                    kind: lhs_kind,
-                    id: lhs_id,
-                },
-                Ty::InferVar {
-                    kind: rhs_kind,
-                    id: rhs_id,
-                },
-            ) => self.same_var(*lhs_kind, *lhs_id, *rhs_kind, *rhs_id),
-            (Ty::Unit, Ty::Unit) | (Ty::Never, Ty::Never) | (Ty::Unknown, Ty::Unknown) => true,
-            (Ty::Primitive(lhs), Ty::Primitive(rhs)) => lhs == rhs,
-            (Ty::Tuple(lhs), Ty::Tuple(rhs)) => self.same_tys(lhs, rhs),
-            (
-                Ty::Array {
-                    inner: lhs_inner,
-                    len: lhs_len,
-                },
-                Ty::Array {
-                    inner: rhs_inner,
-                    len: rhs_len,
-                },
-            ) => lhs_len == rhs_len && self.same_ty(lhs_inner, rhs_inner),
-            (Ty::Slice(lhs), Ty::Slice(rhs)) => self.same_ty(lhs, rhs),
-            (
-                Ty::Reference {
-                    lifetime: lhs_lifetime,
-                    mutability: lhs_mutability,
-                    inner: lhs_inner,
-                },
-                Ty::Reference {
-                    lifetime: rhs_lifetime,
-                    mutability: rhs_mutability,
-                    inner: rhs_inner,
-                },
-            ) => {
-                lhs_lifetime == rhs_lifetime
-                    && lhs_mutability == rhs_mutability
-                    && self.same_ty(lhs_inner, rhs_inner)
-            }
-            (
-                Ty::RawPointer {
-                    mutability: lhs_mutability,
-                    inner: lhs_inner,
-                },
-                Ty::RawPointer {
-                    mutability: rhs_mutability,
-                    inner: rhs_inner,
-                },
-            ) => lhs_mutability == rhs_mutability && self.same_ty(lhs_inner, rhs_inner),
-            (
-                Ty::FnPointer {
-                    params: lhs_params,
-                    ret: lhs_ret,
-                },
-                Ty::FnPointer {
-                    params: rhs_params,
-                    ret: rhs_ret,
-                },
-            ) => self.same_tys(lhs_params, rhs_params) && self.same_ty(lhs_ret, rhs_ret),
-            (Ty::Adt(lhs), Ty::Adt(rhs)) => {
-                lhs.def == rhs.def && self.same_args(&lhs.args, &rhs.args)
-            }
-            (Ty::Param(lhs), Ty::Param(rhs)) => lhs == rhs,
-            (Ty::Alias(lhs), Ty::Alias(rhs)) => {
-                lhs.same_definition(rhs) && self.same_args(lhs.args(), rhs.args())
-            }
-            (Ty::Closure(lhs), Ty::Closure(rhs)) => {
-                lhs.id == rhs.id
-                    && self.same_tys(&lhs.params, &rhs.params)
-                    && self.same_ty(&lhs.ret, &rhs.ret)
-            }
-            (Ty::FnDef(lhs), Ty::FnDef(rhs)) => {
-                lhs.def == rhs.def && self.same_args(&lhs.args, &rhs.args)
-            }
-            _ => false,
-        }
-    }
-
-    fn same_tys(&mut self, lhs: &[Ty], rhs: &[Ty]) -> bool {
-        lhs.len() == rhs.len() && lhs.iter().zip(rhs).all(|(lhs, rhs)| self.same_ty(lhs, rhs))
-    }
-
-    fn same_var(
-        &mut self,
-        lhs_kind: InferVarKind,
-        lhs: InferVarId,
-        rhs_kind: InferVarKind,
-        rhs: InferVarId,
-    ) -> bool {
-        if lhs_kind != rhs_kind {
-            return false;
-        }
-        if let Some((_, _, mapped_rhs)) = self
-            .mappings
-            .iter()
-            .find(|(kind, mapped_lhs, _)| *kind == lhs_kind && *mapped_lhs == lhs)
-        {
-            return *mapped_rhs == rhs;
-        }
-        if self
-            .mappings
-            .iter()
-            .any(|(kind, _, mapped_rhs)| *kind == rhs_kind && *mapped_rhs == rhs)
-        {
-            return false;
-        }
-
-        self.mappings.push((lhs_kind, lhs, rhs));
-        true
-    }
 }
 
 /// One resolved associated-type equality written beside a trait application.
@@ -412,7 +256,7 @@ impl TraitRefLowering {
     }
 }
 
-/// Flat predicate vocabulary consumed by trait selection and the Chalk adapter.
+/// Flat predicate vocabulary consumed by declaration queries and the compiler solver adapter.
 ///
 /// A bound such as `T: Iterator<Item = User>` becomes one `Implemented` clause for
 /// `T: Iterator` and one `AliasEq` clause for `<T as Iterator>::Item = User`.

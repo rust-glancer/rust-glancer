@@ -229,7 +229,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         )))
     }
 

@@ -9,7 +9,6 @@ use rg_std::UniqueVec;
 use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
 use crate::{
     AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TraitRefLowering, Ty,
-    inference::InferenceTable,
 };
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
@@ -32,7 +31,7 @@ where
         trait_ty: &TypeRef,
         self_ty: Ty,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Option<TraitRefLowering>, D::Error> {
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
@@ -82,7 +81,7 @@ where
         trait_ref: TraitDefRef,
         self_ty: Ty,
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<TraitRefLowering, D::Error> {
         let generics = self
             .query
@@ -101,13 +100,8 @@ where
             .last()
             .map(|segment| segment.args.as_slice())
             .unwrap_or_default();
-        let args = self.lower_generic_args(
-            &generics,
-            syntax_args,
-            &seed,
-            impl_trait_mode,
-            inference.as_deref_mut(),
-        )?;
+        let args =
+            self.lower_generic_args(&generics, syntax_args, &seed, impl_trait_mode, inference)?;
         let application = TraitApplication {
             def: trait_ref,
             args,
@@ -239,7 +233,7 @@ where
         application: &TraitApplication,
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Vec<AssocTypeBinding>, D::Error> {
         let mut bindings = Vec::new();
         for arg in syntax_args {
@@ -271,7 +265,7 @@ where
             };
             bindings.push(AssocTypeBinding {
                 associated_ty: alias.associated_ty,
-                ty: self.lower_type_ref_with_mode(ty, impl_trait_mode, inference.as_deref_mut())?,
+                ty: self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)?,
             });
         }
         Ok(bindings)

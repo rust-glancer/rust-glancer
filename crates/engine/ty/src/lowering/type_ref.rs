@@ -1,4 +1,4 @@
-//! Walk source type shapes while retaining one session's inference and opaque identities.
+//! Walk source type shapes while retaining source-hole and opaque-type identities.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
@@ -6,7 +6,7 @@ use rg_item_tree::TypeRef;
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
-use crate::{AliasTy, Lifetime, OpaqueTy, Ty, inference::InferenceTable};
+use crate::{AliasTy, Lifetime, OpaqueTy, Ty};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where
@@ -19,17 +19,18 @@ where
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, None)
     }
 
-    /// Lower a body-written type while giving each explicit `_` a live inference identity.
+    /// Lower a body-written type while asking the caller for a placeholder for each explicit `_`.
     ///
     /// Path failures remain `Unknown`; only the syntax node dedicated to inference requests a
-    /// variable. Keeping this policy inside the authoritative visitor prevents body inference
+    /// placeholder. The caller connects those placeholders to its live variables when converting
+    /// the result. Keeping this policy inside the source visitor prevents body inference
     /// from walking `TypeRef` a second time to rediscover holes.
     pub fn lower_type_ref_with_inference(
         &mut self,
         ty: &TypeRef,
-        table: &mut InferenceTable,
+        new_variable: &dyn Fn() -> Ty,
     ) -> Result<Ty, D::Error> {
-        self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, Some(table))
+        self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, Some(new_variable))
     }
 
     /// Lower a function parameter type, where `impl Trait` introduces an anonymous type parameter.
@@ -44,7 +45,7 @@ where
         &mut self,
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Ty, D::Error> {
         if self.type_ref_depth >= MAX_TYPE_LOWERING_DEPTH {
             self.report_limit("type_ref_depth", Some(MAX_TYPE_LOWERING_DEPTH));
@@ -61,22 +62,19 @@ where
         &mut self,
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<Ty, D::Error> {
         match ty {
             TypeRef::Unknown(_) | TypeRef::DynTrait(_) => Ok(Ty::Unknown),
             TypeRef::Infer => Ok(inference
-                .as_deref_mut()
-                .map(InferenceTable::new_type_var)
+                .map(|new_variable| new_variable())
                 .unwrap_or(Ty::Unknown)),
             TypeRef::Never => Ok(Ty::Never),
             TypeRef::Unit => Ok(Ty::Unit),
             TypeRef::Tuple(types) => Ok(Ty::tuple(
                 types
                     .iter()
-                    .map(|ty| {
-                        self.lower_type_ref_with_mode(ty, impl_trait_mode, inference.as_deref_mut())
-                    })
+                    .map(|ty| self.lower_type_ref_with_mode(ty, impl_trait_mode, inference))
                     .collect::<Result<_, _>>()?,
             )),
             TypeRef::Reference {
@@ -92,38 +90,28 @@ where
                 Ok(Ty::reference_with_lifetime(
                     lifetime,
                     *mutability,
-                    self.lower_type_ref_with_mode(
-                        inner,
-                        impl_trait_mode,
-                        inference.as_deref_mut(),
-                    )?,
+                    self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
                 ))
             }
             TypeRef::RawPointer { mutability, inner } => Ok(Ty::raw_pointer(
                 *mutability,
-                self.lower_type_ref_with_mode(inner, impl_trait_mode, inference.as_deref_mut())?,
+                self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
             )),
             TypeRef::Slice(inner) => Ok(Ty::slice(self.lower_type_ref_with_mode(
                 inner,
                 impl_trait_mode,
-                inference.as_deref_mut(),
+                inference,
             )?)),
             TypeRef::Array { inner, len } => Ok(Ty::array(
-                self.lower_type_ref_with_mode(inner, impl_trait_mode, inference.as_deref_mut())?,
+                self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
                 self.lower_const(len.as_ref().map(rg_item_tree::ConstExpr::as_str))?,
             )),
             TypeRef::FnPointer { params, ret } => Ok(Ty::fn_pointer(
                 params
                     .iter()
-                    .map(|param| {
-                        self.lower_type_ref_with_mode(
-                            param,
-                            impl_trait_mode,
-                            inference.as_deref_mut(),
-                        )
-                    })
+                    .map(|param| self.lower_type_ref_with_mode(param, impl_trait_mode, inference))
                     .collect::<Result<_, _>>()?,
-                self.lower_type_ref_with_mode(ret, impl_trait_mode, inference.as_deref_mut())?,
+                self.lower_type_ref_with_mode(ret, impl_trait_mode, inference)?,
             )),
             TypeRef::ImplTrait(_) if impl_trait_mode == ImplTraitMode::Argument => self
                 .next_argument_impl_trait_param()?

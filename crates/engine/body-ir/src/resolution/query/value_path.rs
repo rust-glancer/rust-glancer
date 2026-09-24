@@ -171,7 +171,7 @@ where
         let args = if let Some(args) = path.last_segment_angle_args() {
             self.context
                 .type_refs(scope)
-                .resolve_generic_args_for(&generics, args, None)?
+                .resolve_generic_args_for(&generics, args)?
         } else {
             Substitution::new().args_for(&generics)
         };

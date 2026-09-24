@@ -41,9 +41,13 @@ pub fn use_it(value: &[u8; 3]) {
             let ty = body
                 .binding_ty(BindingId(binding_idx))
                 .expect("every binding has a persisted type");
-            assert!(!ty.has_var());
+            assert!(!ty.has_source_hole());
         }
-        assert!(body.expr_facts().iter().all(|facts| !facts.ty.has_var()));
+        assert!(
+            body.expr_facts()
+                .iter()
+                .all(|facts| !facts.ty.has_source_hole())
+        );
 
         for (expr_idx, data) in body.exprs().iter().enumerate() {
             let expr = ExprId(expr_idx);
@@ -66,6 +70,6 @@ pub fn use_it(value: &[u8; 3]) {
             GenericArg::Lifetime(_),
             GenericArg::Type(ty),
             GenericArg::Const(ConstValue::Scalar(3)),
-        ] if !ty.has_var()
+        ] if !ty.has_source_hole()
     ));
 }

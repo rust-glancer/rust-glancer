@@ -94,7 +94,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(ty_context);
         let item_paths = ItemPathQuery::new(self.db, self.db);
@@ -195,7 +196,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db
                 .item_lookup_query(use_site)
                 .context("assemble module associated item lookup")?,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(context);
         let mut candidates = query
@@ -243,7 +245,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         );
         let query = AssociatedItemQuery::new(ty_context);
         let item_paths = ItemPathQuery::new(self.db, self.db);

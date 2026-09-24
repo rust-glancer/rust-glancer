@@ -219,6 +219,7 @@ impl ItemLookupIndex {
                                 .push(trait_ref);
                         }
                     }
+
                     // Associated type completion uses the trait-wide surface above. Named type
                     // projection follows written trait bounds, so it needs no reverse name index.
                     AssocItemId::TypeAlias(_) => {}
@@ -336,7 +337,7 @@ impl ItemLookupIndex {
     }
 }
 
-/// All impls of one trait plus the receiver lanes used by native candidate discovery.
+/// All impls of one trait plus the receiver lanes used by impl discovery.
 ///
 /// For `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, `all` contains
 /// all three declarations, `direct_by_self_head` has primitive and slice entries, and `fallbacks`
@@ -344,7 +345,7 @@ impl ItemLookupIndex {
 /// while still considering the blanket one.
 ///
 /// Nominal direct impls already live in `trait_impls_by_type`, so this value duplicates only
-/// structural and fallback impl identities. The complete list remains necessary for Chalk roots,
+/// structural and fallback impl identities. The complete list remains necessary for trait solver enumeration,
 /// implementation navigation, and unresolved receiver fallbacks.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub(crate) struct IndexedTraitImpls {

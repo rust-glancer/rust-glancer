@@ -12,7 +12,6 @@ use rg_std::UniqueVec;
 
 use crate::{
     AdtTy, GenericArgs, Ty, TyContext,
-    inference::InferenceTable,
     trait_selection::{TraitGoal, TraitSelectionQuery},
 };
 
@@ -53,21 +52,19 @@ where
         let Some((deref_trait, target_name)) = self.canonical_deref_items()? else {
             return Ok(targets);
         };
-        let table = InferenceTable::new();
         let query = TraitSelectionQuery::new(self.context.clone());
         let goal = TraitGoal::new(
             Ty::adt(receiver_ty.clone()),
             deref_trait,
             GenericArgs::empty(),
         );
-        let Some(projection) = query.normalize_assoc_type(&goal, target_name.as_str(), &table)?
-        else {
+        let Some(projection) = query.normalize_assoc_type(&goal, target_name.as_str())? else {
             return Ok(targets);
         };
         if projection.applicability != rg_ir_model::TraitApplicability::Yes {
             return Ok(targets);
         }
-        let target = projection.table.finalize(&projection.ty);
+        let target = projection.ty;
         if target.is_projectable() {
             targets.push(target);
         }

@@ -1,32 +1,31 @@
 //! Coherent inputs for crate-scoped type queries.
 
 use rg_def_map::DefMapSource;
+use rg_ir_model::CrateRef;
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemStoreSource};
+use rg_std::CancellationToken;
 
-use crate::{lookup::ItemPathQuery, trait_selection::TraitSelectionSession};
+use crate::lookup::ItemPathQuery;
 
 /// Shared query environment for type reasoning at one crate use site.
 ///
 /// Path lookup, visible-item lookup, the semantic lookup query, and trait selection all describe
-/// one visibility universe. `TyContext` keeps that unit intact, constructs both item-query views
-/// from the same routing providers, and prevents nested queries from silently replacing the shared
-/// solver session.
+/// one visibility universe. `TyContext` keeps that unit intact and carries cancellation through
+/// nested queries. Solver operations borrow this context and own their inference state separately.
 ///
 /// For example, method lookup may autoderef a receiver and then prove a trait impl for the adjusted
-/// type. Both steps must use the crate where the method is called as their use site; mixing a lookup
-/// query from one crate with a solver session from another would produce a coherent-looking but
-/// invalid result.
+/// type. Both steps must use the crate where the method is called as their use site.
 #[derive(Clone)]
 pub struct TyContext<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     crate_items: CrateItemQuery<'query, D, I>,
     item_lookup: ItemLookupQuery<'query>,
-    trait_selection: TraitSelectionSession,
+    cancellation: CancellationToken,
 }
 
 impl<D, I> rg_std::Cancelable for TyContext<'_, D, I> {
     fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
-        rg_std::Cancelable::check_cancelled(self.trait_selection.cancellation(), checkpoint)
+        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
     }
 }
 
@@ -35,22 +34,18 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    /// Build one type-query environment using the solver session's crate as the use site.
-    ///
-    /// Deriving `CrateItemQuery` from the session is intentional: callers cannot pass a second,
-    /// disagreeing use-site identity alongside it.
     pub fn new(
         def_maps: D,
         items: I,
         item_lookup: ItemLookupQuery<'query>,
-        trait_selection: TraitSelectionSession,
+        use_site: CrateRef,
+        cancellation: CancellationToken,
     ) -> Self {
-        let use_site = trait_selection.use_site();
         Self {
             item_paths: ItemPathQuery::new(def_maps.clone(), items.clone()),
             crate_items: CrateItemQuery::new(def_maps, items, use_site),
             item_lookup,
-            trait_selection,
+            cancellation,
         }
     }
 }
@@ -68,7 +63,7 @@ impl<'query, D, I> TyContext<'query, D, I> {
         &self.item_lookup
     }
 
-    pub fn trait_selection(&self) -> &TraitSelectionSession {
-        &self.trait_selection
+    pub fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
     }
 }

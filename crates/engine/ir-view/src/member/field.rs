@@ -30,7 +30,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         ));
         for field_ref in member_query
             .fields_for_ty(ty.raw())
@@ -67,7 +68,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection_for_body(body),
+            body.crate_ref,
+            self.db.cancellation().clone(),
         ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
             for field_ref in member_query

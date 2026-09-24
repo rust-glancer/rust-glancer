@@ -2,7 +2,7 @@
 //!
 //! Body queries describe the trait declaration surface they need: a named function, a named const,
 //! or a broader completion surface. This query merges current-body and saved declarations, then
-//! asks `ImplMatcher` to consider impls only for those traits. Inherent impls remain receiver-first.
+//! asks `ImplQuery` to consider impls only for those traits. Inherent impls remain receiver-first.
 //!
 //! For `value.render()`, the flow is: discover traits declaring `render`, keep only traits in the
 //! expression's lexical scope, gather current-body and saved impls of those traits, then prove their
@@ -16,7 +16,6 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 use rg_ty::{
     Ty,
-    inference::InferenceTable,
     lookup::{ReceiverFunctionCandidate, ReceiverImplMatches},
 };
 
@@ -24,20 +23,6 @@ use crate::resolution::{
     BodyResolutionContext,
     cache::{BodyLocalInherentItemNames, BodyTraitSurface},
 };
-
-/// Selects which declaration families still need matching for one receiver probe.
-///
-/// Named method lookup probes inherent methods first. If none expose the requested name, its second
-/// probe uses `TraitsOnly`; reopening inherent impls there would repeat work and duplicate the same
-/// candidates. Completion and general associated-item lookup need both families together and use
-/// `InherentAndTraits`.
-#[derive(Clone, Copy)]
-enum ReceiverImplLanes {
-    /// Current-body and saved inherent impls, followed by selected trait impls.
-    InherentAndTraits,
-    /// Only selected trait impls, after an earlier inherent probe has settled its lane.
-    TraitsOnly,
-}
 
 /// Receiver matches visible while resolving the current body.
 ///
@@ -99,7 +84,7 @@ impl BodyReceiverImplMatches {
 /// This query owns the boundary between two sources of declarations: request-local body overlays
 /// and persisted project indexes. It chooses a trait surface, applies Rust's lexical trait scope,
 /// gathers impl candidates from both sources, and gives the result to
-/// `rg_ty::lookup::ImplMatcher` for exact header matching.
+/// `rg_ty::lookup::ImplQuery` for exact header matching.
 pub(crate) struct BodyImplQuery<'context, 'query, D, I> {
     context: &'context BodyResolutionContext<'query, D, I>,
 }
@@ -118,28 +103,9 @@ where
         &self,
         scope: ScopeId,
         receiver_ty: &Ty,
-        table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::AssociatedItems)?;
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            trait_refs.iter().copied(),
-            table,
-            ReceiverImplLanes::InherentAndTraits,
-        )
-    }
-
-    /// Match current-body and saved inherent impls without considering any trait impl.
-    pub(crate) fn inherent_matches_for_receiver(
-        &self,
-        receiver_ty: &Ty,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            UniqueVec::<TraitDefRef>::new(),
-            &InferenceTable::new(),
-            ReceiverImplLanes::InherentAndTraits,
-        )
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
     /// Match current-body overlays and traits declaring one named function.
@@ -148,42 +114,10 @@ where
         scope: ScopeId,
         receiver_ty: &Ty,
         name: &str,
-        table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         let trait_refs =
             self.trait_refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?;
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            trait_refs.iter().copied(),
-            table,
-            ReceiverImplLanes::InherentAndTraits,
-        )
-    }
-
-    /// Match trait extension methods after the inherent lane found no named method.
-    pub(crate) fn trait_matches_for_receiver_with_function_name(
-        &self,
-        scope: ScopeId,
-        receiver_ty: &Ty,
-        name: &str,
-        table: &InferenceTable,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs =
-            self.trait_refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?;
-        if trait_refs.is_empty() {
-            self.context.trait_cache().record_empty_extension_probe();
-            return Ok(BodyReceiverImplMatches {
-                receiver_ty: receiver_ty.clone(),
-                matches: ReceiverImplMatches::default(),
-                local_inherent_item_names: BodyLocalInherentItemNames::default(),
-            });
-        }
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            trait_refs.iter().copied(),
-            table,
-            ReceiverImplLanes::TraitsOnly,
-        )
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
     /// Match current-body overlays and traits declaring one named associated const.
@@ -192,15 +126,9 @@ where
         scope: ScopeId,
         receiver_ty: &Ty,
         name: &str,
-        table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::ConstNamed(name))?;
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            trait_refs.iter().copied(),
-            table,
-            ReceiverImplLanes::InherentAndTraits,
-        )
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
     /// Match current-body overlays and every trait that can expose a function.
@@ -208,15 +136,9 @@ where
         &self,
         scope: ScopeId,
         receiver_ty: &Ty,
-        table: &InferenceTable,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::Functions)?;
-        self.matches_for_receiver_with_traits(
-            receiver_ty,
-            trait_refs.iter().copied(),
-            table,
-            ReceiverImplLanes::InherentAndTraits,
-        )
+        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
     /// Merge body-origin declarations before saved-project declaration indexes.
@@ -225,7 +147,7 @@ where
     /// declare `render`. The combined declaration list is then intersected with the traits visible
     /// at this `scope`. The result still says nothing about `value`'s type; receiver matching starts
     /// only after this name-and-scope filter has selected a small trait universe.
-    fn trait_refs_for_surface(
+    pub(crate) fn trait_refs_for_surface(
         &self,
         scope: ScopeId,
         surface: BodyTraitSurface<'_>,
@@ -295,8 +217,6 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-        table: &InferenceTable,
-        lanes: ReceiverImplLanes,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
         // Type-only paths can omit nominal arguments. Complete them before matching so every item
         // adapter sees the same canonical receiver and the same impl substitution.
@@ -314,7 +234,7 @@ where
         let trait_refs = trait_refs.into_iter().collect::<UniqueVec<_>>();
         let mut trait_impls = UniqueVec::new();
         let mut local_inherent_item_names = BodyLocalInherentItemNames::default();
-        if matches!(lanes, ReceiverImplLanes::InherentAndTraits) {
+        {
             for receiver in receiver_ty.as_adts() {
                 inherent_impls.extend(
                     body_items
@@ -329,25 +249,18 @@ where
         }
         trait_impls.extend(body_items.trait_impls_for_traits(trait_refs.iter().copied())?);
 
-        let matcher = self.context.impl_matcher();
-        let mut matches = matcher.matches_for_receiver_from_impls(
+        let impl_query = self.context.impl_query();
+        let mut matches = impl_query.matches_for_receiver_from_impls(
             &receiver_ty,
             inherent_impls,
             trait_impls,
-            table,
         )?;
 
         // Current impl items replace saved declarations of the same kind and name. The names come
         // from every current impl with the receiver's nominal key, not only impls that match the
         // completed receiver today: an edited header must still hide its stale saved declaration.
-        let saved_matches = match lanes {
-            ReceiverImplLanes::InherentAndTraits => {
-                matcher.matches_for_receiver_with_traits(&receiver_ty, trait_refs, table)?
-            }
-            ReceiverImplLanes::TraitsOnly => {
-                matcher.trait_matches_for_receiver(&receiver_ty, trait_refs, table)?
-            }
-        };
+        let saved_matches =
+            impl_query.matches_for_receiver_with_traits(&receiver_ty, trait_refs)?;
         matches.extend(saved_matches);
         Ok(BodyReceiverImplMatches {
             receiver_ty,

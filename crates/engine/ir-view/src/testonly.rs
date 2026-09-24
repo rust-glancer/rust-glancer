@@ -249,7 +249,7 @@ impl ViewFixture {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
+            Ty::SourceHole(id) => format!("source hole {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }
@@ -462,6 +462,7 @@ impl ViewFixture {
                     trait_data.name
                 )
             }
+
             // TODO: Render enough impl owner detail for snapshots to distinguish distinct impls.
             ItemOwner::Impl(_) => "impl".to_string(),
         }

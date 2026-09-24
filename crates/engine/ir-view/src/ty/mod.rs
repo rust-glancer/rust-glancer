@@ -136,7 +136,7 @@ impl IndexedType {
             | Ty::Primitive(_)
             | Ty::Param(_)
             | Ty::Unknown
-            | Ty::InferVar { .. } => {}
+            | Ty::SourceHole(_) => {}
         }
     }
 

@@ -220,22 +220,41 @@ where
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         let receiver_ty = Ty::adt(ty.clone());
-        let receiver = self
+        // Resolving `Self::Id` inside a bound must not first prove that bound. Discover the alias
+        // using the impl header; ordinary item selection proves predicates after lowering ends.
+        let body_items = self.context.body_local_items();
+        let mut impls = body_items
+            .inherent_impls_for_type(ty.def)?
+            .iter()
+            .copied()
+            .collect::<rg_std::UniqueVec<_>>();
+        if let Ok(saved) = self
             .context
-            .impls()
-            .inherent_matches_for_receiver(&receiver_ty)?;
+            .item_lookup_query()
+            .inherent_impls_for_type(ty.def)
+        {
+            impls.extend(saved);
+        }
         let item_query = self.context.item_query();
-        for impl_match in receiver.matches().inherent() {
-            let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
+        for impl_ref in impls {
+            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
+            if self
+                .context
+                .impl_query()
+                .impl_self_subst_for_impl(impl_ref, &receiver_ty)?
+                .is_none()
+            {
+                continue;
+            }
 
             for item in &impl_data.items {
                 let AssocItemId::TypeAlias(id) = item else {
                     continue;
                 };
                 let alias_ref = TypeAliasRef {
-                    origin: impl_match.impl_ref().origin,
+                    origin: impl_ref.origin,
                     id: *id,
                 };
                 let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {

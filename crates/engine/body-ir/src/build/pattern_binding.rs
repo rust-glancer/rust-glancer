@@ -18,10 +18,7 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::{
-    ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates,
-    trait_selection::TraitSelectionSession,
-};
+use rg_ty::{ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
 use crate::{
@@ -40,7 +37,7 @@ pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
     item_stores: &'query I,
     item_lookup_query: &'query ItemLookupQuery<'query>,
     body_ref: rg_ir_model::BodyRef,
-    trait_selection: &'query TraitSelectionSession,
+    cancellation: &'query rg_std::CancellationToken,
     body: &'body mut LoweredBodyData,
 }
 
@@ -55,14 +52,14 @@ where
         item_lookup_query: &'query ItemLookupQuery<'query>,
         body_ref: rg_ir_model::BodyRef,
         body: &'body mut LoweredBodyData,
-        trait_selection: &'query TraitSelectionSession,
+        cancellation: &'query rg_std::CancellationToken,
     ) -> Self {
         Self {
             def_maps,
             item_stores,
             item_lookup_query,
             body_ref,
-            trait_selection,
+            cancellation,
             body,
         }
     }
@@ -74,7 +71,7 @@ where
             self.body_ref,
             self.body.body(),
             self.item_lookup_query,
-            self.trait_selection.clone(),
+            self.cancellation.clone(),
         )
     }
 
@@ -240,6 +237,7 @@ where
                 // wrappers keeps common cases useful without trying to type-check the expression.
                 self.pending_expr_ty(*inner, active, pending_tys)
             }
+
             // Materialization runs before body inference, so other expression forms have no
             // semantic fact to consult yet.
             _ => Ok(Ty::Unknown),

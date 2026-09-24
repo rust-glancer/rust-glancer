@@ -34,7 +34,7 @@ pub struct CallableSignature {
 }
 
 impl CallableSignature {
-    fn lower_with<'query, D, I, R>(
+    pub(crate) fn lower_with<'query, D, I, R>(
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         function: FunctionRef,
@@ -382,7 +382,7 @@ where
             .map(Some)
     }
 
-    fn trait_header_with(
+    pub(crate) fn trait_header_with(
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         trait_ref: TraitDefRef,
@@ -427,7 +427,7 @@ where
         }))
     }
 
-    fn type_alias_ty_with(
+    pub(crate) fn type_alias_ty_with(
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         alias: TypeAliasRef,
@@ -449,7 +449,7 @@ where
         session.lower_alias(alias, &[]).map(Some)
     }
 
-    fn opaque_bounds_for_owner_with(
+    pub(crate) fn opaque_bounds_for_owner_with(
         item_paths: &ItemPathQuery<'query, D, I>,
         resolver: &R,
         owner: GenericDefRef,
@@ -518,27 +518,6 @@ where
         trait_ref: TraitDefRef,
     ) -> Result<Option<TraitHeader>, D::Error> {
         Self::trait_header_with(item_paths, item_paths, trait_ref)
-    }
-
-    pub(crate) fn function_from(
-        item_paths: &ItemPathQuery<'query, D, I>,
-        function: FunctionRef,
-    ) -> Result<Option<CallableSignature>, D::Error> {
-        CallableSignature::lower_with(item_paths, item_paths, function)
-    }
-
-    pub(crate) fn type_alias_ty_from(
-        item_paths: &ItemPathQuery<'query, D, I>,
-        alias: TypeAliasRef,
-    ) -> Result<Option<Ty>, D::Error> {
-        Self::type_alias_ty_with(item_paths, item_paths, alias)
-    }
-
-    pub(crate) fn opaque_bounds_for_owner_from(
-        item_paths: &ItemPathQuery<'query, D, I>,
-        owner: GenericDefRef,
-    ) -> Result<Vec<(OpaqueTy, Vec<TraitRefLowering>)>, D::Error> {
-        Self::opaque_bounds_for_owner_with(item_paths, item_paths, owner)
     }
 }
 

@@ -7,15 +7,11 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
-use rg_item_tree::LangItem;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
-use super::ImplMatcher;
-use crate::{
-    Clause, Substitution, Ty, inference::InferenceTable, lowering::TypePathResolver,
-    trait_selection::TraitSelection,
-};
+use super::ImplQuery;
+use crate::{Substitution, Ty, solver::SolverScope, trait_selection::TraitSelection};
 
 /// One inherent impl whose canonical `Self` header matched a receiver.
 ///
@@ -44,9 +40,9 @@ impl InherentImplMatch {
 
 /// Applicable inherent and trait impls for one canonical receiver type.
 ///
-/// Inherent matches retain owner substitutions. Trait matches retain the stronger
-/// [`TraitSelection`] result because it also carries the instantiated trait arguments and the
-/// trial inference table. Consumers can therefore adapt the same evidence into methods,
+/// Inherent matches retain owner substitutions. Trait matches retain a [`TraitSelection`]
+/// because it also carries the instantiated trait arguments and how much was proved. Both are
+/// owned results after the trial table has been released. Consumers can adapt them into methods,
 /// associated functions, constants, or completion declarations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ReceiverImplMatches {
@@ -106,21 +102,20 @@ enum ReceiverFunctionSource {
     Trait { selection: TraitSelection },
 }
 
-impl<'query, D, I, R> ImplMatcher<'query, D, I, R>
+impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    R: SolverScope<Error = D::Error>,
 {
     /// Match inherent impls plus an already-discovered set of relevant traits.
     pub fn matches_for_receiver_with_traits(
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-        table: &InferenceTable,
     ) -> Result<ReceiverImplMatches, D::Error> {
         let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
-        matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs, table)?);
+        matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs)?);
         Ok(matches)
     }
 
@@ -133,14 +128,11 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-        table: &InferenceTable,
     ) -> Result<ReceiverImplMatches, D::Error> {
         let mut matches = ReceiverImplMatches::default();
-        matches.traits.extend(self.trait_selections_for_receiver(
-            receiver_ty,
-            trait_refs,
-            table,
-        )?);
+        matches
+            .traits
+            .extend(self.trait_selections_for_receiver(receiver_ty, trait_refs)?);
         Ok(matches)
     }
 
@@ -153,7 +145,7 @@ where
         // owner rejects the result through the shared token before publishing body facts or UI.
         let mut inherent_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             let Ok(candidates) = self
@@ -187,55 +179,10 @@ where
                 | Ty::FnDef(_)
         );
         if has_structural_self_head {
-            // Builtin-shaped inherent impls need stricter predicate handling than indexed nominal
-            // impls. `PointeeSized` has no ordinary impl declarations: rustc provides it for every
-            // type that can occur behind a pointer. Core writes `impl<T: PointeeSized> *const T`
-            // for the main raw-pointer methods, so this is the one predicate we can establish from
-            // compiler identity alone. Other unresolved predicates must not expose items
-            // tentatively.
-            let pointee_sized = self
-                .context
-                .item_lookup()
-                .lang_trait(LangItem::PointeeSized);
             let Ok(candidates) = self.context.item_lookup().structural_inherent_impls() else {
-                return Ok(ReceiverImplMatches::default());
+                return Ok(matches);
             };
-            for impl_ref in candidates {
-                if self.context.trait_selection().cancellation().is_cancelled() {
-                    return Ok(Default::default());
-                }
-                let Some(impl_data) = self.context.item_paths().items().impl_data(impl_ref)? else {
-                    continue;
-                };
-                if impl_data.trait_ref.is_some() {
-                    continue;
-                }
-                let Some(header) = self.impl_header(impl_ref)? else {
-                    continue;
-                };
-                if header.clauses.iter().any(|clause| {
-                    !matches!(
-                        clause,
-                        Clause::Implemented(application)
-                            if Some(application.def) == pointee_sized
-                    )
-                }) {
-                    continue;
-                }
-                let Some((subst, applicability)) = Self::impl_self_subst(&header, receiver_ty)
-                else {
-                    continue;
-                };
-                if applicability != TraitApplicability::Yes {
-                    continue;
-                }
-                let candidate = InherentImplMatch {
-                    impl_ref,
-                    subst,
-                    applicability: TraitApplicability::Yes,
-                };
-                matches.inherent.push(candidate);
-            }
+            matches.extend(self.inherent_matches_for_receiver_from_impls(receiver_ty, candidates)?);
         }
 
         Ok(matches)
@@ -246,30 +193,21 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-        table: &InferenceTable,
     ) -> Result<UniqueVec<TraitSelection>, D::Error> {
-        let receiver_ty = table.resolve_root_var(receiver_ty);
         let mut selections = UniqueVec::new();
 
         for trait_ref in trait_refs {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
-            let Some(candidates) = self.context.trait_selection().trait_impl_candidates_for_ty(
-                self.context.item_lookup(),
-                trait_ref,
-                &receiver_ty,
-            ) else {
-                // `None` means the body-wide work allowance was exhausted. Later traits share the
-                // same allowance, so keep the candidates collected so far instead of repeatedly
-                // asking a tracker that cannot reserve more work.
+            let Some(candidates) =
+                super::trait_impl_candidates(&self.context, trait_ref, receiver_ty)
+            else {
+                // Cancellation leaves discovery incomplete; the request owner rejects it.
                 break;
             };
-            selections.extend(self.trait_selections_for_receiver_from_impls(
-                &receiver_ty,
-                candidates,
-                table,
-            )?);
+            selections
+                .extend(self.trait_selections_for_receiver_from_impls(receiver_ty, candidates)?);
         }
 
         Ok(selections)
@@ -280,16 +218,13 @@ where
         &self,
         receiver_ty: &Ty,
         trait_impls: impl IntoIterator<Item = TraitImplRef>,
-        table: &InferenceTable,
     ) -> Result<UniqueVec<TraitSelection>, D::Error> {
         let mut selections = UniqueVec::new();
         for trait_impl in trait_impls {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
-            let Some(selection) =
-                self.trait_impl_selection_for_ty(trait_impl, receiver_ty, table)?
-            else {
+            let Some(selection) = self.trait_impl_selection_for_ty(trait_impl, receiver_ty)? else {
                 continue;
             };
             selections.push(selection);
@@ -307,17 +242,12 @@ where
         receiver_ty: &Ty,
         inherent_impls: UniqueVec<ImplRef>,
         trait_impls: UniqueVec<TraitImplRef>,
-        table: &InferenceTable,
     ) -> Result<ReceiverImplMatches, D::Error> {
         let mut matches =
             self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
         matches
             .traits
-            .extend(self.trait_selections_for_receiver_from_impls(
-                receiver_ty,
-                trait_impls,
-                table,
-            )?);
+            .extend(self.trait_selections_for_receiver_from_impls(receiver_ty, trait_impls)?);
         Ok(matches)
     }
 
@@ -331,7 +261,7 @@ where
         let mut matches = ReceiverImplMatches::default();
 
         for impl_ref in inherent_impls {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
@@ -340,11 +270,16 @@ where
             if impl_data.trait_ref.is_some() {
                 continue;
             }
-            let Some((subst, applicability)) =
-                self.impl_self_subst_for_impl(impl_ref, receiver_ty)?
+            let Some(selected) = crate::trait_selection::TraitSelectionQuery::with_resolver(
+                self.context.clone(),
+                &self.resolver,
+            )
+            .select_impl(impl_ref, receiver_ty)?
             else {
                 continue;
             };
+            let subst = selected.subst;
+            let applicability = selected.applicability;
             if !applicability.is_applicable() {
                 continue;
             }
@@ -369,14 +304,14 @@ where
         let mut functions = Vec::new();
 
         for impl_match in matches.inherent() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
                 continue;
             };
             for function in impl_data.functions() {
-                if self.context.trait_selection().cancellation().is_cancelled() {
+                if self.context.cancellation().is_cancelled() {
                     return Ok(Default::default());
                 }
                 if let Some(name) = function_name {
@@ -397,7 +332,7 @@ where
         }
 
         for selection in matches.traits() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             let trait_ref = selection.trait_impl.trait_ref;
@@ -437,7 +372,7 @@ where
             };
 
             for function in trait_functions {
-                if self.context.trait_selection().cancellation().is_cancelled() {
+                if self.context.cancellation().is_cancelled() {
                     return Ok(Default::default());
                 }
                 if let Some(name) = function_name {

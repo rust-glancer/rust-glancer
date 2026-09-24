@@ -1,35 +1,13 @@
-//! Bounded trait-impl selection shared by inference and editor queries.
+//! Owned trait-selection and normalization queries over the compiler solver.
 //!
-//! Native matching discovers canonical impl headers that may fit a resolved trait goal. A small
-//! bounded native proof handles concrete impl chains and compiler-known closure facts; Chalk owns
-//! the remaining predicates and associated-type equalities. Keeping discovery, native proof, and
-//! solver fallback as different types prevents exploratory editor candidates from being mistaken
-//! for established semantic facts.
-//!
-//! Canonical crate declarations have a wider reuse boundary than solver state. Their lowered types
-//! can be shared by sessions over the same semantic snapshot, while visible impl indexes, Chalk
-//! forests, body declarations, and inference answers remain owned by the use-site session that
-//! produced them.
+//! Each query lowers durable types into a temporary inference table and freezes the result before
+//! returning. Live body inference uses `solver` directly so its variables survive across operations.
 
-mod candidate;
-mod chalk;
-mod declaration_cache;
 mod goal;
-mod matcher;
-mod native_proof;
-mod projection;
 mod query;
-mod session;
-mod work;
-
-pub(crate) use self::session::CachedImplSelfMatch;
 pub use self::{
-    declaration_cache::TraitSelectionDeclarationCache,
     goal::TraitGoal,
-    projection::AssocProjectionResult,
-    query::{TraitProof, TraitSelection, TraitSelectionQuery},
-    session::TraitSelectionSession,
+    query::{AssocProjectionResult, TraitSelection, TraitSelectionQuery},
 };
-
 #[cfg(test)]
 mod tests;

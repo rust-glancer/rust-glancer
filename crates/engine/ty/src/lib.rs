@@ -2,22 +2,22 @@
 //!
 //! `rg_semantic_ir` owns source-shaped declaration signatures. This crate crosses that syntax
 //! boundary once, producing owner-scoped parameters, full generic argument lists, and semantic
-//! clauses. Inference, impl matching, associated-type projection, and Chalk all consume those same
+//! clauses. Inference, impl matching, associated-type projection, and the solver all consume those same
 //! shapes instead of maintaining their own `TypeRef` lowering rules.
 //!
 //! Shared type shapes and substitutions are available at the crate root. `lowering` interprets
 //! source types and declaration signatures; `lookup` finds declarations by path or receiver type.
-//! `autoderef` adjusts receivers, `inference` tracks temporary variables, and `trait_selection`
-//! proves predicates and normalizes associated types.
+//! `autoderef` adjusts receivers, `solver` owns temporary inference and trait proof, and
+//! `trait_selection` freezes results for editor queries.
 
 pub mod autoderef;
 mod context;
 mod generic_arg;
-pub mod inference;
 pub mod lookup;
 pub mod lowering;
 mod primitive_expr;
 mod profile;
+pub mod solver;
 mod substitution;
 pub mod trait_selection;
 mod ty;
@@ -35,6 +35,6 @@ pub use self::{
     substitution::Substitution,
     ty::{
         AdtTy, AliasTy, ClosureTy, ClosureTyId, ExpectedAdtTyExt, ExpectedTyExt, FnDefTy, OpaqueTy,
-        ProjectionTy, Ty,
+        ProjectionTy, SourceTypeHole, Ty,
     },
 };

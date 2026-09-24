@@ -41,7 +41,7 @@ where
         // A method's `self` parameter needs the complete impl type. In particular,
         // `impl<T> Wrapper<T>` must produce `Wrapper<T>`, not a bare `Wrapper` identity.
         let mut self_tys = ExpectedUnique::new();
-        if let Some(header) = self.context.impl_matcher().impl_header(impl_ref)? {
+        if let Some(header) = self.context.impl_query().impl_header(impl_ref)? {
             for ty in header.self_ty.as_adts() {
                 if impl_data.resolved_self_ty.is(&ty.def) {
                     self_tys.push(ty.clone());

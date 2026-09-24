@@ -84,7 +84,7 @@ where
     }
 
     /// Return body-local impls for already-selected traits in one store pass.
-    pub(super) fn trait_impls_for_traits(
+    pub(crate) fn trait_impls_for_traits(
         &self,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
     ) -> Result<impl Iterator<Item = TraitImplRef> + '_, PackageStoreError> {

@@ -15,10 +15,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use rg_ir_model::{ScopeId, TraitDefRef};
@@ -121,13 +118,6 @@ impl BodyTraitLookupCache {
         Ok(collected)
     }
 
-    /// Record a named method surface that contained no lexically visible trait.
-    pub(crate) fn record_empty_extension_probe(&self) {
-        self.shared
-            .empty_extension_probes
-            .fetch_add(1, Ordering::Relaxed);
-    }
-
     #[cfg(test)]
     fn stats(&self) -> (usize, usize, usize, usize) {
         let state = self
@@ -148,8 +138,6 @@ impl BodyTraitLookupCache {
 struct BodyTraitLookupCacheShared {
     /// Low-frequency scope and declaration results, plus their batched profiling counters.
     state: Mutex<BodyTraitLookupCacheState>,
-    /// A hot-path counter kept outside the mutex and flushed when the body cache is dropped.
-    empty_extension_probes: AtomicUsize,
 }
 
 impl Drop for BodyTraitLookupCacheShared {
@@ -169,11 +157,6 @@ impl Drop for BodyTraitLookupCacheShared {
         }
         if state.surface_misses != 0 {
             crate::profile::metric::TRAIT_SURFACE_CACHE_MISSES.add(state.surface_misses as u64);
-        }
-        let empty_extension_probes = self.empty_extension_probes.load(Ordering::Relaxed);
-        if empty_extension_probes != 0 {
-            crate::profile::metric::EMPTY_TRAIT_EXTENSION_SURFACES
-                .add(empty_extension_probes as u64);
         }
     }
 }

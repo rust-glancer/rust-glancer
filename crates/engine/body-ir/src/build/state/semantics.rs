@@ -7,7 +7,6 @@ use rg_def_map::DefMapReadTxn;
 use rg_ir_model::DefMapRef;
 use rg_semantic_ir::{ItemLookupQuery, SemanticIrReadTxn, TypePathResolution};
 use rg_std::ExpectedUnique;
-use rg_ty::trait_selection::TraitSelectionSession;
 
 use super::{
     BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
@@ -34,35 +33,24 @@ impl CrateBodyBuildState<'_> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
-        trait_selection: &TraitSelectionSession,
         mut checkpoint: impl FnMut(BodySemanticStage) -> anyhow::Result<()>,
     ) -> anyhow::Result<BodySemanticTimings> {
         let started = Instant::now();
-        self.resolve_body_local_impl_headers(
-            def_map,
-            semantic_ir,
-            item_lookup_query,
-            trait_selection,
-        )?;
+        self.resolve_body_local_impl_headers(def_map, semantic_ir, item_lookup_query)?;
         let impl_headers = started.elapsed();
         Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers, None);
         checkpoint(BodySemanticStage::ImplHeaders)
             .context("check body work after resolving body-local impl headers")?;
 
         let started = Instant::now();
-        self.materialize_pattern_bindings(
-            def_map,
-            semantic_ir,
-            item_lookup_query,
-            trait_selection,
-        )?;
+        self.materialize_pattern_bindings(def_map, semantic_ir, item_lookup_query)?;
         let pattern_bindings = started.elapsed();
         Self::report_slow_semantic_stage("pattern_bindings", pattern_bindings, None);
         checkpoint(BodySemanticStage::PatternBindings)
             .context("check body work after resolving pattern bindings")?;
 
         let started = Instant::now();
-        self.resolve_bodies(def_map, semantic_ir, item_lookup_query, trait_selection)?;
+        self.resolve_bodies(def_map, semantic_ir, item_lookup_query)?;
         let bodies = started.elapsed();
         Self::report_slow_semantic_stage("bodies", bodies, Some(self.crate_bodies.bodies().len()));
         checkpoint(BodySemanticStage::Bodies).context("check body work after body resolution")?;
@@ -97,7 +85,6 @@ impl CrateBodyBuildState<'_> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
-        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
             rg_std::check_cancel!(self.cancellation, "body impl headers");
@@ -136,7 +123,7 @@ impl CrateBodyBuildState<'_> {
                     body_ref,
                     body,
                     item_lookup_query,
-                    trait_selection.clone(),
+                    self.cancellation.clone(),
                 );
                 let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
@@ -189,7 +176,6 @@ impl CrateBodyBuildState<'_> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
-        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         let source = BodyBuildQuerySource::new(
             def_map,
@@ -208,7 +194,7 @@ impl CrateBodyBuildState<'_> {
                 item_lookup_query,
                 body_ref,
                 body,
-                trait_selection,
+                &self.cancellation,
             )
             .materialize()?;
         }
@@ -223,7 +209,6 @@ impl CrateBodyBuildState<'_> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
-        trait_selection: &TraitSelectionSession,
     ) -> anyhow::Result<()> {
         // Make body inference aware of body-local items.
         let source = BodyBuildQuerySource::new(
@@ -247,7 +232,7 @@ impl CrateBodyBuildState<'_> {
                 item_lookup_query,
                 body_ref,
                 body,
-                trait_selection,
+                &self.cancellation,
             )
             .infer_body()?;
             let elapsed = started.elapsed();

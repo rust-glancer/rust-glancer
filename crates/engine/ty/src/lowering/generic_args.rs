@@ -6,9 +6,7 @@ use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::{
-    ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty, inference::InferenceTable,
-};
+use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty};
 
 impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
 where
@@ -22,13 +20,14 @@ where
     /// are consumed from syntax and omitted positions receive their normal semantic placeholder or
     /// default. Associated bindings belong to `lower_trait_ref`, not this positional list.
     ///
-    /// With an inference table, written type placeholders `_` and omitted function types get live
-    /// variables instead. For `make::<Vec<_>>()`, the inner slot can then learn from the call's use.
+    /// With an inference allocator, written type placeholders `_` and omitted function types get
+    /// source holes that the caller connects to live variables. For `make::<Vec<_>>()`, the inner
+    /// slot can then learn from the call's use without this lowering code owning a solver table.
     pub fn lower_generic_args_for(
         &mut self,
         generics: &rg_semantic_ir::Generics<'_>,
         syntax_args: &[ItemGenericArg],
-        inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<GenericArgs, D::Error> {
         let mut parent_seed = Substitution::new();
         for param in generics.iter().take(generics.parent_len()) {
@@ -51,7 +50,7 @@ where
         syntax_args: &[ItemGenericArg],
         seed: &Substitution,
         impl_trait_mode: ImplTraitMode,
-        mut inference: Option<&mut InferenceTable>,
+        inference: Option<&dyn Fn() -> Ty>,
     ) -> Result<GenericArgs, D::Error> {
         let positional = syntax_args
             .iter()
@@ -85,6 +84,7 @@ where
                     syntax_index += 1;
                     GenericArg::Lifetime(self.lower_lifetime(name)?)
                 }
+
                 // Rust permits omitted lifetime args without shifting following type/const args.
                 (GenericParamRef::Lifetime(_), _) => GenericArg::Lifetime(Lifetime::Erased),
                 (GenericParamRef::Type(_), Some(ItemGenericArg::Type(ty))) => {
@@ -92,7 +92,7 @@ where
                     GenericArg::Type(Box::new(self.lower_type_ref_with_mode(
                         ty,
                         impl_trait_mode,
-                        inference.as_deref_mut(),
+                        inference,
                     )?))
                 }
                 (GenericParamRef::Type(_), Some(ItemGenericArg::FnTraitArgs { params, .. })) => {
@@ -100,13 +100,7 @@ where
                     GenericArg::Type(Box::new(Ty::tuple(
                         params
                             .iter()
-                            .map(|ty| {
-                                self.lower_type_ref_with_mode(
-                                    ty,
-                                    impl_trait_mode,
-                                    inference.as_deref_mut(),
-                                )
-                            })
+                            .map(|ty| self.lower_type_ref_with_mode(ty, impl_trait_mode, inference))
                             .collect::<Result<_, _>>()?,
                     )))
                 }
@@ -127,18 +121,14 @@ where
                     syntax_index += 1;
                     GenericArg::Const(self.lower_const(Some(name.as_str()))?)
                 }
+
                 // Function calls infer omitted type parameters from their arguments and result.
                 // Declaration/type lowering still uses defaults and ordinary unknown placeholders.
                 (GenericParamRef::Type(_), _)
                     if matches!(generics.owner(), GenericDefRef::Function(_))
                         && inference.is_some() =>
                 {
-                    GenericArg::Type(Box::new(
-                        inference
-                            .as_deref_mut()
-                            .expect("call inference table")
-                            .new_type_var(),
-                    ))
+                    GenericArg::Type(Box::new(inference.expect("call inference allocator")()))
                 }
                 (GenericParamRef::Type(_), _)
                     if matches!(

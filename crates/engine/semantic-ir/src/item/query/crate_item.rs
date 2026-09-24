@@ -9,8 +9,8 @@ use crate::{ItemLookupIndex, ItemStore};
 
 /// Item queries that need a Rust language visibility context.
 ///
-/// Raw item refs can be read directly from `ItemStoreQuery`. Lookup-index construction and Chalk
-/// program discovery instead need the set of item stores visible from the crate where lookup
+/// Raw item refs can be read directly from `ItemStoreQuery`. Lookup-index construction and trait solver
+/// declaration discovery instead need the set of item stores visible from the crate where lookup
 /// happens.
 #[derive(Clone)]
 pub struct CrateItemQuery<'item, D, I> {

@@ -1097,7 +1097,7 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
+            Ty::SourceHole(id) => format!("source hole {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

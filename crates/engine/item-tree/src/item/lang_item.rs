@@ -31,6 +31,12 @@ pub enum LangItem {
     FnOnceOutput,
     /// The compiler-provided trait implemented by every possible pointee type.
     PointeeSized,
+    /// Sizedness identities required by the compiler trait solver.
+    Sized,
+    MetaSized,
+    /// Builtin obligations in callable and allocator signatures.
+    Tuple,
+    Destruct,
 }
 
 impl LangItem {
@@ -38,7 +44,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 12] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -47,6 +53,10 @@ impl LangItem {
         Self::FnOnce,
         Self::FnOnceOutput,
         Self::PointeeSized,
+        Self::Sized,
+        Self::MetaSized,
+        Self::Tuple,
+        Self::Destruct,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -67,6 +77,10 @@ impl LangItem {
             "fn_once" => Self::FnOnce,
             "fn_once_output" => Self::FnOnceOutput,
             "pointee_sized" => Self::PointeeSized,
+            "sized" => Self::Sized,
+            "meta_sized" => Self::MetaSized,
+            "tuple_trait" => Self::Tuple,
+            "destruct" => Self::Destruct,
             _ => return None,
         })
     }

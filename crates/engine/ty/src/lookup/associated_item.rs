@@ -41,9 +41,8 @@ use rg_semantic_ir::ItemStoreSource;
 
 use crate::{
     AdtTy, Clause, TraitApplication, Ty, TyContext,
-    inference::InferenceTable,
-    lookup::{ImplMatcher, ItemPathQuery, ReceiverImplMatches},
-    lowering::TypePathResolver,
+    lookup::{ImplQuery, ItemPathQuery, ReceiverImplMatches},
+    solver::SolverScope,
 };
 
 /// Stable declaration identity returned by associated-item discovery.
@@ -57,7 +56,7 @@ pub enum AssociatedItemRef {
 
 /// One declaration together with how confidently its impl matched the receiver.
 ///
-/// A partially known receiver such as `Wrapper<_>` may only give the impl matcher enough
+/// A partially known receiver such as `Wrapper<_>` may only give the impl query enough
 /// information for [`TraitApplicability::Maybe`]. Retaining the applicability lets callers keep a
 /// permissive result without treating it as a proved trait match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -83,7 +82,7 @@ impl AssociatedItemCandidateRef {
 /// `<T as Factory>::` do not grow separate impl-selection behavior in each caller.
 pub struct AssociatedItemQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
     context: TyContext<'query, D, I>,
-    matcher: ImplMatcher<'query, D, I, R>,
+    impls: ImplQuery<'query, D, I, R>,
 }
 
 impl<'query, D, I> AssociatedItemQuery<'query, D, I>
@@ -92,25 +91,25 @@ where
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
-        let matcher = ImplMatcher::new(context.clone());
-        Self { context, matcher }
+        let impls = ImplQuery::new(context.clone());
+        Self { context, impls }
     }
 }
 
 impl<'query, D, I, R> AssociatedItemQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    R: SolverScope<Error = D::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
-        let matcher = ImplMatcher::with_resolver(context.clone(), resolver);
-        Self { context, matcher }
+        let impls = ImplQuery::with_resolver(context.clone(), resolver);
+        Self { context, impls }
     }
 
     /// Find declarations exposed by every applicable impl for one receiver type.
     ///
-    /// Index routing and canonical header matching stay inside [`ImplMatcher`]. A caller therefore
+    /// Index routing and canonical header matching stay inside [`ImplQuery`]. A caller therefore
     /// asks the same question for `Widget`, `u32`, or `[Widget]`; enum variants and item-kind
     /// adaptation remain explicit here.
     pub fn candidates_for_ty(
@@ -123,10 +122,9 @@ where
         let Ok(traits) = self.context.item_lookup().traits_with_associated_items() else {
             return Ok(Vec::new());
         };
-        let table = InferenceTable::new();
         let matches = self
-            .matcher
-            .matches_for_receiver_with_traits(receiver_ty, traits, &table)?;
+            .impls
+            .matches_for_receiver_with_traits(receiver_ty, traits)?;
         self.candidates_for_matches(receiver_ty, &matches)
     }
 
@@ -142,14 +140,14 @@ where
         let mut candidates = Vec::new();
 
         for nominal_ty in receiver_ty.as_adts() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             self.push_enum_variants(&mut candidates, nominal_ty)?;
         }
 
         for impl_match in matches.inherent() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             let Some(data) = self
@@ -169,7 +167,7 @@ where
         }
 
         for selection in matches.traits() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             self.push_trait_hierarchy(
@@ -211,7 +209,7 @@ where
     ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
         for application in applications {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(Default::default());
             }
             self.push_trait_hierarchy(
@@ -242,7 +240,7 @@ where
             return Ok(());
         };
         for index in 0..data.variants.len() {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return Ok(());
             }
             Self::push_candidate(
@@ -279,13 +277,12 @@ where
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
         // the trait's own `Self` excludes unrelated bounds on its other generic parameters.
-        if let Some(header) = self
-            .context
-            .trait_selection()
-            .trait_header_with(self.context.item_paths(), trait_ref)?
-        {
+        if let Some(header) = crate::lowering::SemanticSignatureQuery::trait_header_from(
+            self.context.item_paths(),
+            trait_ref,
+        )? {
             for clause in &header.clauses {
-                if self.context.trait_selection().cancellation().is_cancelled() {
+                if self.context.cancellation().is_cancelled() {
                     return Ok(());
                 }
                 let Clause::Implemented(application) = clause else {
@@ -310,7 +307,7 @@ where
         applicability: TraitApplicability,
     ) {
         for item in items {
-            if self.context.trait_selection().cancellation().is_cancelled() {
+            if self.context.cancellation().is_cancelled() {
                 return;
             }
             let item = match item {

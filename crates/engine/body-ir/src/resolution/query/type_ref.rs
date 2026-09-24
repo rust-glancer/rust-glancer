@@ -7,7 +7,6 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{
     GenericArgs, TraitRefLowering, Ty,
-    inference::InferenceTable,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
 };
 
@@ -34,29 +33,16 @@ where
         lowering.lower(ty, TypeLoweringEnv::new(self.body_owner(), self.anchor()))
     }
 
-    pub(crate) fn resolve_with_inference(
-        &self,
-        ty: &TypeRef,
-        table: &mut InferenceTable,
-    ) -> Result<Ty, PackageStoreError> {
-        let item_paths = self.context.item_paths();
-        let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
-        lowering
-            .session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?
-            .lower_type_ref_with_inference(ty, table)
-    }
-
     pub(crate) fn resolve_generic_args_for(
         &self,
         generics: &rg_semantic_ir::Generics<'_>,
         args: &[ItemGenericArg],
-        inference: Option<&mut InferenceTable>,
     ) -> Result<GenericArgs, PackageStoreError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         let mut session =
             lowering.session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?;
-        session.lower_generic_args_for(generics, args, inference)
+        session.lower_generic_args_for(generics, args, None)
     }
 
     pub(crate) fn resolve_trait_ref(

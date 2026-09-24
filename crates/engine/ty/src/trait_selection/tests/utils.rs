@@ -13,8 +13,8 @@ use rg_def_map::{
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitApplicability, TraitDefRef,
-    TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitDefRef, TraitId,
+    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -30,15 +30,11 @@ use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
-    inference::{InferVarKind, InferenceTable},
-    lookup::ItemPathQuery,
+    AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, SourceTypeHole, Ty,
+    TyContext,
     lowering::SemanticSignatureQuery,
-    trait_selection::{
-        TraitGoal, TraitSelectionQuery, TraitSelectionSession,
-        candidate::TraitCandidate,
-        chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
-    },
+    solver::{self, InferenceTable, Outcome, SourceTypeHoles},
+    trait_selection::TraitGoal,
 };
 
 pub(super) struct TraitSelectionFixture {
@@ -99,95 +95,6 @@ impl TraitSelectionFixture {
                 id: *id,
             })
         })
-    }
-
-    /// Add one dependency impl whose macro-generated `Self` type could not be resolved.
-    ///
-    /// The declaration still names a trait from the main fixture. This mirrors dependencies such
-    /// as `metal`, whose impl is legal for a local generated type but enters the conservative
-    /// receiver fallback lane because that type's spelling is unavailable to semantic lowering.
-    pub(super) fn with_unknown_self_impl_dependency(
-        mut self,
-        dependency: CrateRef,
-        trait_name: &str,
-    ) -> Self {
-        let dependency_origin = DefMapRef::Crate(dependency);
-        let trait_ref = self
-            .trait_ref_by_name(trait_name)
-            .unwrap_or_else(|| panic!("fixture should contain trait `{trait_name}`"));
-        let trait_data = self
-            .store
-            .trait_data(trait_ref.id)
-            .expect("fixture trait should have declaration data");
-
-        // Let the dependency's written trait path resolve to the declaration in the main fixture.
-        // The impl's self type deliberately stays source-level unknown.
-        let mut def_map_builder = DefMapBuilder::new(dependency);
-        let root_module = def_map_builder.alloc_module(ModuleData {
-            name: None,
-            name_span: None,
-            docs: None,
-            user_facing_attrs: Default::default(),
-            visibility: Visibility::Public,
-            parent: None,
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: vec![LocalImplId(0)],
-            imports: Vec::new(),
-            unresolved_imports: Vec::new(),
-            scope: Default::default(),
-            origin: ModuleOrigin::Root { file_id: FileId(1) },
-        });
-        let dependency_module = ModuleRef {
-            origin: dependency_origin,
-            module: root_module,
-        };
-        let mut scope = ModuleScopeBuilder::default();
-        scope.insert_binding(
-            &trait_data.name,
-            Namespace::Types,
-            ScopeBinding::new(
-                DefId::Local(trait_data.local_def),
-                Visibility::Public,
-                ScopeBindingProvenance::Direct,
-            ),
-        );
-        def_map_builder
-            .module_mut(root_module)
-            .expect("dependency root module should exist")
-            .scope = scope.freeze();
-
-        let mut store_builder = ItemStoreBuilder::new(dependency_origin, 0);
-        store_builder.impls.alloc(ImplData {
-            local_impl: LocalImplRef {
-                origin: dependency_origin,
-                local_impl: LocalImplId(0),
-            },
-            source: ItemSource {
-                file_id: FileId(1),
-                kind: ItemSourceKind::Generated(GeneratedItemRef {
-                    source: GeneratedSourceId(1),
-                    item: ItemTreeId(0),
-                }),
-            },
-            owner: dependency_module,
-            generics: GenericParams::default(),
-            trait_ref: Some(path_ty(trait_name, Vec::new())),
-            self_ty: TypeRef::unknown_from_text("macro generated self type"),
-            resolved_self_ty: ExpectedUnique::new(),
-            resolved_trait_ref: resolved_one(trait_ref),
-            items: Vec::new(),
-            is_unsafe: false,
-        });
-        let store = store_builder.build();
-        let lookup_index = ItemLookupIndex::build_from_store(&store, &HashMap::new());
-        self.dependencies.push(TraitSelectionDependency {
-            target: dependency,
-            def_map: def_map_builder.build(),
-            store,
-            lookup_index,
-        });
-        self
     }
 }
 
@@ -426,12 +333,6 @@ pub(super) fn nominal_infer_ty(def: TypeDefRef, args: Vec<GenericArg>) -> Ty {
     })
 }
 
-fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
-    let mut resolved = ExpectedUnique::new();
-    resolved.push(value);
-    resolved
-}
-
 pub(super) fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
     trait_data_with_items(index, name, generics, Vec::new())
 }
@@ -492,20 +393,6 @@ pub(super) fn type_alias_data(
     }
 }
 
-pub(super) fn query(
-    fixture: &TraitSelectionFixture,
-) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    query_with_session(fixture, TraitSelectionSession::new(fixture.target))
-}
-
-pub(super) fn query_with_session(
-    fixture: &TraitSelectionFixture,
-    session: TraitSelectionSession,
-) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    let lookup_query = fixture.lookup_query();
-    TraitSelectionQuery::new(TyContext::new(fixture, fixture, lookup_query, session))
-}
-
 #[derive(Clone, Copy)]
 enum FixtureSection {
     Traits,
@@ -528,6 +415,12 @@ struct TraitSelectionFixtureParser<'a> {
 }
 
 impl<'a> TraitSelectionFixtureParser<'a> {
+    fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
+        let mut resolved = ExpectedUnique::new();
+        resolved.push(value);
+        resolved
+    }
+
     fn new(source: &'a str) -> Self {
         Self {
             source,
@@ -660,7 +553,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             trait_ref: Some(trait_ty),
             self_ty,
             resolved_self_ty,
-            resolved_trait_ref: resolved_one(trait_ref),
+            resolved_trait_ref: Self::resolved_one(trait_ref),
             items: Vec::new(),
             is_unsafe: false,
         };
@@ -689,6 +582,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         } else {
             (ItemOwner::Module(module()), name)
         };
+        let (name, generics) = Self::parse_named_generics(name);
         self.functions.push(FunctionData {
             local_def: None,
             source: dummy_source(),
@@ -699,7 +593,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             visibility: VisibilityLevel::Public,
             docs: None,
             signature: FunctionSignature::from_item(&FunctionItem {
-                generics: GenericParams::default(),
+                generics,
                 params: Vec::new(),
                 ret_ty: Some(parse_type_ref(ret_ty)),
                 qualifiers: FunctionQualifiers::default(),
@@ -762,7 +656,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 .type_refs_by_name
                 .get(note)
                 .unwrap_or_else(|| panic!("unknown resolved self type `{note}`"));
-            return resolved_one(def);
+            return Self::resolved_one(def);
         }
 
         let name = Self::type_ref_path_name(self_ty)
@@ -771,7 +665,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .type_refs_by_name
             .get(&name)
             .unwrap_or_else(|| panic!("unknown impl self type `{name}`"));
-        resolved_one(def)
+        Self::resolved_one(def)
     }
 
     fn local_impl(index: usize) -> LocalImplRef {
@@ -1253,13 +1147,6 @@ impl TraitSelectionCase {
         }
     }
 
-    pub(super) fn candidate_probe(title: &'static str, goal: impl Into<String>) -> Self {
-        Self {
-            title,
-            kind: TraitSelectionCaseKind::CandidateProbe(goal.into()),
-        }
-    }
-
     pub(super) fn normalize_assoc(title: &'static str, goal: impl Into<String>) -> Self {
         Self {
             title,
@@ -1267,29 +1154,14 @@ impl TraitSelectionCase {
         }
     }
 
-    pub(super) fn chalk_normalize_assoc(title: &'static str, goal: impl Into<String>) -> Self {
-        Self {
-            title,
-            kind: TraitSelectionCaseKind::ChalkNormalizeAssoc(goal.into()),
-        }
-    }
-
     fn query_name(&self) -> &'static str {
-        match &self.kind {
-            TraitSelectionCaseKind::Probe(_) | TraitSelectionCaseKind::NormalizeAssoc(_) => {
-                "selection"
-            }
-            TraitSelectionCaseKind::CandidateProbe(_) => "candidate",
-            TraitSelectionCaseKind::ChalkNormalizeAssoc(_) => "chalk",
-        }
+        "selection"
     }
 }
 
 enum TraitSelectionCaseKind {
     Probe(String),
-    CandidateProbe(String),
     NormalizeAssoc(String),
-    ChalkNormalizeAssoc(String),
 }
 
 pub(super) fn check_trait_selection_queries(
@@ -1305,6 +1177,9 @@ pub(super) fn check_trait_selection_queries(
     expect.assert_eq(&actual);
 }
 
+/// Render shared solver operations while their tables are still alive, so cases can inspect
+/// named variables such as `?Item` after selection or normalization. The owned query adapter
+/// finalizes those variables before returning and would hide the relationships being tested.
 struct TraitSelectionSnapshot {
     fixture: TraitSelectionFixture,
     cases: Vec<TraitSelectionCase>,
@@ -1329,15 +1204,7 @@ impl TraitSelectionSnapshot {
 
         match &case.kind {
             TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(goal, dump),
-            TraitSelectionCaseKind::CandidateProbe(goal) => {
-                self.render_candidate_probe_case(goal, dump);
-            }
-            TraitSelectionCaseKind::NormalizeAssoc(goal) => {
-                self.render_normalize_case(goal, false, dump);
-            }
-            TraitSelectionCaseKind::ChalkNormalizeAssoc(goal) => {
-                self.render_normalize_case(goal, true, dump);
-            }
+            TraitSelectionCaseKind::NormalizeAssoc(goal) => self.render_normalize_case(goal, dump),
         }
     }
 
@@ -1348,85 +1215,76 @@ impl TraitSelectionSnapshot {
             "  goal: {}",
             self.render_goal(&parsed.goal, &parsed.var_names)
         )
-        .expect("string writes should not fail");
-
-        let result = query(&self.fixture)
-            .probe(&parsed.goal, &parsed.table)
-            .expect("trait selection fixture query should not fail");
-
-        match result {
-            ExpectedUnique::Empty => {
-                writeln!(dump, "  result: empty").expect("string writes should not fail");
-            }
-            ExpectedUnique::Ambiguous => {
-                writeln!(dump, "  result: ambiguous").expect("string writes should not fail");
-            }
-            ExpectedUnique::One(selection) => {
-                writeln!(dump, "  result: one").expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    impl: impl#{}",
-                    selection.trait_impl.impl_ref.id.0
+        .expect("string write");
+        let context = TyContext::new(
+            &self.fixture,
+            &self.fixture,
+            self.fixture.lookup_query(),
+            self.fixture.target,
+            rg_std::CancellationToken::new(),
+        );
+        solver::SemanticDeclarations::new(&context, context.item_paths())
+            .with_solver(|solver| {
+                let table = InferenceTable::new(solver, Default::default());
+                let holes = SourceTypeHoles::new(&table);
+                for _ in &parsed.vars {
+                    holes.allocate();
+                }
+                let cx = table.interner();
+                let application = solver::TraitApplication {
+                    def: parsed.goal.trait_ref(),
+                    args: holes.lower_args(&parsed.goal.application.args, &[]),
+                };
+                let bindings = parsed
+                    .goal
+                    .associated_types
+                    .iter()
+                    .map(|bound| {
+                        application.associated_type_eq(
+                            cx,
+                            bound.associated_ty,
+                            holes.lower(&bound.ty, &[]),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let candidates = crate::lookup::trait_impl_candidates(
+                    &context,
+                    application.def,
+                    parsed.goal.self_ty(),
                 )
-                .expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    applicability: {}",
-                    Self::render_applicability(selection.applicability)
-                )
-                .expect("string writes should not fail");
-                self.render_named_vars(&parsed.vars, &selection.table, dump);
-            }
-        }
+                .expect("fixture lookup");
+                let selected = table.select_trait_impl(
+                    application,
+                    &bindings,
+                    candidates.into_iter().map(|candidate| candidate.impl_ref),
+                );
+                match selected {
+                    ExpectedUnique::Empty => {
+                        writeln!(dump, "  result: empty").expect("string write")
+                    }
+                    ExpectedUnique::Ambiguous => {
+                        writeln!(dump, "  result: ambiguous").expect("string write")
+                    }
+                    ExpectedUnique::One(selected) => {
+                        writeln!(
+                            dump,
+                            "  result: one\n    impl: impl#{}\n    applicability: {}",
+                            selected.impl_ref.id.0,
+                            if selected.outcome == Outcome::Proven {
+                                "yes"
+                            } else {
+                                "maybe"
+                            }
+                        )
+                        .expect("string write");
+                        self.render_named_vars(&parsed.vars, &holes, &selected.table, dump);
+                    }
+                }
+            })
+            .expect("fixture declarations load");
     }
 
-    fn render_candidate_probe_case(&self, goal: &str, dump: &mut String) {
-        let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_goal(goal);
-        writeln!(
-            dump,
-            "  goal: {}",
-            self.render_goal(&parsed.goal, &parsed.var_names)
-        )
-        .expect("string writes should not fail");
-
-        let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
-        let session = TraitSelectionSession::new(self.fixture.target);
-        let lookup_query = self.fixture.lookup_query();
-        let candidates = TraitCandidate::probe_all(
-            &item_paths,
-            &lookup_query,
-            &session,
-            &parsed.goal,
-            &parsed.table,
-        )
-        .expect("trait candidate fixture query should not fail");
-        match candidates.as_slice() {
-            [] => {
-                writeln!(dump, "  result: empty").expect("string writes should not fail");
-            }
-            [_first, _second, ..] => {
-                writeln!(dump, "  result: ambiguous").expect("string writes should not fail");
-            }
-            [candidate] => {
-                writeln!(dump, "  result: one").expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    impl: impl#{}",
-                    candidate.trait_impl.impl_ref.id.0
-                )
-                .expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    applicability: {}",
-                    Self::render_applicability(candidate.applicability)
-                )
-                .expect("string writes should not fail");
-                self.render_named_vars(&parsed.vars, &candidate.table, dump);
-            }
-        }
-    }
-
-    fn render_normalize_case(&self, goal: &str, chalk_direct: bool, dump: &mut String) {
+    fn render_normalize_case(&self, goal: &str, dump: &mut String) {
         let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_assoc_goal(goal);
         writeln!(
             dump,
@@ -1435,83 +1293,79 @@ impl TraitSelectionSnapshot {
             self.render_trait_path_with_vars(&parsed.goal, &parsed.var_names),
             parsed.assoc_name
         )
-        .expect("string writes should not fail");
-
-        let projection = if chalk_direct {
-            let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
-            let crate_items =
-                CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let session = TraitSelectionSession::new(self.fixture.target);
-            let solver = ChalkTraitSolver::new();
-            let inference_cache = ChalkInferenceCache::new();
-            let lookup_query = self.fixture.lookup_query();
-            let associated_ty = self
-                .fixture
-                .associated_ty_by_name(parsed.goal.trait_ref(), &parsed.assoc_name)
-                .expect("projection fixture should declare the requested associated type");
-            let outcome = solver
-                .normalize_assoc_type(
-                    &item_paths,
-                    &crate_items,
-                    &lookup_query,
-                    &session,
-                    &inference_cache,
-                    &parsed.goal,
-                    associated_ty,
-                    None,
-                    &parsed.table,
-                )
-                .expect("Chalk fixture projection should not fail");
-            match outcome {
-                ChalkOutcome::Proven(projection) | ChalkOutcome::Ambiguous(Some(projection)) => {
-                    Some(projection)
+        .expect("string write");
+        let context = TyContext::new(
+            &self.fixture,
+            &self.fixture,
+            self.fixture.lookup_query(),
+            self.fixture.target,
+            rg_std::CancellationToken::new(),
+        );
+        solver::SemanticDeclarations::new(&context, context.item_paths())
+            .with_solver(|solver| {
+                let table = InferenceTable::new(solver, Default::default());
+                let holes = SourceTypeHoles::new(&table);
+                for _ in &parsed.vars {
+                    holes.allocate();
                 }
-                ChalkOutcome::Ambiguous(None)
-                | ChalkOutcome::NoSolution
-                | ChalkOutcome::Unsupported
-                | ChalkOutcome::Exhausted => None,
-            }
-        } else {
-            query(&self.fixture)
-                .normalize_assoc_type(&parsed.goal, &parsed.assoc_name, &parsed.table)
-                .expect("trait selection fixture projection should not fail")
-        };
-
-        let Some(projection) = projection else {
-            writeln!(dump, "  result: none").expect("string writes should not fail");
-            return;
-        };
-
-        writeln!(dump, "  result: projected").expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    infer: {}",
-            self.render_infer_ty_with_vars(&projection.ty, &parsed.var_names)
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    final: {}",
-            self.render_ty(&projection.table.finalize(&projection.ty))
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    applicability: {}",
-            Self::render_applicability(projection.applicability)
-        )
-        .expect("string writes should not fail");
-        self.render_named_vars(&parsed.vars, &projection.table, dump);
+                let cx = table.interner();
+                let application = solver::TraitApplication {
+                    def: parsed.goal.trait_ref(),
+                    args: holes.lower_args(&parsed.goal.application.args, &[]),
+                };
+                let bindings = parsed
+                    .goal
+                    .associated_types
+                    .iter()
+                    .map(|bound| {
+                        application.associated_type_eq(
+                            cx,
+                            bound.associated_ty,
+                            holes.lower(&bound.ty, &[]),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let associated_ty = context
+                    .item_paths()
+                    .items()
+                    .declared_associated_type_by_name(application.def, &parsed.assoc_name)
+                    .expect("fixture lookup")
+                    .expect("fixture alias");
+                let Some((ty, outcome)) =
+                    table.normalize_assoc_type(application, &bindings, associated_ty)
+                else {
+                    writeln!(dump, "  result: none").expect("string write");
+                    return;
+                };
+                writeln!(
+                    dump,
+                    "  result: projected\n    final: {}\n    applicability: {}",
+                    self.render_ty(&table.finalize(ty)),
+                    if outcome == Outcome::Proven {
+                        "yes"
+                    } else {
+                        "maybe"
+                    }
+                )
+                .expect("string write");
+                self.render_named_vars(&parsed.vars, &holes, &table, dump);
+            })
+            .expect("fixture declarations load");
     }
 
-    fn render_named_vars(&self, vars: &[NamedInferVar], table: &InferenceTable, dump: &mut String) {
+    fn render_named_vars<'s>(
+        &self,
+        vars: &[NamedInferVar],
+        holes: &SourceTypeHoles<'_, 's>,
+        table: &InferenceTable<'s>,
+        dump: &mut String,
+    ) {
         if vars.is_empty() {
             return;
         }
-
         writeln!(dump, "    vars").expect("string writes should not fail");
         for var in vars {
-            let result = self.render_ty(&table.finalize(&var.ty));
+            let result = self.render_ty(&table.finalize(holes.lower(&var.ty, &[])));
             writeln!(dump, "      ?{} = {result}", var.name)
                 .expect("string writes should not fail");
         }
@@ -1622,11 +1476,7 @@ impl TraitSelectionSnapshot {
 
     fn render_infer_ty_with_vars(&self, ty: &Ty, var_names: &HashMap<String, String>) -> String {
         match ty {
-            Ty::InferVar { kind, id } => match kind {
-                InferVarKind::Type => Self::render_named_var("?", id, var_names),
-                InferVarKind::Integer => Self::render_named_var("?int", id, var_names),
-                InferVarKind::Float => Self::render_named_var("?float", id, var_names),
-            },
+            Ty::SourceHole(id) => Self::render_named_var("?", id, var_names),
             Ty::Unit => "()".to_string(),
             Ty::Never => "!".to_string(),
             Ty::Primitive(primitive) => Self::render_primitive(*primitive),
@@ -1770,11 +1620,7 @@ impl TraitSelectionSnapshot {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::InferVar { kind, id } => match kind {
-                InferVarKind::Type => Self::render_named_var("?", id, &HashMap::new()),
-                InferVarKind::Integer => Self::render_named_var("?int", id, &HashMap::new()),
-                InferVarKind::Float => Self::render_named_var("?float", id, &HashMap::new()),
-            },
+            Ty::SourceHole(id) => Self::render_named_var("?", id, &HashMap::new()),
             Ty::Unknown => "_".to_string(),
         }
     }
@@ -1901,14 +1747,6 @@ impl TraitSelectionSnapshot {
         }
     }
 
-    fn render_applicability(applicability: TraitApplicability) -> &'static str {
-        match applicability {
-            TraitApplicability::Yes => "yes",
-            TraitApplicability::Maybe => "maybe",
-            TraitApplicability::No => "no",
-        }
-    }
-
     fn render_primitive(primitive: PrimitiveTy) -> String {
         match primitive {
             PrimitiveTy::Bool => "bool".to_string(),
@@ -1942,7 +1780,7 @@ impl TraitSelectionSnapshot {
 
     fn render_debug_tuple_id(id: &impl Debug) -> String {
         let text = format!("{id:?}");
-        text.strip_prefix("InferVarId(")
+        text.strip_prefix("SourceTypeHole(")
             .and_then(|text| text.strip_suffix(')'))
             .unwrap_or(&text)
             .to_string()
@@ -1951,7 +1789,6 @@ impl TraitSelectionSnapshot {
 
 pub(super) struct ParsedTraitQuery {
     pub(super) goal: TraitGoal,
-    pub(super) table: InferenceTable,
     vars: Vec<NamedInferVar>,
     var_names: HashMap<String, String>,
 }
@@ -1959,7 +1796,6 @@ pub(super) struct ParsedTraitQuery {
 pub(super) struct ParsedAssocQuery {
     pub(super) goal: TraitGoal,
     pub(super) assoc_name: String,
-    pub(super) table: InferenceTable,
     vars: Vec<NamedInferVar>,
     var_names: HashMap<String, String>,
 }
@@ -1971,7 +1807,6 @@ struct NamedInferVar {
 
 pub(super) struct TraitSelectionQueryParser<'a> {
     fixture: &'a TraitSelectionFixture,
-    table: InferenceTable,
     vars: Vec<NamedInferVar>,
     var_by_name: HashMap<String, Ty>,
 }
@@ -1980,7 +1815,6 @@ impl<'a> TraitSelectionQueryParser<'a> {
     pub(super) fn new(fixture: &'a TraitSelectionFixture) -> Self {
         Self {
             fixture,
-            table: InferenceTable::new(),
             vars: Vec::new(),
             var_by_name: HashMap::new(),
         }
@@ -1995,7 +1829,6 @@ impl<'a> TraitSelectionQueryParser<'a> {
         let var_names = self.var_name_map();
         ParsedTraitQuery {
             goal,
-            table: self.table,
             vars: self.vars,
             var_names,
         }
@@ -2021,7 +1854,6 @@ impl<'a> TraitSelectionQueryParser<'a> {
         ParsedAssocQuery {
             goal,
             assoc_name: assoc_name.to_string(),
-            table: self.table,
             vars: self.vars,
             var_names,
         }
@@ -2105,7 +1937,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
             return ty.clone();
         }
 
-        let ty = self.table.new_type_var();
+        let ty = Ty::SourceHole(SourceTypeHole::new(self.vars.len()));
         self.var_by_name.insert(name.to_string(), ty.clone());
         self.vars.push(NamedInferVar {
             name: name.to_string(),
@@ -2118,7 +1950,7 @@ impl<'a> TraitSelectionQueryParser<'a> {
         self.vars
             .iter()
             .filter_map(|var| match &var.ty {
-                Ty::InferVar { id, .. } => Some((
+                Ty::SourceHole(id) => Some((
                     TraitSelectionSnapshot::render_debug_tuple_id(id),
                     var.name.clone(),
                 )),
@@ -2126,4 +1958,30 @@ impl<'a> TraitSelectionQueryParser<'a> {
             })
             .collect()
     }
+}
+
+pub(super) fn prove_fixture_goal(fixture: &TraitSelectionFixture, goal: &str) -> Outcome {
+    let parsed = TraitSelectionQueryParser::new(fixture).parse_goal(goal);
+    let context = TyContext::new(
+        fixture,
+        fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let table = InferenceTable::new(solver, Default::default());
+            let holes = SourceTypeHoles::new(&table);
+            for _ in &parsed.vars {
+                holes.allocate();
+            }
+            let cx = table.interner();
+            table.prove([solver::TraitApplication {
+                def: parsed.goal.trait_ref(),
+                args: holes.lower_args(&parsed.goal.application.args, &[]),
+            }
+            .clause(cx)])
+        })
+        .expect("fixture declarations load")
 }

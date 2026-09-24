@@ -15,7 +15,6 @@ use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_text::{NameInterner, PackageNameInterners};
-use rg_ty::trait_selection::TraitSelectionDeclarationCache;
 
 use super::{
     BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool, lower::LoweredPackageBodies,
@@ -31,8 +30,8 @@ const SLOW_PACKAGE_RESOLUTION: Duration = Duration::from_secs(2);
 ///
 /// Before starting Rayon jobs, give each package mutable access to its own name interner. No two
 /// workers can then touch the same interner, so package resolution needs no extra synchronization.
-/// The jobs also share canonical crate declaration lowering, while keeping their visibility and
-/// solver state inside the corresponding crate session.
+/// The jobs borrow immutable crate declarations. Each body owns its inference state and cache of
+/// lowered declarations, while its crate determines which impls and language items are visible.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn resolve_selected_packages(
     packages: Vec<(PackageSlot, LoweredPackageBodies)>,
@@ -47,7 +46,6 @@ pub(super) fn resolve_selected_packages(
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<()> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
-    let declarations = TraitSelectionDeclarationCache::new();
     let item_lookup_cache = ItemLookupQueryCache::new();
     // Selected builds can be sparse, but resolution may discover nested bodies and lower them,
     // which needs mutable access to the matching package name interner. The builder normalizes
@@ -128,7 +126,6 @@ pub(super) fn resolve_selected_packages(
                             interner,
                             def_map,
                             semantic_ir,
-                            &declarations,
                             &item_lookup_cache,
                             cancellation,
                         )?;
@@ -199,7 +196,6 @@ fn resolve_package(
     interner: &mut NameInterner,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    declarations: &TraitSelectionDeclarationCache,
     item_lookup_cache: &ItemLookupQueryCache,
     cancellation: &rg_std::CancellationToken,
 ) -> anyhow::Result<Vec<(CrateRef, CrateBodies)>> {
@@ -239,7 +235,7 @@ fn resolve_package(
                 interner,
                 cancellation.clone(),
             )
-            .resolve(def_map_txn, semantic_ir, declarations, item_lookup_cache)
+            .resolve(def_map_txn, semantic_ir, item_lookup_cache)
             .map(|bodies| (crate_ref, bodies))
         })
         .collect::<anyhow::Result<Vec<_>>>()?;

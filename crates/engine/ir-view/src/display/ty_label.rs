@@ -149,7 +149,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             },
             // UI surfaces should only see finalized types. If a transient solver variable leaks
             // here, render it like unknown instead of exposing an internal slot identity.
-            Ty::InferVar { .. } | Ty::Unknown => Ok(None),
+            Ty::SourceHole(_) | Ty::Unknown => Ok(None),
         }
     }
 
