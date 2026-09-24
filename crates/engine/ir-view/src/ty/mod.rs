@@ -18,10 +18,8 @@ use rg_ty::{
     AdtTy, AliasTy, GenericArg, Ty,
     autoderef::ReferencePeelingCandidates,
     lookup::ItemPathQuery,
-    lowering::{
-        SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
-        TypePathResolver as _,
-    },
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver as _},
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -131,12 +129,7 @@ impl IndexedType {
                 Self::collect_nominal_type_defs(&closure.ret, type_defs);
             }
             Ty::FnDef(function) => Self::collect_nominal_type_args(&function.args, type_defs),
-            Ty::Unit
-            | Ty::Never
-            | Ty::Primitive(_)
-            | Ty::Param(_)
-            | Ty::Unknown
-            | Ty::SourceHole(_) => {}
+            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => {}
         }
     }
 

@@ -3,46 +3,57 @@
 //! The provider reuses Glancer's lowering and lookup. Solver callbacks are infallible, so the
 //! provider retains source errors for the enclosing operation to return to its caller.
 
-use std::sync::{Arc, Mutex};
+mod stored;
 
-use rg_ir_model::{GenericParamRef, ImplRef, TraitDefRef, TypeDefRef};
-use rg_std::UniqueVec;
+use std::{
+    cell::{Cell, RefCell},
+    sync::{Arc, Mutex},
+};
+
+use rg_def_map::DefMapSource;
+use rg_ir_model::{
+    AssocItemId, DefMapRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, TraitDefRef,
+    TypeAliasRef, TypeDefId, TypeDefRef,
+};
+use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_std::{Cancelable, UniqueVec};
 use rustc_type_ir::{
+    ClauseKind,
     data_structures::HashMap,
+    inherent::IntoKind as _,
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
 
-use super::{DefId, types::AdtDef};
+use self::stored::StoredDeclaration;
+use super::{
+    CallableSignature, Clause, DefId, ImplHeader, InferenceSubstitution, List, ProjectionTy,
+    Solver, SolverInterner, SolverStorage, Ty, profile::SolverProfile, types::AdtDef,
+};
+use crate::{
+    TyContext,
+    lookup::{ItemPathQuery, trait_impl_candidates},
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum LangItem {
-    Trait(SolverTraitLangItem),
-    Projection(SolverProjectionLangItem),
-    Adt(SolverAdtLangItem),
-}
-
-/// The parts of a source declaration that the solver can ask about.
-///
-/// These types still use Glancer's owned representation. For example, a function's `T` is a
-/// generic parameter here; each call gets its own inference variable when it is instantiated.
-/// That lets several solver operations share a declaration without sharing their answers.
-pub(crate) struct Declaration {
+/// A declaration template in this operation's working types. Its parameters are replaced only
+/// when a caller instantiates it; the template itself never contains call-owned variables.
+pub(crate) struct Declaration<'s> {
     pub name: String,
     pub generics: Vec<GenericParamRef>,
     pub parent_count: usize,
     pub parent: Option<DefId>,
     // Requirements on using the item, such as `T: Clone` on `fn copy<T: Clone>(...)`.
-    pub predicates: Vec<crate::Clause>,
+    pub predicates: Vec<Clause<'s>>,
     // Promises about an associated or opaque type, such as `type Item: Clone`.
-    pub bounds: Vec<crate::Clause>,
+    pub bounds: Vec<Clause<'s>>,
     pub lang_item: Option<LangItem>,
-    pub kind: DeclarationKind,
+    pub kind: DeclarationKind<'s>,
 }
 
-pub(crate) enum DeclarationKind {
+pub(crate) enum DeclarationKind<'s> {
     Adt {
         data: AdtDef,
-        fields: Vec<crate::Ty>,
+        fields: Vec<Ty<'s>>,
     },
     Trait {
         is_auto: bool,
@@ -50,11 +61,11 @@ pub(crate) enum DeclarationKind {
         associated_types: Vec<DefId>,
     },
     Impl {
-        header: crate::lowering::ImplHeader,
+        header: ImplHeader<'s>,
         associated_types: Vec<(String, DefId)>,
     },
-    Function(crate::lowering::CallableSignature),
-    Alias(Option<crate::Ty>),
+    Function(CallableSignature<'s>),
+    Alias(Option<Ty<'s>>),
     Opaque,
     Unavailable,
 }
@@ -64,8 +75,15 @@ pub(crate) struct DeclarationGenerics {
     pub parent_count: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum LangItem {
+    Trait(SolverTraitLangItem),
+    Projection(SolverProjectionLangItem),
+    Adt(SolverAdtLangItem),
+}
+
 pub(crate) trait DeclarationProvider {
-    fn declaration(&self, id: DefId) -> Option<Arc<Declaration>>;
+    fn declaration<'s>(&self, cx: SolverInterner<'s>, id: DefId) -> Option<Declaration<'s>>;
     fn generics(&self, id: DefId) -> Option<DeclarationGenerics>;
     fn adt_def(&self, id: TypeDefRef) -> Option<AdtDef>;
     fn impls(&self, trait_id: TraitDefRef, self_ty: Option<crate::Ty>) -> Option<Vec<ImplRef>>;
@@ -73,25 +91,12 @@ pub(crate) trait DeclarationProvider {
     fn is_cancelled(&self) -> bool;
 }
 
-use std::cell::{Cell, RefCell};
-
-use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    AssocItemId, GenericDefRef, ItemOwner, TraitDefRef as TraitRef, TypeAliasRef, TypeDefId,
-};
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
-
-use crate::{
-    TyContext,
-    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
-};
-
 /// Supplies the lexical context needed by solver declarations and standalone editor queries.
 /// Saved item queries have only crate declarations; body queries also expose their local impls
 /// and the generic owner's assumptions.
 /// For example, solving inside `fn f<T: Clone>()` must see `T: Clone` and any impls declared in
 /// a surrounding block, even though neither comes from a crate-wide impl search.
-pub trait SolverScope: crate::lowering::TypePathResolver {
+pub trait SolverScope: TypePathResolver {
     fn local_trait_impls(&self, _trait_ref: TraitDefRef) -> Result<Vec<ImplRef>, Self::Error> {
         Ok(Vec::new())
     }
@@ -121,7 +126,7 @@ impl<R: SolverScope + ?Sized> SolverScope for &R {
     }
 }
 
-impl<'query, D, I> SolverScope for crate::lookup::ItemPathQuery<'query, D, I>
+impl<'query, D, I> SolverScope for ItemPathQuery<'query, D, I>
 where
     D: DefMapSource<Error = I::Error>,
     I: ItemStoreSource<'query>,
@@ -135,24 +140,30 @@ where
 /// than a crate or a process. Compiler types and inference answers never enter this cache.
 #[derive(Clone, Default)]
 pub struct DeclarationCache {
-    entries: Arc<Mutex<HashMap<DefId, Arc<Declaration>>>>,
+    entries: Arc<Mutex<HashMap<DefId, Arc<StoredDeclaration>>>>,
 }
 
 /// Declaration lowering remains tied to the same semantic snapshot and use-site lookup as its
-/// caller. The local map avoids locking on repeated callbacks within one solver operation.
+/// caller. Working templates belong to the interner; this provider bridges source reads and the
+/// optional owned cache shared by separate operations.
 ///
 /// Compiler callbacks ask for declarations as they explore a goal. This provider loads those
 /// declarations on demand, using the same path resolver as the body or editor query. If a read
 /// fails, it saves the error: the compiler's callback API cannot return our storage errors, but
 /// the enclosing `with_solver` call can.
 pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
-    context: &'a TyContext<'query, D, I>,
-    resolver: &'a dyn SolverScope<Error = I::Error>,
-    cache: RefCell<HashMap<DefId, Arc<Declaration>>>,
+    paths: &'a ItemPathQuery<'query, D, I>,
+    resolver: &'a dyn TypePathResolver<Error = I::Error>,
+    // Only operations that evaluate goals need impl discovery and a use-site solver scope.
+    #[allow(clippy::type_complexity)]
+    solving: Option<(
+        &'a TyContext<'query, D, I>,
+        &'a dyn SolverScope<Error = I::Error>,
+    )>,
     shared: Option<&'a DeclarationCache>,
     error: RefCell<Option<I::Error>>,
     cancelled: Cell<bool>,
-    profile: RefCell<super::profile::SolverProfile>,
+    profile: RefCell<SolverProfile>,
 }
 
 impl<'a, 'query, D, I> SemanticDeclarations<'a, 'query, D, I>
@@ -165,10 +176,28 @@ where
         resolver: &'a dyn SolverScope<Error = I::Error>,
     ) -> Self {
         Self {
-            context,
+            paths: context.item_paths(),
             resolver,
-            cache: RefCell::default(),
+            solving: Some((context, resolver)),
             shared: resolver.declaration_cache(),
+            error: RefCell::new(None),
+            cancelled: Cell::new(false),
+            profile: RefCell::default(),
+        }
+    }
+
+    /// Independent source queries need declaration identities and generic metadata, but do
+    /// not search for impls or evaluate goals. They use the same provider and lowering code with
+    /// no use-site solver context. This keeps display queries from building an impl index.
+    pub(crate) fn for_lowering(
+        paths: &'a ItemPathQuery<'query, D, I>,
+        resolver: &'a dyn TypePathResolver<Error = I::Error>,
+    ) -> Self {
+        Self {
+            paths,
+            resolver,
+            solving: None,
+            shared: None,
             error: RefCell::new(None),
             cancelled: Cell::new(false),
             profile: RefCell::default(),
@@ -185,14 +214,19 @@ where
     /// returning, it must turn the answer into owned types or other owned facts. The closure's
     /// lifetime prevents a solver type from escaping into the saved body or an editor result.
     /// Source errors collected by callbacks are returned after the temporary storage is dropped.
-    pub fn with_solver<R>(
+    pub fn with_solver<R>(&self, run: impl for<'s> FnOnce(Solver<'s>) -> R) -> Result<R, I::Error> {
+        self.with_storage(|cx| run(Solver::new(cx)))
+    }
+
+    /// Source-only queries need working type storage without an inference context. Both kinds
+    /// of operation collect callback errors and release their entire working graph here.
+    pub(crate) fn with_storage<R>(
         &self,
-        run: impl for<'s> FnOnce(super::Solver<'s>) -> R,
+        run: impl for<'s> FnOnce(SolverInterner<'s>) -> R,
     ) -> Result<R, I::Error> {
         let result = {
-            let storage = super::SolverStorage::new(self);
-            let solver = super::Solver::new(storage.interner());
-            run(solver)
+            let storage = SolverStorage::new(self);
+            run(storage.interner())
         };
         match self.take_error() {
             Some(error) => Err(error),
@@ -200,8 +234,12 @@ where
         }
     }
 
-    fn load(&self, id: DefId) -> Result<Option<Declaration>, I::Error> {
-        let paths = self.context.item_paths();
+    fn load<'s>(
+        &self,
+        cx: SolverInterner<'s>,
+        id: DefId,
+    ) -> Result<Option<Declaration<'s>>, I::Error> {
+        let paths = self.paths;
         let items = paths.items();
         let Some(owner) = id.generic_owner() else {
             return Ok(None);
@@ -222,11 +260,8 @@ where
                 let Some(data) = items.trait_data(id)? else {
                     return Ok(None);
                 };
-                let Some(header) = crate::lowering::SemanticSignatureQuery::trait_header_with(
-                    paths,
-                    &self.resolver,
-                    id,
-                )?
+                let Some(header) =
+                    TypeLoweringQuery::new(paths, &self.resolver).trait_header(cx, id)?
                 else {
                     return Ok(None);
                 };
@@ -269,7 +304,8 @@ where
                 let Some(data) = items.impl_data(id)? else {
                     return Ok(None);
                 };
-                let Some(header) = crate::lowering::impl_header_with(paths, &self.resolver, id)?
+                let Some(header) =
+                    TypeLoweringQuery::new(paths, &self.resolver).impl_header(cx, id)?
                 else {
                     return Ok(None);
                 };
@@ -299,13 +335,13 @@ where
                 // Declaration anchors still determine ownership; the caller's resolver also
                 // knows the lexical/body overlay needed for paths such as an inherent Self::Id.
                 let Some(signature) =
-                    crate::lowering::CallableSignature::lower_with(paths, &self.resolver, id)?
+                    TypeLoweringQuery::new(paths, &self.resolver).function(cx, id)?
                 else {
                     return Ok(None);
                 };
                 result.name = data.name.to_string();
                 result.parent = Self::parent(id.origin, data.owner);
-                result.predicates = signature.clauses.clone();
+                result.predicates = signature.clauses.to_vec();
                 result.kind = DeclarationKind::Function(signature);
             }
             DefId::TypeAlias(id) => {
@@ -319,51 +355,43 @@ where
                 result.name = data.name.to_string();
                 result.parent = Self::parent(id.origin, data.owner);
                 let lowering = TypeLoweringQuery::new(paths, &self.resolver);
-                let mut lower = lowering.session(TypeLoweringEnv::new(
-                    owner,
-                    TypeLoweringAnchor::Context(context),
-                ))?;
+                let mut lower = lowering.session(
+                    cx,
+                    TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+                )?;
                 result.predicates = lower.lower_clauses()?;
                 if let Some(DefId::Trait(_)) = result.parent {
-                    let subject =
-                        crate::Ty::Alias(crate::AliasTy::Projection(crate::ProjectionTy {
-                            associated_ty: id,
-                            args: crate::Substitution::identity(&generics).args_for(&generics),
-                        }));
+                    let subject = cx.projection(ProjectionTy {
+                        associated_ty: id,
+                        args: InferenceSubstitution::identity(
+                            cx,
+                            generics.iter().map(|p| p.param()),
+                        )
+                        .args_for(cx, generics.iter().map(|p| p.param())),
+                    });
                     for bound in data.signature.bounds() {
                         if let Some(ty) = bound.required_trait_ty()
-                            && let Some(bound) = lower.lower_trait_ref(ty, subject.clone())?
+                            && let Some(bound) = lower.lower_trait_ref(ty, subject)?
                         {
-                            result.bounds.extend(bound.into_clauses());
+                            result.bounds.extend(bound.clauses(cx));
                         }
                     }
                 }
                 result.kind = DeclarationKind::Alias(if data.signature.aliased_ty().is_some() {
-                    crate::lowering::SemanticSignatureQuery::type_alias_ty_with(
-                        paths,
-                        &self.resolver,
-                        id,
-                    )?
+                    lowering.type_alias_ty(cx, id)?
                 } else {
                     None
                 });
             }
             DefId::Opaque(id) => {
-                let opaque_bounds =
-                    crate::lowering::SemanticSignatureQuery::opaque_bounds_for_owner_with(
-                        paths,
-                        &self.resolver,
-                        id.owner,
-                    )?;
+                let opaque_bounds = TypeLoweringQuery::new(paths, &self.resolver)
+                    .opaque_bounds_for_owner(cx, id.owner)?;
                 let Some((_, bounds)) =
                     opaque_bounds.iter().find(|(opaque, _)| opaque.opaque == id)
                 else {
                     return Ok(None);
                 };
-                result.bounds = bounds
-                    .iter()
-                    .flat_map(|b| b.clone().into_clauses())
-                    .collect();
+                result.bounds = bounds.iter().flat_map(|b| b.clauses(cx)).collect();
                 result.kind = DeclarationKind::Opaque;
             }
             DefId::Adt(id) => {
@@ -403,10 +431,13 @@ where
                 };
                 result.name = name.to_string();
                 let lowering = TypeLoweringQuery::new(paths, &self.resolver);
-                let mut lower = lowering.session(TypeLoweringEnv::new(
-                    owner,
-                    TypeLoweringAnchor::Context(TypePathContext::module(module)),
-                ))?;
+                let mut lower = lowering.session(
+                    cx,
+                    TypeLoweringEnv::new(
+                        owner,
+                        TypeLoweringAnchor::Context(TypePathContext::module(module)),
+                    ),
+                )?;
                 result.predicates = lower.lower_clauses()?;
                 let fields = fields
                     .into_iter()
@@ -424,10 +455,10 @@ where
                 result.parent = Self::parent(id.origin, data.owner);
                 if let Some(context) = items.type_path_context_for_owner(id.origin, data.owner)? {
                     result.predicates = TypeLoweringQuery::new(paths, &self.resolver)
-                        .session(TypeLoweringEnv::new(
-                            owner,
-                            TypeLoweringAnchor::Context(context),
-                        ))?
+                        .session(
+                            cx,
+                            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+                        )?
                         .lower_clauses()?;
                 }
             }
@@ -437,22 +468,31 @@ where
 
         // PointeeSized is a tautology in the compiler type system and must not reach its solver
         // assembly. In particular, core uses it on pointer impls without declaring source impls.
-        let pointee_sized = self
-            .context
-            .item_lookup()
-            .lang_trait(rg_item_tree::LangItem::PointeeSized);
-        let retained = |clause: &crate::Clause| !matches!(clause, crate::Clause::Implemented(tr) if Some(tr.def) == pointee_sized);
+        let pointee_sized = self.lang_item(LangItem::Trait(SolverTraitLangItem::PointeeSized));
+        let retained = |clause: &Clause<'s>| {
+            !matches!(
+                clause.kind().skip_binder(),
+                ClauseKind::Trait(tr) if Some(tr.trait_ref.def_id) == pointee_sized
+            )
+        };
         result.predicates.retain(retained);
         result.bounds.retain(retained);
         if let DeclarationKind::Function(signature) = &mut result.kind {
-            signature.clauses.retain(retained);
+            signature.clauses = List::new(
+                cx,
+                &signature
+                    .clauses
+                    .iter()
+                    .filter(retained)
+                    .collect::<Vec<_>>(),
+            );
         }
         Ok(Some(result))
     }
 
-    fn parent(origin: rg_ir_model::DefMapRef, owner: ItemOwner) -> Option<DefId> {
+    fn parent(origin: DefMapRef, owner: ItemOwner) -> Option<DefId> {
         match owner {
-            ItemOwner::Trait(id) => Some(DefId::Trait(TraitRef { origin, id })),
+            ItemOwner::Trait(id) => Some(DefId::Trait(TraitDefRef { origin, id })),
             ItemOwner::Impl(id) => Some(DefId::Impl(ImplRef { origin, id })),
             ItemOwner::Module(_) => None,
         }
@@ -468,16 +508,10 @@ where
         if self.is_cancelled() {
             return None;
         }
-        if let Some(data) = self.cache.borrow().get(&id) {
-            return Some(DeclarationGenerics {
-                params: data.generics.clone(),
-                parent_count: data.parent_count,
-            });
-        }
         let owner = id.generic_owner()?;
         // Parameter identity and order come from syntax-shaped declarations. Reading them must
         // not lower a function's signature or an alias's target through the solver again.
-        let paths = self.context.item_paths();
+        let paths = self.paths;
         let result = (|| {
             if paths.items().semantic_item_view(owner.into())?.is_none() {
                 return Ok(None);
@@ -505,8 +539,7 @@ where
         // Merely naming `Vec<T>` does not require its fields or bounds. Check that the source
         // declaration exists, then leave field lowering to the callbacks that need field types.
         match self
-            .context
-            .item_paths()
+            .paths
             .items()
             .semantic_item_view(GenericDefRef::TypeDef(id).into())
         {
@@ -519,41 +552,40 @@ where
         }
     }
 
-    fn declaration(&self, id: DefId) -> Option<Arc<Declaration>> {
+    fn declaration<'s>(&self, cx: SolverInterner<'s>, id: DefId) -> Option<Declaration<'s>> {
         if self.is_cancelled() {
             return None;
         }
-        if let Some(data) = self.cache.borrow().get(&id) {
-            self.profile.borrow_mut().declaration_hits += 1;
-            return Some(data.clone());
-        }
-        if let Some(shared) = self.shared
-            && let Some(data) = shared
+        // Copy the cache handle before importing types. Import can read declaration metadata,
+        // so it must run after the shared-cache lock has been released.
+        let cached = self.shared.and_then(|shared| {
+            shared
                 .entries
                 .lock()
                 .expect("declaration cache lock should not be poisoned")
                 .get(&id)
                 .cloned()
-        {
+        });
+        if let Some(data) = cached {
             self.profile.borrow_mut().shared_declaration_hits += 1;
-            self.cache.borrow_mut().insert(id, data.clone());
-            return Some(data);
+            return Some(data.lower(cx));
         }
 
-        // Lowering may itself select an associated declaration. Keep the shared lock out of
-        // that recursive work, and publish only a complete successful source read.
+        // Never hold the shared lock across lowering: a declaration can name other declarations.
+        // The active interner caches the working result; only the reusable template is exported.
         self.profile.borrow_mut().declaration_loads += 1;
-        match self.load(id) {
+        match self.load(cx, id) {
             Ok(Some(data)) => {
-                let data = Arc::new(data);
-                if let Some(shared) = self.shared {
+                if let Some(shared) = self.shared
+                    && !cx.has_unavailable()
+                {
+                    let stored = Arc::new(StoredDeclaration::raise(cx, &data));
                     shared
                         .entries
                         .lock()
                         .expect("declaration cache lock should not be poisoned")
-                        .insert(id, data.clone());
+                        .insert(id, stored);
                 }
-                self.cache.borrow_mut().insert(id, data.clone());
                 Some(data)
             }
             Ok(None) => None,
@@ -564,13 +596,14 @@ where
         }
     }
 
-    fn impls(&self, trait_id: TraitRef, self_ty: Option<crate::Ty>) -> Option<Vec<ImplRef>> {
+    fn impls(&self, trait_id: TraitDefRef, self_ty: Option<crate::Ty>) -> Option<Vec<ImplRef>> {
         // Keep the source index's outer-shape rejection before lowering impl headers. For
         // example, an unsupported `&dyn Trait` header can lower to Unknown, but its reference
         // syntax still tells us it cannot implement a trait for Vec<T>.
-        let lookup = self.context.item_lookup();
+        let (context, scope) = self.solving?;
+        let lookup = context.item_lookup();
         let impls = match self_ty {
-            Some(ty) => crate::lookup::trait_impl_candidates(self.context, trait_id, &ty),
+            Some(ty) => trait_impl_candidates(context, trait_id, &ty),
             None => lookup
                 .trait_impls_for_trait(trait_id)
                 .ok()
@@ -582,7 +615,7 @@ where
                     .into_iter()
                     .map(|i| i.impl_ref)
                     .collect::<UniqueVec<_>>();
-                match self.resolver.local_trait_impls(trait_id) {
+                match scope.local_trait_impls(trait_id) {
                     Ok(local) => result.extend(local),
                     Err(error) => {
                         *self.error.borrow_mut() = Some(error);
@@ -612,14 +645,14 @@ where
             }
             _ => return None,
         };
-        self.context
-            .item_lookup()
-            .lang_trait(source)
-            .map(DefId::Trait)
+        let (context, _) = self.solving?;
+        context.item_lookup().lang_trait(source).map(DefId::Trait)
     }
 
     fn is_cancelled(&self) -> bool {
         self.cancelled.get()
-            || rg_std::Cancelable::check_cancelled(self.context, "solver declarations").is_err()
+            || self.solving.is_some_and(|(context, _)| {
+                Cancelable::check_cancelled(context, "solver declarations").is_err()
+            })
     }
 }

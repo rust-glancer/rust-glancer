@@ -20,7 +20,7 @@ pub(crate) fn trait_impl_candidates<D, I>(
     let head = match receiver {
         // An unknown receiver must not acquire a type by guessing a source impl. A parameter or
         // projection can still select an impl, but provides no outer shape to narrow the index.
-        Ty::Unknown | Ty::SourceHole(_) => return Some(UniqueVec::new()),
+        Ty::Unknown => return Some(UniqueVec::new()),
         Ty::Param(_) | Ty::Alias(_) => {
             return Some(
                 lookup

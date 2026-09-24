@@ -5,13 +5,16 @@ use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathResolution};
 use rg_std::UniqueVec;
+use rg_text::Name;
+use rustc_type_ir::{ClauseKind, inherent::IntoKind as _};
 
 use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
-use crate::{
-    AssocTypeBinding, Clause, GenericArg, Substitution, TraitApplication, TraitRefLowering, Ty,
+use crate::solver::{
+    AssocTypeBinding, Clause, DefId, InferenceSubstitution as Substitution, InferenceTable,
+    TraitApplication, TraitRefLowering, Ty,
 };
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
@@ -21,18 +24,18 @@ where
     pub fn lower_trait_ref(
         &mut self,
         trait_ty: &TypeRef,
-        self_ty: Ty,
-    ) -> Result<Option<TraitRefLowering>, D::Error> {
+        self_ty: Ty<'s>,
+    ) -> Result<Option<TraitRefLowering<'s>>, D::Error> {
         self.lower_trait_ref_with_mode(trait_ty, self_ty, ImplTraitMode::Opaque, None)
     }
 
     pub(crate) fn lower_trait_ref_with_mode(
         &mut self,
         trait_ty: &TypeRef,
-        self_ty: Ty,
+        self_ty: Ty<'s>,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Option<TraitRefLowering>, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Option<TraitRefLowering<'s>>, D::Error> {
         let TypeRef::Path(path) = trait_ty else {
             return Ok(None);
         };
@@ -79,10 +82,10 @@ where
         &mut self,
         path: &TypePath,
         trait_ref: TraitDefRef,
-        self_ty: Ty,
+        self_ty: Ty<'s>,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<TraitRefLowering, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<TraitRefLowering<'s>, D::Error> {
         let generics = self
             .query
             .item_paths
@@ -92,7 +95,7 @@ where
         if let Some(self_param) = generics.iter().find_map(|param| {
             matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
         }) {
-            seed.push(self_param, GenericArg::Type(Box::new(self_ty)));
+            seed.insert(self_param, self_ty.into());
         }
 
         let syntax_args = path
@@ -136,12 +139,19 @@ where
     /// ignored because this method keeps only clauses whose trait `Self` argument is exactly `ty`.
     pub fn trait_applications_for_type(
         &mut self,
-        ty: &Ty,
-    ) -> Result<UniqueVec<TraitApplication>, D::Error> {
+        ty: Ty<'s>,
+    ) -> Result<UniqueVec<TraitApplication<'s>>, D::Error> {
         let mut applications = UniqueVec::new();
         for clause in self.lower_clauses()? {
-            let Clause::Implemented(application) = clause else {
+            let ClauseKind::Trait(bound) = clause.kind().skip_binder() else {
                 continue;
+            };
+            let DefId::Trait(def) = bound.trait_ref.def_id else {
+                continue;
+            };
+            let application = TraitApplication {
+                def,
+                args: bound.trait_ref.args,
             };
             if application.self_ty() == Some(ty) {
                 applications.push(application);
@@ -151,7 +161,7 @@ where
     }
 
     /// Lower every trait predicate visible from this owner.
-    pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause>, D::Error> {
+    pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause<'s>>, D::Error> {
         let generics = self.query.item_paths.generics().generics(self.owner)?;
         let mut inline_bounds = Vec::new();
         let mut predicate_owners = UniqueVec::new();
@@ -168,7 +178,7 @@ where
                 | GenericParamSource::Const(_)
                 | GenericParamSource::TraitSelf => continue,
             };
-            inline_bounds.push((param_ref.owner, Ty::Param(param_ref), bounds));
+            inline_bounds.push((param_ref.owner, self.param_ty(param_ref), bounds));
         }
         predicate_owners.push(self.owner);
 
@@ -213,16 +223,16 @@ where
 
     fn lower_bound_clauses(
         &mut self,
-        subject: Ty,
+        subject: Ty<'s>,
         bounds: &[TypeBound],
-        clauses: &mut Vec<Clause>,
+        clauses: &mut Vec<Clause<'s>>,
     ) -> Result<(), D::Error> {
         for bound in bounds {
             let Some(trait_ty) = bound.required_trait_ty() else {
                 continue;
             };
-            if let Some(trait_ref) = self.lower_trait_ref(trait_ty, subject.clone())? {
-                clauses.extend(trait_ref.into_clauses());
+            if let Some(trait_ref) = self.lower_trait_ref(trait_ty, subject)? {
+                clauses.extend(trait_ref.clauses(self.cx));
             }
         }
         Ok(())
@@ -230,18 +240,18 @@ where
 
     fn lower_associated_bindings(
         &mut self,
-        application: &TraitApplication,
+        application: &TraitApplication<'s>,
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Vec<AssocTypeBinding>, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Vec<AssocTypeBinding<'s>>, D::Error> {
         let mut bindings = Vec::new();
         for arg in syntax_args {
             let output_name;
             let (name, ty) = match arg {
                 ItemGenericArg::AssocType { name, ty, .. } => (name, ty.as_ref()),
                 ItemGenericArg::FnTraitArgs { ret, .. } => {
-                    output_name = rg_text::Name::new("Output");
+                    output_name = Name::new("Output");
                     (&output_name, Some(ret.as_ref()))
                 }
                 ItemGenericArg::Type(_)

@@ -23,13 +23,15 @@ mod types;
 
 pub(crate) use self::declarations::{Declaration, DeclarationKind, DeclarationProvider};
 pub use self::{
-    conversion::SourceTypeHoles,
     declarations::{DeclarationCache, SemanticDeclarations, SolverScope},
     delegate::{Outcome, Solver},
     infer::InferCtxt,
     inference::{InferenceConflict, InferenceSubstitution, InferenceTable},
     interner::{SolverInterner, SolverStorage},
-    query::{CallableSignature, ImplSelection, TraitApplication},
+    query::{
+        AssocTypeBinding, CallableSignature, ImplHeader, ImplSelection, TraitApplication,
+        TraitRefLowering,
+    },
     shape::{AdtTy, AliasTy, ClosureTy, FnDefTy, InferVarKind, OpaqueTy, ProjectionTy, TyShape},
     types::{
         Clause, Const, DefId, GenericArg, GenericArgs, List, Param, ParamEnv, Predicate, Region,

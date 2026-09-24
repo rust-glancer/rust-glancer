@@ -18,8 +18,9 @@ use rustc_type_ir::{
 };
 
 use super::{
-    Declaration, DeclarationKind, DeclarationProvider,
+    Declaration, DeclarationKind, DeclarationProvider, Solver,
     declarations::LangItem,
+    profile::SolverProfile,
     types::{
         AdtDef, Clause, Const, ConstExpr, DefId, ErrorGuaranteed, ExternalConstraints, GenericArg,
         GenericArgs, Generics, List, Param, ParamEnv, Pattern, Predicate, Region, Safety, Symbol,
@@ -27,12 +28,13 @@ use super::{
     },
 };
 
-// Declaration parameters are stable throughout an operation. Keep their converted forms beside
-// the arena, so repeated compiler callbacks share slices without storing any live solver types
-// in the semantic snapshot. Conversions which report missing information are not cached: each
-// evaluation still needs to observe that failure and discard its speculative answer.
+// Declaration templates and generic metadata are stable throughout an operation. Keep them
+// beside the arena so repeated callbacks reuse working types. Nothing here enters the semantic
+// snapshot. Incomplete reads are not cached: each evaluation must observe the missing prerequisite
+// before it can keep a speculative answer.
 #[derive(Default)]
-struct ConvertedDeclarations<'s> {
+struct WorkingDeclarations<'s> {
+    templates: HashMap<DefId, Arc<Declaration<'s>>>,
     adts: HashMap<DefId, AdtDef>,
     generics: HashMap<DefId, Generics<'s>>,
     impl_traits: HashMap<DefId, ir::TraitRef<SolverInterner<'s>>>,
@@ -62,9 +64,9 @@ pub struct SolverStorage<'s> {
     #[allow(clippy::vec_box)]
     external: RefCell<Vec<Box<ir::solve::ExternalConstraintsData<SolverInterner<'s>>>>>,
     cache: RefCell<ir::search_graph::GlobalCache<SolverInterner<'s>>>,
-    declarations: RefCell<ConvertedDeclarations<'s>>,
+    declarations: RefCell<WorkingDeclarations<'s>>,
     unavailable: Cell<Option<&'static str>>,
-    profile: RefCell<super::profile::SolverProfile>,
+    profile: RefCell<SolverProfile>,
 }
 
 impl<'s> SolverStorage<'s> {
@@ -119,7 +121,7 @@ impl fmt::Debug for SolverInterner<'_> {
 }
 
 impl<'s> SolverInterner<'s> {
-    pub(crate) fn profile(self, record: impl FnOnce(&mut super::profile::SolverProfile)) {
+    pub(crate) fn profile(self, record: impl FnOnce(&mut SolverProfile)) {
         record(&mut self.0.profile.borrow_mut());
     }
 
@@ -156,20 +158,37 @@ impl<'s> SolverInterner<'s> {
         self.0.provider.is_cancelled()
     }
 
-    pub(crate) fn declaration(self, id: DefId) -> Arc<Declaration> {
-        self.0.provider.declaration(id).unwrap_or_else(|| {
-            self.unavailable("missing declaration");
-            Arc::new(Declaration {
-                name: String::new(),
-                generics: Vec::new(),
-                parent_count: 0,
-                parent: None,
-                predicates: Vec::new(),
-                bounds: Vec::new(),
-                lang_item: None,
-                kind: DeclarationKind::Unavailable,
-            })
+    pub(crate) fn declaration(self, id: DefId) -> Arc<Declaration<'s>> {
+        if let Some(data) = self.0.declarations.borrow().templates.get(&id) {
+            self.profile(|p| p.declaration_hits += 1);
+            return data.clone();
+        }
+        if let Some(data) = self.0.provider.declaration(self, id) {
+            let data = Arc::new(data);
+            if !self.has_unavailable() {
+                self.0
+                    .declarations
+                    .borrow_mut()
+                    .templates
+                    .insert(id, data.clone());
+            }
+            return data;
+        }
+        self.unavailable("missing declaration");
+        Arc::new(Declaration {
+            name: String::new(),
+            generics: Vec::new(),
+            parent_count: 0,
+            parent: None,
+            predicates: Vec::new(),
+            bounds: Vec::new(),
+            lang_item: None,
+            kind: DeclarationKind::Unavailable,
         })
+    }
+
+    pub fn params(self, owner: DefId) -> &'s [rg_ir_model::GenericParamRef] {
+        self.generics(owner).params.as_slice()
     }
 
     pub(crate) fn generics(self, id: DefId) -> Generics<'s> {
@@ -195,6 +214,12 @@ impl<'s> SolverInterner<'s> {
                 .insert(id, generics);
         }
         generics
+    }
+
+    /// A named item can be known before any arguments are inferred. Preserve every parameter's
+    /// kind and position without importing the declaration's own parameters into that use site.
+    pub fn unknown_args(self, owner: DefId) -> GenericArgs<'s> {
+        self.complete_args(owner, List::default())
     }
 
     pub(crate) fn complete_args(self, id: DefId, args: GenericArgs<'s>) -> GenericArgs<'s> {
@@ -272,10 +297,7 @@ impl<'s> SolverInterner<'s> {
     pub(crate) fn field_tys(self, id: DefId) -> Vec<Ty<'s>> {
         let d = self.declaration(id);
         match &d.kind {
-            DeclarationKind::Adt { fields, .. } => fields
-                .iter()
-                .map(|ty| self.lower_ty(ty, &d.generics))
-                .collect(),
+            DeclarationKind::Adt { fields, .. } => fields.clone(),
             _ => {
                 self.unavailable("missing ADT fields");
                 Vec::new()
@@ -309,13 +331,7 @@ impl<'s> SolverInterner<'s> {
         }
         let d = self.declaration(id);
         let clauses = if bounds { &d.bounds } else { &d.predicates };
-        let clauses = List::new(
-            self,
-            &clauses
-                .iter()
-                .map(|c| self.lower_clause(c, &d.generics))
-                .collect::<Vec<_>>(),
-        );
+        let clauses = List::new(self, clauses);
         if !self.has_unavailable() {
             self.0
                 .declarations
@@ -482,8 +498,8 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     fn type_of(self, id: DefId) -> ir::EarlyBinder<Self, Ty<'s>> {
         let d = self.declaration(id);
         let ty = match &d.kind {
-            DeclarationKind::Alias(Some(ty)) => self.lower_ty(ty, &d.generics),
-            DeclarationKind::Impl { header, .. } => self.lower_ty(&header.self_ty, &d.generics),
+            DeclarationKind::Alias(Some(ty)) => *ty,
+            DeclarationKind::Impl { header, .. } => header.self_ty,
             DeclarationKind::Adt { data, .. } => {
                 Ty::new_adt(self, *data, GenericArgs::identity_for_item(self, id))
             }
@@ -646,12 +662,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
             self.unavailable("function signature");
             return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
         };
-        let tys = sig
-            .params
-            .iter()
-            .chain([&sig.ret])
-            .map(|t| self.lower_ty(t, &d.generics))
-            .collect::<Vec<_>>();
+        let tys = sig.params.iter().chain([sig.ret]).collect::<Vec<_>>();
         ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig {
             inputs_and_output: List::new(self, &tys),
             fn_sig_kind: ir::FnSigKind::new(
@@ -941,7 +952,11 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         if let DeclarationKind::Impl { header, .. } = &d.kind
             && let Some(tr) = &header.trait_ref
         {
-            let reference = self.lower_trait_ref(&tr.application, &d.generics);
+            let reference = ir::TraitRef::new_from_args(
+                self,
+                DefId::Trait(tr.application.def),
+                self.complete_args(DefId::Trait(tr.application.def), tr.application.args),
+            );
             // Compiler error types deliberately relate to any type for error recovery. Missing
             // source information must not turn that recovery rule into proof of an impl.
             if reference.references_error() {
@@ -1059,7 +1074,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         input: ir::solve::CanonicalInput<Self>,
     ) -> (ir::solve::QueryResult<Self>, Self::Probe) {
         rustc_next_trait_solver::solve::evaluate_root_goal_for_proof_tree_raw_provider::<
-            super::Solver<'s>,
+            Solver<'s>,
             Self,
         >(self, input)
     }

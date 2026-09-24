@@ -35,11 +35,10 @@ where
             if let Some(annotation) = &param.annotation {
                 let annotation = self
                     .context
-                    .type_refs(scope)
-                    .resolve(annotation)
+                    .live()
+                    .type_ref(scope, annotation, self.inference.table())
                     .context("resolve closure parameter")?;
-                self.inference
-                    .constrain_infer_tys(&ty, &self.lower(&annotation));
+                self.inference.constrain_infer_tys(&ty, &annotation);
             }
             if let Some(pat) = param.pat {
                 self.infer_pattern(pat, &ty)
@@ -49,11 +48,11 @@ where
         if let Some(annotation) = ret_ty {
             let annotation = self
                 .context
-                .type_refs(scope)
-                .resolve(annotation)
+                .live()
+                .type_ref(scope, annotation, self.inference.table())
                 .context("resolve closure result")?;
             self.inference
-                .constrain_infer_tys(&signature.ret, &self.lower(&annotation));
+                .constrain_infer_tys(&signature.ret, &annotation);
         }
         self.infer_optional(body, &signature.ret)
             .context("infer closure body")?;

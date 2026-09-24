@@ -23,11 +23,12 @@ use rustc_type_ir::{
 };
 
 use super::{
-    Clause, Const, GenericArg, GenericArgs, List, Outcome, ParamEnv, Predicate, Region, Solver,
-    SolverInterner, Ty,
+    Clause, Const, DefId, GenericArg, GenericArgs, List, Outcome, ParamEnv, Predicate, Region,
+    Solver, SolverInterner, Ty, infer::OpaqueEntries,
 };
 
 type I<'s> = SolverInterner<'s>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InferenceConflict;
 
@@ -52,7 +53,7 @@ struct GoalInputs<'s> {
     // Relating two variables or defining an opaque type can help a goal even if its input types
     // still contain variables. Watch those changes as well as concrete type assignments.
     sub_roots: Vec<ir::TyVid>,
-    opaques: super::infer::OpaqueEntries,
+    opaques: OpaqueEntries,
 }
 
 impl<'s> GoalInputs<'s> {
@@ -491,7 +492,7 @@ impl<'s> InferenceTable<'s> {
 
             fn fold_ty(&mut self, ty: Ty<'s>) -> Ty<'s> {
                 // Interned flags summarize the whole subtree; most ordinary relations have
-                // no source holes, so there is nothing to replace or re-intern.
+                // no unknown components, so there is nothing to replace or re-intern.
                 if !ty.references_error() {
                     return ty;
                 }
@@ -586,13 +587,12 @@ impl<'s> InferenceTable<'s> {
             .collect()
     }
 
-    pub fn params(&self, owner: super::DefId) -> &'s [GenericParamRef] {
-        self.interner().generics(owner).params.as_slice()
+    pub fn params(&self, owner: DefId) -> &'s [GenericParamRef] {
+        self.interner().params(owner)
     }
 
-    pub fn lower(&self, ty: &crate::Ty, owner: super::DefId) -> Ty<'s> {
-        self.interner()
-            .lower_ty(ty, self.interner().generics(owner).params.as_slice())
+    pub fn lower(&self, ty: &crate::Ty, owner: DefId) -> Ty<'s> {
+        self.interner().lower_ty(ty, self.interner().params(owner))
     }
 }
 
@@ -615,6 +615,14 @@ impl<'s> InferenceSubstitution<'s> {
 
     pub fn get(&self, param: GenericParamRef) -> Option<GenericArg<'s>> {
         self.args.get(&param).copied()
+    }
+
+    pub(crate) fn identity(cx: I<'s>, params: impl IntoIterator<Item = GenericParamRef>) -> Self {
+        let mut subst = Self::new();
+        for (index, param) in params.into_iter().enumerate() {
+            subst.insert(param, cx.param_arg(param, index));
+        }
+        subst
     }
 
     pub fn fresh_for(
@@ -640,10 +648,7 @@ impl<'s> InferenceSubstitution<'s> {
             cx,
             &params
                 .into_iter()
-                .map(|p| {
-                    self.get(p)
-                        .expect("substitution covers declaration parameters")
-                })
+                .map(|p| self.get(p).unwrap_or_else(|| cx.unknown_arg(p)))
                 .collect::<Vec<_>>(),
         )
     }

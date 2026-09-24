@@ -3,15 +3,20 @@
 //! These views contain only copied arena handles. They do not own another type tree or variable
 //! table, and inspecting a shape does not normalize it or choose fallback types.
 
+use rg_ir_model::{
+    FunctionRef, GenericParamRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+};
+use rustc_abi::ExternAbi;
 use rustc_type_ir::{
     self as ir, TypeVisitableExt,
     inherent::{GenericArgs as _, IntoKind, Ty as _},
 };
 
 use super::{
-    Const, DefId, GenericArgs, List, Region, SolverInterner, Ty,
-    types::{ErrorGuaranteed, Safety},
+    Const, DefId, GenericArg, GenericArgs, List, Param, Region, SolverInterner, Ty,
+    types::{ErrorGuaranteed, Safety, ValueConst},
 };
+use crate::{ClosureTyId, Mutability, PrimitiveTy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferVarKind {
@@ -22,32 +27,32 @@ pub enum InferVarKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdtTy<'s> {
-    pub def: rg_ir_model::TypeDefRef,
+    pub def: TypeDefRef,
     pub args: GenericArgs<'s>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FnDefTy<'s> {
-    pub def: rg_ir_model::FunctionRef,
+    pub def: FunctionRef,
     pub args: GenericArgs<'s>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClosureTy<'s> {
-    pub id: crate::ClosureTyId,
+    pub id: ClosureTyId,
     pub params: List<'s, Ty<'s>>,
     pub ret: Ty<'s>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProjectionTy<'s> {
-    pub associated_ty: rg_ir_model::TypeAliasRef,
+    pub associated_ty: TypeAliasRef,
     pub args: GenericArgs<'s>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OpaqueTy<'s> {
-    pub opaque: rg_ir_model::OpaqueTyRef,
+    pub opaque: OpaqueTyRef,
     pub args: GenericArgs<'s>,
 }
 
@@ -66,7 +71,7 @@ pub enum AliasTy<'s> {
 pub enum TyShape<'s> {
     Unit,
     Never,
-    Primitive(crate::PrimitiveTy),
+    Primitive(PrimitiveTy),
     Tuple(List<'s, Ty<'s>>),
     Array {
         inner: Ty<'s>,
@@ -75,11 +80,11 @@ pub enum TyShape<'s> {
     Slice(Ty<'s>),
     Reference {
         lifetime: Region<'s>,
-        mutability: crate::Mutability,
+        mutability: Mutability,
         inner: Ty<'s>,
     },
     RawPointer {
-        mutability: crate::Mutability,
+        mutability: Mutability,
         inner: Ty<'s>,
     },
     FnPointer {
@@ -87,7 +92,7 @@ pub enum TyShape<'s> {
         ret: Ty<'s>,
     },
     Adt(AdtTy<'s>),
-    Param(rg_ir_model::TypeParamRef),
+    Param(TypeParamRef),
     Alias(AliasTy<'s>),
     Closure(ClosureTy<'s>),
     FnDef(FnDefTy<'s>),
@@ -104,18 +109,16 @@ impl<'s> Ty<'s> {
             ir::Never => S::Never,
             ir::Tuple(fields) if fields.is_empty() => S::Unit,
             ir::Tuple(fields) => S::Tuple(fields),
-            ir::Bool => S::Primitive(crate::PrimitiveTy::Bool),
-            ir::Char => S::Primitive(crate::PrimitiveTy::Char),
-            ir::Str => S::Primitive(crate::PrimitiveTy::Str),
+            ir::Bool => S::Primitive(PrimitiveTy::Bool),
+            ir::Char => S::Primitive(PrimitiveTy::Char),
+            ir::Str => S::Primitive(PrimitiveTy::Str),
             ir::Int(p) => {
-                S::Primitive(crate::PrimitiveTy::from_name(p.name_str()).expect("integer spelling"))
+                S::Primitive(PrimitiveTy::from_name(p.name_str()).expect("integer spelling"))
             }
             ir::Uint(p) => {
-                S::Primitive(crate::PrimitiveTy::from_name(p.name_str()).expect("integer spelling"))
+                S::Primitive(PrimitiveTy::from_name(p.name_str()).expect("integer spelling"))
             }
-            ir::Float(p) => {
-                crate::PrimitiveTy::from_name(p.name_str()).map_or(S::Unknown, S::Primitive)
-            }
+            ir::Float(p) => PrimitiveTy::from_name(p.name_str()).map_or(S::Unknown, S::Primitive),
             ir::Array(inner, len) => S::Array { inner, len },
             ir::Slice(inner) => S::Slice(inner),
             ir::Ref(lifetime, inner, mutability) => S::Reference {
@@ -144,8 +147,8 @@ impl<'s> Ty<'s> {
                     ret: sig.output(),
                 })
             }
-            ir::Param(super::Param {
-                source: rg_ir_model::GenericParamRef::Type(p),
+            ir::Param(Param {
+                source: GenericParamRef::Type(p),
                 ..
             }) => S::Param(p),
             ir::Alias(alias) => match alias.kind {
@@ -176,7 +179,7 @@ impl<'s> Ty<'s> {
         }
     }
 
-    pub fn reference_inner(self) -> Option<(Self, crate::Mutability)> {
+    pub fn reference_inner(self) -> Option<(Self, Mutability)> {
         match self.shape() {
             TyShape::Reference {
                 inner, mutability, ..
@@ -210,7 +213,7 @@ impl<'s> SolverInterner<'s> {
         Ty::new(self, ir::Never)
     }
 
-    pub fn primitive(self, p: crate::PrimitiveTy) -> Ty<'s> {
+    pub fn primitive(self, p: PrimitiveTy) -> Ty<'s> {
         self.lower_primitive(p)
     }
 
@@ -225,7 +228,7 @@ impl<'s> SolverInterner<'s> {
     pub fn scalar(self, value: u128) -> Const<'s> {
         Const::new(
             self,
-            ir::ConstKind::Value(super::types::ValueConst {
+            ir::ConstKind::Value(ValueConst {
                 ty: Ty::new_usize(self),
                 value,
             }),
@@ -236,20 +239,20 @@ impl<'s> SolverInterner<'s> {
         Ty::new_slice(self, inner)
     }
 
-    pub fn reference(self, mutability: crate::Mutability, inner: Ty<'s>) -> Ty<'s> {
+    pub fn reference(self, mutability: Mutability, inner: Ty<'s>) -> Ty<'s> {
         self.reference_with_lifetime(Region(ir::ReErased), mutability, inner)
     }
 
     pub fn reference_with_lifetime(
         self,
         region: Region<'s>,
-        mutability: crate::Mutability,
+        mutability: Mutability,
         inner: Ty<'s>,
     ) -> Ty<'s> {
         Ty::new_ref(self, region, inner, Self::lower_mutability(mutability))
     }
 
-    pub fn raw_pointer(self, mutability: crate::Mutability, inner: Ty<'s>) -> Ty<'s> {
+    pub fn raw_pointer(self, mutability: Mutability, inner: Ty<'s>) -> Ty<'s> {
         Ty::new_ptr(self, inner, Self::lower_mutability(mutability))
     }
 
@@ -271,15 +274,50 @@ impl<'s> SolverInterner<'s> {
         )
     }
 
-    pub fn fn_def(self, function: rg_ir_model::FunctionRef, args: GenericArgs<'s>) -> Ty<'s> {
+    pub fn opaque(self, opaque: OpaqueTy<'s>) -> Ty<'s> {
+        Ty::new(
+            self,
+            ir::Alias(ir::AliasTy::new_from_args(
+                self,
+                ir::AliasTyKind::Opaque {
+                    def_id: DefId::Opaque(opaque.opaque),
+                },
+                self.complete_args(DefId::Opaque(opaque.opaque), opaque.args),
+            )),
+        )
+    }
+
+    pub(crate) fn param_arg(self, source: GenericParamRef, index: usize) -> GenericArg<'s> {
+        let param = Param {
+            index: index as u32,
+            source,
+        };
+        match source {
+            GenericParamRef::Type(_) => Ty::new(self, ir::Param(param)).into(),
+            GenericParamRef::Lifetime(_) => Region(ir::ReEarlyParam(param)).into(),
+            GenericParamRef::Const(_) => Const::new(self, ir::ConstKind::Param(param)).into(),
+        }
+    }
+
+    pub(crate) fn unknown_arg(self, param: GenericParamRef) -> GenericArg<'s> {
+        match param {
+            GenericParamRef::Type(_) => self.unknown().into(),
+            GenericParamRef::Lifetime(_) => Region(ir::ReErased).into(),
+            GenericParamRef::Const(_) => {
+                Const::new(self, ir::ConstKind::Error(ErrorGuaranteed)).into()
+            }
+        }
+    }
+
+    pub fn fn_def(self, function: FunctionRef, args: GenericArgs<'s>) -> Ty<'s> {
         Ty::new(self, ir::FnDef(DefId::Function(function), args))
     }
 
     pub fn fn_pointer(self, params: &[Ty<'s>], ret: Ty<'s>) -> Ty<'s> {
-        self.function_pointer(params, ret, rustc_abi::ExternAbi::Rust)
+        self.function_pointer(params, ret, ExternAbi::Rust)
     }
 
-    fn function_pointer(self, params: &[Ty<'s>], ret: Ty<'s>, abi: rustc_abi::ExternAbi) -> Ty<'s> {
+    fn function_pointer(self, params: &[Ty<'s>], ret: Ty<'s>, abi: ExternAbi) -> Ty<'s> {
         let tys = params.iter().copied().chain([ret]).collect::<Vec<_>>();
         Ty::new_fn_ptr(
             self,
@@ -290,8 +328,8 @@ impl<'s> SolverInterner<'s> {
         )
     }
 
-    pub fn closure(self, id: crate::ClosureTyId, params: &[Ty<'s>], ret: Ty<'s>) -> Ty<'s> {
-        let sig = self.function_pointer(&[self.tuple(params)], ret, rustc_abi::ExternAbi::RustCall);
+    pub fn closure(self, id: ClosureTyId, params: &[Ty<'s>], ret: Ty<'s>) -> Ty<'s> {
+        let sig = self.function_pointer(&[self.tuple(params)], ret, ExternAbi::RustCall);
         Ty::new_closure(
             self,
             DefId::Closure(id),
@@ -307,7 +345,7 @@ impl<'s> SolverInterner<'s> {
     }
 }
 
-impl<'s> super::GenericArg<'s> {
+impl<'s> GenericArg<'s> {
     pub fn as_ty(self) -> Option<Ty<'s>> {
         match self.0 {
             ir::GenericArgKind::Type(ty) => Some(ty),

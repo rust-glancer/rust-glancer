@@ -10,7 +10,7 @@ use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -147,9 +147,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Some(application) => self.render_trait_impl_projection(projection, application),
                 None => Ok(None),
             },
-            // UI surfaces should only see finalized types. If a transient solver variable leaks
-            // here, render it like unknown instead of exposing an internal slot identity.
-            Ty::SourceHole(_) | Ty::Unknown => Ok(None),
+            Ty::Unknown => Ok(None),
         }
     }
 

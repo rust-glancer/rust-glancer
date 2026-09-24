@@ -5,11 +5,12 @@ use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeParamRef};
 use rg_item_tree::{TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_std::{ExpectedUnique, UniqueVec};
+use rg_text::Name;
 
 use super::{ImplTraitMode, TypeLoweringSession, TypePathResolver};
-use crate::{ProjectionTy, Substitution, TraitApplication, Ty};
+use crate::solver::{InferenceSubstitution as Substitution, ProjectionTy, TraitApplication, Ty};
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
@@ -22,9 +23,9 @@ where
     /// `FnOnce::Output`, so direct-item lookup is not enough.
     pub(crate) fn associated_type_projection(
         &mut self,
-        application: &TraitApplication,
-        name: &rg_text::Name,
-    ) -> Result<Option<ProjectionTy>, D::Error> {
+        application: &TraitApplication<'s>,
+        name: &Name,
+    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
         // Supertrait arguments can refer back to the associated item being searched for. The
         // lineage inside the graph walk cannot see that re-entry because lowering the argument
         // starts a fresh walk, so retain the semantic request across the complete lowering session.
@@ -51,10 +52,10 @@ where
 
     fn associated_type_projection_inner(
         &mut self,
-        application: &TraitApplication,
-        name: &rg_text::Name,
-        lineage: &[rg_ir_model::TraitDefRef],
-    ) -> Result<Option<ProjectionTy>, D::Error> {
+        application: &TraitApplication<'s>,
+        name: &Name,
+        lineage: &[TraitDefRef],
+    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
         if lineage.contains(&application.def) {
             return Ok(None);
         }
@@ -69,7 +70,7 @@ where
         {
             return Ok(Some(ProjectionTy {
                 associated_ty: alias,
-                args: application.args.clone(),
+                args: application.args,
             }));
         }
 
@@ -85,7 +86,8 @@ where
             return Ok(None);
         };
         let anchor = self.anchor_for_owner(owner)?;
-        let application_subst = Substitution::from_args(&generics, &application.args);
+        let application_subst =
+            Substitution::from_args(generics.iter().map(|p| p.param()), application.args);
         let mut next_lineage = lineage.to_vec();
         next_lineage.push(application.def);
 
@@ -96,17 +98,21 @@ where
 
             // Supertrait syntax is written in the declaring trait's generic namespace. Lower it
             // against identity parameters first, then apply the concrete current application.
-            let previous_subst =
-                std::mem::replace(&mut self.subst, Substitution::identity(&generics));
+            let previous_subst = std::mem::replace(
+                &mut self.subst,
+                Substitution::identity(self.cx, generics.iter().map(|p| p.param())),
+            );
             let lowered = self.with_owner_anchor(owner, anchor, |session| {
-                session.lower_trait_ref(trait_ty, Ty::Param(self_param))
+                session.lower_trait_ref(trait_ty, session.param_ty(self_param))
             });
             self.subst = previous_subst;
             let Some(super_trait) = lowered? else {
                 continue;
             };
-            let super_application =
-                application_subst.apply_trait_application(&super_trait.application);
+            let super_application = TraitApplication {
+                def: super_trait.application.def,
+                args: application_subst.apply(self.cx, super_trait.application.args),
+            };
             if let Some(alias) =
                 self.associated_type_projection_inner(&super_application, name, &next_lineage)?
             {
@@ -123,7 +129,7 @@ where
     fn trait_exposes_associated_type(
         &mut self,
         trait_ref: TraitDefRef,
-        name: &rg_text::Name,
+        name: &Name,
     ) -> Result<bool, D::Error> {
         self.trait_exposes_associated_type_inner(trait_ref, name, &[])
     }
@@ -131,7 +137,7 @@ where
     fn trait_exposes_associated_type_inner(
         &mut self,
         trait_ref: TraitDefRef,
-        name: &rg_text::Name,
+        name: &Name,
         lineage: &[TraitDefRef],
     ) -> Result<bool, D::Error> {
         if lineage.contains(&trait_ref) {
@@ -179,9 +185,9 @@ where
     pub(crate) fn param_associated_projection(
         &mut self,
         param: TypeParamRef,
-        self_ty: Ty,
-        assoc_name: &rg_text::Name,
-    ) -> Result<Option<ProjectionTy>, D::Error> {
+        self_ty: Ty<'s>,
+        assoc_name: &Name,
+    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
         if self
             .param_projection_stack
             .iter()
@@ -205,9 +211,9 @@ where
     fn param_associated_projection_inner(
         &mut self,
         param: TypeParamRef,
-        self_ty: Ty,
-        assoc_name: &rg_text::Name,
-    ) -> Result<Option<ProjectionTy>, D::Error> {
+        self_ty: Ty<'s>,
+        assoc_name: &Name,
+    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
         let generics = self.query.item_paths.generics().generics(self.owner)?;
         let mut bound_groups = Vec::new();
         if let Some(candidate) = generics
@@ -289,7 +295,7 @@ where
                     let trait_ref = session.lower_resolved_trait_ref_with_mode(
                         path,
                         trait_def,
-                        self_ty.clone(),
+                        self_ty,
                         ImplTraitMode::Opaque,
                         None,
                     )?;

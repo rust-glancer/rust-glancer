@@ -42,6 +42,7 @@ use rg_semantic_ir::ItemStoreSource;
 use crate::{
     AdtTy, Clause, TraitApplication, Ty, TyContext,
     lookup::{ImplQuery, ItemPathQuery, ReceiverImplMatches},
+    signature::SemanticSignatureQuery,
     solver::SolverScope,
 };
 
@@ -277,10 +278,9 @@ where
 
         // The canonical trait header has already lowered `Self: Super` predicates. Filtering on
         // the trait's own `Self` excludes unrelated bounds on its other generic parameters.
-        if let Some(header) = crate::lowering::SemanticSignatureQuery::trait_header_from(
-            self.context.item_paths(),
-            trait_ref,
-        )? {
+        if let Some(header) =
+            SemanticSignatureQuery::trait_header_from(self.context.item_paths(), trait_ref)?
+        {
             for clause in &header.clauses {
                 if self.context.cancellation().is_cancelled() {
                     return Ok(());

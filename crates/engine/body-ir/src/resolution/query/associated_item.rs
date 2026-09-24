@@ -68,10 +68,23 @@ where
             BodyAssociatedPathPrefix::Type(prefix_ty_ref) => {
                 // A type-shaped prefix may contribute from a nominal receiver, bounds on that
                 // receiver, or the trait declaration named by the prefix.
-                let prefix_ty = lowering.lower(prefix_ty_ref, env.clone())?;
-                let mut session = lowering.session(env)?;
-                let owner_traits = session.trait_applications_for_type(&prefix_ty)?;
-                let direct_trait = session.lower_trait_ref(prefix_ty_ref, prefix_ty.clone())?;
+                let (prefix_ty, owner_traits, direct_trait) = lowering.with_storage(|cx| {
+                    let mut session = lowering.session(cx, env)?;
+                    let prefix_ty = session.lower_type_ref(prefix_ty_ref)?;
+                    let owner_traits = session
+                        .trait_applications_for_type(prefix_ty)?
+                        .into_iter()
+                        .map(|tr| tr.raise(cx))
+                        .collect::<Vec<_>>();
+                    let direct_trait = session
+                        .lower_trait_ref(prefix_ty_ref, prefix_ty)?
+                        .map(|tr| tr.raise(cx));
+                    Ok((
+                        cx.raise_ty(prefix_ty).unwrap_or(Ty::Unknown),
+                        owner_traits,
+                        direct_trait,
+                    ))
+                })?;
 
                 let mut candidates = self.candidates_for_ty(scope, &prefix_ty)?;
                 candidates.extend(self.candidates_for_trait_applications(owner_traits)?);
@@ -83,9 +96,14 @@ where
                 Ok(candidates)
             }
             BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
-                let self_ty = lowering.lower(self_ty, env.clone())?;
-                let mut session = lowering.session(env)?;
-                let Some(trait_ref) = session.lower_trait_ref(trait_ref, self_ty)? else {
+                let trait_ref = lowering.with_storage(|cx| {
+                    let mut session = lowering.session(cx, env)?;
+                    let self_ty = session.lower_type_ref(self_ty)?;
+                    Ok(session
+                        .lower_trait_ref(trait_ref, self_ty)?
+                        .map(|tr| tr.raise(cx)))
+                })?;
+                let Some(trait_ref) = trait_ref else {
                     return Ok(Vec::new());
                 };
                 self.candidates_for_trait_applications([trait_ref.application])
@@ -108,8 +126,13 @@ where
             self.context.body().owner().generic_def(),
             TypeLoweringAnchor::Scope(scope),
         );
-        let mut session = lowering.session(env)?;
-        let Some(trait_ref) = session.lower_trait_ref(trait_ref, Ty::Unknown)? else {
+        let trait_ref = lowering.with_storage(|cx| {
+            Ok(lowering
+                .session(cx, env)?
+                .lower_trait_ref(trait_ref, cx.unknown())?
+                .map(|tr| tr.raise(cx)))
+        })?;
+        let Some(trait_ref) = trait_ref else {
             return Ok(Vec::new());
         };
         self.candidates_for_trait_applications([trait_ref.application])

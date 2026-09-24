@@ -30,10 +30,7 @@ where
             .body
             .owner()
             .function()
-            .map(|function| self.context.signatures().function(function))
-            .transpose()
-            .context("resolve function signature")?
-            .flatten();
+            .and_then(|function| self.cx.function_signature(function));
         // A missing arrow has no body expectation, even though the semantic signature uses unit.
         if let Some(function) = self.body.owner().function()
             && self
@@ -45,14 +42,14 @@ where
         {
             self.return_ty = signature
                 .as_ref()
-                .map(|signature| self.lower(&signature.ret))
+                .map(|signature| signature.ret)
                 .unwrap_or(self.cx.unknown());
         }
         for (index, param) in self.body.function_params().iter().enumerate() {
             let parameter_ty = signature
                 .as_ref()
                 .and_then(|signature| signature.params.get(index))
-                .map(|ty| self.lower(ty));
+                .copied();
             // `self` and incomplete ordinary parameters can have bindings without a pattern.
             // Seed them here, using the position already known from this declaration walk.
             for binding in &param.bindings {
@@ -66,10 +63,9 @@ where
                     *ty
                 } else if let Some(annotation) = &data.annotation {
                     self.context
-                        .type_refs(data.scope)
-                        .resolve(annotation)
-                        .context("resolve parameter binding annotation")
-                        .map(|ty| self.lower(&ty))?
+                        .live()
+                        .type_ref(data.scope, annotation, self.inference.table())
+                        .context("resolve parameter binding annotation")?
                 } else if let BindingKind::SelfParam(kind) = data.kind
                     && data.name.as_deref() == Some("self")
                     && let Some(function) = self.body.owner().function()
@@ -99,10 +95,9 @@ where
                 None => match &param.annotation {
                     Some(annotation) => self
                         .context
-                        .type_refs(self.body.param_scope())
-                        .resolve(annotation)
-                        .context("resolve parameter annotation")
-                        .map(|ty| self.lower(&ty))?,
+                        .live()
+                        .type_ref(self.body.param_scope(), annotation, self.inference.table())
+                        .context("resolve parameter annotation")?,
                     None => self.cx.unknown(),
                 },
             };

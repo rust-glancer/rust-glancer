@@ -95,9 +95,8 @@ where
         // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
         // synthetic syntax as if the user had written it.
         self.context
-            .type_refs(expr_data.scope)
-            .resolve(&ty)
-            .map(|ty| self.lower(&ty))
+            .live()
+            .type_ref(expr_data.scope, &ty, self.inference.table())
     }
 
     fn synthetic_type_path(

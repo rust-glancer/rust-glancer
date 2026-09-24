@@ -1,8 +1,8 @@
-//! Canonical semantic type shapes.
+//! Owned semantic types that can outlive a type operation.
 //!
-//! Item declarations keep source-shaped `TypeRef` values for display and navigation. After the
-//! lowering boundary, type algorithms use only the identities and full argument lists in this
-//! module; they do not compare source text or reinterpret declaration syntax.
+//! Item declarations keep source-shaped `TypeRef` values; lowering and inference use scoped
+//! `solver::Ty` values. Saved facts, shared declaration templates, and independent query results
+//! use these owned shapes, which carry declaration identities but no inference-table state.
 
 use std::fmt;
 
@@ -51,22 +51,11 @@ pub struct ClosureTy {
     pub ret: Box<Ty>,
 }
 
-/// Source lowering can allocate named holes before constructing an interned solver type. The
-/// corresponding scoped allocator owns their meaning; persisted types never contain these tokens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
-pub struct SourceTypeHole(u32);
-
-impl SourceTypeHole {
-    pub(crate) fn new(index: usize) -> Self {
-        Self(index.try_into().expect("source type hole fits u32"))
-    }
-
-    pub(crate) fn index(self) -> usize {
-        self.0 as usize
-    }
-}
-
-/// Owned semantic types shared by indexing and body analysis.
+/// Owned types for saved facts, independent query results, and shared declaration templates.
+///
+/// Inference variables live only in `solver::Ty`. A body exports its learned assignments into
+/// these types at completion; an unanswered variable becomes `Unknown`. Declaration parameters
+/// and projections can remain, because their identities do not depend on an inference table.
 ///
 /// Every identity-carrying variant is self-contained: syntax text is not an equality key, generic
 /// parameters carry their owner, and inherent `Self` is the same `Adt` as its concrete spelling.
@@ -107,11 +96,6 @@ pub enum Ty {
     // of identity even when it consists entirely of unknown or inferred positions.
     FnDef(FnDefTy),
     Unknown,
-    /// Token allocated during source lowering and consumed when that type enters the solver.
-    /// It is not an inference variable and cannot be persisted.
-    SourceHole(
-        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<SourceTypeHole>")] SourceTypeHole,
-    ),
 }
 
 impl Ty {
@@ -222,27 +206,6 @@ impl Ty {
         }
     }
 
-    pub fn has_source_hole(&self) -> bool {
-        match self {
-            Self::SourceHole(_) => true,
-            Self::Tuple(fields) => fields.iter().any(Self::has_source_hole),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.has_source_hole(),
-            Self::FnPointer { params, ret } => {
-                params.iter().any(Self::has_source_hole) || ret.has_source_hole()
-            }
-            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_source_hole),
-            Self::Alias(alias) => alias.has_source_hole(),
-            Self::Closure(closure) => {
-                closure.params.iter().any(Self::has_source_hole) || closure.ret.has_source_hole()
-            }
-            Self::FnDef(function) => function.args.iter().any(GenericArg::has_source_hole),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
-        }
-    }
-
     pub fn has_unknown(&self) -> bool {
         match self {
             Self::Tuple(fields) => fields.iter().any(Self::has_unknown),
@@ -260,11 +223,7 @@ impl Ty {
             }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::SourceHole(_) => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => false,
         }
     }
 
@@ -288,12 +247,7 @@ impl Ty {
                 closure.params.iter().any(Self::has_projection) || closure.ret.has_projection()
             }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_projection),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::SourceHole(_) => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 
@@ -312,18 +266,13 @@ impl Ty {
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_closure),
             Self::Alias(alias) => alias.args().iter().any(GenericArg::has_closure),
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_closure),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::SourceHole(_) => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
-            Self::Unknown | Self::SourceHole(_) => false,
+            Self::Unknown => false,
             Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
             Self::Array { inner, .. }
             | Self::Slice(inner)
@@ -359,12 +308,7 @@ impl Shrink for Ty {
             Self::Alias(alias) => Shrink::shrink_to_fit(alias),
             Self::Closure(closure) => Shrink::shrink_to_fit(closure),
             Self::FnDef(function) => Shrink::shrink_to_fit(function),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::SourceHole(_) => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => {}
         }
     }
 }
@@ -405,10 +349,6 @@ impl AliasTy {
             Self::Projection(alias) => &alias.args,
             Self::Opaque(alias) => &alias.args,
         }
-    }
-
-    fn has_source_hole(&self) -> bool {
-        self.args().iter().any(GenericArg::has_source_hole)
     }
 
     fn has_unknown(&self) -> bool {

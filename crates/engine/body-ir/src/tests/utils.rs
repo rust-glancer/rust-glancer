@@ -13,7 +13,7 @@ use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -1097,7 +1097,6 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::SourceHole(id) => format!("source hole {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

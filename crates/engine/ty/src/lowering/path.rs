@@ -6,9 +6,15 @@ use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathAnchor, TypeR
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathResolution};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::{AdtTy, AliasTy, PrimitiveTy, ProjectionTy, Substitution, TraitApplication, Ty};
+use crate::{
+    PrimitiveTy,
+    solver::{
+        AdtTy, InferenceSubstitution as Substitution, InferenceTable, ProjectionTy,
+        TraitApplication, Ty,
+    },
+};
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
@@ -18,8 +24,8 @@ where
         &mut self,
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Ty, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Ty<'s>, D::Error> {
         if path.anchor.is_some() {
             return self.lower_anchored_type_path(path, impl_trait_mode, inference);
         }
@@ -62,10 +68,12 @@ where
                         .generics(GenericDefRef::Trait(trait_ref))?;
                     let application = TraitApplication {
                         def: trait_ref,
-                        args: self.subst.args_for(&generics),
+                        args: self
+                            .subst
+                            .args_for(self.cx, generics.iter().map(|p| p.param())),
                     };
                     if let Some(projection) = self.associated_type_projection(&application, name)? {
-                        return Ok(Ty::Alias(AliasTy::Projection(projection)));
+                        return Ok(self.cx.projection(projection));
                     }
                 }
 
@@ -75,7 +83,7 @@ where
                 if let Some(projection) =
                     self.param_associated_projection(param, prefix_ty, name)?
                 {
-                    return Ok(Ty::Alias(AliasTy::Projection(projection)));
+                    return Ok(self.cx.projection(projection));
                 }
             }
         }
@@ -84,11 +92,7 @@ where
             && let Some(param) = self.param_by_name(name.as_str())?
             && let GenericParamRef::Type(param) = param
         {
-            return Ok(self
-                .subst
-                .type_param(param)
-                .cloned()
-                .unwrap_or(Ty::Param(param)));
+            return Ok(self.param_ty(param));
         }
 
         // `Self` keeps the owner's generic arguments, including when the type has defaults.
@@ -103,7 +107,7 @@ where
         }
 
         let Some(path_key) = path.as_def_map_path() else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
         let resolution = self
             .query
@@ -132,7 +136,7 @@ where
                     impl_trait_mode,
                     inference,
                 )?;
-                Ok(Ty::adt(AdtTy { def, args }))
+                Ok(self.cx.adt(AdtTy { def, args }))
             }
             TypePathResolution::TypeDef(def) => {
                 let generics = self
@@ -147,17 +151,17 @@ where
                     impl_trait_mode,
                     inference,
                 )?;
-                Ok(Ty::adt(AdtTy { def, args }))
+                Ok(self.cx.adt(AdtTy { def, args }))
             }
             TypePathResolution::TypeAlias(alias) => {
                 self.lower_alias_with_mode(alias, syntax_args, impl_trait_mode, inference)
             }
-            TypePathResolution::Trait(_) => Ok(Ty::Unknown),
+            TypePathResolution::Trait(_) => Ok(self.cx.unknown()),
             TypePathResolution::Unknown => Ok(path
                 .single_name()
                 .and_then(|name| PrimitiveTy::from_name(name.as_str()))
-                .map(Ty::Primitive)
-                .unwrap_or(Ty::Unknown)),
+                .map(|p| self.cx.primitive(p))
+                .unwrap_or(self.cx.unknown())),
         }
     }
 
@@ -165,7 +169,7 @@ where
     ///
     /// In `struct Wrapper<T = u32>`, `Self` means `Wrapper<T>`, including before `T` is known.
     /// An impl supplies its full receiver spelling, as in `impl<T> Wrapper<Vec<T>>`.
-    fn lower_self(&mut self) -> Result<Option<Ty>, D::Error> {
+    fn lower_self(&mut self) -> Result<Option<Ty<'s>>, D::Error> {
         let TypeLoweringAnchor::Context(context) = self.anchor else {
             return Ok(None);
         };
@@ -176,10 +180,14 @@ where
                     .item_paths
                     .generics()
                     .generics(GenericDefRef::TypeDef(def))?;
-                return Ok(Some(Ty::adt(AdtTy {
-                    def,
-                    args: self.subst.args_for(&generics),
-                })));
+                return Ok(Some(
+                    self.cx.adt(AdtTy {
+                        def,
+                        args: self
+                            .subst
+                            .args_for(self.cx, generics.iter().map(|p| p.param())),
+                    }),
+                ));
             }
             Some(SelfTypeOwner::Impl(impl_ref)) => impl_ref,
             // Trait `Self` is a generic parameter and is lowered before owner-type lookup.
@@ -200,13 +208,13 @@ where
         &mut self,
         path: &TypePath,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Ty, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Ty<'s>, D::Error> {
         let Some(anchor) = &path.anchor else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
         let Some(name) = path.segments.last().map(|segment| &segment.name) else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
 
         let projection = match anchor {
@@ -222,7 +230,7 @@ where
                 let self_ty =
                     self.lower_type_ref_with_mode(self_ty_ref, impl_trait_mode, inference)?;
                 let Some(GenericParamRef::Type(param)) = param else {
-                    return Ok(Ty::Unknown);
+                    return Ok(self.cx.unknown());
                 };
                 self.param_associated_projection(param, self_ty, name)?
             }
@@ -231,23 +239,23 @@ where
                 let Some(trait_ref) =
                     self.lower_trait_ref_with_mode(trait_ty, self_ty, impl_trait_mode, inference)?
                 else {
-                    return Ok(Ty::Unknown);
+                    return Ok(self.cx.unknown());
                 };
                 self.associated_type_projection(&trait_ref.application, name)?
             }
         };
         let Some(projection) = projection else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
 
-        Ok(Ty::Alias(AliasTy::Projection(projection)))
+        Ok(self.cx.projection(projection))
     }
 
     pub(crate) fn lower_alias(
         &mut self,
         alias: TypeAliasRef,
         syntax_args: &[ItemGenericArg],
-    ) -> Result<Ty, D::Error> {
+    ) -> Result<Ty<'s>, D::Error> {
         self.lower_alias_with_mode(alias, syntax_args, ImplTraitMode::Opaque, None)
     }
 
@@ -256,13 +264,13 @@ where
         alias: TypeAliasRef,
         syntax_args: &[ItemGenericArg],
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Ty, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Ty<'s>, D::Error> {
         if self.alias_stack.contains(&alias) {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         }
         let Some(data) = self.query.item_paths.items().type_alias_data(alias)? else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
         let alias_owner = GenericDefRef::TypeAlias(alias);
         let generics = self.query.item_paths.generics().generics(alias_owner)?;
@@ -277,7 +285,7 @@ where
         };
         for param in generics.iter().take(inherited_len) {
             if let Some(arg) = self.subst.get(param.param()) {
-                parent_seed.push(param.param(), arg.clone());
+                parent_seed.insert(param.param(), arg);
             }
         }
         let args = self.lower_generic_args(
@@ -290,12 +298,12 @@ where
 
         let Some(aliased_ty) = data.signature.aliased_ty() else {
             if matches!(data.owner, ItemOwner::Trait(_)) {
-                return Ok(Ty::Alias(AliasTy::Projection(ProjectionTy {
+                return Ok(self.cx.projection(ProjectionTy {
                     associated_ty: alias,
                     args,
-                })));
+                }));
             }
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
         let Some(context) = self
             .query
@@ -303,13 +311,15 @@ where
             .items()
             .type_path_context_for_owner(alias.origin, data.owner)?
         else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
 
         let previous_owner = self.owner;
         let previous_anchor = self.anchor;
-        let previous_subst =
-            std::mem::replace(&mut self.subst, Substitution::from_args(&generics, &args));
+        let previous_subst = std::mem::replace(
+            &mut self.subst,
+            Substitution::from_args(generics.iter().map(|p| p.param()), args),
+        );
         self.owner = alias_owner;
         self.anchor = TypeLoweringAnchor::Context(context);
         self.alias_stack.push(alias);

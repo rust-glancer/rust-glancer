@@ -9,6 +9,7 @@
 //! convert its result to owned types before dropping the solver.
 
 use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef, TypeAliasRef};
+use rg_item_tree::FunctionQualifiers;
 use rg_std::ExpectedUnique;
 use rustc_type_ir::{self as ir, Upcast};
 
@@ -16,6 +17,7 @@ use super::{
     Clause, DeclarationKind, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List,
     Outcome, ProjectionTy, SolverInterner, Ty,
 };
+use crate::signature;
 
 /// A trait together with its live arguments. `args[0]` is `Self`: for `Vec<?T>: IntoIterator`,
 /// it holds `Vec<?T>`. Associated-type equalities such as `Item = u8` are separate clauses.
@@ -26,6 +28,17 @@ pub struct TraitApplication<'s> {
 }
 
 impl<'s> TraitApplication<'s> {
+    pub fn self_ty(self) -> Option<Ty<'s>> {
+        self.args.first().and_then(|arg| arg.as_ty())
+    }
+
+    pub fn raise(self, cx: SolverInterner<'s>) -> crate::TraitApplication {
+        crate::TraitApplication {
+            def: self.def,
+            args: cx.raise_args(self.args),
+        }
+    }
+
     pub fn clause(self, cx: SolverInterner<'s>) -> Clause<'s> {
         let def = DefId::Trait(self.def);
         ir::TraitRef::new_from_args(cx, def, cx.complete_args(def, self.args)).upcast(cx)
@@ -51,13 +64,96 @@ impl<'s> TraitApplication<'s> {
     }
 }
 
-/// A signature with declaration parameters replaced by the caller's live arguments.
-/// For `fn id<T>(x: T) -> T`, the parameter and return can both hold the same `?T`.
+/// A signature in the operation's storage. The declaration of `fn id<T>(x: T) -> T` keeps
+/// `T` in both positions; instantiating it for a call replaces both with the same live `?T`.
+#[derive(Debug, Clone, Copy)]
 pub struct CallableSignature<'s> {
     pub params: List<'s, Ty<'s>>,
     pub ret: Ty<'s>,
     pub clauses: List<'s, Clause<'s>>,
-    pub qualifiers: rg_item_tree::FunctionQualifiers,
+    pub qualifiers: FunctionQualifiers,
+}
+
+impl<'s> CallableSignature<'s> {
+    pub fn raise(self, cx: SolverInterner<'s>) -> signature::CallableSignature {
+        signature::CallableSignature {
+            params: self
+                .params
+                .iter()
+                .map(|ty| cx.raise_ty(ty).unwrap_or(crate::Ty::Unknown))
+                .collect(),
+            ret: cx.raise_ty(self.ret).unwrap_or(crate::Ty::Unknown),
+            clauses: self
+                .clauses
+                .iter()
+                .map(|clause| cx.raise_clause(clause))
+                .collect(),
+            qualifiers: self.qualifiers,
+        }
+    }
+}
+
+/// A source bound keeps its associated equalities beside the positional trait arguments.
+/// Once registered with inference, these become ordinary compiler clauses.
+#[derive(Debug, Clone)]
+pub struct TraitRefLowering<'s> {
+    pub application: TraitApplication<'s>,
+    pub associated_types: Vec<AssocTypeBinding<'s>>,
+}
+
+impl<'s> TraitRefLowering<'s> {
+    pub fn clauses(&self, cx: SolverInterner<'s>) -> impl Iterator<Item = Clause<'s>> + '_ {
+        std::iter::once(self.application.clause(cx)).chain(self.associated_types.iter().map(
+            move |binding| {
+                self.application
+                    .associated_type_eq(cx, binding.associated_ty, binding.ty)
+            },
+        ))
+    }
+
+    pub fn raise(&self, cx: SolverInterner<'s>) -> crate::TraitRefLowering {
+        crate::TraitRefLowering {
+            application: self.application.raise(cx),
+            associated_types: self
+                .associated_types
+                .iter()
+                .map(|b| crate::AssocTypeBinding {
+                    associated_ty: b.associated_ty,
+                    ty: cx.raise_ty(b.ty).unwrap_or(crate::Ty::Unknown),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AssocTypeBinding<'s> {
+    pub associated_ty: TypeAliasRef,
+    pub ty: Ty<'s>,
+}
+
+/// Declaration parameters remain in this template until an impl is matched to a receiver.
+#[derive(Debug, Clone)]
+pub struct ImplHeader<'s> {
+    pub owner: ImplRef,
+    pub self_ty: Ty<'s>,
+    pub trait_ref: Option<TraitRefLowering<'s>>,
+    pub clauses: Vec<Clause<'s>>,
+}
+
+impl<'s> ImplHeader<'s> {
+    pub fn raise(&self, cx: SolverInterner<'s>) -> signature::ImplHeader {
+        signature::ImplHeader {
+            owner: self.owner,
+            self_ty: cx.raise_ty(self.self_ty).unwrap_or(crate::Ty::Unknown),
+            trait_ref: self.trait_ref.as_ref().map(|bound| bound.raise(cx)),
+            clauses: self
+                .clauses
+                .iter()
+                .map(|&clause| cx.raise_clause(clause))
+                .collect(),
+        }
+    }
 }
 
 /// Everything learned while checking one impl, including the trial table that owns its variables.
@@ -70,6 +166,18 @@ pub struct ImplSelection<'s> {
     pub subst: InferenceSubstitution<'s>,
     pub outcome: Outcome,
     pub table: InferenceTable<'s>,
+}
+
+impl<'s> SolverInterner<'s> {
+    /// The declaration template is shared inside this operation. Reading the enclosing body's
+    /// signature retains its parameters; a call instantiates them through `InferenceTable`.
+    pub fn function_signature(self, function: FunctionRef) -> Option<CallableSignature<'s>> {
+        let declaration = self.declaration(DefId::Function(function));
+        match &declaration.kind {
+            DeclarationKind::Function(signature) => Some(*signature),
+            _ => None,
+        }
+    }
 }
 
 impl<'s> InferenceTable<'s> {
@@ -89,21 +197,20 @@ impl<'s> InferenceTable<'s> {
         subst: &InferenceSubstitution<'s>,
     ) -> Option<CallableSignature<'s>> {
         let cx = self.interner();
-        let owner = DefId::Function(function);
-        let declaration = cx.declaration(owner);
-        let DeclarationKind::Function(signature) = &declaration.kind else {
-            return None;
-        };
-        let lower = |ty| subst.apply(cx, self.lower(ty, owner));
+        let signature = cx.function_signature(function)?;
+        let instantiate = |ty| subst.apply(cx, ty);
         Some(CallableSignature {
-            params: List::new(cx, &signature.params.iter().map(lower).collect::<Vec<_>>()),
-            ret: lower(&signature.ret),
+            params: List::new(
+                cx,
+                &signature.params.iter().map(instantiate).collect::<Vec<_>>(),
+            ),
+            ret: instantiate(signature.ret),
             clauses: List::new(
                 cx,
                 &signature
                     .clauses
                     .iter()
-                    .map(|clause| subst.apply(cx, cx.lower_clause(clause, &declaration.generics)))
+                    .map(|clause| subst.apply(cx, clause))
                     .collect::<Vec<_>>(),
             ),
             qualifiers: signature.qualifiers,
@@ -130,16 +237,13 @@ impl<'s> InferenceTable<'s> {
         // from the receiver without changing the body if this candidate is later rejected.
         let table = self.probe();
         let subst = table.fresh_substitution(DefId::Impl(impl_ref));
-        let self_ty = subst.apply(cx, cx.lower_ty(&header.self_ty, &declaration.generics));
+        let self_ty = subst.apply(cx, header.self_ty);
         if table.try_unify(receiver, self_ty).is_err() {
             return None;
         }
         let application = header.trait_ref.as_ref().map(|tr| TraitApplication {
             def: tr.application.def,
-            args: subst.apply(
-                cx,
-                cx.lower_args(&tr.application.args, &declaration.generics),
-            ),
+            args: subst.apply(cx, tr.application.args),
         });
         // A receiver match is enough for inherent lookup. A named trait goal also supplies
         // arguments: matching `Convert<u8>` must not accept an impl of `Convert<u16>`.
@@ -151,10 +255,7 @@ impl<'s> InferenceTable<'s> {
                 return None;
             }
         }
-        let clauses = declaration
-            .predicates
-            .iter()
-            .map(|c| subst.apply(cx, cx.lower_clause(c, &declaration.generics)));
+        let clauses = declaration.predicates.iter().map(|&c| subst.apply(cx, c));
         for clause in clauses {
             table.register(clause);
         }

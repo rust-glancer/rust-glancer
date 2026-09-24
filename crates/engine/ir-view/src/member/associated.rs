@@ -11,7 +11,8 @@ use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
 use rg_ty::{
     GenericArgs, TraitApplication, Ty, TyContext,
     lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ItemPathQuery},
-    lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    signature::SemanticSignatureQuery,
 };
 
 use super::{
@@ -108,9 +109,25 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let mut candidates = Vec::new();
         match qualifier {
             IndexedAssociatedPathQualifier::Type(prefix_ty_ref) => {
-                let prefix_ty = lowering
-                    .lower(prefix_ty_ref, env.clone())
-                    .context("lower associated path type qualifier")?;
+                let (prefix_ty, owner_traits, direct_trait) = lowering
+                    .with_storage(|cx| {
+                        let mut session = lowering.session(cx, env)?;
+                        let prefix_ty = session.lower_type_ref(prefix_ty_ref)?;
+                        let owner_traits = session
+                            .trait_applications_for_type(prefix_ty)?
+                            .into_iter()
+                            .map(|tr| tr.raise(cx))
+                            .collect::<Vec<_>>();
+                        let direct_trait = session
+                            .lower_trait_ref(prefix_ty_ref, prefix_ty)?
+                            .map(|tr| tr.raise(cx));
+                        Ok((
+                            cx.raise_ty(prefix_ty).unwrap_or(Ty::Unknown),
+                            owner_traits,
+                            direct_trait,
+                        ))
+                    })
+                    .context("lower associated path qualifier and bounds")?;
 
                 // One receiver-centric query covers nominal, primitive, and structural prefixes.
                 // The impl matcher owns whether a candidate came from a keyed or fallback index.
@@ -122,12 +139,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
                 // A generic prefix has no nominal impl universe of its own. Bounds written on the
                 // owning declaration, such as `T: Factory`, supply its associated-item surface.
-                let mut session = lowering
-                    .session(env)
-                    .context("create associated path lowering session")?;
-                let owner_traits = session
-                    .trait_applications_for_type(&prefix_ty)
-                    .context("resolve associated path owner traits")?;
                 candidates.extend(
                     query
                         .candidates_for_trait_applications(owner_traits, TraitApplicability::Yes)
@@ -136,10 +147,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
                 // The prefix spelling may itself name a trait. This handles `Factory::Item`
                 // independently of whether the lowered type also looks nominal or generic.
-                if let Some(direct_trait) = session
-                    .lower_trait_ref(prefix_ty_ref, prefix_ty.clone())
-                    .context("lower direct associated path trait")?
-                {
+                if let Some(direct_trait) = direct_trait {
                     candidates.extend(
                         query
                             .candidates_for_trait_applications(
@@ -151,16 +159,16 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 }
             }
             IndexedAssociatedPathQualifier::QualifiedTrait { self_ty, trait_ref } => {
-                let self_ty = lowering
-                    .lower(self_ty, env.clone())
-                    .context("lower qualified associated path self type")?;
-                let mut session = lowering
-                    .session(env)
-                    .context("create qualified associated path session")?;
-                if let Some(trait_ref) = session
-                    .lower_trait_ref(trait_ref, self_ty)
-                    .context("lower qualified associated path trait")?
-                {
+                let trait_ref = lowering
+                    .with_storage(|cx| {
+                        let mut session = lowering.session(cx, env)?;
+                        let self_ty = session.lower_type_ref(self_ty)?;
+                        Ok(session
+                            .lower_trait_ref(trait_ref, self_ty)?
+                            .map(|tr| tr.raise(cx)))
+                    })
+                    .context("lower qualified associated path trait")?;
+                if let Some(trait_ref) = trait_ref {
                     candidates.extend(
                         query
                             .candidates_for_trait_applications(
@@ -255,13 +263,15 @@ impl<'a, 'db> MemberView<'a, 'db> {
             scope.generic_owner(),
             TypeLoweringAnchor::Context(scope.context()),
         );
-        let mut session = lowering
-            .session(env)
-            .context("create trait binding lowering session")?;
-        let Some(trait_ref) = session
-            .lower_trait_ref(trait_ref, Ty::Unknown)
-            .context("lower trait binding qualifier")?
-        else {
+        let trait_ref = lowering
+            .with_storage(|cx| {
+                Ok(lowering
+                    .session(cx, env)?
+                    .lower_trait_ref(trait_ref, cx.unknown())?
+                    .map(|tr| tr.raise(cx)))
+            })
+            .context("lower trait binding qualifier")?;
+        let Some(trait_ref) = trait_ref else {
             return Ok(Vec::new());
         };
         Ok(Self::project_associated_candidates(

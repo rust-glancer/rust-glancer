@@ -267,10 +267,13 @@ where
                 if let Some(ty) = ty {
                     let ty = self
                         .context
-                        .type_refs(self.body.expr_unchecked(expr).scope)
-                        .resolve(ty)
-                        .context("resolve cast type")
-                        .map(|ty| self.lower(&ty))?;
+                        .live()
+                        .type_ref(
+                            self.body.expr_unchecked(expr).scope,
+                            ty,
+                            self.inference.table(),
+                        )
+                        .context("resolve cast type")?;
                     self.inference.set_expr_ty(expr, ty);
                 }
             }
@@ -438,12 +441,15 @@ where
                     Some(path) => self
                         .context
                         .value_paths()
-                        .resolve_record_expr_path(self.body.expr_unchecked(expr).scope, path)
+                        .resolve_record_expr_path(
+                            self.body.expr_unchecked(expr).scope,
+                            path,
+                            self.inference.table(),
+                        )
                         .context("resolve record path")?,
-                    None => (BodyResolution::Unknown, rg_ty::Ty::Unknown),
+                    None => (BodyResolution::Unknown, self.cx.unknown()),
                 };
-                self.inference
-                    .set_expr_facts(expr, resolution, self.lower(&ty));
+                self.inference.set_expr_facts(expr, resolution, ty);
                 // Path lookup supplies the record's identity and written generic arguments.
                 // Make omitted arguments inferable before deriving expectations for the fields.
                 let ty = self.inference.expr_ty(expr);
@@ -521,14 +527,13 @@ where
                 let (resolution, ty) = self
                     .context
                     .value_paths()
-                    .resolve_body_path_expr(expr, path)
+                    .resolve_body_path_expr(expr, path, self.cx)
                     .context("resolve body path")?;
                 if let BodyResolution::Binding(binding) = resolution {
                     self.inference.set_expr_resolution(expr, resolution);
                     self.inference.set_expr_from_binding(expr, binding);
                 } else {
-                    self.inference
-                        .set_expr_facts(expr, resolution, self.lower(&ty));
+                    self.inference.set_expr_facts(expr, resolution, ty);
                 }
             }
 

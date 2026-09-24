@@ -14,8 +14,8 @@ use rg_semantic_ir::ItemStoreSource;
 pub(crate) use self::candidates::trait_impl_candidates;
 pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
 use crate::{
-    Substitution, Ty, TyContext, lookup::ItemPathQuery, lowering::ImplHeader, solver::SolverScope,
-    trait_selection::TraitSelectionQuery,
+    Substitution, Ty, TyContext, lookup::ItemPathQuery, lowering::TypeLoweringQuery,
+    signature::ImplHeader, solver::SolverScope, trait_selection::TraitSelectionQuery,
 };
 
 /// Receiver-based impl discovery and selection in one type-query context.
@@ -50,7 +50,12 @@ where
 
     /// Lower the impl's self type, trait arguments, and bounds through the query's path resolver.
     pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
-        crate::lowering::impl_header_with(self.context.item_paths(), &self.resolver, impl_ref)
+        let lowering = TypeLoweringQuery::new(self.context.item_paths(), &self.resolver);
+        lowering.with_storage(|cx| {
+            Ok(lowering
+                .impl_header(cx, impl_ref)?
+                .map(|header| header.raise(cx)))
+        })
     }
 
     /// Match the impl's semantic `Self` pattern and return owner-scoped bindings.

@@ -379,7 +379,6 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
         } else {
             let facts = result.expect("fresh inference can finish");
             assert_eq!(facts.exprs.len(), body.exprs().len());
-            assert!(facts.exprs.iter().all(|facts| !facts.ty.has_source_hole()));
         }
         assert!(CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.get().is_none()));
     }

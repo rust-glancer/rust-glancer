@@ -11,7 +11,7 @@ use rg_semantic_ir::{
 };
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{IndexedViewDb, ty::IndexedType};
@@ -249,7 +249,6 @@ impl ViewFixture {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::SourceHole(id) => format!("source hole {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

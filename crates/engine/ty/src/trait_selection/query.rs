@@ -4,15 +4,16 @@
 //! normalizes them in a scoped table, and freezes its result before releasing all solver storage.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ImplRef, TraitApplicability, TraitImplRef};
+use rg_ir_model::{GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rg_std::ExpectedUnique;
-use rustc_type_ir::{Upcast as _, inherent::GenericArgs as _};
+use rustc_type_ir::{self as ir, Upcast as _, inherent::GenericArgs as _};
 
 use super::TraitGoal;
 use crate::{
     Substitution, TraitApplication, Ty, TyContext,
-    lookup::ItemPathQuery,
+    lookup::{ItemPathQuery, trait_impl_candidates},
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{self, DefId, InferenceTable, Outcome, SemanticDeclarations, SolverScope},
 };
 
@@ -108,48 +109,47 @@ where
     fn with_table<T>(
         &self,
         include_bounds: bool,
-        run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [rg_ir_model::GenericParamRef]) -> T,
+        run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> T,
     ) -> Result<T, I::Error> {
         // Loading a whole function signature here would resolve its return path through this
         // very editor query again. Only generic metadata and declared bounds form the environment.
-        let paths = self.context.item_paths();
-        let (params, clauses, self_trait) = match self.resolver.generic_owner() {
-            Some(owner) => {
-                let generics = paths.generics().generics(owner)?;
-                let params = generics.iter().map(|p| p.param()).collect::<Vec<_>>();
-                let self_trait = generics.iter().find_map(|p| {
-                    matches!(p.source(), GenericParamSource::TraitSelf).then_some(p.param().owner())
-                });
-                let clauses = if include_bounds
-                    && let Some(context) = paths.items().type_path_context_for_generic_def(owner)?
-                {
-                    crate::lowering::TypeLoweringQuery::new(paths, &self.resolver)
-                        .session(crate::lowering::TypeLoweringEnv::new(
-                            owner,
-                            crate::lowering::TypeLoweringAnchor::Context(context),
-                        ))?
-                        .lower_clauses()?
-                } else {
-                    Vec::new()
-                };
-                (params, clauses, self_trait)
-            }
-            None => (Vec::new(), Vec::new(), None),
-        };
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
         declarations.with_solver(|solver| {
             let cx = solver.interner();
+            let paths = self.context.item_paths();
+            let (params, clauses, self_trait) = match self.resolver.generic_owner() {
+                Some(owner) => {
+                    let generics = paths.generics().generics(owner)?;
+                    let params = generics.iter().map(|p| p.param()).collect::<Vec<_>>();
+                    let self_trait = generics.iter().find_map(|p| {
+                        matches!(p.source(), GenericParamSource::TraitSelf)
+                            .then_some(p.param().owner())
+                    });
+                    let clauses = if include_bounds
+                        && let Some(context) =
+                            paths.items().type_path_context_for_generic_def(owner)?
+                    {
+                        TypeLoweringQuery::new(paths, &self.resolver)
+                            .session(
+                                cx,
+                                TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+                            )?
+                            .lower_clauses()?
+                    } else {
+                        Vec::new()
+                    };
+                    (params, clauses, self_trait)
+                }
+                None => (Vec::new(), Vec::new(), None),
+            };
             let params = solver::List::new(cx, &params).as_slice();
-            let mut clauses = clauses
-                .iter()
-                .map(|c| cx.lower_clause(c, params))
-                .collect::<Vec<_>>();
+            let mut clauses = clauses;
             // A default trait method may use its own trait without a written `Self: Trait`
             // bound. Mirror the body's environment without loading the whole method signature.
             if include_bounds && let Some(owner) = self_trait {
                 let owner = DefId::from(owner);
                 clauses.push(
-                    rustc_type_ir::TraitRef::new_from_args(
+                    ir::TraitRef::new_from_args(
                         cx,
                         owner,
                         solver::GenericArgs::identity_for_item(cx, owner),
@@ -159,10 +159,10 @@ where
             }
             let env = solver::ParamEnv(solver::List::new(
                 cx,
-                &rustc_type_ir::elaborate::elaborate(cx, clauses).collect::<Vec<_>>(),
+                &ir::elaborate::elaborate(cx, clauses).collect::<Vec<_>>(),
             ));
-            run(InferenceTable::new(solver, env), params)
-        })
+            Ok(run(InferenceTable::new(solver, env), params))
+        })?
     }
 
     pub(crate) fn match_impl(
@@ -183,7 +183,7 @@ where
         impl_ref: ImplRef,
         receiver: &Ty,
     ) -> Result<Option<SelectedImpl>, I::Error> {
-        if matches!(receiver, Ty::Unknown | Ty::SourceHole(_)) {
+        if matches!(receiver, Ty::Unknown) {
             return Ok(None);
         }
         self.with_table(true, |table, params| {
@@ -199,7 +199,7 @@ where
     /// therefore does not use this source-selection API.
     pub fn probe(&self, goal: &TraitGoal) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
         let Some(candidates) =
-            crate::lookup::trait_impl_candidates(&self.context, goal.trait_ref(), goal.self_ty())
+            trait_impl_candidates(&self.context, goal.trait_ref(), goal.self_ty())
         else {
             return Ok(ExpectedUnique::Empty);
         };

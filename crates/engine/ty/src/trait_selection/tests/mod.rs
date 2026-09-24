@@ -1090,8 +1090,16 @@ fn generic_argument_relations_retain_const_evidence() {
 }
 
 #[test]
-fn source_holes_are_consumed_before_owned_results_are_serialized() {
-    use crate::solver;
+fn inferred_source_types_export_serializable_results() {
+    use rg_ir_model::{DefMapRef, GenericDefRef, ScopeId, StructId, TypeDefId, TypeDefRef};
+    use rg_item_tree::TypeRef;
+
+    use crate::{
+        PrimitiveTy,
+        lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+        solver,
+    };
+
     let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");
     let context = TyContext::new(
         &fixture,
@@ -1103,22 +1111,23 @@ fn source_holes_are_consumed_before_owned_results_are_serialized() {
     let finalized = solver::SemanticDeclarations::new(&context, context.item_paths())
         .with_solver(|solver| {
             let table = solver::InferenceTable::new(solver, Default::default());
-            let holes = solver::SourceTypeHoles::new(&table);
-            let source = Ty::tuple(vec![
-                holes.allocate(),
-                Ty::Primitive(crate::PrimitiveTy::Bool),
-            ]);
-            assert!(wincode::serialize(&source).is_err());
-            let scoped = holes.lower(&source, &[]);
-            let expected = Ty::tuple(vec![
-                Ty::Primitive(crate::PrimitiveTy::Char),
-                Ty::Primitive(crate::PrimitiveTy::Bool),
-            ]);
+            let owner = GenericDefRef::TypeDef(TypeDefRef {
+                origin: DefMapRef::Crate(fixture.target),
+                id: TypeDefId::Struct(StructId(0)),
+            });
+            let source = TypeRef::Tuple(vec![TypeRef::Infer, TypeRef::Unit]);
+            let scoped = TypeLoweringQuery::new(context.item_paths(), context.item_paths())
+                .lower_inference_type(
+                    &source,
+                    TypeLoweringEnv::new(owner, TypeLoweringAnchor::Scope(ScopeId(0))),
+                    &table,
+                )
+                .expect("source type lowers");
+            let expected = Ty::tuple(vec![Ty::Primitive(PrimitiveTy::Char), Ty::Unit]);
             table.unify(scoped, table.interner().lower_ty(&expected, &[]));
             table.finalize(scoped)
         })
         .expect("fixture declarations load");
-    assert!(!finalized.has_source_hole());
     let encoded = wincode::serialize(&finalized).expect("owned type serializes");
     let decoded: Ty = wincode::deserialize(&encoded).expect("owned type reads back");
     assert_eq!(decoded, finalized);

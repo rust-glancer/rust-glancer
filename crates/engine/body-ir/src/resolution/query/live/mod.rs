@@ -4,12 +4,17 @@
 mod call;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, ItemOwner, ScopeId, TraitDefRef, TypeDefId};
+use rg_item_tree::{GenericArg as ItemGenericArg, LangItem, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{Generics, ItemStoreSource};
 use rg_std::UniqueVec;
-use rg_ty::solver::{
-    AdtTy, DefId, InferenceSubstitution, InferenceTable, ProjectionTy, Ty, TyShape,
+use rg_ty::{
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    solver::{
+        AdtTy, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, ProjectionTy, Ty,
+        TyShape,
+    },
 };
 
 use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
@@ -33,40 +38,35 @@ where
     pub(crate) fn type_ref<'s>(
         &self,
         scope: ScopeId,
-        ty: &rg_item_tree::TypeRef,
+        ty: &TypeRef,
         table: &InferenceTable<'s>,
     ) -> Result<Ty<'s>, PackageStoreError> {
         let paths = self.context.item_paths();
-        let query = rg_ty::lowering::TypeLoweringQuery::new(&paths, &self.context);
+        let query = TypeLoweringQuery::new(&paths, &self.context);
         let owner = self.context.body().owner().generic_def();
-        let holes = rg_ty::solver::SourceTypeHoles::new(table);
-        let ty = query
-            .session(rg_ty::lowering::TypeLoweringEnv::new(
-                owner,
-                rg_ty::lowering::TypeLoweringAnchor::Scope(scope),
-            ))?
-            .lower_type_ref_with_inference(ty, &|| holes.allocate())?;
-        Ok(holes.lower(&ty, table.params(owner.into())))
+        query.lower_inference_type(
+            ty,
+            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Scope(scope)),
+            table,
+        )
     }
 
     pub(crate) fn generic_args<'s>(
         &self,
         scope: ScopeId,
-        generics: &rg_semantic_ir::Generics<'_>,
-        args: &[rg_item_tree::GenericArg],
+        generics: &Generics<'_>,
+        args: &[ItemGenericArg],
         table: &InferenceTable<'s>,
-    ) -> Result<rg_ty::solver::GenericArgs<'s>, PackageStoreError> {
+    ) -> Result<GenericArgs<'s>, PackageStoreError> {
         let paths = self.context.item_paths();
-        let query = rg_ty::lowering::TypeLoweringQuery::new(&paths, &self.context);
+        let query = TypeLoweringQuery::new(&paths, &self.context);
         let owner = self.context.body().owner().generic_def();
-        let holes = rg_ty::solver::SourceTypeHoles::new(table);
-        let args = query
-            .session(rg_ty::lowering::TypeLoweringEnv::new(
-                owner,
-                rg_ty::lowering::TypeLoweringAnchor::Scope(scope),
-            ))?
-            .lower_generic_args_for(generics, args, Some(&|| holes.allocate()))?;
-        Ok(holes.lower_args(&args, table.params(owner.into())))
+        query.lower_inference_args(
+            generics,
+            args,
+            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Scope(scope)),
+            table,
+        )
     }
 
     /// Adjustments only inspect the receiver shape. Trait-backed dereference registers a normal
@@ -93,11 +93,10 @@ where
                 }
                 TyShape::Adt(_) => {
                     let lookup = self.context.item_lookup_query();
-                    let Some(alias) = lookup.lang_type_alias(rg_item_tree::LangItem::DerefTarget)
-                    else {
+                    let Some(alias) = lookup.lang_type_alias(LangItem::DerefTarget) else {
                         break;
                     };
-                    let Some(deref) = lookup.lang_trait(rg_item_tree::LangItem::Deref) else {
+                    let Some(deref) = lookup.lang_trait(LangItem::Deref) else {
                         break;
                     };
                     let Some(data) = self.context.item_query().type_alias_data(alias)? else {
@@ -105,14 +104,12 @@ where
                     };
                     // Language items are indexed separately. Only the associated type owned by
                     // this Deref trait can supply its target.
-                    if alias.origin != deref.origin
-                        || data.owner != rg_ir_model::ItemOwner::Trait(deref.id)
-                    {
+                    if alias.origin != deref.origin || data.owner != ItemOwner::Trait(deref.id) {
                         break;
                     }
                     let target = table.normalize(cx.projection(ProjectionTy {
                         associated_ty: alias,
-                        args: rg_ty::solver::List::new(cx, &[ty.into()]),
+                        args: List::new(cx, &[ty.into()]),
                     }));
                     let _ = table.fulfill();
                     let target = table.resolve_root_var(target);
@@ -133,7 +130,7 @@ where
     pub(crate) fn projection<'s>(
         &self,
         ty: Ty<'s>,
-        trait_ref: rg_ir_model::TraitDefRef,
+        trait_ref: TraitDefRef,
         name: &str,
         table: &InferenceTable<'s>,
     ) -> Result<Option<Ty<'s>>, PackageStoreError> {
@@ -147,7 +144,7 @@ where
         let cx = table.interner();
         Ok(Some(table.normalize(cx.projection(ProjectionTy {
             associated_ty,
-            args: rg_ty::solver::List::new(cx, &[ty.into()]),
+            args: List::new(cx, &[ty.into()]),
         }))))
     }
 
@@ -169,11 +166,11 @@ where
             let Some(field_ref) = self.context.item_query().field_for_type(adt.def, field)? else {
                 continue;
             };
-            let ty = self
-                .context
-                .signatures()
-                .field_ty(field_ref)?
-                .map(|ty| self.instantiate_field(adt, &ty, table))
+            let paths = self.context.item_paths();
+            let lowering = TypeLoweringQuery::new(&paths, &self.context);
+            let ty = lowering
+                .field_ty(table.interner(), field_ref)?
+                .map(|ty| self.instantiate_field(adt, ty, table))
                 .unwrap_or(table.interner().unknown());
             return Ok(Some((
                 BodyResolution::Declarations([field_ref.into()].into_iter().collect()),
@@ -186,12 +183,12 @@ where
     fn instantiate_field<'s>(
         &self,
         adt: AdtTy<'s>,
-        ty: &rg_ty::Ty,
+        ty: Ty<'s>,
         table: &InferenceTable<'s>,
     ) -> Ty<'s> {
         let owner = DefId::Adt(adt.def);
         InferenceSubstitution::from_args(table.params(owner).iter().copied(), adt.args)
-            .apply(table.interner(), table.lower(ty, owner))
+            .apply(table.interner(), ty)
     }
 
     pub(crate) fn enum_variant_field<'s>(
@@ -216,11 +213,11 @@ where
         else {
             return Ok(None);
         };
-        Ok(self
-            .context
-            .signatures()
-            .enum_variant_field_ty(variant, index)?
-            .map(|ty| self.instantiate_field(adt, &ty, table)))
+        let paths = self.context.item_paths();
+        let lowering = TypeLoweringQuery::new(&paths, &self.context);
+        Ok(lowering
+            .enum_variant_field_ty(table.interner(), variant, index)?
+            .map(|ty| self.instantiate_field(adt, ty, table)))
     }
 
     pub(crate) fn pattern_field<'s>(

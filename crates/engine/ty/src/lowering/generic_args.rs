@@ -3,12 +3,19 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, Generics, ItemStoreSource};
+use rg_text::Name;
+use rustc_type_ir::{self as ir, inherent::IntoKind};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
-use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Substitution, Ty};
+use crate::{
+    ConstValue,
+    solver::{
+        Const, GenericArgs, InferenceSubstitution as Substitution, InferenceTable, List, Region, Ty,
+    },
+};
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
@@ -20,19 +27,19 @@ where
     /// are consumed from syntax and omitted positions receive their normal semantic placeholder or
     /// default. Associated bindings belong to `lower_trait_ref`, not this positional list.
     ///
-    /// With an inference allocator, written type placeholders `_` and omitted function types get
-    /// source holes that the caller connects to live variables. For `make::<Vec<_>>()`, the inner
-    /// slot can then learn from the call's use without this lowering code owning a solver table.
+    /// With a table, written `_` and omitted function type arguments become live variables.
+    /// Defaults are still interpreted in the declaration's scope; their parameter references
+    /// can carry those variables without allocating new ones at the default's source site.
     pub fn lower_generic_args_for(
         &mut self,
-        generics: &rg_semantic_ir::Generics<'_>,
+        generics: &Generics<'_>,
         syntax_args: &[ItemGenericArg],
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<GenericArgs, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<GenericArgs<'s>, D::Error> {
         let mut parent_seed = Substitution::new();
         for param in generics.iter().take(generics.parent_len()) {
             if let Some(arg) = self.subst.get(param.param()) {
-                parent_seed.push(param.param(), arg.clone());
+                parent_seed.insert(param.param(), arg);
             }
         }
         self.lower_generic_args(
@@ -46,12 +53,12 @@ where
 
     pub(crate) fn lower_generic_args(
         &mut self,
-        generics: &rg_semantic_ir::Generics<'_>,
+        generics: &Generics<'_>,
         syntax_args: &[ItemGenericArg],
-        seed: &Substitution,
+        seed: &Substitution<'s>,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<GenericArgs, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<GenericArgs<'s>, D::Error> {
         let positional = syntax_args
             .iter()
             .filter(|arg| {
@@ -67,13 +74,13 @@ where
 
         for (param_index, param) in generics.iter().enumerate() {
             if let Some(arg) = seed.get(param.param()) {
-                args.push(arg.clone());
-                resolved.push(param.param(), arg.clone());
+                args.push(arg);
+                resolved.insert(param.param(), arg);
                 continue;
             }
             if param_index < generics.parent_len() {
-                let arg = Substitution::unknown_arg(param.param());
-                resolved.push(param.param(), arg.clone());
+                let arg = self.cx.unknown_arg(param.param());
+                resolved.insert(param.param(), arg);
                 args.push(arg);
                 continue;
             }
@@ -82,31 +89,32 @@ where
             let arg = match (param.param(), syntax) {
                 (GenericParamRef::Lifetime(_), Some(ItemGenericArg::Lifetime(name))) => {
                     syntax_index += 1;
-                    GenericArg::Lifetime(self.lower_lifetime(name)?)
+                    self.lower_lifetime(name)?.into()
                 }
 
                 // Rust permits omitted lifetime args without shifting following type/const args.
-                (GenericParamRef::Lifetime(_), _) => GenericArg::Lifetime(Lifetime::Erased),
+                (GenericParamRef::Lifetime(_), _) => Region(ir::ReErased).into(),
                 (GenericParamRef::Type(_), Some(ItemGenericArg::Type(ty))) => {
                     syntax_index += 1;
-                    GenericArg::Type(Box::new(self.lower_type_ref_with_mode(
-                        ty,
-                        impl_trait_mode,
-                        inference,
-                    )?))
+                    self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)?
+                        .into()
                 }
                 (GenericParamRef::Type(_), Some(ItemGenericArg::FnTraitArgs { params, .. })) => {
                     syntax_index += 1;
-                    GenericArg::Type(Box::new(Ty::tuple(
-                        params
-                            .iter()
-                            .map(|ty| self.lower_type_ref_with_mode(ty, impl_trait_mode, inference))
-                            .collect::<Result<_, _>>()?,
-                    )))
+                    self.cx
+                        .tuple(
+                            params
+                                .iter()
+                                .map(|ty| {
+                                    self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)
+                                })
+                                .collect::<Result<Vec<_>, _>>()?,
+                        )
+                        .into()
                 }
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Const(value))) => {
                     syntax_index += 1;
-                    GenericArg::Const(self.lower_const(Some(value.as_str()))?)
+                    self.lower_const(Some(value.as_str()))?.into()
                 }
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Type(ty)))
                     if ty.type_param_name().is_some() && !ty.has_generic_args() =>
@@ -119,7 +127,7 @@ where
                         .type_param_name()
                         .expect("guard requires a plain single-segment path");
                     syntax_index += 1;
-                    GenericArg::Const(self.lower_const(Some(name.as_str()))?)
+                    self.lower_const(Some(name.as_str()))?.into()
                 }
 
                 // Function calls infer omitted type parameters from their arguments and result.
@@ -128,7 +136,10 @@ where
                     if matches!(generics.owner(), GenericDefRef::Function(_))
                         && inference.is_some() =>
                 {
-                    GenericArg::Type(Box::new(inference.expect("call inference allocator")()))
+                    inference
+                        .expect("call inference table")
+                        .new_type_var()
+                        .into()
                 }
                 (GenericParamRef::Type(_), _)
                     if matches!(
@@ -139,16 +150,15 @@ where
                     let GenericParamSource::Type(source) = param.source() else {
                         unreachable!("guard accepts only source type parameters")
                     };
-                    GenericArg::Type(Box::new(
-                        self.lower_default_type(
-                            generics.owner(),
-                            source
-                                .default
-                                .as_ref()
-                                .expect("guard requires a type default"),
-                            &resolved,
-                        )?,
-                    ))
+                    self.lower_default_type(
+                        generics.owner(),
+                        source
+                            .default
+                            .as_ref()
+                            .expect("guard requires a type default"),
+                        &resolved,
+                    )?
+                    .into()
                 }
                 (GenericParamRef::Const(_), _)
                     if matches!(
@@ -159,40 +169,39 @@ where
                     let GenericParamSource::Const(source) = param.source() else {
                         unreachable!("guard accepts only source const parameters")
                     };
-                    GenericArg::Const(
-                        self.lower_default_const(
-                            generics.owner(),
-                            source
-                                .default
-                                .as_ref()
-                                .expect("guard requires a const default")
-                                .as_str(),
-                            &resolved,
-                        )?,
-                    )
+                    self.lower_default_const(
+                        generics.owner(),
+                        source
+                            .default
+                            .as_ref()
+                            .expect("guard requires a const default")
+                            .as_str(),
+                        &resolved,
+                    )?
+                    .into()
                 }
-                (param, _) => Substitution::unknown_arg(param),
+                (param, _) => self.cx.unknown_arg(param),
             };
-            resolved.push(param.param(), arg.clone());
+            resolved.insert(param.param(), arg);
             args.push(arg);
         }
 
-        Ok(args.into())
+        Ok(List::new(self.cx, &args))
     }
 
     fn lower_default_type(
         &mut self,
         owner: GenericDefRef,
         ty: &TypeRef,
-        subst: &Substitution,
-    ) -> Result<Ty, D::Error> {
+        subst: &Substitution<'s>,
+    ) -> Result<Ty<'s>, D::Error> {
         let Some(context) = self
             .query
             .item_paths
             .items()
             .type_path_context_for_generic_def(owner)?
         else {
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         };
         let previous_owner = self.owner;
         let previous_anchor = self.anchor;
@@ -210,15 +219,15 @@ where
         &mut self,
         owner: GenericDefRef,
         text: &str,
-        subst: &Substitution,
-    ) -> Result<ConstValue, D::Error> {
+        subst: &Substitution<'s>,
+    ) -> Result<Const<'s>, D::Error> {
         let Some(context) = self
             .query
             .item_paths
             .items()
             .type_path_context_for_generic_def(owner)?
         else {
-            return Ok(ConstValue::Unknown);
+            return Ok(self.cx.lower_const(ConstValue::Unknown, &[]));
         };
         let previous_owner = self.owner;
         let previous_anchor = self.anchor;
@@ -232,37 +241,43 @@ where
         result
     }
 
-    pub(crate) fn lower_lifetime(&self, name: &rg_text::Name) -> Result<Lifetime, D::Error> {
+    pub(crate) fn lower_lifetime(&self, name: &Name) -> Result<Region<'s>, D::Error> {
         if name.as_str() == "'static" {
-            return Ok(Lifetime::Static);
+            return Ok(Region(ir::ReStatic));
         }
-        Ok(match self.param_by_name(name.as_str())? {
-            Some(GenericParamRef::Lifetime(param)) => {
-                match self.subst.get(GenericParamRef::Lifetime(param)) {
-                    Some(GenericArg::Lifetime(lifetime)) => *lifetime,
-                    Some(GenericArg::Type(_)) | Some(GenericArg::Const(_)) | None => {
-                        Lifetime::Param(param)
-                    }
-                }
-            }
-            _ => Lifetime::Erased,
-        })
+        let Some(param @ GenericParamRef::Lifetime(_)) = self.param_by_name(name.as_str())? else {
+            return Ok(Region(ir::ReErased));
+        };
+        if let Some(arg) = self.subst.get(param)
+            && let ir::GenericArgKind::Lifetime(region) = arg.kind()
+        {
+            return Ok(region);
+        }
+        let params = self.cx.generics(param.owner().into()).params;
+        Ok(self
+            .cx
+            .param(param, &params)
+            .map(|param| Region(ir::ReEarlyParam(param)))
+            .unwrap_or(Region(ir::ReErased)))
     }
 
-    pub(crate) fn lower_const(&self, text: Option<&str>) -> Result<ConstValue, D::Error> {
+    pub(crate) fn lower_const(&self, text: Option<&str>) -> Result<Const<'s>, D::Error> {
         let Some(text) = text else {
-            return Ok(ConstValue::Unknown);
+            return Ok(self.cx.lower_const(ConstValue::Unknown, &[]));
         };
-        Ok(match self.param_by_name(text)? {
-            Some(GenericParamRef::Const(param)) => {
-                match self.subst.get(GenericParamRef::Const(param)) {
-                    Some(GenericArg::Const(value)) => *value,
-                    Some(GenericArg::Type(_)) | Some(GenericArg::Lifetime(_)) | None => {
-                        ConstValue::Param(param)
-                    }
-                }
+        if let Some(param @ GenericParamRef::Const(_)) = self.param_by_name(text)? {
+            if let Some(arg) = self.subst.get(param)
+                && let ir::GenericArgKind::Const(value) = arg.kind()
+            {
+                return Ok(value);
             }
-            _ => ConstValue::from_syntax(text),
-        })
+            let params = self.cx.generics(param.owner().into()).params;
+            if let Some(param) = self.cx.param(param, &params) {
+                return Ok(Const::new(self.cx, ir::ConstKind::Param(param)));
+            }
+        }
+        // Const evaluation is intentionally limited to the same scalar syntax supported by
+        // saved types. Name resolution above preserves const parameters without evaluating them.
+        Ok(self.cx.lower_const(ConstValue::from_syntax(text), &[]))
     }
 }

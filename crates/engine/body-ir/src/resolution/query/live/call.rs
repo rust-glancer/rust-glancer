@@ -4,15 +4,20 @@
 //! `&&Widget`, `&Widget`, or `Widget`; the first depth with candidates wins. Within that depth,
 //! inherent methods take precedence over methods from visible traits. The chosen target retains
 //! its receiver bindings so its signature uses the same variables as the body.
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, ExprId, FunctionRef, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
+use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::solver::{
-    DefId, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty, TyShape,
+use rg_ty::{
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    solver::{
+        DefId, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty, TyShape,
+    },
 };
 
 use super::LiveBodyQuery;
@@ -27,7 +32,7 @@ use crate::{
 /// inference chooses this target, it adopts the table and reuses the receiver's substitutions.
 pub(crate) struct LiveCallTarget<'s> {
     pub function: FunctionRef,
-    pub explicit_args: Vec<rg_item_tree::GenericArg>,
+    pub explicit_args: Vec<ItemGenericArg>,
     pub scope: ScopeId,
     pub subst: InferenceSubstitution<'s>,
     pub receiver: Option<Ty<'s>>,
@@ -95,19 +100,21 @@ where
                             (self.type_ref(callee.scope, &ty, table)?, None)
                         }
                         BodyAssociatedPathPrefix::QualifiedTrait { self_ty, trait_ref } => {
-                            let owned = self.context.type_refs(callee.scope).resolve(&self_ty)?;
-                            let tr = self
-                                .context
-                                .type_refs(callee.scope)
-                                .resolve_trait_ref(&trait_ref, owned.clone())?;
-                            let owner = self.context.body().owner().generic_def();
-                            let qualification = tr.map(|tr| TraitApplication {
-                                def: tr.application.def,
-                                args: table
-                                    .interner()
-                                    .lower_args(&tr.application.args, table.params(owner.into())),
-                            });
-                            (table.lower(&owned, owner.into()), qualification)
+                            let paths = self.context.item_paths();
+                            let lowering = TypeLoweringQuery::new(&paths, &self.context);
+                            let mut session = lowering.session(
+                                table.interner(),
+                                TypeLoweringEnv::new(
+                                    self.context.body().owner().generic_def(),
+                                    TypeLoweringAnchor::Scope(callee.scope),
+                                ),
+                            )?;
+                            let receiver =
+                                session.lower_type_ref_with_inference(&self_ty, table)?;
+                            let qualification = session
+                                .lower_trait_ref(&trait_ref, receiver)?
+                                .map(|tr| tr.application);
+                            (receiver, qualification)
                         }
                     };
                     if !receiver.is_unknown() || qualification.is_some() {
@@ -156,7 +163,7 @@ where
         receiver: Ty<'s>,
         name: &str,
         method: bool,
-        explicit: &[rg_item_tree::GenericArg],
+        explicit: &[ItemGenericArg],
         qualification: Option<TraitApplication<'s>>,
         table: &InferenceTable<'s>,
     ) -> Result<Vec<LiveCallTarget<'s>>, PackageStoreError> {

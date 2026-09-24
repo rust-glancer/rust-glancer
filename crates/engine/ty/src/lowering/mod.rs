@@ -1,4 +1,9 @@
-//! The single source-type to semantic-type lowering boundary.
+//! Interpret source types in the working type representation.
+//!
+//! A session borrows an operation's storage. A body can supply its inference table for written
+//! `_`, while declarations keep named parameters such as `T`. Signatures, bounds, aliases and
+//! defaults all use this visitor. Independent queries export owned results before releasing the
+//! storage; body inference retains the working types until it finalizes its facts.
 //!
 //! Definition HIR intentionally keeps `TypeRef`. This module is the only place that interprets
 //! that syntax as semantic identity. Callers may customize path lookup for a body scope, but they
@@ -15,12 +20,18 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{
     GenericDefRef, GenericParamRef, Path, ScopeId, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
-use rg_item_tree::TypeRef;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
+use rg_semantic_ir::{Generics, ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_text::Name;
+use rustc_type_ir::TyKind;
 
-pub(crate) use self::signature::impl_header_with;
-pub use self::signature::{CallableSignature, ImplHeader, SemanticSignatureQuery};
-use crate::{OpaqueTy, Substitution, TraitRefLowering, Ty, lookup::ItemPathQuery};
+use crate::{
+    lookup::ItemPathQuery,
+    solver::{
+        GenericArgs, InferenceSubstitution as Substitution, InferenceTable, OpaqueTy,
+        SemanticDeclarations, SolverInterner, TraitRefLowering, Ty,
+    },
+};
 
 // Source syntax can be deeply nested even without aliases or projections. This is an emergency
 // boundary for malformed/generated input; ordinary Rust types stay far below it.
@@ -125,15 +136,17 @@ where
         }
     }
 
-    pub fn session(
+    pub fn session<'s>(
         &'lower self,
+        cx: SolverInterner<'s>,
         env: TypeLoweringEnv,
-    ) -> Result<TypeLoweringSession<'lower, 'query, D, I, R>, D::Error> {
+    ) -> Result<TypeLoweringSession<'s, 'lower, 'query, D, I, R>, D::Error> {
         let generics = self.item_paths.generics().generics(env.owner)?;
-        let subst = Substitution::identity(&generics);
+        let subst = Substitution::identity(cx, generics.iter().map(|p| p.param()));
 
         Ok(TypeLoweringSession {
             query: self,
+            cx,
             owner: env.owner,
             anchor: env.anchor,
             subst,
@@ -148,8 +161,46 @@ where
         })
     }
 
-    pub fn lower(&'lower self, ty: &TypeRef, env: TypeLoweringEnv) -> Result<Ty, D::Error> {
-        self.session(env)?.lower_type_ref(ty)
+    /// Own the temporary storage for an independent result. Declaration callbacks during this
+    /// operation use this same storage; recursive source steps never create their own arenas.
+    pub fn with_storage<T>(
+        &self,
+        run: impl for<'s> FnOnce(SolverInterner<'s>) -> Result<T, D::Error>,
+    ) -> Result<T, D::Error> {
+        let declarations = SemanticDeclarations::for_lowering(self.item_paths, self.resolver);
+        declarations.with_storage(run)?
+    }
+
+    pub fn lower(&self, ty: &TypeRef, env: TypeLoweringEnv) -> Result<crate::Ty, D::Error> {
+        self.with_storage(|cx| {
+            let ty = self.session(cx, env)?.lower_type_ref(ty)?;
+            Ok(cx.raise_ty(ty).unwrap_or(crate::Ty::Unknown))
+        })
+    }
+
+    /// Interpret a body annotation in the caller's inference context. A written `_` belongs to
+    /// this table, so later constraints on the result can fill it in.
+    pub fn lower_inference_type<'s>(
+        &self,
+        ty: &TypeRef,
+        env: TypeLoweringEnv,
+        table: &InferenceTable<'s>,
+    ) -> Result<Ty<'s>, D::Error> {
+        self.session(table.interner(), env)?
+            .lower_type_ref_with_inference(ty, table)
+    }
+
+    /// Interpret explicit arguments such as `collect::<Vec<_>>()` without exporting the
+    /// caller's variables into an independent result.
+    pub fn lower_inference_args<'s>(
+        &self,
+        generics: &Generics<'_>,
+        args: &[ItemGenericArg],
+        env: TypeLoweringEnv,
+        table: &InferenceTable<'s>,
+    ) -> Result<GenericArgs<'s>, D::Error> {
+        self.session(table.interner(), env)?
+            .lower_generic_args_for(generics, args, Some(table))
     }
 }
 
@@ -158,30 +209,44 @@ where
 /// Keeping a session across all parameters is what gives anonymous `impl Trait` occurrences a
 /// stable owner-local order. Alias and projection stacks keep recursive source types bounded,
 /// while owner and lookup context change only for the duration of nested declarations.
-pub struct TypeLoweringSession<'lower, 'query, D, I, R> {
+pub struct TypeLoweringSession<'s, 'lower, 'query, D, I, R> {
     query: &'lower TypeLoweringQuery<'lower, 'query, D, I, R>,
     owner: GenericDefRef,
     anchor: TypeLoweringAnchor,
-    subst: Substitution,
+    cx: SolverInterner<'s>,
+    subst: Substitution<'s>,
     alias_stack: Vec<TypeAliasRef>,
-    param_projection_stack: Vec<(TypeParamRef, rg_text::Name)>,
-    associated_projection_stack: Vec<(TraitDefRef, rg_text::Name)>,
+    param_projection_stack: Vec<(TypeParamRef, Name)>,
+    associated_projection_stack: Vec<(TraitDefRef, Name)>,
     type_ref_depth: usize,
     limit_reported: bool,
     opaque_indices: Vec<(GenericDefRef, usize)>,
-    opaque_bounds: Vec<(OpaqueTy, Vec<TraitRefLowering>)>,
+    opaque_bounds: Vec<(OpaqueTy<'s>, Vec<TraitRefLowering<'s>>)>,
     argument_impl_trait_indices: Vec<(GenericDefRef, usize)>,
 }
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Opaque identities and their lowered predicates encountered by this complete signature walk.
-    pub(crate) fn into_opaque_bounds(self) -> Vec<(OpaqueTy, Vec<TraitRefLowering>)> {
+    pub(crate) fn into_opaque_bounds(self) -> Vec<(OpaqueTy<'s>, Vec<TraitRefLowering<'s>>)> {
         self.opaque_bounds
+    }
+
+    fn param_ty(&self, param: TypeParamRef) -> Ty<'s> {
+        self.subst
+            .get(GenericParamRef::Type(param))
+            .and_then(|a| a.as_ty())
+            .unwrap_or_else(|| {
+                let params = self.cx.generics(param.owner.into()).params;
+                self.cx
+                    .param(GenericParamRef::Type(param), &params)
+                    .map(|p| Ty::new(self.cx, TyKind::Param(p)))
+                    .unwrap_or_else(|| self.cx.unknown())
+            })
     }
 
     /// Resolve syntax owned by a parent declaration in that declaration's generic namespace.

@@ -15,7 +15,10 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreSource, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{AdtTy, ExpectedTyExt, GenericArg, Substitution, Ty};
+use rg_ty::{
+    lowering::TypeLoweringQuery,
+    solver::{self, AdtTy, InferenceTable, List, SolverInterner, Ty},
+};
 
 use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
@@ -48,7 +51,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<rg_ty::Ty, PackageStoreError> {
         let (_, ty) = self.resolve_nonlocal_path_expr(scope, path)?;
         Ok(ty)
     }
@@ -58,47 +61,63 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        self.resolve_path_expr(scope, path, None)
+    ) -> Result<(BodyResolution, rg_ty::Ty), PackageStoreError> {
+        let paths = self.context.item_paths();
+        TypeLoweringQuery::new(&paths, &self.context).with_storage(|cx| {
+            let (resolution, ty) = self.resolve_path_expr(scope, path, None, cx)?;
+            Ok((resolution, cx.raise_ty(ty).unwrap_or(rg_ty::Ty::Unknown)))
+        })
     }
 
     /// Resolve a body expression's path, including qualified associated items and local bindings.
     /// A local binding returns its identity with an unknown type; the caller connects that identity
     /// to its own type state. Item types come from declarations and can be resolved here directly.
-    pub(crate) fn resolve_body_path_expr(
+    pub(crate) fn resolve_body_path_expr<'s>(
         &self,
         expr: ExprId,
         path: &BodyPath,
-    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        cx: SolverInterner<'s>,
+    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(expr);
         // Preserve associated-item syntax such as `<T as Trait>::VALUE` before trying ordinary
         // lexical lookup, which only understands a DefMap path and its visible local bindings.
+        // This is declaration discovery: its independent result has no body inference variables.
+        // Calls subsequently instantiate the selected declaration in the caller's live table.
         if let Some(result) = self
             .context
             .associated_items()
             .resolve_body_path(expr_data.scope, path)?
         {
-            return Ok(result);
+            let (resolution, ty) = result;
+            return Ok((
+                resolution,
+                cx.lower_ty(
+                    &ty,
+                    cx.params(self.context.body().owner().generic_def().into()),
+                ),
+            ));
         }
 
         match path.as_def_map_path() {
             Some(path) => {
-                self.resolve_path_expr(expr_data.scope, &path, Some(expr_data.visible_bindings))
+                self.resolve_path_expr(expr_data.scope, &path, Some(expr_data.visible_bindings), cx)
             }
-            None => Ok((BodyResolution::Unknown, Ty::Unknown)),
+            None => Ok((BodyResolution::Unknown, cx.unknown())),
         }
     }
 
     /// Record constructors use type names, independently of ordinary local value bindings.
     /// For `struct User { name: Name }`, a local `let User = ...` therefore does not hide the
     /// constructor in `User { name }`.
-    pub(crate) fn resolve_record_expr_path(
+    pub(crate) fn resolve_record_expr_path<'s>(
         &self,
         scope: ScopeId,
         path: &BodyPath,
-    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        table: &InferenceTable<'s>,
+    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
+        let cx = table.interner();
         let Some(def_map_path) = path.as_def_map_path() else {
-            return Ok((BodyResolution::Unknown, Ty::Unknown));
+            return Ok((BodyResolution::Unknown, cx.unknown()));
         };
 
         match self
@@ -109,7 +128,7 @@ where
             TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
+                    cx.adt(self.record_nominal_ty(scope, path, type_def, table)?),
                 ));
             }
             TypePathResolution::TypeDef(type_def) => {
@@ -126,7 +145,7 @@ where
                 };
                 return Ok((
                     BodyResolution::Declarations([declaration].into_iter().collect()),
-                    Ty::adt(self.record_nominal_ty(scope, path, type_def)?),
+                    cx.adt(self.record_nominal_ty(scope, path, type_def, table)?),
                 ));
             }
             TypePathResolution::TypeAlias(_)
@@ -149,20 +168,21 @@ where
                         .into_iter()
                         .collect(),
                 ),
-                Ty::adt(self.record_nominal_ty(scope, path, variant.owner)?),
+                cx.adt(self.record_nominal_ty(scope, path, variant.owner, table)?),
             ));
         }
 
-        self.resolve_nonlocal_path_expr(scope, &def_map_path)
+        self.resolve_path_expr(scope, &def_map_path, None, cx)
     }
 
     /// Preserve written record arguments, leaving omitted type arguments unknown for inference.
-    fn record_nominal_ty(
+    fn record_nominal_ty<'s>(
         &self,
         scope: ScopeId,
         path: &BodyPath,
         type_def: TypeDefRef,
-    ) -> Result<AdtTy, PackageStoreError> {
+        table: &InferenceTable<'s>,
+    ) -> Result<AdtTy<'s>, PackageStoreError> {
         let generics = self
             .context
             .item_paths()
@@ -170,10 +190,10 @@ where
             .generics(GenericDefRef::TypeDef(type_def))?;
         let args = if let Some(args) = path.last_segment_angle_args() {
             self.context
-                .type_refs(scope)
-                .resolve_generic_args_for(&generics, args)?
+                .live()
+                .generic_args(scope, &generics, args, table)?
         } else {
-            Substitution::new().args_for(&generics)
+            table.interner().unknown_args(solver::DefId::Adt(type_def))
         };
         Ok(AdtTy {
             def: type_def,
@@ -184,17 +204,18 @@ where
     /// Resolve a value path from a body scope.
     ///
     /// `visible_bindings` caps which local bindings are visible for local queries.
-    fn resolve_path_expr(
+    fn resolve_path_expr<'s>(
         &self,
         scope: ScopeId,
         path: &Path,
         visible_bindings: Option<usize>,
-    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        cx: SolverInterner<'s>,
+    ) -> Result<(BodyResolution, Ty<'s>), PackageStoreError> {
         // Single-segment paths are the only ones that can resolve to local bindings. They also
         // need lexical item lookup, so handle them before type-shaped paths.
         if let Some(name) = path.single_name()
             && let Some((resolution, ty)) =
-                self.resolve_single_segment_value_name(scope, name, visible_bindings)?
+                self.resolve_single_segment_value_name(scope, name, visible_bindings, cx)?
         {
             return Ok((resolution, ty));
         }
@@ -207,7 +228,13 @@ where
             .resolve_in_scope(scope, path)?
         {
             TypePathResolution::SelfType(type_def) => {
-                return Ok((BodyResolution::Unknown, Ty::adt(AdtTy::bare(type_def))));
+                return Ok((
+                    BodyResolution::Unknown,
+                    cx.adt(AdtTy {
+                        def: type_def,
+                        args: List::default(),
+                    }),
+                ));
             }
             TypePathResolution::TypeDef(_)
             | TypePathResolution::TypeAlias(_)
@@ -223,14 +250,20 @@ where
                     .associated_items()
                     .resolve_path(scope, &prefix, last_segment)?
         {
-            return Ok((resolution, ty));
+            return Ok((
+                resolution,
+                cx.lower_ty(
+                    &ty,
+                    cx.params(self.context.body().owner().generic_def().into()),
+                ),
+            ));
         }
 
         // Multi-segment body paths can name body-local values nested in local modules. Single
         // names already took the lexical route above.
         if path.single_name().is_none()
             && let Some((resolution, ty)) =
-                self.resolve_body_value_path_from_def_map(scope, path)?
+                self.resolve_body_value_path_from_def_map(scope, path, cx)?
         {
             return Ok((resolution, ty));
         }
@@ -239,23 +272,25 @@ where
         // initializer bodies whose owner/fallback modules are outside the body def map.
         let result = self.resolve_path_from_owner_modules(path)?;
         if result.resolved.is_empty() {
-            return Ok((BodyResolution::Unknown, Ty::Unknown));
+            return Ok((BodyResolution::Unknown, cx.unknown()));
         }
 
         Ok(self
-            .value_name_resolution(BodyValueName::Candidates(
-                self.value_candidates_for_defs(result.resolved)?,
-            ))?
-            .unwrap_or((BodyResolution::Unknown, Ty::Unknown)))
+            .value_name_resolution(
+                BodyValueName::Candidates(self.value_candidates_for_defs(result.resolved)?),
+                cx,
+            )?
+            .unwrap_or((BodyResolution::Unknown, cx.unknown())))
     }
 
     /// Search one value name through parent scopes, with an optional local binding cutoff.
-    fn resolve_single_segment_value_name(
+    fn resolve_single_segment_value_name<'s>(
         &self,
         start_scope: ScopeId,
         name: &str,
         visible_bindings: Option<usize>,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        cx: SolverInterner<'s>,
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
         // Value lookup is scope-ordered: an inner const/function shadows an outer binding just as
         // surely as an inner binding shadows an outer item.
         let from = ModuleRef {
@@ -278,7 +313,7 @@ where
                         continue;
                     };
                     if binding_data.name.as_deref() == Some(name) {
-                        return self.value_name_resolution(BodyValueName::Binding(*binding));
+                        return self.value_name_resolution(BodyValueName::Binding(*binding), cx);
                     }
                 }
             }
@@ -293,7 +328,7 @@ where
                 .scope_resolver()
                 .resolve_lexical_name_in_module(from, module, name, NamespaceSet::VALUES)?;
             let value_name = BodyValueName::Candidates(self.value_candidates_for_defs(defs)?);
-            if let Some(resolution) = self.value_name_resolution(value_name)? {
+            if let Some(resolution) = self.value_name_resolution(value_name, cx)? {
                 return Ok(Some(resolution));
             }
 
@@ -329,11 +364,12 @@ where
     }
 
     /// Resolve a multi-segment value path through the body def map.
-    fn resolve_body_value_path_from_def_map(
+    fn resolve_body_value_path_from_def_map<'s>(
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        cx: SolverInterner<'s>,
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
         let from = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
@@ -344,9 +380,10 @@ where
             .scope_resolver()
             .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
             .resolved;
-        self.value_name_resolution(BodyValueName::Candidates(
-            self.value_candidates_for_defs(defs)?,
-        ))
+        self.value_name_resolution(
+            BodyValueName::Candidates(self.value_candidates_for_defs(defs)?),
+            cx,
+        )
     }
 
     /// Project selected value-namespace definitions into Body IR candidates.
@@ -384,10 +421,7 @@ where
                                 .item_query()
                                 .type_def_has_value_constructor(type_def)?
                             {
-                                candidates.push(BodyValueCandidate::TypeConstructor(
-                                    type_def,
-                                    AdtTy::bare(type_def),
-                                ));
+                                candidates.push(BodyValueCandidate::TypeConstructor(type_def));
                             }
                         }
                         SemanticItemRef::Trait(_)
@@ -408,15 +442,16 @@ where
     }
 
     /// Convert one value-namespace match into body resolution and type.
-    fn value_name_resolution(
+    fn value_name_resolution<'s>(
         &self,
         value_name: BodyValueName,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        cx: SolverInterner<'s>,
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
                 // A local path reports identity only. Its consumer links the binding's live
                 // inference slot; semantic item lookup does not read body-local types.
-                Ok(Some((BodyResolution::Binding(binding), Ty::Unknown)))
+                Ok(Some((BodyResolution::Binding(binding), cx.unknown())))
             }
             BodyValueName::Candidates(candidates) => {
                 let mut declarations = UniqueVec::new();
@@ -426,28 +461,53 @@ where
                     match candidate {
                         BodyValueCandidate::Function(function) => {
                             declarations.push(DeclarationRef::from(function));
-                            tys.push(
-                                self.context
-                                    .signatures()
-                                    .function_item_ty(function)?
-                                    .unwrap_or(Ty::Unknown),
-                            );
+                            tys.push(cx.fn_def(
+                                function,
+                                cx.unknown_args(solver::DefId::Function(function)),
+                            ));
                         }
                         BodyValueCandidate::Const(const_ref) => {
                             declarations.push(DeclarationRef::from(const_ref));
-                            tys.push(self.semantic_const_ty(const_ref)?);
+                            let paths = self.context.item_paths();
+                            tys.push(
+                                TypeLoweringQuery::new(&paths, &self.context)
+                                    .const_ty(cx, const_ref)?
+                                    .unwrap_or_else(|| cx.unknown()),
+                            );
                         }
                         BodyValueCandidate::Static(static_ref) => {
                             declarations.push(DeclarationRef::from(static_ref));
-                            tys.push(self.semantic_static_ty(static_ref)?);
+                            let paths = self.context.item_paths();
+                            tys.push(
+                                TypeLoweringQuery::new(&paths, &self.context)
+                                    .static_ty(cx, static_ref)?
+                                    .unwrap_or_else(|| cx.unknown()),
+                            );
                         }
-                        BodyValueCandidate::TypeConstructor(type_def, ty) => {
+                        BodyValueCandidate::TypeConstructor(type_def) => {
                             declarations.push(DeclarationRef::from(type_def));
-                            tys.push(Ty::adt(ty));
+                            tys.push(cx.adt(AdtTy {
+                                def: type_def,
+                                args: List::default(),
+                            }));
                         }
-                        BodyValueCandidate::EnumVariant(variant_ref, ty) => {
+                        BodyValueCandidate::EnumVariant(variant_ref, owner) => {
                             declarations.push(DeclarationRef::EnumVariant(variant_ref));
-                            tys.push(ty);
+                            let args = self
+                                .context
+                                .item_query()
+                                .generic_params_for_type_def(owner)?
+                                .map(|params| {
+                                    params
+                                        .types()
+                                        .map(|_| cx.unknown().into())
+                                        .collect::<Vec<_>>()
+                                })
+                                .unwrap_or_default();
+                            tys.push(cx.adt(AdtTy {
+                                def: owner,
+                                args: List::new(cx, &args),
+                            }));
                         }
                     }
                 }
@@ -455,31 +515,13 @@ where
                 if !declarations.is_empty() {
                     return Ok(Some((
                         BodyResolution::Declarations(declarations),
-                        tys.into_ty(),
+                        tys.into_option().unwrap_or_else(|| cx.unknown()),
                     )));
                 }
 
                 Ok(None)
             }
         }
-    }
-
-    /// Resolve the declared type of a const item.
-    fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
-        Ok(self
-            .context
-            .signatures()
-            .const_ty(const_ref)?
-            .unwrap_or(Ty::Unknown))
-    }
-
-    /// Resolve the declared type of a static item.
-    fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
-        Ok(self
-            .context
-            .signatures()
-            .static_ty(static_ref)?
-            .unwrap_or(Ty::Unknown))
     }
 
     /// Build the constructor-like value type for an imported enum variant.
@@ -494,22 +536,9 @@ where
                 item_query.enum_variant_ref_for_local_enum_variant(variant_def, variant_def_data)?
             && let Some(variant_data) = item_query.enum_variant_data(variant_ref)?
         {
-            let args = item_query
-                .generic_params_for_type_def(variant_data.owner)?
-                .map(|generics| {
-                    generics
-                        .types()
-                        .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
-                        .collect()
-                })
-                .unwrap_or_default();
-
             Ok(Some(BodyValueCandidate::EnumVariant(
                 variant_ref,
-                Ty::adt(AdtTy {
-                    def: variant_data.owner,
-                    args,
-                }),
+                variant_data.owner,
             )))
         } else {
             Ok(None)
@@ -531,6 +560,6 @@ enum BodyValueCandidate {
     Const(ConstRef),
     Static(StaticRef),
     /// Unit or tuple struct selected through the value namespace.
-    TypeConstructor(TypeDefRef, AdtTy),
-    EnumVariant(EnumVariantRef, Ty),
+    TypeConstructor(TypeDefRef),
+    EnumVariant(EnumVariantRef, TypeDefRef),
 }

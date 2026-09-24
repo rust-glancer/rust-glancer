@@ -1,43 +1,40 @@
-//! Walk source type shapes while retaining source-hole and opaque-type identities.
+//! Interpret source shapes directly in working storage, including inference and opaque identities.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
-use rg_item_tree::TypeRef;
+use rg_item_tree::{ConstExpr, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
-use crate::{AliasTy, Lifetime, OpaqueTy, Ty};
+use crate::solver::{InferenceTable, OpaqueTy, Region, Ty};
 
-impl<'lower, 'query, D, I, R> TypeLoweringSession<'lower, 'query, D, I, R>
+impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Lower a source type, treating `impl Trait` as an opaque type occurrence.
-    pub(crate) fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
+    pub fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty<'s>, D::Error> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, None)
     }
 
-    /// Lower a body-written type while asking the caller for a placeholder for each explicit `_`.
-    ///
-    /// Path failures remain `Unknown`; only the syntax node dedicated to inference requests a
-    /// placeholder. The caller connects those placeholders to its live variables when converting
-    /// the result. Keeping this policy inside the source visitor prevents body inference
-    /// from walking `TypeRef` a second time to rediscover holes.
+    /// A written `_` creates a real variable in the caller's table. Missing or unsupported
+    /// syntax remains an error type: it must not silently become a fresh inference question.
     pub fn lower_type_ref_with_inference(
         &mut self,
         ty: &TypeRef,
-        new_variable: &dyn Fn() -> Ty,
-    ) -> Result<Ty, D::Error> {
-        self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, Some(new_variable))
+        table: &InferenceTable<'s>,
+    ) -> Result<Ty<'s>, D::Error> {
+        self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, Some(table))
     }
 
     /// Lower a function parameter type, where `impl Trait` introduces an anonymous type parameter.
     ///
     /// `fn visit(value: impl Display)` is generic over a hidden function parameter constrained by
     /// `Display`; it is not the opaque return type produced by `fn make() -> impl Display`.
-    pub(crate) fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty, D::Error> {
+    pub(crate) fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty<'s>, D::Error> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Argument, None)
     }
 
@@ -45,11 +42,11 @@ where
         &mut self,
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Ty, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Ty<'s>, D::Error> {
         if self.type_ref_depth >= MAX_TYPE_LOWERING_DEPTH {
             self.report_limit("type_ref_depth", Some(MAX_TYPE_LOWERING_DEPTH));
-            return Ok(Ty::Unknown);
+            return Ok(self.cx.unknown());
         }
 
         self.type_ref_depth += 1;
@@ -62,20 +59,20 @@ where
         &mut self,
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
-        inference: Option<&dyn Fn() -> Ty>,
-    ) -> Result<Ty, D::Error> {
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<Ty<'s>, D::Error> {
         match ty {
-            TypeRef::Unknown(_) | TypeRef::DynTrait(_) => Ok(Ty::Unknown),
+            TypeRef::Unknown(_) | TypeRef::DynTrait(_) => Ok(self.cx.unknown()),
             TypeRef::Infer => Ok(inference
-                .map(|new_variable| new_variable())
-                .unwrap_or(Ty::Unknown)),
-            TypeRef::Never => Ok(Ty::Never),
-            TypeRef::Unit => Ok(Ty::Unit),
-            TypeRef::Tuple(types) => Ok(Ty::tuple(
+                .map(|table| table.new_type_var())
+                .unwrap_or(self.cx.unknown())),
+            TypeRef::Never => Ok(self.cx.never()),
+            TypeRef::Unit => Ok(self.cx.unit()),
+            TypeRef::Tuple(types) => Ok(self.cx.tuple(
                 types
                     .iter()
                     .map(|ty| self.lower_type_ref_with_mode(ty, impl_trait_mode, inference))
-                    .collect::<Result<_, _>>()?,
+                    .collect::<Result<Vec<_>, _>>()?,
             )),
             TypeRef::Reference {
                 lifetime,
@@ -86,37 +83,41 @@ where
                     .as_ref()
                     .map(|lifetime| self.lower_lifetime(lifetime))
                     .transpose()?
-                    .unwrap_or(Lifetime::Erased);
-                Ok(Ty::reference_with_lifetime(
-                    lifetime,
-                    *mutability,
-                    self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
-                ))
+                    .unwrap_or(Region(ir::ReErased));
+                let inner = self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?;
+                // An unresolved source reference supplies no type evidence. A written `&_`
+                // is different: its inner type is a real variable and keeps the reference shape.
+                Ok(if inner.is_unknown() {
+                    inner
+                } else {
+                    self.cx
+                        .reference_with_lifetime(lifetime, *mutability, inner)
+                })
             }
-            TypeRef::RawPointer { mutability, inner } => Ok(Ty::raw_pointer(
+            TypeRef::RawPointer { mutability, inner } => Ok(self.cx.raw_pointer(
                 *mutability,
                 self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
             )),
-            TypeRef::Slice(inner) => Ok(Ty::slice(self.lower_type_ref_with_mode(
+            TypeRef::Slice(inner) => Ok(self.cx.slice(self.lower_type_ref_with_mode(
                 inner,
                 impl_trait_mode,
                 inference,
             )?)),
-            TypeRef::Array { inner, len } => Ok(Ty::array(
+            TypeRef::Array { inner, len } => Ok(self.cx.array(
                 self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
-                self.lower_const(len.as_ref().map(rg_item_tree::ConstExpr::as_str))?,
+                self.lower_const(len.as_ref().map(ConstExpr::as_str))?,
             )),
-            TypeRef::FnPointer { params, ret } => Ok(Ty::fn_pointer(
-                params
+            TypeRef::FnPointer { params, ret } => Ok(self.cx.fn_pointer(
+                &params
                     .iter()
                     .map(|param| self.lower_type_ref_with_mode(param, impl_trait_mode, inference))
-                    .collect::<Result<_, _>>()?,
+                    .collect::<Result<Vec<_>, _>>()?,
                 self.lower_type_ref_with_mode(ret, impl_trait_mode, inference)?,
             )),
             TypeRef::ImplTrait(_) if impl_trait_mode == ImplTraitMode::Argument => self
                 .next_argument_impl_trait_param()?
-                .map(Ty::Param)
-                .map_or(Ok(Ty::Unknown), Ok),
+                .map(|param| self.param_ty(param))
+                .map_or(Ok(self.cx.unknown()), Ok),
             TypeRef::ImplTrait(bounds) => {
                 let opaque = OpaqueTyRef {
                     owner: self.owner,
@@ -125,15 +126,17 @@ where
                 let generics = self.query.item_paths.generics().generics(self.owner)?;
                 let opaque = OpaqueTy {
                     opaque,
-                    args: self.subst.args_for(&generics),
+                    args: self
+                        .subst
+                        .args_for(self.cx, generics.iter().map(|p| p.param())),
                 };
-                let self_ty = Ty::Alias(AliasTy::Opaque(opaque.clone()));
+                let self_ty = self.cx.opaque(opaque);
                 let mut lowered_bounds = Vec::new();
                 for bound in bounds {
                     let Some(trait_ty) = bound.required_trait_ty() else {
                         continue;
                     };
-                    if let Some(bound) = self.lower_trait_ref(trait_ty, self_ty.clone())? {
+                    if let Some(bound) = self.lower_trait_ref(trait_ty, self_ty)? {
                         lowered_bounds.push(bound);
                     }
                 }

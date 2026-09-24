@@ -14,7 +14,8 @@ use rg_ty::{
     Ty, TyContext,
     autoderef::Autoderef,
     lookup::{AssociatedItemCandidateRef, ImplQuery, ItemPathQuery},
-    lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolver},
+    lowering::{TypeLoweringAnchor, TypePathResolver},
+    signature::SemanticSignatureQuery,
 };
 
 use super::cache::{BodyLocalItemCache, BodyResolutionCaches, BodyTraitLookupCache};

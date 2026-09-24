@@ -163,14 +163,6 @@ impl GenericArg {
         }
     }
 
-    /// Returns whether this generic argument still carries inference variables.
-    pub fn has_source_hole(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.has_source_hole(),
-            Self::Lifetime(_) | Self::Const(_) => false,
-        }
-    }
-
     /// Returns true when this generic argument contains `Ty::Unknown`.
     pub fn has_unknown(&self) -> bool {
         match self {
