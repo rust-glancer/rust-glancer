@@ -308,20 +308,19 @@ impl<'s> InferenceTable<'s> {
             if cx.is_cancelled() {
                 return Outcome::Unavailable;
             }
-            // Take one round out of the queue. Only unfinished goals go back; successful goals
-            // have already written their evidence into the shared inference variables.
-            let pending = std::mem::take(&mut *self.pending.borrow_mut());
-            let mut remaining = Vec::new();
+            // Work outside the RefCell borrow, retaining unfinished goals in the same buffer.
+            // Successful goals have already written their evidence into the inference variables;
+            // later rounds and registrations can reuse the queue's allocation.
+            let mut pending = std::mem::take(&mut *self.pending.borrow_mut());
             let mut progress = false;
             let mut unavailable = false;
-            for mut pending in pending {
+            pending.retain_mut(|pending| {
                 cx.profile(|p| p.pending_visits += 1);
                 if pending.goal.predicate.references_error()
                     || pending.goal.param_env.references_error()
                 {
-                    remaining.push(pending);
                     unavailable = true;
-                    continue;
+                    return true;
                 }
                 if pending
                     .unavailable
@@ -329,9 +328,8 @@ impl<'s> InferenceTable<'s> {
                     .is_some_and(|inputs| !inputs.changed(&self.solver))
                 {
                     cx.profile(|p| p.unavailable_reuses += 1);
-                    remaining.push(pending);
                     unavailable = true;
-                    continue;
+                    return true;
                 }
                 pending.unavailable = None;
                 // The delegate can recognize a still-unknown trait receiver without creating
@@ -343,11 +341,10 @@ impl<'s> InferenceTable<'s> {
                         if let Some(projection) = pending.normalization {
                             self.projections.borrow_mut().retain(|p| *p != projection);
                         }
-                    } else {
-                        pending.stalled = None;
-                        remaining.push(pending);
+                        return false;
                     }
-                    continue;
+                    pending.stalled = None;
+                    return true;
                 }
                 let snapshot = self.solver.snapshot();
                 let was_tainted = self.solver.is_tainted();
@@ -363,9 +360,8 @@ impl<'s> InferenceTable<'s> {
                     // to retry. Observe the caller's variables after restoring its snapshot.
                     drop(snapshot);
                     pending.unavailable = Some(GoalInputs::new(&self.solver, pending.goal));
-                    remaining.push(pending);
                     unavailable = true;
-                    continue;
+                    return true;
                 }
                 match result {
                     Ok(result) => {
@@ -384,10 +380,11 @@ impl<'s> InferenceTable<'s> {
                             if let Some(projection) = pending.normalization {
                                 self.projections.borrow_mut().retain(|p| *p != projection);
                             }
+                            false
                         } else {
                             pending.goal = result.goal;
                             pending.stalled = result.stalled_on;
-                            remaining.push(pending);
+                            true
                         }
                     }
                     Err(_) => {
@@ -395,10 +392,11 @@ impl<'s> InferenceTable<'s> {
                         // Earlier successful obligations keep their guidance, but a failed root
                         // cannot leave any of its speculative assignments in the table.
                         self.failed.set(true);
+                        false
                     }
                 }
-            }
-            *self.pending.borrow_mut() = remaining;
+            });
+            *self.pending.borrow_mut() = pending;
             if self.pending.borrow().is_empty() {
                 return if self.failed.get() {
                     Outcome::NoSolution

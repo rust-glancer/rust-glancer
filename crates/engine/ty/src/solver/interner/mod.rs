@@ -31,6 +31,7 @@ use super::{
         Term, Ty, TyKind, ValTree, ValueConst,
     },
 };
+use crate::lookup::TraitImplFilter;
 
 // Declaration templates and generic metadata are stable throughout an operation. Keep them
 // beside the arena so repeated callbacks reuse working types. Nothing here enters the semantic
@@ -907,7 +908,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
             self.unavailable("trait identity");
             return R::output();
         };
-        let Some(impls) = self.0.provider.impls(id, self.raise_ty(ty)) else {
+        let Some(impls) = self.0.provider.impls(id, TraitImplFilter::from(ty)) else {
             self.unavailable("impl enumeration");
             return R::output();
         };
@@ -939,7 +940,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
             self.unavailable("trait identity");
             return R::output();
         };
-        let Some(impls) = self.0.provider.impls(id, None) else {
+        let Some(impls) = self.0.provider.impls(id, TraitImplFilter::All) else {
             self.unavailable("impl enumeration");
             return R::output();
         };

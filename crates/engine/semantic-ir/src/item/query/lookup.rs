@@ -231,6 +231,26 @@ impl<'item> ItemLookupQuery<'item> {
         Ok(functions)
     }
 
+    /// Returns same-name inherent functions whose `Self` needs structural matching.
+    #[rg_std::cancelable("lookup candidates")]
+    pub fn structural_inherent_functions_by_name(
+        &self,
+        name: &str,
+    ) -> Result<UniqueVec<FunctionRef>, Cancelled> {
+        let mut functions = self
+            .local_index
+            .structural_inherent_functions_by_name
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        self.dependencies.extend(
+            &mut functions,
+            self.dependencies
+                .structural_inherent_functions_by_name(name)?,
+        )?;
+        Ok(functions)
+    }
+
     /// Returns inherent impls whose `Self` type needs structural matching.
     #[rg_std::cancelable("lookup candidates")]
     pub fn structural_inherent_impls(&self) -> Result<UniqueVec<ImplRef>, Cancelled> {
@@ -551,6 +571,34 @@ impl DependencyLookup<'_> {
         results
             .inherent_functions_by_type_and_name
             .insert(key, functions.clone());
+        Ok(functions)
+    }
+
+    #[rg_std::cancelable("lookup candidates")]
+    fn structural_inherent_functions_by_name(
+        &self,
+        name: &str,
+    ) -> Result<UniqueVec<FunctionRef>, Cancelled> {
+        let mut results = self
+            .results
+            .lock()
+            .expect("dependency lookup results lock should not be poisoned");
+        if let Some(functions) = results.structural_inherent_functions_by_name.get(name) {
+            self.operation_cache.record_dependency_result_hit();
+            return Ok(functions.clone());
+        }
+
+        self.operation_cache.record_dependency_result_miss();
+        let mut functions = UniqueVec::new();
+        for index in self.indexes.iter() {
+            rg_std::check_cancel!(self, "dependency candidate index");
+            if let Some(indexed) = index.structural_inherent_functions_by_name.get(name) {
+                self.extend(&mut functions, indexed.iter().copied())?;
+            }
+        }
+        results
+            .structural_inherent_functions_by_name
+            .insert(Name::new(name), functions.clone());
         Ok(functions)
     }
 
@@ -965,6 +1013,7 @@ struct DependencyLookupResults {
     inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<(TypeDefRef, Name), UniqueVec<FunctionRef>>,
     structural_inherent_impls: Option<UniqueVec<ImplRef>>,
+    structural_inherent_functions_by_name: HashMap<Name, UniqueVec<FunctionRef>>,
     trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
     trait_impls_by_trait: HashMap<TraitDefRef, Option<UniqueVec<TraitImplRef>>>,
     trait_impl_candidates_by_self_head:

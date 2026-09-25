@@ -6,7 +6,7 @@ mod impls;
 mod item_path;
 mod member;
 
-pub(crate) use self::impls::trait_impl_candidates;
+pub(crate) use self::impls::TraitImplFilter;
 pub use self::{
     associated_item::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
     implementation::ImplementationQuery,

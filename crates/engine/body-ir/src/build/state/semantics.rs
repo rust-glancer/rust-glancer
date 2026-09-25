@@ -12,9 +12,7 @@ use super::{
     BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
 };
 use crate::{
-    build::{
-        pattern_binding::PatternBindingMaterializationPass, query_source::BodyBuildQuerySource,
-    },
+    build::{pattern_binding::PatternBindingQuery, query_source::BodyBuildQuerySource},
     resolution::{BodyResolutionContext, InferenceContext},
 };
 
@@ -188,7 +186,10 @@ impl CrateBodyBuildState<'_> {
         for (body_id, body) in self.crate_bodies.bodies_mut().iter_mut_with_ids() {
             rg_std::check_cancel!(self.cancellation, "body pattern bindings");
             let body_ref = self.body_refs[body_id];
-            PatternBindingMaterializationPass::new(
+            if !body.has_pending_bindings() {
+                continue;
+            }
+            let active = PatternBindingQuery::new(
                 &source,
                 &source,
                 item_lookup_query,
@@ -196,7 +197,9 @@ impl CrateBodyBuildState<'_> {
                 body,
                 &self.cancellation,
             )
-            .materialize()?;
+            .active_bindings()
+            .context("resolve pattern binding identities")?;
+            body.compact_bindings(&active);
         }
 
         Ok(())

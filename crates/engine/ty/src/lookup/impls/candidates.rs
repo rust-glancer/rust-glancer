@@ -4,53 +4,99 @@ use rg_ir_model::{TraitDefRef, TraitImplRef};
 use rg_semantic_ir::TraitImplSelfHead;
 use rg_std::UniqueVec;
 
-use crate::{Ty, TyContext};
+use crate::{
+    Ty, TyContext,
+    solver::{self, TyShape},
+};
 
-/// Shared discovery for owned queries and solver callbacks. This only chooses source impls;
+/// The receiver evidence available to source-impl discovery. This only narrows declarations;
 /// the solver still relates their generic arguments and proves their predicates.
-pub(crate) fn trait_impl_candidates<D, I>(
-    context: &TyContext<'_, D, I>,
-    trait_ref: TraitDefRef,
-    receiver: &Ty,
-) -> Option<UniqueVec<TraitImplRef>> {
-    if context.cancellation().is_cancelled() {
-        return None;
-    }
-    let lookup = context.item_lookup();
-    let head = match receiver {
-        // An unknown receiver must not acquire a type by guessing a source impl. A parameter or
-        // projection can still select an impl, but provides no outer shape to narrow the index.
-        Ty::Unknown => return Some(UniqueVec::new()),
-        Ty::Param(_) | Ty::Alias(_) => {
-            return Some(
-                lookup
-                    .trait_impls_for_trait(trait_ref)
-                    .ok()?
-                    .unwrap_or_default(),
-            );
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TraitImplFilter {
+    /// A parameter, projection, or live variable does not identify a concrete receiver family.
+    All,
+    /// Include this concrete family and the blanket/unresolved-header fallbacks.
+    Head(TraitImplSelfHead),
+    /// A closure or function item cannot be named by a concrete source impl.
+    Fallbacks,
+    /// An unknown owned type supplies no evidence; do not guess its type from visible impls.
+    NoEvidence,
+}
+
+impl TraitImplFilter {
+    pub(crate) fn candidates<D, I>(
+        self,
+        context: &TyContext<'_, D, I>,
+        trait_ref: TraitDefRef,
+    ) -> Option<UniqueVec<TraitImplRef>> {
+        if context.cancellation().is_cancelled() {
+            return None;
         }
-        Ty::Unit => Some(TraitImplSelfHead::Unit),
-        Ty::Never => Some(TraitImplSelfHead::Never),
-        Ty::Primitive(primitive) => Some(TraitImplSelfHead::Primitive(*primitive)),
-        Ty::Tuple(fields) => u32::try_from(fields.len())
-            .ok()
-            .map(TraitImplSelfHead::Tuple),
-        Ty::Array { .. } => Some(TraitImplSelfHead::Array),
-        Ty::Slice(_) => Some(TraitImplSelfHead::Slice),
-        Ty::Reference { mutability, .. } => Some(TraitImplSelfHead::Reference(*mutability)),
-        Ty::RawPointer { mutability, .. } => Some(TraitImplSelfHead::RawPointer(*mutability)),
-        Ty::FnPointer { params, .. } => u32::try_from(params.len())
-            .ok()
-            .map(TraitImplSelfHead::FnPointer),
-        Ty::Adt(ty) => Some(TraitImplSelfHead::Adt(ty.def)),
-        // No source impl can name a particular closure or function item. `None` asks the index
-        // for blanket and unresolved-header fallbacks, without unrelated concrete impls.
-        Ty::Closure(_) | Ty::FnDef(_) => None,
-    };
-    Some(
-        lookup
-            .trait_impl_candidates_for_self_head(trait_ref, head)
-            .ok()?
-            .unwrap_or_default(),
-    )
+        let lookup = context.item_lookup();
+        let candidates = match self {
+            Self::All => lookup.trait_impls_for_trait(trait_ref),
+            Self::Head(head) => lookup.trait_impl_candidates_for_self_head(trait_ref, Some(head)),
+            Self::Fallbacks => lookup.trait_impl_candidates_for_self_head(trait_ref, None),
+            Self::NoEvidence => return Some(UniqueVec::new()),
+        };
+        Some(candidates.ok()?.unwrap_or_default())
+    }
+}
+
+impl From<&Ty> for TraitImplFilter {
+    fn from(receiver: &Ty) -> Self {
+        let head = match receiver {
+            Ty::Unknown => return Self::NoEvidence,
+            Ty::Param(_) | Ty::Alias(_) => return Self::All,
+            Ty::Unit => TraitImplSelfHead::Unit,
+            Ty::Never => TraitImplSelfHead::Never,
+            Ty::Primitive(primitive) => TraitImplSelfHead::Primitive(*primitive),
+            Ty::Tuple(fields) => match u32::try_from(fields.len()) {
+                Ok(arity) => TraitImplSelfHead::Tuple(arity),
+                Err(_) => return Self::Fallbacks,
+            },
+            Ty::Array { .. } => TraitImplSelfHead::Array,
+            Ty::Slice(_) => TraitImplSelfHead::Slice,
+            Ty::Reference { mutability, .. } => TraitImplSelfHead::Reference(*mutability),
+            Ty::RawPointer { mutability, .. } => TraitImplSelfHead::RawPointer(*mutability),
+            Ty::FnPointer { params, .. } => match u32::try_from(params.len()) {
+                Ok(arity) => TraitImplSelfHead::FnPointer(arity),
+                Err(_) => return Self::Fallbacks,
+            },
+            Ty::Adt(ty) => TraitImplSelfHead::Adt(ty.def),
+            Ty::Closure(_) | Ty::FnDef(_) => return Self::Fallbacks,
+        };
+        Self::Head(head)
+    }
+}
+
+impl From<solver::Ty<'_>> for TraitImplFilter {
+    /// Impl discovery only needs the outer constructor of `Vec<?T>`, not an owned copy of ?T
+    /// and every nested argument. Unresolved solver types keep the conservative all-impl search;
+    /// an owned `Ty::Unknown` instead has no inference state to support that search.
+    fn from(receiver: solver::Ty<'_>) -> Self {
+        let head = match receiver.shape() {
+            TyShape::Unit => TraitImplSelfHead::Unit,
+            TyShape::Never => TraitImplSelfHead::Never,
+            TyShape::Primitive(primitive) => TraitImplSelfHead::Primitive(primitive),
+            TyShape::Tuple(fields) => match u32::try_from(fields.len()) {
+                Ok(arity) => TraitImplSelfHead::Tuple(arity),
+                Err(_) => return Self::Fallbacks,
+            },
+            TyShape::Array { .. } => TraitImplSelfHead::Array,
+            TyShape::Slice(_) => TraitImplSelfHead::Slice,
+            TyShape::Reference { mutability, .. } => TraitImplSelfHead::Reference(mutability),
+            TyShape::RawPointer { mutability, .. } => TraitImplSelfHead::RawPointer(mutability),
+            TyShape::FnPointer { params, .. } => match u32::try_from(params.len()) {
+                Ok(arity) => TraitImplSelfHead::FnPointer(arity),
+                Err(_) => return Self::Fallbacks,
+            },
+            TyShape::Adt(adt) => TraitImplSelfHead::Adt(adt.def),
+            TyShape::Closure(_) | TyShape::FnDef(_) => return Self::Fallbacks,
+            TyShape::Param(_) | TyShape::Alias(_) | TyShape::InferVar { .. } | TyShape::Unknown => {
+                return Self::All;
+            }
+        };
+        Self::Head(head)
+    }
 }

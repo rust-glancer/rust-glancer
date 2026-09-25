@@ -11,7 +11,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, TraitApplicability};
 use rg_semantic_ir::ItemStoreSource;
 
-pub(crate) use self::candidates::trait_impl_candidates;
+pub(crate) use self::candidates::TraitImplFilter;
 pub use self::receiver::{InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches};
 use crate::{
     Substitution, Ty, TyContext, lookup::ItemPathQuery, lowering::TypeLoweringQuery,

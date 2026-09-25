@@ -198,21 +198,10 @@ impl<'s> InferenceTable<'s> {
     ) -> Option<CallableSignature<'s>> {
         let cx = self.interner();
         let signature = cx.function_signature(function)?;
-        let instantiate = |ty| subst.apply(cx, ty);
         Some(CallableSignature {
-            params: List::new(
-                cx,
-                &signature.params.iter().map(instantiate).collect::<Vec<_>>(),
-            ),
-            ret: instantiate(signature.ret),
-            clauses: List::new(
-                cx,
-                &signature
-                    .clauses
-                    .iter()
-                    .map(|clause| subst.apply(cx, clause))
-                    .collect::<Vec<_>>(),
-            ),
+            params: subst.apply(cx, signature.params),
+            ret: subst.apply(cx, signature.ret),
+            clauses: subst.apply(cx, signature.clauses),
             qualifiers: signature.qualifiers,
         })
     }

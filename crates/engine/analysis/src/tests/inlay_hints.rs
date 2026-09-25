@@ -385,3 +385,62 @@ pub fn use_it(scope: u32, user: User, other: User, normal: User) {
         "#]],
     );
 }
+
+#[test]
+fn infers_fields_and_methods_through_generic_deref_steps() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_deref_steps"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[lang = "deref"]
+pub trait Project {
+    #[lang = "deref_target"]
+    type Target;
+    fn project(&self) -> &Self::Target;
+}
+pub struct Wrapper<T> { pub inner: T }
+impl<T> Project for Wrapper<T> {
+    type Target = T;
+    fn project(&self) -> &T { &self.inner }
+}
+impl<T> Wrapper<T> {
+    pub fn own(&self) -> bool { true }
+}
+pub struct Item { pub field: u16 }
+impl Item {
+    pub fn value(&self) -> u8 { 0 }
+}
+impl<T> [T] {
+    pub fn first(&self) -> T { missing() }
+}
+pub fn make<T>() -> Wrapper<Wrapper<T>> { missing() }
+pub fn settle(_: &Wrapper<Wrapper<Item>>) {}
+pub fn use_it(nested: Wrapper<Wrapper<Item>>, array: [u8; 3]) {
+    let direct = nested.inner;
+    let method = nested.own();
+    let field = nested.field;
+    let inherited = nested.value();
+    let element = array.first();
+    let later = make();
+    let refined = later.field;
+    settle(&later);
+}
+"#,
+        InlayHintsQuery::new("receiver steps", "/src/lib.rs"),
+        expect![[r#"
+            receiver steps
+            - `: Wrapper<Item>` @ 25:9-25:15
+            - `: bool` @ 26:9-26:15
+            - `: u16` @ 27:9-27:14
+            - `: u8` @ 28:9-28:18
+            - `: u8` @ 29:9-29:16
+            - `: Wrapper<Wrapper<Item>>` @ 30:9-30:14
+            - `: u16` @ 31:9-31:16
+        "#]],
+    );
+}

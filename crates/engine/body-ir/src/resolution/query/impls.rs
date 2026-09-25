@@ -247,7 +247,7 @@ where
                 }
             }
         }
-        trait_impls.extend(body_items.trait_impls_for_traits(trait_refs.iter().copied())?);
+        trait_impls.extend(body_items.trait_impls_for_traits(trait_refs.as_slice())?);
 
         let impl_query = self.context.impl_query();
         let mut matches = impl_query.matches_for_receiver_from_impls(

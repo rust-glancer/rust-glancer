@@ -264,11 +264,10 @@ where
     fn local_trait_impls(
         &self,
         trait_ref: rg_ir_model::TraitDefRef,
-    ) -> Result<Vec<rg_ir_model::ImplRef>, PackageStoreError> {
+    ) -> Result<Vec<rg_ir_model::TraitImplRef>, PackageStoreError> {
         Ok(self
             .body_local_items()
-            .trait_impls_for_traits([trait_ref])?
-            .map(|i| i.impl_ref)
+            .trait_impls_for_traits(&[trait_ref])?
             .collect())
     }
 

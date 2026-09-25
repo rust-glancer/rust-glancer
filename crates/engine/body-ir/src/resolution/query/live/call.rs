@@ -7,7 +7,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ExprId, FunctionRef, ScopeId, SemanticItemRef, identity::DeclarationRef,
+    ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
@@ -67,7 +67,8 @@ where
                 let Some(receiver) = receiver else {
                     return Ok(Vec::new());
                 };
-                for receiver in self.receivers(receiver, table, true)? {
+                for receiver in self.receivers(receiver, table, true) {
+                    let receiver = receiver?;
                     let candidates = self.named_targets(
                         data.scope,
                         receiver,
@@ -173,72 +174,60 @@ where
         // Unqualified calls try inherent declarations first. A written `<T as Trait>::method`
         // already chooses the trait, so it bypasses that search.
         if qualification.is_none() {
-            let mut impls = UniqueVec::new();
-            let mut shadowed = None;
+            let mut functions = UniqueVec::new();
             if let Some(adt) = receiver.as_adt() {
-                impls.extend(body_items.inherent_impls_for_type(adt.def)?.iter().copied());
-                shadowed = body_items.inherent_item_names_for_type(adt.def)?;
-                if let Ok(saved) = lookup.inherent_impls_for_type(adt.def) {
-                    impls.extend(saved);
+                // Body-local declarations are outside the saved name index. Read their small
+                // surface first; a local name replaces the saved declaration of that name.
+                for &id in body_items.inherent_impls_for_type(adt.def)? {
+                    if let Some(data) = self.context.item_query().impl_data(id)? {
+                        functions.extend(data.functions());
+                    }
+                }
+                let shadowed = body_items
+                    .inherent_item_names_for_type(adt.def)?
+                    .is_some_and(|names| names.contains_function(name));
+                if !shadowed
+                    && let Ok(saved) = lookup.inherent_functions_for_type_and_name(adt.def, name)
+                {
+                    functions.extend(saved);
                 }
             } else if !matches!(
                 receiver.shape(),
                 TyShape::InferVar { .. } | TyShape::Unknown | TyShape::Param(_) | TyShape::Alias(_)
-            ) && let Ok(saved) = lookup.structural_inherent_impls()
+            ) && let Ok(saved) = lookup.structural_inherent_functions_by_name(name)
             {
-                impls.extend(saved);
+                functions = saved;
             }
-            for id in impls {
-                if id.origin.as_crate_ref().is_some()
-                    && shadowed
-                        .as_ref()
-                        .is_some_and(|names| names.contains_function(name))
-                {
-                    continue;
-                }
-                let Some(data) = self.context.item_query().impl_data(id)? else {
+            for function in functions {
+                let Some(data) = self.context.item_query().function_data(function)? else {
                     continue;
                 };
-                if data.trait_ref.is_some() {
+                if data.name != name || method && !data.has_self_receiver() {
                     continue;
                 }
-
-                // Look for the requested declaration before running any semantic probe.
-                for item in &data.items {
-                    let AssocItemId::Function(function_id) = item else {
-                        continue;
-                    };
-                    let function = FunctionRef {
-                        origin: id.origin,
-                        id: *function_id,
-                    };
-                    let Some(function_data) = self.context.item_query().function_data(function)?
-                    else {
-                        continue;
-                    };
-                    if function_data.name != name || method && !function_data.has_self_receiver() {
-                        continue;
-                    }
-                    let Some(selection) = table.select_impl(id, receiver, None) else {
-                        continue;
-                    };
-                    targets.push(LiveCallTarget {
-                        function,
-                        explicit_args: explicit.to_vec(),
-                        scope,
-                        subst: selection.subst,
-                        receiver: Some(receiver),
-                        first_written: usize::from(method),
-                        table: selection.table,
-                        // `Wrapper::new(value)` may learn the impl's T from the argument. A
-                        // unique inherent header supplies its signature now; the adopted table
-                        // keeps its predicates pending until that argument provides evidence.
-                        can_infer: matches!(
-                            selection.outcome,
-                            Outcome::Proven | Outcome::Ambiguous
-                        ),
-                    });
-                }
+                let ItemOwner::Impl(id) = data.owner else {
+                    continue;
+                };
+                let impl_ref = ImplRef {
+                    origin: function.origin,
+                    id,
+                };
+                let Some(selection) = table.select_impl(impl_ref, receiver, None) else {
+                    continue;
+                };
+                targets.push(LiveCallTarget {
+                    function,
+                    explicit_args: explicit.to_vec(),
+                    scope,
+                    subst: selection.subst,
+                    receiver: Some(receiver),
+                    first_written: usize::from(method),
+                    table: selection.table,
+                    // `Wrapper::new(value)` may learn the impl's T from the argument. A
+                    // unique inherent header supplies its signature now; the adopted table
+                    // keeps its predicates pending until that argument provides evidence.
+                    can_infer: matches!(selection.outcome, Outcome::Proven | Outcome::Ambiguous),
+                });
             }
             if !targets.is_empty() {
                 return Ok(targets);
@@ -257,17 +246,21 @@ where
                 .collect(),
         };
         for trait_ref in traits {
-            let Some(data) = self.context.item_query().trait_data(trait_ref)? else {
-                continue;
+            let Ok(indexed) = lookup.trait_functions_by_name(trait_ref, name) else {
+                return Ok(Vec::new());
             };
-            for item in &data.items {
-                let AssocItemId::Function(function_id) = item else {
-                    continue;
-                };
-                let function = FunctionRef {
-                    origin: trait_ref.origin,
-                    id: *function_id,
-                };
+            let functions = match indexed {
+                Some(functions) => functions,
+                None => {
+                    // A trait declared inside a body has no saved index. Its functions still
+                    // pass through the same name and receiver checks as indexed declarations.
+                    let Some(data) = self.context.item_query().trait_data(trait_ref)? else {
+                        continue;
+                    };
+                    data.functions().collect()
+                }
+            };
+            for function in functions {
                 let Some(data) = self.context.item_query().function_data(function)? else {
                     continue;
                 };

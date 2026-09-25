@@ -12,7 +12,7 @@ use rustc_type_ir::{self as ir, Upcast as _, inherent::GenericArgs as _};
 use super::TraitGoal;
 use crate::{
     Substitution, TraitApplication, Ty, TyContext,
-    lookup::{ItemPathQuery, trait_impl_candidates},
+    lookup::{ItemPathQuery, TraitImplFilter},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{self, DefId, InferenceTable, Outcome, SemanticDeclarations, SolverScope},
 };
@@ -198,7 +198,7 @@ where
     /// therefore does not use this source-selection API.
     pub fn probe(&self, goal: &TraitGoal) -> Result<ExpectedUnique<TraitSelection>, I::Error> {
         let Some(candidates) =
-            trait_impl_candidates(&self.context, goal.trait_ref(), goal.self_ty())
+            TraitImplFilter::from(goal.self_ty()).candidates(&self.context, goal.trait_ref())
         else {
             return Ok(ExpectedUnique::Empty);
         };

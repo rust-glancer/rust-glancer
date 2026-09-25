@@ -502,15 +502,15 @@ where
                         op: Some(ExprUnaryOp::Deref),
                         expr: Some(inner),
                     } => {
-                        // Retain a dereference result only when candidate types agree.
+                        // An explicit `*value` needs exactly one receiver adjustment.
                         let inner_ty = self.inference.root_resolved_expr_ty(inner);
                         let ty = self
                             .context
                             .live()
                             .receivers(inner_ty, self.inference.table(), false)
+                            .nth(1)
+                            .transpose()
                             .context("resolve dereference target")?
-                            .get(1)
-                            .copied()
                             .unwrap_or(self.cx.unknown());
                         self.inference.set_expr_ty(*expr, ty);
                     }

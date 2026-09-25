@@ -201,7 +201,7 @@ where
                 return Ok(Default::default());
             }
             let Some(candidates) =
-                super::trait_impl_candidates(&self.context, trait_ref, receiver_ty)
+                super::TraitImplFilter::from(receiver_ty).candidates(&self.context, trait_ref)
             else {
                 // Cancellation leaves discovery incomplete; the request owner rejects it.
                 break;

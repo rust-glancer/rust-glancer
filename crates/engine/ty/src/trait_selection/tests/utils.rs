@@ -1223,12 +1223,11 @@ impl TraitSelectionSnapshot {
                     .iter()
                     .map(|bound| application.associated_type_eq(cx, bound.associated_ty, bound.ty))
                     .collect::<Vec<_>>();
-                let candidates = crate::lookup::trait_impl_candidates(
-                    &context,
-                    application.def,
+                let candidates = crate::lookup::TraitImplFilter::from(
                     &cx.raise_ty(application.self_ty().expect("Self"))
                         .unwrap_or(Ty::Unknown),
                 )
+                .candidates(&context, application.def)
                 .expect("fixture lookup");
                 let selected = table.select_trait_impl(
                     application,

@@ -13,10 +13,10 @@ use std::{
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, DefMapRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, TraitDefRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
-use rg_std::{Cancelable, UniqueVec};
+use rg_std::Cancelable;
 use rustc_type_ir::{
     ClauseKind,
     data_structures::HashMap,
@@ -31,7 +31,7 @@ use super::{
 };
 use crate::{
     TyContext,
-    lookup::{ItemPathQuery, trait_impl_candidates},
+    lookup::{ItemPathQuery, TraitImplFilter},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
 };
 
@@ -86,7 +86,7 @@ pub(crate) trait DeclarationProvider {
     fn declaration<'s>(&self, cx: SolverInterner<'s>, id: DefId) -> Option<Declaration<'s>>;
     fn generics(&self, id: DefId) -> Option<DeclarationGenerics>;
     fn adt_def(&self, id: TypeDefRef) -> Option<AdtDef>;
-    fn impls(&self, trait_id: TraitDefRef, self_ty: Option<crate::Ty>) -> Option<Vec<ImplRef>>;
+    fn impls(&self, trait_id: TraitDefRef, filter: TraitImplFilter) -> Option<Vec<ImplRef>>;
     fn lang_item(&self, item: LangItem) -> Option<DefId>;
     fn is_cancelled(&self) -> bool;
 }
@@ -97,7 +97,7 @@ pub(crate) trait DeclarationProvider {
 /// For example, solving inside `fn f<T: Clone>()` must see `T: Clone` and any impls declared in
 /// a surrounding block, even though neither comes from a crate-wide impl search.
 pub trait SolverScope: TypePathResolver {
-    fn local_trait_impls(&self, _trait_ref: TraitDefRef) -> Result<Vec<ImplRef>, Self::Error> {
+    fn local_trait_impls(&self, _trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, Self::Error> {
         Ok(Vec::new())
     }
 
@@ -113,7 +113,7 @@ pub trait SolverScope: TypePathResolver {
 }
 
 impl<R: SolverScope + ?Sized> SolverScope for &R {
-    fn local_trait_impls(&self, trait_ref: TraitDefRef) -> Result<Vec<ImplRef>, Self::Error> {
+    fn local_trait_impls(&self, trait_ref: TraitDefRef) -> Result<Vec<TraitImplRef>, Self::Error> {
         R::local_trait_impls(*self, trait_ref)
     }
 
@@ -598,33 +598,29 @@ where
         }
     }
 
-    fn impls(&self, trait_id: TraitDefRef, self_ty: Option<crate::Ty>) -> Option<Vec<ImplRef>> {
+    fn impls(&self, trait_id: TraitDefRef, filter: TraitImplFilter) -> Option<Vec<ImplRef>> {
         // Keep the source index's outer-shape rejection before lowering impl headers. For
         // example, an unsupported `&dyn Trait` header can lower to Unknown, but its reference
         // syntax still tells us it cannot implement a trait for Vec<T>.
         let (context, scope) = self.solving?;
-        let lookup = context.item_lookup();
-        let impls = match self_ty {
-            Some(ty) => trait_impl_candidates(context, trait_id, &ty),
-            None => lookup
-                .trait_impls_for_trait(trait_id)
-                .ok()
-                .map(Option::unwrap_or_default),
-        };
+        let impls = filter.candidates(context, trait_id);
         match impls {
-            Some(impls) => {
-                let mut result = impls
-                    .into_iter()
-                    .map(|i| i.impl_ref)
-                    .collect::<UniqueVec<_>>();
+            Some(mut impls) => {
+                // Keep the index's ordered set while merging the local overlay. For this one
+                // trait, projecting to ImplRef preserves uniqueness and needs no second set.
                 match scope.local_trait_impls(trait_id) {
-                    Ok(local) => result.extend(local),
+                    Ok(local) => impls.extend(local),
                     Err(error) => {
                         *self.error.borrow_mut() = Some(error);
                         return None;
                     }
                 }
-                Some(result.into_vec())
+                Some(
+                    impls
+                        .into_iter()
+                        .map(|candidate| candidate.impl_ref)
+                        .collect(),
+                )
             }
             None => {
                 self.cancelled.set(true);
