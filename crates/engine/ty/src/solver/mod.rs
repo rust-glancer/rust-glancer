@@ -7,6 +7,10 @@
 //! `infer` implements the compiler's inference interface. `inference` adds the caller's assumptions
 //! and pending obligations; `query` matches declarations and normalizes projections in that live
 //! table. `declarations` supplies source metadata and the cache shared within one lexical context.
+//!
+//! The compiler reads that data through `interner` callbacks. A `CallbackScope` records when
+//! those reads cannot supply the requested information, so queries can reject an answer based
+//! on fallback data even if the compiler solver itself reports success.
 
 mod conversion;
 mod declarations;
@@ -27,7 +31,7 @@ pub use self::{
     delegate::{Outcome, Solver},
     infer::InferCtxt,
     inference::{InferenceConflict, InferenceSubstitution, InferenceTable},
-    interner::{SolverInterner, SolverStorage},
+    interner::{CallbackScope, SolverInterner, SolverStorage},
     query::{
         AssocTypeBinding, CallableSignature, ImplHeader, ImplSelection, TraitApplication,
         TraitRefLowering,

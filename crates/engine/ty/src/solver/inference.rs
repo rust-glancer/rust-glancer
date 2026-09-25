@@ -147,6 +147,10 @@ impl<'s> InferenceTable<'s> {
     /// Candidate conditions are evaluated with the body's assignments and assumptions, but are
     /// not made responsible for unrelated obligations that the body still needs to finish.
     /// All forks share type storage; each fork has its own assignments and pending goals.
+    ///
+    /// Callback reporting still goes through the shared interner. Candidate lookup also needs
+    /// a `CallbackScope` around preparing and checking that candidate, including declaration
+    /// reads which happen before proving its bounds.
     pub fn probe(&self) -> Self {
         self.interner().profile(|p| p.probes += 1);
         let result = Self::new(self.solver.clone(), self.env);
@@ -230,7 +234,10 @@ impl<'s> InferenceTable<'s> {
             return Ok(());
         }
 
-        // Conflicting later evidence rolls back this relation, keeping accepted constraints.
+        // Relating types can read declarations before it produces any trait goals. Check for
+        // missing callback data as well as ordinary mismatches. In either case, the snapshot
+        // restores this relation's assignments, and its goals never enter the pending queue.
+        let callbacks = self.interner().track_callbacks();
         let snapshot = self.solver.snapshot();
         // An unresolved source component supplies no evidence. Give it a throwaway variable for
         // this relation, so a useful sibling can constrain the body without propagating Error.
@@ -240,6 +247,9 @@ impl<'s> InferenceTable<'s> {
             .solver
             .relate(self.env, a, ir::Invariant, b, ())
             .map_err(|_| InferenceConflict)?;
+        if callbacks.failure().is_some() {
+            return Err(InferenceConflict);
+        }
         self.pending
             .borrow_mut()
             .extend(goals.into_iter().map(|goal| Pending {
@@ -254,16 +264,21 @@ impl<'s> InferenceTable<'s> {
 
     /// Generic arguments include consts and regions as well as types. Use the compiler's relation
     /// here too, so selecting an array impl retains its inferred length alongside its element.
+    /// If a later argument needs unavailable data, also undo assignments for earlier arguments.
     pub fn try_unify_args(
         &self,
         a: GenericArgs<'s>,
         b: GenericArgs<'s>,
     ) -> Result<(), InferenceConflict> {
+        let callbacks = self.interner().track_callbacks();
         let snapshot = self.solver.snapshot();
         let goals = self
             .solver
             .relate(self.env, a, ir::Invariant, b, ())
             .map_err(|_| InferenceConflict)?;
+        if callbacks.failure().is_some() {
+            return Err(InferenceConflict);
+        }
         self.pending
             .borrow_mut()
             .extend(goals.into_iter().map(|goal| Pending {
@@ -310,8 +325,7 @@ impl<'s> InferenceTable<'s> {
     pub fn fulfill(&self) -> Outcome {
         let cx = self.interner();
         cx.profile(|p| p.fulfillments += 1);
-        if let Some(reason) = cx.take_unavailable() {
-            tracing::debug!(reason, "obligations unavailable before evaluation");
+        if self.env.unavailable {
             return Outcome::Unavailable;
         }
         for _ in 0..MAX_OBLIGATION_FULFILLMENT_ROUNDS {
@@ -342,6 +356,11 @@ impl<'s> InferenceTable<'s> {
                     return true;
                 }
                 pending.unavailable = None;
+                // One queued question is a root goal, such as `Vec<?T>: Clone`. The compiler
+                // may try several impls and solve their bounds while answering it. Missing data
+                // anywhere in that work makes this root unavailable; the next queued question
+                // starts a new scope and can still make progress.
+                let callbacks = cx.track_callbacks();
                 // The delegate can recognize a still-unknown trait receiver without creating
                 // an evaluation context or a rollback snapshot. Keep it pending for later
                 // evidence, just as rust-analyzer's fulfillment context does.
@@ -362,7 +381,9 @@ impl<'s> InferenceTable<'s> {
                 let result =
                     self.solver
                         .evaluate_root_goal(pending.goal, (), pending.stalled.take());
-                let unavailable_reason = cx.take_unavailable();
+                // The compiler's Result does not include our missing-data reports. Check those
+                // before accepting even a successful result and the assignments it produced.
+                let unavailable_reason = callbacks.failure();
                 if unavailable_reason.is_some() || self.solver.is_tainted() && !was_tainted {
                     cx.profile(|p| *p.outcomes.entry("unavailable").or_default() += 1);
                     tracing::debug!(?unavailable_reason, goal = ?pending.goal, "trait obligation unavailable");
@@ -464,7 +485,12 @@ impl<'s> InferenceTable<'s> {
                 ) {
                     let normalized = self.0.new_type_var();
                     let previous = self.0.pending.borrow().len();
-                    self.0.unify(normalized, ty);
+                    if self.0.try_unify(normalized, ty).is_err() {
+                        // We created ?Item expecting the relation to connect it to this alias.
+                        // Without that equality, an empty goal queue could look like successful
+                        // normalization even though ?Item has no connection to the source type.
+                        return self.cx().unknown();
+                    }
                     let mut pending = self.0.pending.borrow_mut();
                     if pending.len() > previous {
                         // Keep an alias spelling only while its equality is pending. Once

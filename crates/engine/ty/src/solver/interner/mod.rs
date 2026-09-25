@@ -4,13 +4,10 @@
 //! This module connects those requests to one operation's storage and declaration provider.
 //! Interning gives repeated type shapes the same address, so the solver can compare them cheaply.
 
+mod availability;
 mod lists;
 
-use std::{
-    cell::{Cell, RefCell},
-    fmt,
-    sync::Arc,
-};
+use std::{cell::RefCell, fmt, sync::Arc};
 
 use rustc_type_ir::{
     self as ir, TypeFoldable, TypeVisitableExt, Upcast, VisitorResult,
@@ -19,8 +16,8 @@ use rustc_type_ir::{
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
 
-pub use self::lists::ListElement;
-use self::lists::ListInterners;
+use self::{availability::CallbackAvailability, lists::ListInterners};
+pub use self::{availability::CallbackScope, lists::ListElement};
 use super::{
     Declaration, DeclarationKind, DeclarationProvider, Solver,
     declarations::LangItem,
@@ -35,8 +32,8 @@ use crate::lookup::TraitImplFilter;
 
 // Declaration templates and generic metadata are stable throughout an operation. Keep them
 // beside the arena so repeated callbacks reuse working types. Nothing here enters the semantic
-// snapshot. Incomplete reads are not cached: each evaluation must observe the missing prerequisite
-// before it can keep a speculative answer.
+// snapshot. Do not cache a template built using callback fallback values: reading it from the
+// cache would skip the callback that reported missing data and make it look complete.
 #[derive(Default)]
 struct WorkingDeclarations<'s> {
     templates: HashMap<DefId, Arc<Declaration<'s>>>,
@@ -73,7 +70,7 @@ pub struct SolverStorage<'s> {
     external: RefCell<Vec<Box<ir::solve::ExternalConstraintsData<SolverInterner<'s>>>>>,
     cache: RefCell<ir::search_graph::GlobalCache<SolverInterner<'s>>>,
     declarations: RefCell<WorkingDeclarations<'s>>,
-    unavailable: Cell<Option<&'static str>>,
+    callbacks: CallbackAvailability,
     profile: RefCell<SolverProfile>,
 }
 
@@ -90,7 +87,7 @@ impl<'s> SolverStorage<'s> {
             external: RefCell::default(),
             cache: RefCell::default(),
             declarations: RefCell::default(),
-            unavailable: Cell::new(None),
+            callbacks: CallbackAvailability::default(),
             profile: RefCell::default(),
         }
     }
@@ -131,6 +128,9 @@ macro_rules! debug_print {
 
 /// A copyable handle to the operation's storage, usually named `cx` in compiler callbacks.
 /// Copying this handle shares allocations and caches; it does not copy inference assignments.
+///
+/// Declaration reads through these handles also share callback reporting. A `CallbackScope`
+/// identifies which reads belong to one candidate or query before its answer is accepted.
 #[derive(Clone, Copy)]
 pub struct SolverInterner<'s>(&'s SolverStorage<'s>);
 
@@ -145,30 +145,6 @@ impl<'s> SolverInterner<'s> {
         record(&mut self.0.profile.borrow_mut());
     }
 
-    /// Mark the root evaluation as unusable when a callback cannot supply the requested fact.
-    /// Some callbacks must still return a placeholder value. The caller checks this flag before
-    /// keeping any assignments, so that placeholder cannot become evidence for a solver answer.
-    pub(crate) fn unavailable(self, reason: &'static str) {
-        self.0.unavailable.set(Some(reason));
-    }
-
-    pub(crate) fn has_unavailable(self) -> bool {
-        self.0.unavailable.get().is_some()
-    }
-
-    pub(crate) fn take_unavailable(self) -> Option<&'static str> {
-        let reason = self.0.unavailable.take();
-        if let Some(reason) = reason {
-            self.profile(|p| {
-                *p.unavailable.entry(reason).or_default() += 1;
-            });
-            // Unsupported callbacks cannot contribute reusable semantic answers. Otherwise a
-            // second evaluation could hit a cached failure without seeing the missing prerequisite.
-            *self.0.cache.borrow_mut() = Default::default();
-        }
-        reason
-    }
-
     pub(crate) fn is_cancelled(self) -> bool {
         self.0.provider.is_cancelled()
     }
@@ -178,6 +154,10 @@ impl<'s> SolverInterner<'s> {
             self.profile(|p| p.declaration_hits += 1);
             return data.clone();
         }
+        // Lowering a declaration can read types or bounds from other declarations. Keep this
+        // scope alive until we decide whether to cache it: Some(declaration) can still contain
+        // fallback data from one of those nested reads.
+        let _callbacks = self.track_callbacks();
         if let Some(data) = self.0.provider.declaration(self, id) {
             let data = Arc::new(data);
             if !self.has_unavailable() {
@@ -210,6 +190,7 @@ impl<'s> SolverInterner<'s> {
         if let Some(&generics) = self.0.declarations.borrow().generics.get(&id) {
             return generics;
         }
+        let _callbacks = self.track_callbacks();
         let Some(data) = self.0.provider.generics(id) else {
             self.unavailable("missing declaration generics");
             return Generics {
@@ -329,7 +310,12 @@ impl<'s> SolverInterner<'s> {
         }
     }
 
+    /// Collect the assumptions available inside this item, such as `T: Clone` inside
+    /// `fn f<T: Clone>()`. Later goals reuse these assumptions without reading them again.
+    /// If preparing them needs unavailable data, carry that failure in the environment so
+    /// each later goal knows its inputs were incomplete even after this callback scope ends.
     pub fn parameter_environment(self, id: DefId) -> ParamEnv<'s> {
+        let callbacks = self.track_callbacks();
         let mut clauses = self.declaration_clauses(id, false).to_vec();
         // A trait's own methods may assume `Self: Trait`, in addition to its declared bounds.
         // This assumption belongs in the caller environment, not in the trait's super-predicates.
@@ -343,16 +329,18 @@ impl<'s> SolverInterner<'s> {
             }
             owner = self.declaration(id).parent;
         }
-        ParamEnv(List::new(
-            self,
-            &ir::elaborate::elaborate(self, clauses).collect::<Vec<_>>(),
-        ))
+        let clauses = ir::elaborate::elaborate(self, clauses).collect::<Vec<_>>();
+        ParamEnv {
+            clauses: List::new(self, &clauses),
+            unavailable: callbacks.failure().is_some(),
+        }
     }
 
     fn declaration_clauses(self, id: DefId, bounds: bool) -> List<'s, Clause<'s>> {
         if let Some(&clauses) = self.0.declarations.borrow().clauses.get(&(id, bounds)) {
             return clauses;
         }
+        let _callbacks = self.track_callbacks();
         let d = self.declaration(id);
         let clauses = if bounds { &d.bounds } else { &d.predicates };
         let clauses = List::new(self, clauses);
@@ -972,6 +960,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         if let Some(&reference) = self.0.declarations.borrow().impl_traits.get(&id) {
             return ir::EarlyBinder::bind(reference);
         }
+        let _callbacks = self.track_callbacks();
         let d = self.declaration(id);
         if let DeclarationKind::Impl { header, .. } = &d.kind
             && let Some(tr) = &header.trait_ref

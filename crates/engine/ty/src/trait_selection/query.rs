@@ -116,6 +116,7 @@ where
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
         declarations.with_solver(|solver| {
             let cx = solver.interner();
+            let callbacks = cx.track_callbacks();
             let paths = self.context.item_paths();
             let (params, clauses, self_trait) = match self.resolver.generic_owner() {
                 Some(owner) => {
@@ -156,10 +157,13 @@ where
                     .upcast(cx),
                 );
             }
-            let env = solver::ParamEnv(solver::List::new(
-                cx,
-                &ir::elaborate::elaborate(cx, clauses).collect::<Vec<_>>(),
-            ));
+            let clauses = ir::elaborate::elaborate(cx, clauses).collect::<Vec<_>>();
+            // Later goals start their own callback scopes after these reads have happened.
+            // Carry incomplete assumptions with the environment so each of those goals sees them.
+            let env = solver::ParamEnv {
+                clauses: solver::List::new(cx, &clauses),
+                unavailable: callbacks.failure().is_some(),
+            };
             Ok(run(InferenceTable::new(solver, env), params))
         })?
     }
@@ -246,8 +250,14 @@ where
     /// still display a projection such as `T::Item` instead of losing the whole type.
     pub fn normalize_ty(&self, ty: &Ty) -> Result<Ty, I::Error> {
         self.with_table(true, |table, params| {
+            let callbacks = table.interner().track_callbacks();
             let lowered = table.interner().lower_ty(ty, params);
             let normalized = table.normalize(lowered);
+            // Goal evaluation cannot detect a failed read which happened while preparing its
+            // input. Preserve the original spelling if lowering or setting up the equality failed.
+            if callbacks.failure().is_some() {
+                return ty.clone();
+            }
             match table.fulfill() {
                 Outcome::Proven | Outcome::Ambiguous => table.finalize(normalized),
                 Outcome::NoSolution | Outcome::Unavailable => ty.clone(),

@@ -268,6 +268,10 @@ where
                     continue;
                 }
                 let trial = table.probe();
+                // Building `Receiver: Trait<?T>` requires the trait's parameter slots. Missing
+                // metadata can look like an empty parameter list, so check these reads before
+                // asking the solver to prove the goal. Each candidate gets its own scope.
+                let callbacks = trial.interner().track_callbacks();
                 let owner = DefId::Trait(trait_ref);
                 let mut subst = qualification.map_or_else(
                     || trial.fresh_substitution(owner),
@@ -282,6 +286,9 @@ where
                     subst.insert(*self_param, receiver.into());
                 }
                 let args = subst.args_for(trial.interner(), trial.params(owner).iter().copied());
+                if callbacks.failure().is_some() {
+                    continue;
+                }
                 let outcome = trial.prove([TraitApplication {
                     def: trait_ref,
                     args,

@@ -1432,11 +1432,17 @@ impl<'s> ir::UpcastFrom<Interner<'s>, ir::ClauseKind<Interner<'s>>> for Clause<'
 /// Assumptions available where a goal is asked. Inside `fn f<T: Clone>()`, `T: Clone` belongs
 /// here: the solver can use that bound without finding a concrete impl for the generic `T`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct ParamEnv<'s>(pub List<'s, Clause<'s>>);
+pub struct ParamEnv<'s> {
+    pub(crate) clauses: List<'s, Clause<'s>>,
+    // If reading the owner's bounds failed, an empty or partial clause list does not mean
+    // those were all its bounds. Every goal using this environment needs to know that, even
+    // though it starts a fresh callback scope and does not repeat the failed reads itself.
+    pub(crate) unavailable: bool,
+}
 
 impl<'s> TypeVisitable<Interner<'s>> for ParamEnv<'s> {
     fn visit_with<V: ir::TypeVisitor<Interner<'s>>>(&self, v: &mut V) -> V::Result {
-        self.0.visit_with(v)
+        self.clauses.visit_with(v)
     }
 }
 
@@ -1445,17 +1451,23 @@ impl<'s> TypeFoldable<Interner<'s>> for ParamEnv<'s> {
         self,
         f: &mut F,
     ) -> Result<Self, F::Error> {
-        Ok(Self(self.0.try_fold_with(f)?))
+        Ok(Self {
+            clauses: self.clauses.try_fold_with(f)?,
+            ..self
+        })
     }
 
     fn fold_with<F: ir::TypeFolder<Interner<'s>>>(self, f: &mut F) -> Self {
-        Self(self.0.fold_with(f))
+        Self {
+            clauses: self.clauses.fold_with(f),
+            ..self
+        }
     }
 }
 
 impl<'s> ir::inherent::ParamEnv<Interner<'s>> for ParamEnv<'s> {
     fn caller_bounds(self) -> impl SliceLike<Item = Clause<'s>> {
-        self.0
+        self.clauses
     }
 }
 

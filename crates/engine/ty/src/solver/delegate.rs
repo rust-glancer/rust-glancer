@@ -32,22 +32,27 @@ impl<'s> Deref for Solver<'s> {
 }
 
 impl<'s> Solver<'s> {
-    /// Evaluate one goal and keep useful assignments only when the required facts were available.
-    /// An ambiguous answer can still constrain variables. A rejected goal or missing callback
-    /// leaves the context as it was before the attempt, through the snapshot's rollback on drop.
+    /// Ask the compiler to solve one goal, such as `Iter<?T>: Iterator`, and keep useful variable
+    /// assignments from its answer. An ambiguous answer can still help constrain those variables.
+    ///
+    /// The compiler can finish after a declaration callback returned fallback data. Check the
+    /// callback scope before accepting that answer. The inference snapshot restores assignments
+    /// when data was missing or the goal was rejected; the scope handles callback and cache cleanup.
     pub fn evaluate(&self, env: ParamEnv<'s>, predicate: Predicate<'s>) -> Outcome {
         use rustc_next_trait_solver::solve::SolverDelegateEvalExt;
         use rustc_type_ir::TypeVisitableExt;
-        if self.interner.take_unavailable().is_some()
-            || self.interner.is_cancelled()
+        let callbacks = self.interner.track_callbacks();
+        if self.interner.is_cancelled()
+            || env.unavailable
             || predicate.references_error()
+            || env.references_error()
         {
             return Outcome::Unavailable;
         }
         let snapshot = self.snapshot();
         let was_tainted = self.is_tainted();
         let result = self.evaluate_root_goal(Goal::new(self.interner, env, predicate), (), None);
-        if let Some(reason) = self.interner.take_unavailable() {
+        if let Some(reason) = callbacks.failure() {
             tracing::debug!(reason, "trait goal unavailable");
             return Outcome::Unavailable;
         }
@@ -99,9 +104,9 @@ impl<'s> SolverDelegate for Solver<'s> {
     }
 
     fn compute_goal_fast_path(&self, goal: Goal<I<'s>, Predicate<'s>>, _: ()) -> Option<Certainty> {
-        // An unsupported callback invalidates the whole root, including its cached answers.
-        // Leave nested obligations undecided until the caller rolls that root back, instead of
-        // exploring branches whose results cannot be used.
+        // A callback has already had to supply fallback data while answering the enclosing
+        // root goal. Its caller will discard the answer and roll back assignments. Leave further
+        // goals undecided without spending more work or claiming that a nested bound is false.
         if self.interner.has_unavailable() {
             return Some(Certainty::AMBIGUOUS);
         }

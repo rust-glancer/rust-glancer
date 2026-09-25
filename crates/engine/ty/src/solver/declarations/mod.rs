@@ -151,6 +151,8 @@ pub struct DeclarationCache {
 /// declarations on demand, using the same path resolver as the body or editor query. If a read
 /// fails, it saves the error: the compiler's callback API cannot return our storage errors, but
 /// the enclosing `with_solver` call can.
+/// Callback availability tracking prevents accepting a solver answer based on that failed read.
+/// Keeping the underlying error here also lets the operation report the storage failure itself.
 pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
     paths: &'a ItemPathQuery<'query, D, I>,
     resolver: &'a dyn TypePathResolver<Error = I::Error>,
@@ -578,6 +580,9 @@ where
         self.profile.borrow_mut().declaration_loads += 1;
         match self.load(cx, id) {
             Ok(Some(data)) => {
+                // Some(data) can still contain fallback types from a nested callback. The
+                // interner keeps this declaration's callback scope active through the load;
+                // share the template only if its reads completed without those failures.
                 if let Some(shared) = self.shared
                     && !cx.has_unavailable()
                 {

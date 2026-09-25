@@ -794,6 +794,202 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
 }
 
 #[test]
+fn unavailable_candidate_does_not_change_independent_selection_or_normalization() {
+    use rg_ir_model::{ImplId, ImplRef};
+    use rg_std::ExpectedUnique;
+
+    use crate::solver::{self, Outcome};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+        traits
+          trait#0 Iterator
+        structs
+          struct#0 User
+        impls
+          impl#0 impl Iterator for User
+        type aliases
+          type#0 trait#0::Item
+          type#1 impl#0::Item = bool
+    "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let table = solver::InferenceTable::new(solver, Default::default());
+            let cx = table.interner();
+            let receiver = cx.lower_ty(
+                &Ty::adt(AdtTy {
+                    def: fixture.type_ref_by_name("User").expect("fixture User"),
+                    args: Default::default(),
+                }),
+                &[],
+            );
+            let application = solver::TraitApplication {
+                def: fixture
+                    .trait_ref_by_name("Iterator")
+                    .expect("fixture Iterator"),
+                args: solver::List::new(cx, &[receiver.into()]),
+            };
+            let valid = ImplRef {
+                origin: origin(),
+                id: ImplId(0),
+            };
+            let missing = ImplRef {
+                origin: origin(),
+                id: ImplId(99),
+            };
+            let item = fixture
+                .associated_ty_by_name(application.def, "Item")
+                .expect("fixture Item");
+            for candidates in [[missing, valid], [valid, missing]] {
+                // The missing declaration returns from header matching before fulfillment.
+                // Exercise both orders in the same storage, including its declaration caches.
+                for candidate in candidates {
+                    match table.select_impl(candidate, receiver, Some(application)) {
+                        Some(selected) => {
+                            assert_eq!(candidate, valid);
+                            assert_eq!(selected.outcome, Outcome::Proven);
+                        }
+                        None => assert_eq!(candidate, missing),
+                    }
+                }
+                let ExpectedUnique::One(selected) =
+                    table.select_trait_impl(application, &[], candidates)
+                else {
+                    panic!("the available impl remains uniquely selected");
+                };
+                assert_eq!(selected.impl_ref, valid);
+                assert_eq!(selected.outcome, Outcome::Proven);
+                assert_eq!(table.prove([application.clause(cx)]), Outcome::Proven);
+                let (normalized, outcome) = table
+                    .normalize_assoc_type(application, &[], item)
+                    .expect("independent normalization succeeds");
+                assert_eq!(outcome, Outcome::Proven);
+                assert_eq!(
+                    table.finalize(normalized),
+                    Ty::Primitive(crate::PrimitiveTy::Bool)
+                );
+            }
+            // An unavailable environment remains an unavailable input to its own table; it
+            // must neither become valid on the second proof nor poison a different table.
+            let missing_owner = solver::DefId::Function(rg_ir_model::FunctionRef {
+                origin: origin(),
+                id: rg_ir_model::FunctionId(99),
+            });
+            let incomplete = solver::InferenceTable::new(
+                solver::Solver::new(cx),
+                cx.parameter_environment(missing_owner),
+            );
+            for _ in 0..2 {
+                assert_eq!(
+                    incomplete.prove([application.clause(cx)]),
+                    Outcome::Unavailable
+                );
+                assert_eq!(table.prove([application.clause(cx)]), Outcome::Proven);
+            }
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
+fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usable() {
+    use rustc_type_ir::{InferCtxtLike, Upcast};
+
+    use crate::solver::{self, Outcome};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+        traits
+          trait#0 Iterator
+          trait#1 Marker<T>
+          trait#2 Copy
+        structs
+          struct#0 Incomplete
+          struct#1 Complete
+        impls
+          impl#0 impl Iterator for Incomplete
+          impl#1 impl Marker<bool> for Incomplete where <Incomplete as Iterator>::Item: Copy
+          impl#2 impl Marker<bool> for Complete
+        type aliases
+          type#0 trait#0::Item
+    "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let cx = solver.interner();
+            let receivers = ["Incomplete", "Complete"].map(|name| {
+                cx.lower_ty(
+                    &Ty::adt(AdtTy {
+                        def: fixture.type_ref_by_name(name).expect("fixture receiver"),
+                        args: Default::default(),
+                    }),
+                    &[],
+                )
+            });
+            let marker = fixture.trait_ref_by_name("Marker").expect("fixture Marker");
+            // Matching the impl can learn ?T = bool before the nested Item projection fails.
+            // Repeat the root to check that its incomplete answer was not kept in the cache.
+            for _ in 0..2 {
+                let variable = solver.next_ty_infer();
+                for (receiver, expected) in receivers
+                    .into_iter()
+                    .zip([Outcome::Unavailable, Outcome::Proven])
+                {
+                    let goal = solver::TraitApplication {
+                        def: marker,
+                        args: solver::List::new(cx, &[receiver.into(), variable.into()]),
+                    };
+                    assert_eq!(
+                        solver.evaluate(Default::default(), goal.clause(cx).upcast(cx)),
+                        expected
+                    );
+                    if expected == Outcome::Unavailable {
+                        assert_eq!(solver.shallow_resolve(variable), variable);
+                    } else {
+                        assert_eq!(
+                            cx.raise_ty(solver.shallow_resolve(variable)),
+                            Some(Ty::Primitive(crate::PrimitiveTy::Bool)),
+                        );
+                    }
+                }
+            }
+
+            let table = solver::InferenceTable::new(solver, Default::default());
+            let variables = [table.new_type_var(), table.new_type_var()];
+            for (receiver, variable) in receivers.into_iter().zip(variables) {
+                table.register(
+                    solver::TraitApplication {
+                        def: marker,
+                        args: solver::List::new(cx, &[receiver.into(), variable.into()]),
+                    }
+                    .clause(cx),
+                );
+            }
+            assert_eq!(table.fulfill(), Outcome::Unavailable);
+            assert_eq!(table.resolve_root_var(variables[0]), variables[0]);
+            assert_eq!(
+                table.finalize(variables[1]),
+                Ty::Primitive(crate::PrimitiveTy::Bool)
+            );
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
 fn next_solver_keeps_projection_evidence_in_the_live_context() {
     use rustc_type_ir::{self as ir, InferCtxtLike, Upcast};
 

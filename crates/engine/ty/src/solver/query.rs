@@ -171,8 +171,15 @@ pub struct ImplSelection<'s> {
 impl<'s> SolverInterner<'s> {
     /// The declaration template is shared inside this operation. Reading the enclosing body's
     /// signature retains its parameters; a call instantiates them through `InferenceTable`.
+    ///
+    /// A declaration read can return fallback data after a nested lookup fails. In that case
+    /// return no signature, so call inference cannot use those fallback types as real constraints.
     pub fn function_signature(self, function: FunctionRef) -> Option<CallableSignature<'s>> {
+        let callbacks = self.track_callbacks();
         let declaration = self.declaration(DefId::Function(function));
+        if callbacks.failure().is_some() {
+            return None;
+        }
         match &declaration.kind {
             DeclarationKind::Function(signature) => Some(*signature),
             _ => None,
@@ -218,6 +225,10 @@ impl<'s> InferenceTable<'s> {
         expected: Option<TraitApplication<'s>>,
     ) -> Option<ImplSelection<'s>> {
         let cx = self.interner();
+        // Loading the header is part of checking this candidate. It can report missing data
+        // and make us return None below, before we have a trial table or goals to fulfill.
+        // Include those reads in this scope; the next candidate gets its own starting count.
+        let callbacks = cx.track_callbacks();
         let declaration = cx.declaration(DefId::Impl(impl_ref));
         let DeclarationKind::Impl { header, .. } = &declaration.kind else {
             return None;
@@ -249,7 +260,9 @@ impl<'s> InferenceTable<'s> {
             table.register(clause);
         }
         let mut outcome = Outcome::Proven;
-        if receiver.has_unknown() || self_ty.has_unknown() {
+        // Matching the parts we could read is useful for discovery, but does not make an
+        // incomplete header reliable. Carry that distinction with the returned candidate.
+        if callbacks.failure().is_some() || receiver.has_unknown() || self_ty.has_unknown() {
             outcome = Outcome::Unavailable;
         }
         Some(ImplSelection {
@@ -333,6 +346,7 @@ impl<'s> InferenceTable<'s> {
         associated_ty: TypeAliasRef,
     ) -> Option<(Ty<'s>, Outcome)> {
         let cx = self.interner();
+        let callbacks = cx.track_callbacks();
         self.register(application.clause(cx));
         for &binding in bindings {
             self.register(binding);
@@ -341,6 +355,11 @@ impl<'s> InferenceTable<'s> {
             associated_ty,
             args: application.args,
         }));
+        // Preparing the projection can read declarations before any goal is evaluated. Check
+        // those reads here: fulfillment's per-goal scopes only see failures during that goal.
+        if callbacks.failure().is_some() {
+            return None;
+        }
         match self.fulfill() {
             outcome @ (Outcome::Proven | Outcome::Ambiguous) => Some((ty, outcome)),
             Outcome::NoSolution | Outcome::Unavailable => None,
