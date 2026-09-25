@@ -243,7 +243,7 @@ where
             .unwrap_or_else(|| {
                 let params = self.cx.generics(param.owner.into()).params;
                 self.cx
-                    .param(GenericParamRef::Type(param), &params)
+                    .param(GenericParamRef::Type(param), params)
                     .map(|p| Ty::new(self.cx, TyKind::Param(p)))
                     .unwrap_or_else(|| self.cx.unknown())
             })

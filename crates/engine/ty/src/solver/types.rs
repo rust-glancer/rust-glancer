@@ -23,7 +23,7 @@ use rustc_type_ir::{
     relate::{Relate, RelateResult, TypeRelation},
 };
 
-use super::SolverInterner;
+use super::{SolverInterner, interner::ListElement};
 
 type Interner<'s> = SolverInterner<'s>;
 pub type GenericArgs<'s> = List<'s, GenericArg<'s>>;
@@ -395,10 +395,23 @@ impl<'s> ir::inherent::ExprConst<Interner<'s>> for ConstExpr {
     }
 }
 
-/// A slice owned by the operation's arena. Copying it shares the elements for the same lifetime
-/// as types, so argument lists can be passed through compiler callbacks without cloning vectors.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// A slice owned by the operation's arena. Construction reuses equal sequences, and copying a
+/// list shares its elements. A list may also be a view into another list, such as a signature's
+/// inputs without its output, so equality and hashing still describe the sequence contents.
+#[derive(Clone, Copy, Eq)]
 pub struct List<'s, T: Copy>(pub(crate) &'s [T]);
+
+impl<T: Copy + Eq> PartialEq for List<'_, T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0) || self.0 == other.0
+    }
+}
+
+impl<T: Copy + Hash> Hash for List<'_, T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
 
 impl<T: Copy> Default for List<'_, T> {
     fn default() -> Self {
@@ -413,8 +426,11 @@ impl<T: Copy + fmt::Debug> fmt::Debug for List<'_, T> {
 }
 
 impl<'s, T: Copy> List<'s, T> {
-    pub fn new(cx: Interner<'s>, values: &[T]) -> Self {
-        Self(cx.alloc_slice(values))
+    pub fn new(cx: Interner<'s>, values: &[T]) -> Self
+    where
+        T: ListElement<'s>,
+    {
+        Self(T::intern(cx, values))
     }
 
     pub fn as_slice(self) -> &'s [T] {
@@ -459,33 +475,40 @@ impl<'s, T: Copy + TypeVisitable<Interner<'s>>> TypeVisitable<Interner<'s>> for 
     }
 }
 
-impl<'s, T: Copy + PartialEq + TypeFoldable<Interner<'s>>> TypeFoldable<Interner<'s>>
+impl<'s, T: ListElement<'s> + TypeFoldable<Interner<'s>>> TypeFoldable<Interner<'s>>
     for List<'s, T>
 {
     fn try_fold_with<F: ir::FallibleTypeFolder<Interner<'s>>>(
         self,
         folder: &mut F,
     ) -> Result<Self, F::Error> {
-        let values = self
-            .iter()
-            .map(|v| v.try_fold_with(folder))
-            .collect::<Result<Vec<_>, _>>()?;
-        // A fold often visits a list without replacing anything. The original slice already has
-        // the right lifetime; allocating another copy would retain both until the body finishes.
-        Ok(if values == self.0 {
-            self
-        } else {
-            Self::new(folder.cx(), &values)
-        })
+        let cx = folder.cx();
+        // The compiler collector keeps short lists on the stack. An unchanged fold can then
+        // reuse this slice without any allocation; changed contents go through the interner.
+        ir::CollectAndApply::collect_and_apply(
+            self.iter().map(|v| v.try_fold_with(folder)),
+            |values: &[T]| {
+                if values == self.0 {
+                    self
+                } else {
+                    Self::new(cx, values)
+                }
+            },
+        )
     }
 
     fn fold_with<F: ir::TypeFolder<Interner<'s>>>(self, folder: &mut F) -> Self {
-        let values = self.iter().map(|v| v.fold_with(folder)).collect::<Vec<_>>();
-        if values == self.0 {
-            self
-        } else {
-            Self::new(folder.cx(), &values)
-        }
+        let cx = folder.cx();
+        ir::CollectAndApply::collect_and_apply(
+            self.iter().map(|v| v.fold_with(folder)),
+            |values: &[T]| {
+                if values == self.0 {
+                    self
+                } else {
+                    Self::new(cx, values)
+                }
+            },
+        )
     }
 }
 
@@ -630,6 +653,7 @@ impl<'s> ir::inherent::GenericArgs<Interner<'s>> for GenericArgs<'s> {
         let params = cx.generics(id).params;
         let args = params
             .iter()
+            .copied()
             .enumerate()
             .map(|(index, source)| {
                 GenericArg::param(
@@ -1524,7 +1548,7 @@ impl<'s> ir::inherent::AdtDef<Interner<'s>> for AdtDef {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Generics<'s> {
-    pub params: List<'s, GenericParamRef>,
+    pub params: &'s [GenericParamRef],
     pub parent_count: usize,
 }
 

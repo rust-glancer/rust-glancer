@@ -4,6 +4,8 @@
 //! This module connects those requests to one operation's storage and declaration provider.
 //! Interning gives repeated type shapes the same address, so the solver can compare them cheaply.
 
+mod lists;
+
 use std::{
     cell::{Cell, RefCell},
     fmt,
@@ -17,6 +19,8 @@ use rustc_type_ir::{
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
 
+pub use self::lists::ListElement;
+use self::lists::ListInterners;
 use super::{
     Declaration, DeclarationKind, DeclarationProvider, Solver,
     declarations::LangItem,
@@ -52,14 +56,17 @@ struct WorkingDeclarations<'s> {
 pub struct SolverStorage<'s> {
     arena: bumpalo::Bump,
     provider: &'s dyn DeclarationProvider,
-    tys: RefCell<HashMap<TyKind<'s>, Ty<'s>>>,
-    consts: RefCell<HashMap<ir::ConstKind<SolverInterner<'s>>, Const<'s>>>,
+    // Each node already owns its kind. Borrow that kind for structural lookup instead of
+    // copying it into the table; only the returned solver handle uses pointer equality.
+    tys: RefCell<HashMap<&'s TyKind<'s>, Ty<'s>>>,
+    consts: RefCell<HashMap<&'s ir::ConstKind<SolverInterner<'s>>, Const<'s>>>,
     predicates: RefCell<
         HashMap<
-            ir::Binder<SolverInterner<'s>, ir::PredicateKind<SolverInterner<'s>>>,
+            &'s ir::Binder<SolverInterner<'s>, ir::PredicateKind<SolverInterner<'s>>>,
             Predicate<'s>,
         >,
     >,
+    lists: ListInterners<'s>,
     // Boxes keep published addresses stable when the owner vector grows.
     #[allow(clippy::vec_box)]
     external: RefCell<Vec<Box<ir::solve::ExternalConstraintsData<SolverInterner<'s>>>>>,
@@ -78,6 +85,7 @@ impl<'s> SolverStorage<'s> {
             tys: RefCell::default(),
             consts: RefCell::default(),
             predicates: RefCell::default(),
+            lists: ListInterners::default(),
             external: RefCell::default(),
             cache: RefCell::default(),
             declarations: RefCell::default(),
@@ -88,6 +96,17 @@ impl<'s> SolverStorage<'s> {
 
     pub fn interner(&'s self) -> SolverInterner<'s> {
         SolverInterner(self)
+    }
+
+    /// Sample storage before releasing the operation. These totals describe allocation work
+    /// across bodies and queries; their sum is not the amount that was alive at the same time.
+    pub(crate) fn record_profile(&self) {
+        let mut profile = self.profile.borrow_mut();
+        profile.arena_reserved_bytes = self.arena.allocated_bytes_including_metadata() as u64;
+        profile.record_node_table(&self.tys.borrow());
+        profile.record_node_table(&self.consts.borrow());
+        profile.record_node_table(&self.predicates.borrow());
+        self.lists.record_profile(&mut profile);
     }
 }
 
@@ -123,11 +142,6 @@ impl fmt::Debug for SolverInterner<'_> {
 impl<'s> SolverInterner<'s> {
     pub(crate) fn profile(self, record: impl FnOnce(&mut SolverProfile)) {
         record(&mut self.0.profile.borrow_mut());
-    }
-
-    pub(crate) fn alloc_slice<T: Copy>(self, values: &[T]) -> &'s [T] {
-        self.profile(|p| p.slice_bytes += std::mem::size_of_val(values) as u64);
-        self.0.arena.alloc_slice_copy(values)
     }
 
     /// Mark the root evaluation as unusable when a callback cannot supply the requested fact.
@@ -188,7 +202,7 @@ impl<'s> SolverInterner<'s> {
     }
 
     pub fn params(self, owner: DefId) -> &'s [rg_ir_model::GenericParamRef] {
-        self.generics(owner).params.as_slice()
+        self.generics(owner).params
     }
 
     pub(crate) fn generics(self, id: DefId) -> Generics<'s> {
@@ -198,12 +212,18 @@ impl<'s> SolverInterner<'s> {
         let Some(data) = self.0.provider.generics(id) else {
             self.unavailable("missing declaration generics");
             return Generics {
-                params: List::default(),
+                params: &[],
                 parent_count: 0,
             };
         };
+        // Parameter identities are already cached by declaration. Unlike a type's arguments,
+        // they rarely recur under another owner, so a second content interner adds little reuse.
+        self.profile(|p| {
+            p.parameter_slice_requests += u64::from(!data.params.is_empty());
+            p.parameter_slice_bytes += std::mem::size_of_val(data.params.as_slice()) as u64;
+        });
         let generics = Generics {
-            params: List::new(self, &data.params),
+            params: self.0.arena.alloc_slice_copy(&data.params),
             parent_count: data.parent_count,
         };
         if !self.has_unavailable() {
@@ -259,7 +279,7 @@ impl<'s> SolverInterner<'s> {
             flags: flags.flags,
             outer_exclusive_binder: flags.outer_exclusive_binder,
         }));
-        self.0.tys.borrow_mut().insert(kind, value);
+        self.0.tys.borrow_mut().insert(&value.0.internee, value);
         value
     }
 
@@ -273,7 +293,7 @@ impl<'s> SolverInterner<'s> {
             flags: flags.flags,
             outer_exclusive_binder: flags.outer_exclusive_binder,
         }));
-        self.0.consts.borrow_mut().insert(kind, value);
+        self.0.consts.borrow_mut().insert(&value.0.internee, value);
         value
     }
 
@@ -290,7 +310,10 @@ impl<'s> SolverInterner<'s> {
             flags: flags.flags,
             outer_exclusive_binder: flags.outer_exclusive_binder,
         }));
-        self.0.predicates.borrow_mut().insert(kind, value);
+        self.0
+            .predicates
+            .borrow_mut()
+            .insert(&value.0.internee, value);
         value
     }
 

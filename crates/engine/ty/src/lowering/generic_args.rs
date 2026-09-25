@@ -256,7 +256,7 @@ where
         let params = self.cx.generics(param.owner().into()).params;
         Ok(self
             .cx
-            .param(param, &params)
+            .param(param, params)
             .map(|param| Region(ir::ReEarlyParam(param)))
             .unwrap_or(Region(ir::ReErased)))
     }
@@ -272,7 +272,7 @@ where
                 return Ok(value);
             }
             let params = self.cx.generics(param.owner().into()).params;
-            if let Some(param) = self.cx.param(param, &params) {
+            if let Some(param) = self.cx.param(param, params) {
                 return Ok(Const::new(self.cx, ir::ConstKind::Param(param)));
             }
         }

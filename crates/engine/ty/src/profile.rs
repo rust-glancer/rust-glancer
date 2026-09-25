@@ -39,8 +39,30 @@ declare_metrics! {
             counter SOLVER_IMPL_CANDIDATES = "impl_candidates";
             /// Body candidate searches that clone the inference context.
             counter SOLVER_PROBES = "candidate_probes";
-            /// Generic and predicate slices allocated in operation arenas.
+            /// Requests to construct nonempty solver slices, summed across operations.
+            counter SOLVER_SLICE_REQUESTS = "slices.requests";
+            /// Nonempty slice requests grouped by element kind.
+            keyed_counter SOLVER_SLICE_REQUESTS_BY_KIND = "slices.requests_by_kind" [report super::BY_COUNT, title "Solver slice requests"];
+            /// Nonempty slice requests served without allocation, grouped by element kind.
+            keyed_counter SOLVER_SLICE_HITS_BY_KIND = "slices.hits_by_kind" [report super::BY_COUNT, title "Solver slice reuse"];
+            /// Slice payload bytes allocated across operations, grouped by element kind.
+            keyed_counter SOLVER_SLICE_BYTES_BY_KIND = "slices.bytes_by_kind" [report super::BY_COUNT, title "Solver slice payload bytes"];
+            /// Unique slices retained at operation exit, summed across operations.
+            counter SOLVER_SLICE_ENTRIES = "slices.entries_total";
+            /// Usable slice-table capacity at operation exit, summed across operations.
+            counter SOLVER_SLICE_CAPACITY = "slices.capacity_total";
+            /// Usable slice-table capacity times entry size; excludes control bytes and allocator overhead.
+            counter SOLVER_SLICE_CAPACITY_BYTES = "slices.capacity_bytes_total";
+            /// Slice payload bytes allocated across all operation arenas, not peak live memory.
             counter SOLVER_SLICE_BYTES = "arena.slice_bytes";
+            /// Arena bytes reserved at operation exit, including metadata, summed across operations.
+            counter SOLVER_ARENA_RESERVED_BYTES = "arena.reserved_bytes_total";
+            /// Type, constant, and predicate nodes retained at operation exit, summed across operations.
+            counter SOLVER_NODE_ENTRIES = "nodes.entries_total";
+            /// Usable node-table capacity at operation exit, summed across operations.
+            counter SOLVER_NODE_CAPACITY = "nodes.capacity_total";
+            /// Usable node-table capacity times entry size; excludes control bytes and allocator overhead.
+            counter SOLVER_NODE_CAPACITY_BYTES = "nodes.capacity_bytes_total";
         }
     }
 }

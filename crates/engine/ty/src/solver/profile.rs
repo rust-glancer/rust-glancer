@@ -19,9 +19,29 @@ pub(crate) struct SolverProfile {
     pub unavailable_reuses: u64,
     pub impl_candidates: u64,
     pub probes: u64,
+    pub slice_requests: u64,
     pub slice_bytes: u64,
+    pub slice_entries: u64,
+    pub slice_capacity: u64,
+    pub slice_capacity_bytes: u64,
+    pub parameter_slice_requests: u64,
+    pub parameter_slice_bytes: u64,
+    pub arena_reserved_bytes: u64,
+    pub node_entries: u64,
+    pub node_capacity: u64,
+    pub node_capacity_bytes: u64,
     pub outcomes: HashMap<&'static str, u64>,
     pub unavailable: HashMap<&'static str, u64>,
+}
+
+impl SolverProfile {
+    pub fn record_node_table<K, V>(&mut self, table: &HashMap<K, V>) {
+        self.node_entries += table.len() as u64;
+        self.node_capacity += table.capacity() as u64;
+        // Capacity counts usable entries, not raw buckets. This measures entry storage without
+        // pretending to include the hash table's control bytes or allocator overhead.
+        self.node_capacity_bytes += (table.capacity() * std::mem::size_of::<(K, V)>()) as u64;
+    }
 }
 
 impl Drop for SolverProfile {
@@ -43,7 +63,27 @@ impl Drop for SolverProfile {
             (metric::SOLVER_UNAVAILABLE_REUSES, self.unavailable_reuses),
             (metric::SOLVER_IMPL_CANDIDATES, self.impl_candidates),
             (metric::SOLVER_PROBES, self.probes),
-            (metric::SOLVER_SLICE_BYTES, self.slice_bytes),
+            (
+                metric::SOLVER_SLICE_REQUESTS,
+                self.slice_requests + self.parameter_slice_requests,
+            ),
+            (
+                metric::SOLVER_SLICE_BYTES,
+                self.slice_bytes + self.parameter_slice_bytes,
+            ),
+            (metric::SOLVER_SLICE_ENTRIES, self.slice_entries),
+            (metric::SOLVER_SLICE_CAPACITY, self.slice_capacity),
+            (
+                metric::SOLVER_SLICE_CAPACITY_BYTES,
+                self.slice_capacity_bytes,
+            ),
+            (
+                metric::SOLVER_ARENA_RESERVED_BYTES,
+                self.arena_reserved_bytes,
+            ),
+            (metric::SOLVER_NODE_ENTRIES, self.node_entries),
+            (metric::SOLVER_NODE_CAPACITY, self.node_capacity),
+            (metric::SOLVER_NODE_CAPACITY_BYTES, self.node_capacity_bytes),
         ] {
             if count != 0 {
                 metric.add(count);
@@ -54,6 +94,10 @@ impl Drop for SolverProfile {
         }
         for (&reason, &count) in &self.unavailable {
             metric::SOLVER_UNAVAILABLE.add(reason, count);
+        }
+        if self.parameter_slice_requests != 0 {
+            metric::SOLVER_SLICE_REQUESTS_BY_KIND.add("parameters", self.parameter_slice_requests);
+            metric::SOLVER_SLICE_BYTES_BY_KIND.add("parameters", self.parameter_slice_bytes);
         }
     }
 }

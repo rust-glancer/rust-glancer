@@ -1059,6 +1059,62 @@ fn shared_inference_finalizes_numeric_links_and_nested_types() {
 }
 
 #[test]
+fn inference_preserves_repeated_and_reordered_signature_types() {
+    use crate::{PrimitiveTy, solver};
+
+    let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let table = solver::InferenceTable::new(solver, Default::default());
+            let cx = table.interner();
+            let boolean = cx.lower_ty(&Ty::Primitive(PrimitiveTy::Bool), &[]);
+            let first = table.new_type_var();
+            let second = table.new_type_var();
+            let signature = cx.fn_pointer(&[boolean, first, first, second], second);
+            let solver::TyShape::FnPointer { params, .. } = signature.shape() else {
+                panic!("function pointer retains its signature");
+            };
+            // Signature inputs are a view into inputs-and-output storage. They still describe
+            // the same sequence as separately constructed inputs, including repeated slots.
+            assert_eq!(
+                params,
+                solver::List::new(cx, &[boolean, first, first, second])
+            );
+            let inputs = cx.tuple(params.as_slice());
+            let reordered = cx.tuple([boolean, second, first, second]);
+            let character = Ty::Primitive(PrimitiveTy::Char);
+            table.unify(first, cx.lower_ty(&character, &[]));
+            table.unify(second, boolean);
+            let boolean = Ty::Primitive(PrimitiveTy::Bool);
+            for (actual, expected) in [
+                (
+                    inputs,
+                    vec![
+                        boolean.clone(),
+                        character.clone(),
+                        character.clone(),
+                        boolean.clone(),
+                    ],
+                ),
+                (
+                    reordered,
+                    vec![boolean.clone(), boolean.clone(), character, boolean],
+                ),
+            ] {
+                assert_eq!(table.finalize(actual), Ty::tuple(expected));
+            }
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
 fn generic_argument_relations_retain_const_evidence() {
     use crate::solver;
     let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");

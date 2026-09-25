@@ -120,7 +120,7 @@ where
             let (params, clauses, self_trait) = match self.resolver.generic_owner() {
                 Some(owner) => {
                     let generics = paths.generics().generics(owner)?;
-                    let params = generics.iter().map(|p| p.param()).collect::<Vec<_>>();
+                    let params = cx.params(DefId::from(owner));
                     let self_trait = generics.iter().find_map(|p| {
                         matches!(p.source(), GenericParamSource::TraitSelf)
                             .then_some(p.param().owner())
@@ -140,9 +140,8 @@ where
                     };
                     (params, clauses, self_trait)
                 }
-                None => (Vec::new(), Vec::new(), None),
+                None => (&[][..], Vec::new(), None),
             };
-            let params = solver::List::new(cx, &params).as_slice();
             let mut clauses = clauses;
             // A default trait method may use its own trait without a written `Self: Trait`
             // bound. Mirror the body's environment without loading the whole method signature.

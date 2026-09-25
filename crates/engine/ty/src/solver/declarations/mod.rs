@@ -226,7 +226,9 @@ where
     ) -> Result<R, I::Error> {
         let result = {
             let storage = SolverStorage::new(self);
-            run(storage.interner())
+            let result = run(storage.interner());
+            storage.record_profile();
+            result
         };
         match self.take_error() {
             Some(error) => Err(error),
