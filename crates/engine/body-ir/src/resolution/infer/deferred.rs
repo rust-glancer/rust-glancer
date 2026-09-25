@@ -21,6 +21,10 @@ use crate::{
     body::{ExprKind, PatKind},
 };
 
+// Limit solver/body alternations at one checkpoint. The solver separately limits passes over
+// its pending goals; each of these rounds can include several of those passes.
+const MAX_DEFERRED_INFERENCE_ROUNDS: usize = 128;
+
 /// One unfinished operation and the input against which it last ran or was queued.
 /// The operation reads live slots; the stored input is only a snapshot for deciding when to retry.
 pub(super) struct Deferred<'s> {
@@ -206,15 +210,23 @@ where
         Ok(())
     }
 
-    /// Retry changed questions until a full round has nothing to try. For example, learning the
-    /// type of `source` can unlock `source.field`, whose result can unlock another pending lookup.
-    /// Canonical inputs include variable identity and equality guidance, so progress need not mean
-    /// that a type became concrete. Unchanged questions stay queued for a later checkpoint.
+    /// Let trait goals and deferred body operations pass new type information to each other.
+    ///
+    /// For example, solving a trait goal can reveal the type of `source`, letting us look up
+    /// `source.field`. If the field's type is `T::Item`, relating it to the expression slot can
+    /// add another goal. Solving that goal can then unlock `source.field.method()`.
+    ///
+    /// A round first runs the solver until its goals stop learning from each other, then retries
+    /// body operations with changed inputs. The solver cannot perform those body operations, and
+    /// they can add goals after it returns, so both levels need their own retry loop.
+    ///
+    /// Stop when a full round has nothing to try. Input comparisons include variable identity
+    /// and equality guidance, so progress need not mean that a type became concrete. Unchanged
+    /// questions stay queued for a later checkpoint.
     pub(super) fn fulfill_pending(&mut self) -> anyhow::Result<()> {
-        // Bound the retry work at one checkpoint. Reaching the limit leaves useful facts in
-        // place for body completion to publish.
-        for _ in 0..128 {
+        for _ in 0..MAX_DEFERRED_INFERENCE_ROUNDS {
             rg_std::check_cancel!(self.context, "fulfill pending inference");
+            // Settle the queued trait goals before checking which body inputs have changed.
             let _ = self.inference.table().fulfill();
             let mut attempted = false;
             // Keep the other operations visible while retrying one: a coercion must know whether
@@ -251,10 +263,13 @@ where
                     self.defer(operation.kind, Some(input));
                 }
             }
+            // An attempt can add solver goals or help an operation we already passed in this
+            // scan. Allow another round even if it learned nothing; unchanged inputs are skipped.
             if !attempted {
                 return Ok(());
             }
         }
+        // Report exhaustion while keeping the facts learned so far for body completion to publish.
         self.inference_exhausted = true;
         crate::profile::metric::DEFERRED_EXHAUSTIONS.inc();
         Ok(())

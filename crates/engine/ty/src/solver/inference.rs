@@ -27,6 +27,10 @@ use super::{
     Solver, SolverInterner, Ty, infer::OpaqueEntries,
 };
 
+// Safety cap for passes over the goal queue in one fulfillment call. A chain of goals can keep
+// changing inference variables without finishing, so progress alone cannot bound this work.
+const MAX_OBLIGATION_FULFILLMENT_ROUNDS: usize = 128;
+
 type I<'s> = SolverInterner<'s>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,9 +295,15 @@ impl<'s> InferenceTable<'s> {
     /// Retry stalled goals only after their inputs change. A projection and a bound on its output
     /// stay in this queue together; there is no separate concrete query that loses their variables.
     ///
-    /// For example, proving `<Iter<u8> as Iterator>::Item = ?Item` can give the next goal,
-    /// `?Item: Clone`, enough information to finish. Run another round when a goal learned
-    /// something. If all remaining goals are waiting for more information, return to the caller.
+    /// Queue order matters within one pass. Suppose `?Item: Clone` comes before
+    /// `<Iter<u8> as Iterator>::Item = ?Item`. The first goal waits; the second learns `?Item = u8`.
+    /// We need another pass to revisit the first goal with that assignment. Evaluating one root
+    /// goal does not revisit the other roots in this queue.
+    ///
+    /// Keep making passes while a goal changes inference state. This also serves standalone type
+    /// queries, which have no body retry loop to finish the work for them. Body callers can do
+    /// field or method lookup after this returns, add more goals, and call fulfillment again.
+    /// If all remaining goals are waiting for more information, return to the caller.
     ///
     /// An ambiguous answer can still supply useful assignments. An answer that relied on missing
     /// source data cannot: roll back that goal's trial before keeping it in the queue.
@@ -304,7 +314,7 @@ impl<'s> InferenceTable<'s> {
             tracing::debug!(reason, "obligations unavailable before evaluation");
             return Outcome::Unavailable;
         }
-        for _ in 0..128 {
+        for _ in 0..MAX_OBLIGATION_FULFILLMENT_ROUNDS {
             if cx.is_cancelled() {
                 return Outcome::Unavailable;
             }
@@ -374,6 +384,8 @@ impl<'s> InferenceTable<'s> {
                                 })
                                 .or_default() += 1
                         });
+                        // Even an ambiguous answer can change variables that earlier goals use.
+                        // Proving a goal without changing inference state needs no extra pass.
                         progress |= result.has_changed == HasChanged::Yes;
                         snapshot.commit();
                         if result.certainty == ir::solve::Certainty::Yes {
@@ -405,6 +417,8 @@ impl<'s> InferenceTable<'s> {
                 };
             }
             if !progress {
+                // Every remaining goal has seen the same evidence it would see on another pass.
+                // Leave it queued until the caller supplies more information.
                 return if unavailable {
                     Outcome::Unavailable
                 } else if self.failed.get() {
@@ -414,6 +428,8 @@ impl<'s> InferenceTable<'s> {
                 };
             }
         }
+        // Keep accepted assignments and unfinished goals, but do not claim that fulfillment
+        // settled: the round limit stopped it while goals were still making progress.
         Outcome::Unavailable
     }
 
