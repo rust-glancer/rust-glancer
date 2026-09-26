@@ -2,11 +2,10 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, CrateRef, EnumVariantFieldRef, EnumVariantRef, FieldRef, Path, ScopeId, TypeDefRef,
+    BodyRef, EnumVariantFieldRef, EnumVariantRef, FieldRef, Path, ScopeId, TypeDefRef,
     identity::DeclarationRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
-use rg_ty::{TyContext, lookup::MemberQuery};
 
 use super::{ConstructorShape, MemberEnumVariantField, MemberField, MemberView};
 use crate::{
@@ -15,26 +14,15 @@ use crate::{
 };
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    /// Return fields visible for a type at a crate use site.
+    /// Return fields visible for a type under the enclosing body's assumptions.
     pub fn field_candidates_for_ty<'view>(
         &'view self,
-        use_site: CrateRef,
+        body: BodyRef,
         ty: &IndexedType,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
-        let item_lookup_query = self
-            .db
-            .item_lookup_query(use_site)
-            .context("assemble field candidate item lookup")?;
-        let member_query = MemberQuery::new(TyContext::new(
-            self.db,
-            self.db,
-            item_lookup_query,
-            use_site,
-            self.db.cancellation().clone(),
-        ));
-        for field_ref in member_query
-            .fields_for_ty(ty.raw())
+        for field_ref in BodyResolutionView::new(self.db)
+            .field_candidate_refs_for_ty(body, ty.raw())
             .context("resolve field candidates for type")?
         {
             let Some(field) = self.field(field_ref).context("read field candidate data")? else {
@@ -59,32 +47,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        let mut fields = Vec::new();
-        let item_lookup_query = self
-            .db
-            .item_lookup_query(body.crate_ref)
-            .context("assemble body field item lookup")?;
-        let member_query = MemberQuery::new(TyContext::new(
-            self.db,
-            self.db,
-            item_lookup_query,
-            body.crate_ref,
-            self.db.cancellation().clone(),
-        ));
         if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
-            for field_ref in member_query
-                .fields_for_type_def(ty)
-                .context("resolve fields for body type path")?
-            {
-                let Some(field) = self.field(field_ref).context("read body type path field")?
-                else {
-                    continue;
-                };
-                fields.push(field);
-            }
+            return self
+                .field_candidates_for_type_def(ty)
+                .context("resolve fields for body type path");
         }
-
-        Ok(fields)
+        Ok(Vec::new())
     }
 
     /// Return fields declared directly by a resolved nominal type.

@@ -16,7 +16,6 @@ use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Ty,
-    autoderef::ReferencePeelingCandidates,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver as _},
     signature::SemanticSignatureQuery,
@@ -67,8 +66,9 @@ impl IndexedType {
 
     /// Iterate nominal definitions represented by this type after peeling references.
     pub fn nominal_type_defs(&self) -> impl Iterator<Item = TypeDefRef> + '_ {
-        ReferencePeelingCandidates::new(self.raw())
-            .filter_map(|candidate| candidate.ty().as_adts().first().map(|ty| ty.def))
+        self.raw()
+            .reference_chain()
+            .filter_map(|candidate| candidate.as_adts().first().map(|ty| ty.def))
     }
 
     /// Return the nominal definition only when reference peeling identifies exactly one.

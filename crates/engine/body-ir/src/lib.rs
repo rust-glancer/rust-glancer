@@ -38,7 +38,10 @@ pub use self::{
         RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData,
         StmtKind,
     },
-    resolution::{BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery},
+    resolution::{
+        BodyFieldQuery, BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery,
+        BodyValuePathQuery,
+    },
     store::{
         BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
         BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,

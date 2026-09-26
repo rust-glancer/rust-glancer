@@ -5,12 +5,12 @@
 //! unsupported current-body evidence remains a useful editor-facing `Maybe` match.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{TraitApplicability, TraitImplRef};
+use rg_ir_model::TraitImplRef;
 use rg_semantic_ir::ItemStoreSource;
 
 use super::ImplQuery;
 use crate::{
-    AdtTy, Ty,
+    Ty,
     solver::SolverScope,
     trait_selection::{TraitSelection, TraitSelectionQuery},
 };
@@ -21,18 +21,6 @@ where
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
     R: SolverScope<Error = D::Error>,
 {
-    /// Return only the yes/maybe/no part of exact trait impl selection.
-    pub(crate) fn trait_impl_applicability(
-        &self,
-        trait_impl: TraitImplRef,
-        receiver_ty: &AdtTy,
-    ) -> Result<TraitApplicability, D::Error> {
-        Ok(self
-            .trait_impl_selection_for_ty(trait_impl, &Ty::adt(receiver_ty.clone()))?
-            .map(|selection| selection.applicability)
-            .unwrap_or(TraitApplicability::No))
-    }
-
     /// Match one trait impl against any canonical receiver shape.
     ///
     /// Nominal, primitive, and structural associated-item queries use the same selection result.

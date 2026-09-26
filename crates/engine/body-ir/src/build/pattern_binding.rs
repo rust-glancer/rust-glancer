@@ -21,9 +21,7 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::{
-    ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates, signature::CallableSignature,
-};
+use rg_ty::{ExpectedAdtTyExt, Ty, signature::CallableSignature};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
 use crate::{
@@ -393,9 +391,8 @@ where
             return Ok(false);
         };
 
-        for candidate in ReferencePeelingCandidates::new(expected_ty) {
+        for candidate in expected_ty.reference_chain() {
             for enum_ty in candidate
-                .ty()
                 .as_adts()
                 .iter()
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))

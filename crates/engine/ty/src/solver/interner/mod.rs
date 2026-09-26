@@ -220,8 +220,12 @@ impl<'s> SolverInterner<'s> {
         value
     }
 
+    pub(crate) fn lang_item(self, item: LangItem) -> Option<DefId> {
+        self.0.provider.lang_item(item)
+    }
+
     fn require_lang_item(self, item: LangItem) -> DefId {
-        self.0.provider.lang_item(item).unwrap_or_else(|| {
+        self.lang_item(item).unwrap_or_else(|| {
             self.unavailable("missing language item");
             DefId::Unavailable
         })

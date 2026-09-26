@@ -108,17 +108,7 @@ where
         run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> T,
     ) -> Result<T, I::Error> {
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
-        declarations.with_solver(|solver| {
-            let cx = solver.interner();
-            let (params, env) = match self.resolver.generic_owner() {
-                Some(owner) => (
-                    cx.params(owner.into()),
-                    cx.parameter_environment(owner.into()),
-                ),
-                None => (&[][..], Default::default()),
-            };
-            run(InferenceTable::new(solver, env), params)
-        })
+        declarations.with_table(run)
     }
 
     /// Find an impl's generic arguments from an owned receiver, without checking its bounds.

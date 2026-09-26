@@ -517,15 +517,13 @@ where
                         op: Some(ExprUnaryOp::Deref),
                         expr: Some(inner),
                     } => {
-                        // An explicit `*value` needs exactly one receiver adjustment.
+                        // An explicit `*value` takes one dereference step after the original type.
                         let inner_ty = self.inference.root_resolved_expr_ty(inner);
                         let ty = self
-                            .context
-                            .live()
-                            .receivers(inner_ty, self.inference.table(), false)
+                            .inference
+                            .table()
+                            .autoderef(inner_ty)
                             .nth(1)
-                            .transpose()
-                            .context("resolve dereference target")?
                             .unwrap_or(self.cx.unknown());
                         self.inference.set_expr_ty(*expr, ty);
                     }

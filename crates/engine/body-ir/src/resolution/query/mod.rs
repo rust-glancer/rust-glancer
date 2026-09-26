@@ -24,7 +24,6 @@ pub(crate) use self::{
     associated_item::BodyAssociatedItemQuery,
     body_items::BodyLocalItemQuery,
     callable::BodyCallableCandidate,
-    field::BodyFieldQuery,
     function::BodyFunctionQuery,
     generics::BodyGenericsQuery,
     impls::{BodyImplQuery, BodyReceiverImplMatches},
@@ -34,5 +33,6 @@ pub(crate) use self::{
     type_ref::TypeRefResolutionQuery,
 };
 pub use self::{
-    method::BodyMethodQuery, type_path::BodyTypePathQuery, value_path::BodyValuePathQuery,
+    field::BodyFieldQuery, method::BodyMethodQuery, type_path::BodyTypePathQuery,
+    value_path::BodyValuePathQuery,
 };

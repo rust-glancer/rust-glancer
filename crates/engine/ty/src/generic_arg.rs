@@ -184,13 +184,6 @@ impl GenericArg {
             Self::Lifetime(_) | Self::Const(_) => false,
         }
     }
-
-    pub(crate) fn is_projectable(&self) -> bool {
-        match self {
-            Self::Type(ty) => ty.is_projectable(),
-            Self::Lifetime(_) | Self::Const(_) => true,
-        }
-    }
 }
 
 /// A trait definition applied to its full semantic argument list.

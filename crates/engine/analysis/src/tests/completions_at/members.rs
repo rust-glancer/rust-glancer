@@ -5,6 +5,140 @@ use expect_test::expect;
 use crate::tests::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
 };
+
+#[test]
+fn finds_methods_from_caller_bounds_without_concrete_impls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "bound_members"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub trait Base<T> {
+        fn base(&self) -> T;
+    }
+    pub trait Render: Base<u16> {
+        fn render(&self) -> u32;
+    }
+}
+
+pub fn inspect<T: api::Render>(value: T) {
+    let $direct$direct = value.$render$render();
+    let $inherited$inherited = value.$base$base();
+    value.$members$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct bound result", "direct"),
+            AnalysisQuery::ty("supertrait result", "inherited"),
+            AnalysisQuery::goto("direct declaration", "render"),
+            AnalysisQuery::goto("supertrait declaration", "base"),
+            AnalysisQuery::complete("saved bound methods", "members"),
+            AnalysisQuery::complete_with_source("request-local bound methods", "members"),
+        ],
+        expect![[r#"
+            direct bound result
+            - u32
+
+            supertrait result
+            - u16
+
+            direct declaration
+            - fn render @ 6:12-6:18
+
+            supertrait declaration
+            - fn base @ 3:12-3:16
+
+            saved bound methods
+            - trait_method base
+            - trait_method render
+
+            request-local bound methods
+            - trait_method base
+            - postfix box
+            - postfix dbg
+            - postfix err
+            - postfix match
+            - postfix ok
+            - postfix ref
+            - postfix refm
+            - trait_method render
+            - postfix some
+        "#]],
+    );
+}
+
+#[test]
+fn finds_members_through_generic_deref_bounds() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Widget {
+    pub id: u16,
+}
+
+impl Widget {
+    pub fn label(&self) -> u32 { 0 }
+}
+
+pub fn inspect<P, Q>(value: &P)
+where
+    P: core::ops::Deref<Target = Q>,
+    Q: core::ops::Deref<Target = Widget>,
+{
+    let $field$field = value.id;
+    let $method$method = value.label();
+    value.$members$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through generic Deref chain", "field").in_lib("app"),
+            AnalysisQuery::ty("method through generic Deref chain", "method").in_lib("app"),
+            AnalysisQuery::complete("generic Deref members", "members").in_lib("app"),
+            AnalysisQuery::complete_with_source("request-local Deref members", "members")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            field through generic Deref chain
+            - u16
+
+            method through generic Deref chain
+            - u32
+
+            generic Deref members
+            - field id
+            - inherent_method label
+
+            request-local Deref members
+            - postfix box
+            - postfix dbg
+            - postfix err
+            - field id
+            - inherent_method label
+            - postfix match
+            - postfix ok
+            - postfix ref
+            - postfix refm
+            - postfix some
+        "#]],
+    );
+}
+
 #[test]
 fn completes_inherent_and_trait_methods_at_partial_and_bare_dot_sites() {
     check_analysis_queries(
@@ -455,7 +589,7 @@ pub trait Displayed {
 pub struct User;
 
 impl User {
-    pub fn label(&self) {}
+    pub fn label(&self) -> u32 { 0 }
 }
 
 impl Named for User {
@@ -467,15 +601,21 @@ impl Displayed for User {
 }
 
 pub fn use_it(user: User) {
-    user.$0label();
+    let $picked$picked = user.$0label();
 }
 "#,
-        &[AnalysisQuery::complete("same-name completions", "0")],
+        &[
+            AnalysisQuery::complete("same-name completions", "0"),
+            AnalysisQuery::ty("inherent call takes precedence", "picked"),
+        ],
         expect![[r#"
             same-name completions
             - inherent_method label
             - trait_method label
             - trait_method label
+
+            inherent call takes precedence
+            - u32
         "#]],
     );
 }

@@ -25,9 +25,9 @@ use rustc_type_ir::{
 
 use self::stored::StoredDeclarations;
 use super::{
-    CallableSignature, Clause, DefId, ImplHeader, InferenceSubstitution, List, ProjectionTy,
-    Solver, SolverInterner, SolverStorage, TraitApplication, Ty, profile::SolverProfile,
-    types::AdtDef,
+    CallableSignature, Clause, DefId, ImplHeader, InferenceSubstitution, InferenceTable, List,
+    ProjectionTy, Solver, SolverInterner, SolverStorage, TraitApplication, Ty,
+    profile::SolverProfile, types::AdtDef,
 };
 use crate::{
     TyContext,
@@ -69,6 +69,8 @@ pub(crate) enum LangItem {
     Trait(SolverTraitLangItem),
     Projection(SolverProjectionLangItem),
     Adt(SolverAdtLangItem),
+    Deref,
+    DerefTarget,
 }
 
 /// Supply declaration metadata, types, and bounds to the solver as separate reads.
@@ -223,6 +225,25 @@ where
     /// Source errors collected by callbacks are returned after the temporary storage is dropped.
     pub fn with_solver<R>(&self, run: impl for<'s> FnOnce(Solver<'s>) -> R) -> Result<R, I::Error> {
         self.with_storage(|cx| run(Solver::new(cx)))
+    }
+
+    /// Give a standalone query the same assumptions as inference in its enclosing declaration.
+    /// The table and all its types belong to this operation; return owned results from the closure.
+    pub fn with_table<R>(
+        &self,
+        run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> R,
+    ) -> Result<R, I::Error> {
+        self.with_solver(|solver| {
+            let cx = solver.interner();
+            let (params, env) = match self.solving.and_then(|(_, scope)| scope.generic_owner()) {
+                Some(owner) => (
+                    cx.params(owner.into()),
+                    cx.parameter_environment(owner.into()),
+                ),
+                None => (&[][..], Default::default()),
+            };
+            run(InferenceTable::new(solver, env), params)
+        })
     }
 
     /// Source-only queries need working type storage without an inference context. Both kinds
@@ -708,7 +729,15 @@ where
     }
 
     fn lang_item(&self, item: LangItem) -> Option<DefId> {
+        let (context, _) = self.solving?;
+        if item == LangItem::DerefTarget {
+            return context
+                .item_lookup()
+                .lang_type_alias(rg_item_tree::LangItem::DerefTarget)
+                .map(DefId::TypeAlias);
+        }
         let source = match item {
+            LangItem::Deref => rg_item_tree::LangItem::Deref,
             LangItem::Trait(SolverTraitLangItem::Sized) => rg_item_tree::LangItem::Sized,
             LangItem::Trait(SolverTraitLangItem::MetaSized) => rg_item_tree::LangItem::MetaSized,
             LangItem::Trait(SolverTraitLangItem::Tuple) => rg_item_tree::LangItem::Tuple,
@@ -721,7 +750,6 @@ where
             }
             _ => return None,
         };
-        let (context, _) = self.solving?;
         context.item_lookup().lang_trait(source).map(DefId::Trait)
     }
 

@@ -8,11 +8,10 @@
 //!
 //! Owned type shapes and substitutions are available at the crate root. `lowering` interprets
 //! source types and declaration signatures; `signature` queries declarations for owned types and
-//! bounds. `lookup` finds declarations by path or receiver type, `autoderef` adjusts receivers,
-//! `solver` owns temporary inference and trait proof, and `trait_selection` freezes results for
+//! bounds. `lookup` finds declarations by path or receiver type. `solver` owns temporary inference,
+//! receiver adjustment, and trait proof; `trait_selection` freezes results for
 //! editor queries.
 
-pub mod autoderef;
 mod context;
 mod generic_arg;
 pub mod lookup;

@@ -10,12 +10,12 @@
 
 use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef};
 use rg_item_tree::FunctionQualifiers;
-use rg_std::ExpectedUnique;
-use rustc_type_ir::{self as ir, Upcast};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rustc_type_ir::{self as ir, Upcast, inherent::IntoKind as _};
 
 use super::{
-    Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome, ProjectionTy,
-    SolverInterner, Ty,
+    AliasTy, Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome,
+    ProjectionTy, SolverInterner, Ty, TyShape,
 };
 use crate::signature;
 
@@ -173,6 +173,43 @@ pub struct ImplSelection<'s> {
 }
 
 impl<'s> InferenceTable<'s> {
+    /// Traits supplied by bounds on this receiver are method candidates even when the trait is
+    /// named only in a bound, such as `fn draw<T: api::Render>(value: T)`. The environment already
+    /// includes supertraits. Opaque and associated types also carry bounds on their declarations.
+    pub fn bound_traits(&self, receiver: Ty<'s>) -> UniqueVec<TraitDefRef> {
+        let cx = self.interner();
+        let receiver = self.resolve_root_var(receiver);
+        let mut traits = UniqueVec::new();
+        let mut collect = |clause: Clause<'s>| {
+            if let ir::ClauseKind::Trait(predicate) = clause.kind().skip_binder()
+                && self.resolve_root_var(predicate.trait_ref.self_ty()) == receiver
+                && let DefId::Trait(trait_ref) = predicate.trait_ref.def_id
+            {
+                traits.push(trait_ref);
+            }
+        };
+        for clause in self.environment().clauses {
+            collect(clause);
+        }
+        let alias = match receiver.shape() {
+            TyShape::Alias(AliasTy::Opaque(alias)) => {
+                Some((DefId::Opaque(alias.opaque), alias.args))
+            }
+            TyShape::Alias(AliasTy::Projection(alias)) => {
+                Some((DefId::TypeAlias(alias.associated_ty), alias.args))
+            }
+            _ => None,
+        };
+        if let Some((owner, args)) = alias {
+            let subst = InferenceSubstitution::from_args(cx.params(owner).iter().copied(), args);
+            let bounds = subst.apply(cx, cx.bounds(owner));
+            for clause in ir::elaborate::elaborate(cx, bounds) {
+                collect(clause);
+            }
+        }
+        traits
+    }
+
     /// Give each declaration parameter a fresh variable for this use of the declaration.
     /// Two calls to `id<T>` need separate `?T`s so their argument types can differ.
     pub fn fresh_substitution(&self, owner: DefId) -> InferenceSubstitution<'s> {

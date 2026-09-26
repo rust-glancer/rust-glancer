@@ -12,7 +12,6 @@ use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathR
 use rg_std::CancellationToken;
 use rg_ty::{
     Ty, TyContext,
-    autoderef::Autoderef,
     lookup::{AssociatedItemCandidateRef, ImplQuery, ItemPathQuery},
     lowering::{TypeLoweringAnchor, TypePathResolver},
     signature::SemanticSignatureQuery,
@@ -204,7 +203,7 @@ where
         BodyTraitQuery::new(self.clone())
     }
 
-    pub(crate) fn fields(&self) -> BodyFieldQuery<'a, D, I> {
+    pub fn fields(&self) -> BodyFieldQuery<'a, D, I> {
         BodyFieldQuery::new(self.clone())
     }
 
@@ -226,10 +225,6 @@ where
 
     pub(crate) fn impl_query(&self) -> ImplQuery<'a, D, I, &Self> {
         ImplQuery::with_resolver(self.ty.clone(), self)
-    }
-
-    pub(crate) fn autoderef(&self) -> Autoderef<'a, D, I> {
-        Autoderef::new(self.ty.clone())
     }
 }
 

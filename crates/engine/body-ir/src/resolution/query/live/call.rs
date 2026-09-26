@@ -6,25 +6,19 @@
 //! its receiver bindings so its signature uses the same variables as the body.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef, identity::DeclarationRef,
-};
+use rg_ir_model::{ExprId, FunctionRef, ScopeId, SemanticItemRef, identity::DeclarationRef};
 use rg_item_tree::GenericArg as ItemGenericArg;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
-    solver::{
-        DefId, InferenceSubstitution, InferenceTable, Outcome, TraitApplication, Ty, TyShape,
-    },
+    solver::{InferenceSubstitution, InferenceTable, Outcome, Ty},
 };
 
-use super::LiveBodyQuery;
+use super::{FunctionLookup, LiveBodyQuery};
 use crate::{
     BodyAssociatedPathPrefix,
     body::{ExprKind, facts::BodyResolution},
-    resolution::cache::BodyTraitSurface,
 };
 
 /// A function candidate together with the receiver evidence found while considering it.
@@ -67,15 +61,12 @@ where
                 let Some(receiver) = receiver else {
                     return Ok(Vec::new());
                 };
-                for receiver in self.receivers(receiver, table, true) {
-                    let receiver = receiver?;
-                    let candidates = self.named_targets(
+                for receiver in table.method_receivers(receiver) {
+                    let candidates = self.member_targets(
                         data.scope,
                         receiver,
-                        method_name,
-                        true,
+                        FunctionLookup::Method(method_name),
                         generic_args,
-                        None,
                         table,
                     )?;
                     if !candidates.is_empty() {
@@ -120,13 +111,14 @@ where
                     };
                     if !receiver.is_unknown() || qualification.is_some() {
                         let receiver = table.instantiate_nested_unknowns(receiver);
-                        let targets = self.named_targets(
+                        let targets = self.member_targets(
                             callee.scope,
                             receiver,
-                            name,
-                            false,
+                            FunctionLookup::Associated {
+                                name,
+                                qualification,
+                            },
                             explicit,
-                            qualification,
                             table,
                         )?;
                         if !targets.is_empty() {
@@ -157,164 +149,30 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn named_targets<'s>(
+    fn member_targets<'s>(
         &self,
         scope: ScopeId,
         receiver: Ty<'s>,
-        name: &str,
-        method: bool,
+        lookup: FunctionLookup<'_, 's>,
         explicit: &[ItemGenericArg],
-        qualification: Option<TraitApplication<'s>>,
         table: &InferenceTable<'s>,
     ) -> Result<Vec<LiveCallTarget<'s>>, PackageStoreError> {
-        let mut targets = Vec::new();
-        let body_items = self.context.body_local_items();
-        let lookup = self.context.item_lookup_query();
-        // Unqualified calls try inherent declarations first. A written `<T as Trait>::method`
-        // already chooses the trait, so it bypasses that search.
-        if qualification.is_none() {
-            let mut functions = UniqueVec::new();
-            if let Some(adt) = receiver.as_adt() {
-                // Body-local declarations are outside the saved name index. Read their small
-                // surface first; a local name replaces the saved declaration of that name.
-                for &id in body_items.inherent_impls_for_type(adt.def)? {
-                    if let Some(data) = self.context.item_query().impl_data(id)? {
-                        functions.extend(data.functions());
-                    }
-                }
-                let shadowed = body_items
-                    .inherent_item_names_for_type(adt.def)?
-                    .is_some_and(|names| names.contains_function(name));
-                if !shadowed
-                    && let Ok(saved) = lookup.inherent_functions_for_type_and_name(adt.def, name)
-                {
-                    functions.extend(saved);
-                }
-            } else if !matches!(
-                receiver.shape(),
-                TyShape::InferVar { .. } | TyShape::Unknown | TyShape::Param(_) | TyShape::Alias(_)
-            ) && let Ok(saved) = lookup.structural_inherent_functions_by_name(name)
-            {
-                functions = saved;
-            }
-            for function in functions {
-                let Some(data) = self.context.item_query().function_data(function)? else {
-                    continue;
-                };
-                if data.name != name || method && !data.has_self_receiver() {
-                    continue;
-                }
-                let ItemOwner::Impl(id) = data.owner else {
-                    continue;
-                };
-                let impl_ref = ImplRef {
-                    origin: function.origin,
-                    id,
-                };
-                let Some(selection) = table.select_impl(impl_ref, receiver, None) else {
-                    continue;
-                };
-                targets.push(LiveCallTarget {
-                    function,
-                    explicit_args: explicit.to_vec(),
-                    scope,
-                    subst: selection.subst,
-                    receiver: Some(receiver),
-                    first_written: usize::from(method),
-                    table: selection.table,
-                    // `Wrapper::new(value)` may learn the impl's T from the argument. A
-                    // unique inherent header supplies its signature now; the adopted table
-                    // keeps its predicates pending until that argument provides evidence.
-                    can_infer: matches!(selection.outcome, Outcome::Proven | Outcome::Ambiguous),
-                });
-            }
-            if !targets.is_empty() {
-                return Ok(targets);
-            }
-        }
-        // Search only traits that can supply this name, then ask whether the receiver implements
-        // each one. Name lookup narrows the declarations; the trial carries the type evidence.
-        let traits = match qualification {
-            Some(tr) => vec![tr.def],
-            None => self
-                .context
-                .impls()
-                .trait_refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?
-                .iter()
-                .copied()
-                .collect(),
-        };
-        for trait_ref in traits {
-            let Ok(indexed) = lookup.trait_functions_by_name(trait_ref, name) else {
-                return Ok(Vec::new());
-            };
-            let functions = match indexed {
-                Some(functions) => functions,
-                None => {
-                    // A trait declared inside a body has no saved index. Its functions still
-                    // pass through the same name and receiver checks as indexed declarations.
-                    let Some(data) = self.context.item_query().trait_data(trait_ref)? else {
-                        continue;
-                    };
-                    data.functions().collect()
-                }
-            };
-            for function in functions {
-                let Some(data) = self.context.item_query().function_data(function)? else {
-                    continue;
-                };
-                if data.name != name || method && !data.has_self_receiver() {
-                    continue;
-                }
-                let trial = table.probe();
-                // Building `Receiver: Trait<?T>` requires the trait's parameter slots. Missing
-                // metadata can look like an empty parameter list, so check these reads before
-                // asking the solver to prove the goal. Each candidate gets its own scope.
-                let callbacks = trial.interner().track_callbacks();
-                let owner = DefId::Trait(trait_ref);
-                let mut subst = qualification.map_or_else(
-                    || trial.fresh_substitution(owner),
-                    |tr| {
-                        InferenceSubstitution::from_args(
-                            trial.params(owner).iter().copied(),
-                            tr.args,
-                        )
-                    },
-                );
-                if let Some(self_param) = trial.params(owner).first() {
-                    subst.insert(*self_param, receiver.into());
-                }
-                let args = subst.args_for(trial.interner(), trial.params(owner).iter().copied());
-                if callbacks.failure().is_some() {
-                    continue;
-                }
-                let outcome = trial.prove([TraitApplication {
-                    def: trait_ref,
-                    args,
-                }
-                .clause(trial.interner())]);
-                if outcome == Outcome::NoSolution {
-                    continue;
-                }
-                targets.push(LiveCallTarget {
-                    function,
-                    explicit_args: explicit.to_vec(),
-                    scope,
-                    subst,
-                    receiver: Some(receiver),
-                    first_written: usize::from(method),
-                    table: trial,
-                    // A unique trait declaration supplies a signature even while its proof is
-                    // pending. `handler.convert(value)` can learn the trait's T from value;
-                    // `Widget::default()` already knows Self from its written receiver. Keep
-                    // the obligation in the adopted table instead of requiring proof before
-                    // arguments can provide evidence. Competing declarations remain ambiguous.
-                    can_infer: true,
-                });
-            }
-        }
-        Ok(targets)
+        Ok(self
+            .function_candidates(scope, receiver, lookup, table)?
+            .into_iter()
+            .map(|candidate| LiveCallTarget {
+                function: candidate.function,
+                explicit_args: explicit.to_vec(),
+                scope,
+                subst: candidate.subst,
+                receiver: Some(receiver),
+                first_written: usize::from(matches!(lookup, FunctionLookup::Method(_))),
+                table: candidate.table,
+                // A possible proof can learn from call arguments later. Missing callback data
+                // still leaves a navigation candidate, but cannot supply inference evidence.
+                can_infer: matches!(candidate.outcome, Outcome::Proven | Outcome::Ambiguous),
+            })
+            .collect())
     }
 
     /// Keep only declarations that name functions.

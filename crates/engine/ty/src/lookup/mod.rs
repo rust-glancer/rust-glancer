@@ -12,5 +12,5 @@ pub use self::{
     implementation::ImplementationQuery,
     impls::{ImplQuery, InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches},
     item_path::ItemPathQuery,
-    member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
+    member::{MemberMethodCandidateRef, MemberMethodOrigin},
 };

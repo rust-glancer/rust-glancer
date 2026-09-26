@@ -19,10 +19,10 @@ use rg_ir_model::{
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
+use rg_std::{OperationError, UniqueVec};
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
-use crate::resolution::BodyResolutionContext;
+use crate::resolution::{BodyResolutionContext, cache::BodyTraitSurface};
 
 /// Resolves lexical trait scope and qualified trait prefixes in body context.
 pub(crate) struct BodyTraitQuery<'query, D, I> {
@@ -36,6 +36,75 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Merge body-origin declarations before saved-project declaration indexes.
+    ///
+    /// For `value.render()`, body-local and saved reverse-name indexes first answer which traits
+    /// declare `render`. The combined declaration list is then intersected with the traits visible
+    /// at this `scope`. The result still says nothing about `value`'s type; receiver matching starts
+    /// only after this name-and-scope filter has selected a small trait universe.
+    pub(crate) fn refs_for_surface(
+        &self,
+        scope: ScopeId,
+        surface: BodyTraitSurface<'_>,
+    ) -> Result<Arc<UniqueVec<TraitDefRef>>, PackageStoreError> {
+        let result = self.context.trait_cache().surface_or_try_init(
+            scope,
+            surface,
+            || -> Result<_, OperationError<PackageStoreError>> {
+                let body_items = self.context.body_local_items();
+                let item_lookup = self.context.item_lookup_query();
+                let (body_traits, saved_traits) = match surface {
+                    BodyTraitSurface::AssociatedItems => (
+                        body_items
+                            .traits_with_associated_items()
+                            .map_err(OperationError::Source)?,
+                        item_lookup.traits_with_associated_items()?,
+                    ),
+                    BodyTraitSurface::Functions => (
+                        body_items
+                            .traits_with_functions()
+                            .map_err(OperationError::Source)?,
+                        item_lookup.traits_with_functions()?,
+                    ),
+                    BodyTraitSurface::FunctionNamed(name) => (
+                        body_items
+                            .traits_with_function_name(name)
+                            .map_err(OperationError::Source)?,
+                        item_lookup.traits_with_function_name(name)?,
+                    ),
+                    BodyTraitSurface::ConstNamed(name) => (
+                        body_items
+                            .traits_with_const_name(name)
+                            .map_err(OperationError::Source)?,
+                        item_lookup.traits_with_const_name(name)?,
+                    ),
+                };
+                let mut traits = body_traits.iter().copied().collect::<UniqueVec<_>>();
+                traits.extend(saved_traits);
+
+                // Declaration indexes answer which traits *could* provide this item. Rust's
+                // implicit lookup then asks the independent lexical question: which of those
+                // traits are in method scope at this use site? Both facts are stable for one
+                // immutable body, so deferred lookups reuse this filtered result.
+                let traits_in_scope = self
+                    .traits_in_scope(scope)
+                    .map_err(OperationError::Source)?;
+                rg_std::check_cancel!(self.context, "body trait surface");
+                Ok(traits
+                    .into_iter()
+                    .filter(|trait_ref| traits_in_scope.contains(trait_ref))
+                    .collect())
+            },
+        );
+        // Keep cancellation out of the source-only type resolver interface, but propagate it
+        // through the initializer first so the cache never stores an incomplete trait surface.
+        match result {
+            Ok(traits) => Ok(traits),
+            Err(OperationError::Source(error)) => Err(error),
+            Err(OperationError::Cancelled(_)) => Ok(Arc::default()),
+        }
     }
 
     /// Return the traits Rust makes available for implicit associated-item lookup at this scope.

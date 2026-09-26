@@ -10,10 +10,11 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{
     Ty,
-    autoderef::AutoderefMode,
     lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
+    solver::SemanticDeclarations,
 };
 
+use super::live::FunctionLookup;
 use crate::resolution::BodyResolutionContext;
 
 /// Collects methods visible from the body scope for an editor's receiver-type query.
@@ -36,42 +37,26 @@ where
         scope: ScopeId,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        let impl_query = self.context.impl_query();
-        let mut candidates = Vec::new();
-        for candidate in self
-            .context
-            .autoderef()
-            .candidates(AutoderefMode::MethodReceiver, ty)
-        {
-            let candidate = candidate?;
-            let receiver = self
-                .context
-                .impls()
-                .matches_for_receiver_with_functions(scope, candidate.ty())?;
-            for function in impl_query.function_candidates_for_matches(receiver.matches(), None)? {
-                let function_ref = function.function();
-                let Some(function_data) = self.context.item_query().function_data(function_ref)?
-                else {
-                    continue;
-                };
-                if !function_data.has_self_receiver()
-                    || receiver.saved_inherent_function_is_shadowed(&function, &function_data.name)
-                {
-                    continue;
+        let context = self.context.ty_context();
+        let declarations = SemanticDeclarations::new(&context, &self.context);
+        declarations.with_table(|table, params| {
+            let receiver = table.interner().lower_ty(ty, params);
+            let lookup = self.context.live();
+            let mut candidates = Vec::new();
+            // Completion keeps both origins at every adjustment. Named inference lookup uses
+            // the same candidate operation, but stops at the first depth and prefers inherent items.
+            for receiver in table.method_receivers(receiver) {
+                for candidate in lookup.function_candidates(
+                    scope,
+                    receiver,
+                    FunctionLookup::Completion,
+                    &table,
+                )? {
+                    Self::push_candidate(&mut candidates, candidate.method_ref());
                 }
-
-                let candidate = match function.into_trait_selection() {
-                    Some(selection) => MemberMethodCandidateRef::trait_method(
-                        function_ref,
-                        selection.applicability,
-                    ),
-                    None => MemberMethodCandidateRef::inherent(function_ref),
-                };
-                Self::push_candidate(&mut candidates, candidate);
             }
-        }
-
-        Ok(candidates)
+            Ok(candidates)
+        })?
     }
 
     /// Deduplicate a method candidate and keep the stronger origin.

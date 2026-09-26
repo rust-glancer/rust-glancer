@@ -1,19 +1,19 @@
 //! Field types for owned receivers and pattern bindings.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId};
 use rg_item_tree::FieldList;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rg_ty::{AdtTy, Ty, autoderef::ReferencePeelingCandidates};
+use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
 
 use crate::{BodyPath, resolution::BodyResolutionContext};
 
 /// Reads field declarations and substitutes the owner type's arguments into them.
 /// Enum patterns also supply a variant name so the same field position is read from the right
 /// variant. Results use owned types and can be used before live body inference starts.
-pub(crate) struct BodyFieldQuery<'query, D, I> {
+pub struct BodyFieldQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -24,6 +24,23 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Collect fields along the same receiver chain used by live field inference. The body's
+    /// bounds and lexical declarations stay available while generic Deref targets are resolved.
+    pub fn field_candidates_for_ty(&self, ty: &Ty) -> Result<Vec<FieldRef>, PackageStoreError> {
+        let context = self.context.ty_context();
+        let declarations = SemanticDeclarations::new(&context, &self.context);
+        declarations.with_table(|table, params| {
+            let receiver = table.interner().lower_ty(ty, params);
+            let mut fields = Vec::new();
+            for receiver in table.autoderef(receiver) {
+                if let Some(adt) = receiver.as_adt() {
+                    fields.extend(self.context.item_query().fields_for_type(adt.def)?);
+                }
+            }
+            Ok(fields)
+        })?
     }
 
     /// Project the field type destructured by a record or tuple-variant pattern.
@@ -44,8 +61,8 @@ where
             .map(rg_text::Name::as_str);
         let mut candidates = ExpectedUnique::new();
 
-        for candidate in ReferencePeelingCandidates::new(expected_ty) {
-            for nominal_ty in candidate.ty().as_adts() {
+        for candidate in expected_ty.reference_chain() {
+            for nominal_ty in candidate.as_adts() {
                 let field_ty = match nominal_ty.def.id {
                     TypeDefId::Struct(_) | TypeDefId::Union(_) => {
                         self.declared(nominal_ty, field_key)?

@@ -2,13 +2,13 @@
 //! layer; substitutions and projections keep the caller's inference variables throughout.
 
 mod call;
+mod member;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, ItemOwner, ScopeId, TraitDefRef, TypeDefId};
-use rg_item_tree::{GenericArg as ItemGenericArg, LangItem, TypeRef};
+use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TraitDefRef, TypeDefId};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
-use rg_std::UniqueVec;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{
@@ -17,6 +17,7 @@ use rg_ty::{
     },
 };
 
+pub(crate) use self::member::FunctionLookup;
 use crate::{BodyPath, body::facts::BodyResolution, resolution::BodyResolutionContext};
 
 /// Looks up declarations without turning the body's live types into saved types along the way.
@@ -69,67 +70,6 @@ where
         )
     }
 
-    /// Yield the current receiver before doing another adjustment. A direct field or method
-    /// needs no Deref projection; a later step registers its projection in the caller's table
-    /// so a target such as `Wrapper<?T>::Target` keeps the same live ?T.
-    pub(crate) fn receivers<'s>(
-        &self,
-        ty: Ty<'s>,
-        table: &InferenceTable<'s>,
-        unsize_array: bool,
-    ) -> impl Iterator<Item = Result<Ty<'s>, PackageStoreError>> {
-        let mut seen = UniqueVec::new();
-        let mut current = Some(ty);
-        let cx = table.interner();
-        std::iter::from_fn(move || {
-            let ty = current.take()?;
-            let ty = if seen.is_empty() {
-                ty
-            } else {
-                match ty.shape() {
-                    // Unsizing is a final alternative at the same dereference depth, including
-                    // when an array was the last receiver allowed by the depth limit.
-                    TyShape::Array { inner, .. } if unsize_array => cx.slice(inner),
-                    _ if seen.len() >= 32 => return None,
-                    TyShape::Reference { inner, .. } => inner,
-                    TyShape::Adt(_) => {
-                        let lookup = self.context.item_lookup_query();
-                        let alias = lookup.lang_type_alias(LangItem::DerefTarget)?;
-                        let deref = lookup.lang_trait(LangItem::Deref)?;
-                        let data = match self.context.item_query().type_alias_data(alias) {
-                            Ok(Some(data)) => data,
-                            Ok(None) => return None,
-                            Err(error) => return Some(Err(error)),
-                        };
-                        // Language items are indexed separately. Only the associated type owned
-                        // by this Deref trait can supply its target.
-                        if alias.origin != deref.origin || data.owner != ItemOwner::Trait(deref.id)
-                        {
-                            return None;
-                        }
-                        let target = table.normalize(cx.projection(ProjectionTy {
-                            associated_ty: alias,
-                            args: List::new(cx, &[ty.into()]),
-                        }));
-                        let _ = table.fulfill();
-                        let target = table.resolve_root_var(target);
-                        if target.is_var() || target.has_unknown() {
-                            return None;
-                        }
-                        target
-                    }
-                    _ => return None,
-                }
-            };
-            let ty = table.resolve_root_var(ty);
-            if !seen.push(ty) {
-                return None;
-            }
-            current = Some(ty);
-            Some(Ok(ty))
-        })
-    }
-
     /// Find the associated declaration and give its value a live destination in the table.
     /// For `<Iter<?T> as Iterator>::Item`, `Some` means the question could be registered, not
     /// that its answer is already known. The returned type can settle as later goals are solved.
@@ -160,8 +100,7 @@ where
         field: &FieldKey,
         table: &InferenceTable<'s>,
     ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
-        for receiver in self.receivers(ty, table, false) {
-            let receiver = receiver?;
+        for receiver in table.autoderef(ty) {
             if let (TyShape::Tuple(fields), FieldKey::Tuple(index)) = (receiver.shape(), field)
                 && let Some(ty) = fields.get(*index)
             {

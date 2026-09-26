@@ -1,13 +1,12 @@
 //! Current-body and saved-project impl matching for one receiver.
 //!
-//! Body queries describe the trait declaration surface they need: a named function, a named const,
-//! or a broader completion surface. This query merges current-body and saved declarations, then
-//! asks `ImplQuery` to consider impls only for those traits. Inherent impls remain receiver-first.
+//! Associated-item queries describe the declarations they need: a named function, a named const,
+//! or all associated items. Lexical trait discovery narrows the search, then this query merges
+//! current-body and saved impls of those traits. Inherent impls remain receiver-first.
 //!
-//! For `value.render()`, the flow is: discover traits declaring `render`, keep only traits in the
-//! expression's lexical scope, gather current-body and saved impls of those traits, then prove their
-//! full headers against `value`'s type. This prevents a receiver query from opening every trait impl
-//! in the crate just because its outer `Self` shape happens to match.
+//! These queries expose concrete impls to associated-path lookup. Calls and dot completion can
+//! also use methods supplied by a caller bound, so they discover declarations and prove their
+//! applicability in a live inference table instead of requiring a concrete impl here.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
@@ -55,7 +54,7 @@ impl BodyReceiverImplMatches {
             && self.saved_function_name_is_shadowed(candidate.function().origin, name.as_str())
     }
 
-    /// Completion expands functions from impl items before constructing function candidates.
+    /// Associated-item collection can also check a function before building its candidate.
     pub(crate) fn saved_function_name_is_shadowed(
         &self,
         function_origin: DefMapRef,
@@ -104,7 +103,10 @@ where
         scope: ScopeId,
         receiver_ty: &Ty,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::AssociatedItems)?;
+        let trait_refs = self
+            .context
+            .traits()
+            .refs_for_surface(scope, BodyTraitSurface::AssociatedItems)?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
@@ -115,8 +117,10 @@ where
         receiver_ty: &Ty,
         name: &str,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs =
-            self.trait_refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?;
+        let trait_refs = self
+            .context
+            .traits()
+            .refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
@@ -127,89 +131,11 @@ where
         receiver_ty: &Ty,
         name: &str,
     ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::ConstNamed(name))?;
+        let trait_refs = self
+            .context
+            .traits()
+            .refs_for_surface(scope, BodyTraitSurface::ConstNamed(name))?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
-    }
-
-    /// Match current-body overlays and every trait that can expose a function.
-    pub(crate) fn matches_for_receiver_with_functions(
-        &self,
-        scope: ScopeId,
-        receiver_ty: &Ty,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self.trait_refs_for_surface(scope, BodyTraitSurface::Functions)?;
-        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
-    }
-
-    /// Merge body-origin declarations before saved-project declaration indexes.
-    ///
-    /// For `value.render()`, body-local and saved reverse-name indexes first answer which traits
-    /// declare `render`. The combined declaration list is then intersected with the traits visible
-    /// at this `scope`. The result still says nothing about `value`'s type; receiver matching starts
-    /// only after this name-and-scope filter has selected a small trait universe.
-    pub(crate) fn trait_refs_for_surface(
-        &self,
-        scope: ScopeId,
-        surface: BodyTraitSurface<'_>,
-    ) -> Result<std::sync::Arc<UniqueVec<TraitDefRef>>, PackageStoreError> {
-        let result = self.context.trait_cache().surface_or_try_init(
-            scope,
-            surface,
-            || -> Result<_, rg_std::OperationError<PackageStoreError>> {
-                let body_items = self.context.body_local_items();
-                let item_lookup = self.context.item_lookup_query();
-                let (body_traits, saved_traits) = match surface {
-                    BodyTraitSurface::AssociatedItems => (
-                        body_items
-                            .traits_with_associated_items()
-                            .map_err(rg_std::OperationError::Source)?,
-                        item_lookup.traits_with_associated_items()?,
-                    ),
-                    BodyTraitSurface::Functions => (
-                        body_items
-                            .traits_with_functions()
-                            .map_err(rg_std::OperationError::Source)?,
-                        item_lookup.traits_with_functions()?,
-                    ),
-                    BodyTraitSurface::FunctionNamed(name) => (
-                        body_items
-                            .traits_with_function_name(name)
-                            .map_err(rg_std::OperationError::Source)?,
-                        item_lookup.traits_with_function_name(name)?,
-                    ),
-                    BodyTraitSurface::ConstNamed(name) => (
-                        body_items
-                            .traits_with_const_name(name)
-                            .map_err(rg_std::OperationError::Source)?,
-                        item_lookup.traits_with_const_name(name)?,
-                    ),
-                };
-                let mut traits = body_traits.iter().copied().collect::<UniqueVec<_>>();
-                traits.extend(saved_traits);
-
-                // Declaration indexes answer which traits *could* provide this item. Rust's
-                // implicit lookup then asks the independent lexical question: which of those
-                // traits are in method scope at this use site? Both facts are stable for one
-                // immutable body, so deferred lookups reuse this filtered result.
-                let traits_in_scope = self
-                    .context
-                    .traits()
-                    .traits_in_scope(scope)
-                    .map_err(rg_std::OperationError::Source)?;
-                rg_std::check_cancel!(self.context, "body trait surface");
-                Ok(traits
-                    .into_iter()
-                    .filter(|trait_ref| traits_in_scope.contains(trait_ref))
-                    .collect())
-            },
-        );
-        // Keep cancellation out of the source-only type resolver interface, but propagate it
-        // through the initializer first so the cache never stores an incomplete trait surface.
-        match result {
-            Ok(traits) => Ok(traits),
-            Err(rg_std::OperationError::Source(error)) => Err(error),
-            Err(rg_std::OperationError::Cancelled(_)) => Ok(std::sync::Arc::default()),
-        }
     }
 
     /// Match current-body inherent impls first, then impls of caller-selected traits.

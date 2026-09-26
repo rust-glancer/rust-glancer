@@ -197,6 +197,17 @@ impl Ty {
         }
     }
 
+    /// Visit this type and each inner type behind a written `&T` or `&mut T`.
+    /// Patterns and type-definition queries only need these wrappers; member lookup also needs
+    /// trait `Deref` and uses the inference table's receiver walk instead.
+    pub fn reference_chain(&self) -> impl Iterator<Item = &Self> {
+        const MAX_REFERENCE_PEELING_DEPTH: usize = 8;
+        std::iter::successors(Some(self), |ty| {
+            ty.reference_inner().map(|(inner, _)| inner)
+        })
+        .take(MAX_REFERENCE_PEELING_DEPTH + 1)
+    }
+
     pub fn reference_inner(&self) -> Option<(&Self, Mutability)> {
         match self {
             Self::Reference {
@@ -269,27 +280,6 @@ impl Ty {
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
-
-    pub(crate) fn is_projectable(&self) -> bool {
-        match self {
-            Self::Unknown => false,
-            Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.is_projectable(),
-            Self::FnPointer { params, ret } => {
-                params.iter().all(Self::is_projectable) && ret.is_projectable()
-            }
-            Self::Adt(ty) => ty.args.iter().all(GenericArg::is_projectable),
-            Self::Alias(alias) => alias.is_projectable(),
-            Self::Closure(closure) => {
-                closure.params.iter().all(Self::is_projectable) && closure.ret.is_projectable()
-            }
-            Self::FnDef(function) => function.args.iter().all(GenericArg::is_projectable),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => true,
-        }
-    }
 }
 
 impl Shrink for Ty {
@@ -353,10 +343,6 @@ impl AliasTy {
 
     fn has_unknown(&self) -> bool {
         self.args().iter().any(GenericArg::has_unknown)
-    }
-
-    fn is_projectable(&self) -> bool {
-        self.args().iter().all(GenericArg::is_projectable)
     }
 }
 
