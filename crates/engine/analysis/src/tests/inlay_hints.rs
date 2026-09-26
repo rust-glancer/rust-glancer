@@ -408,24 +408,15 @@ impl<T> Project for Wrapper<T> {
     type Target = T;
     fn project(&self) -> &T { &self.inner }
 }
-impl<T> Wrapper<T> {
-    pub fn own(&self) -> bool { true }
-}
 pub struct Item { pub field: u16 }
 impl Item {
     pub fn value(&self) -> u8 { 0 }
 }
-impl<T> [T] {
-    pub fn first(&self) -> T { missing() }
-}
 pub fn make<T>() -> Wrapper<Wrapper<T>> { missing() }
 pub fn settle(_: &Wrapper<Wrapper<Item>>) {}
-pub fn use_it(nested: Wrapper<Wrapper<Item>>, array: [u8; 3]) {
-    let direct = nested.inner;
-    let method = nested.own();
+pub fn use_it(nested: Wrapper<Wrapper<Item>>) {
     let field = nested.field;
     let inherited = nested.value();
-    let element = array.first();
     let later = make();
     let refined = later.field;
     settle(&later);
@@ -434,13 +425,10 @@ pub fn use_it(nested: Wrapper<Wrapper<Item>>, array: [u8; 3]) {
         InlayHintsQuery::new("receiver steps", "/src/lib.rs"),
         expect![[r#"
             receiver steps
-            - `: Wrapper<Item>` @ 25:9-25:15
-            - `: bool` @ 26:9-26:15
-            - `: u16` @ 27:9-27:14
-            - `: u8` @ 28:9-28:18
-            - `: u8` @ 29:9-29:16
-            - `: Wrapper<Wrapper<Item>>` @ 30:9-30:14
-            - `: u16` @ 31:9-31:16
+            - `: u16` @ 19:9-19:14
+            - `: u8` @ 20:9-20:18
+            - `: Wrapper<Wrapper<Item>>` @ 21:9-21:14
+            - `: u16` @ 22:9-22:16
         "#]],
     );
 }

@@ -1707,6 +1707,7 @@ pub struct Vec<T> {
 
 pub fn id<T>(value: T) -> T {}
 pub fn wrap<T>(value: T) -> Vec<T> {}
+pub fn array<T, const N: usize>(value: [T; N]) -> [T; N] { value }
 pub fn make_user() -> User {}
 pub fn missing<T>() -> T {}
 pub fn takes_vec(value: Vec<User>) {}
@@ -1716,6 +1717,9 @@ pub fn use_it(user: User) {
     let from_call = id(make_user())$type_from_call$;
     let wrapped = wrap(user)$type_wrapped$;
     let explicit = wrap::<_>(user)$type_explicit$;
+    let byte = id(1u8)$type_byte$;
+    let flag = id(true)$type_flag$;
+    let array = array([true; 3])$type_array$;
 
     let from_return: User = id(missing()$type_inner_from_return$)$type_outer_from_return$;
     takes_vec(wrap::<_>(missing()$type_inner_from_arg$)$type_outer_arg$);
@@ -1726,6 +1730,9 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("generic arg from call result", "type_from_call"),
             AnalysisQuery::ty("wrapped generic arg", "type_wrapped"),
             AnalysisQuery::ty("explicit wildcard generic arg", "type_explicit"),
+            AnalysisQuery::ty("independent byte call", "type_byte"),
+            AnalysisQuery::ty("independent bool call", "type_flag"),
+            AnalysisQuery::ty("inferred array element and length", "type_array"),
             AnalysisQuery::ty(
                 "inner generic call solved from return",
                 "type_inner_from_return",
@@ -1750,6 +1757,15 @@ pub fn use_it(user: User) {
             explicit wildcard generic arg
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
 
+            independent byte call
+            - u8
+
+            independent bool call
+            - bool
+
+            inferred array element and length
+            - [bool; 3]
+
             inner generic call solved from return
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
 
@@ -1761,6 +1777,41 @@ pub fn use_it(user: User) {
 
             outer generic call solved from arg
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+        "#]],
+    );
+}
+
+#[test]
+fn alias_placeholders_share_later_evidence_between_components() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_type_identity"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+type Pair<T> = (T, T);
+fn missing<T>() -> T { loop {} }
+fn require(_: u16) {}
+
+pub fn use_it() {
+    let $pair$pair: Pair<_> = missing();
+    let $right$right = pair.1;
+    require(pair.0);
+}
+"#,
+        &[
+            AnalysisQuery::ty("alias shares its inferred argument", "pair"),
+            AnalysisQuery::ty("second component learns from the first", "right"),
+        ],
+        expect![[r#"
+            alias shares its inferred argument
+            - (u16, u16)
+
+            second component learns from the first
+            - u16
         "#]],
     );
 }

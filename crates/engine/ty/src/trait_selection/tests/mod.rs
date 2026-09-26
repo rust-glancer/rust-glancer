@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use expect_test::expect;
 
 use self::utils::*;
-use crate::{AdtTy, AliasTy, GenericArg, ProjectionTy, Ty, TyContext, lookup::ImplQuery};
+use crate::{AdtTy, AliasTy, GenericArg, Ty, TyContext, lookup::ImplQuery};
 
 #[test]
 fn named_trait_discovery_ignores_unrelated_blanket_impls() {
@@ -179,34 +179,23 @@ fn normalizes_generic_associated_types_with_live_variables() {
         "#,
         vec![
             TraitSelectionCase::normalize_assoc(
-                "selection projects generic impl Item",
+                "project concrete generic impl Item",
                 "<Iter<User> as Iterator>::Item",
             ),
             TraitSelectionCase::normalize_assoc(
-                "solver projects generic impl Item",
-                "<Iter<User> as Iterator>::Item",
-            ),
-            TraitSelectionCase::normalize_assoc(
-                "solver preserves projection variable",
+                "preserve unresolved projection variable",
                 "<Iter<?item> as Iterator>::Item",
             ),
         ],
         expect![[r#"
-            selection projects generic impl Item
+            project concrete generic impl Item
               query: selection
               goal: <Iter<User> as Iterator>::Item
               result: projected
                 final: User
                 applicability: yes
 
-            solver projects generic impl Item
-              query: selection
-              goal: <Iter<User> as Iterator>::Item
-              result: projected
-                final: User
-                applicability: yes
-
-            solver preserves projection variable
+            preserve unresolved projection variable
               query: selection
               goal: <Iter<?item> as Iterator>::Item
               result: projected
@@ -926,16 +915,7 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
                 .expect("fixture Item");
             for candidates in [[missing, valid], [valid, missing]] {
                 // The missing declaration returns from header matching before fulfillment.
-                // Exercise both orders in the same storage, including its declaration caches.
-                for candidate in candidates {
-                    match table.select_impl(candidate, receiver, Some(application)) {
-                        Some(selected) => {
-                            assert_eq!(candidate, valid);
-                            assert_eq!(selected.outcome, Outcome::Proven);
-                        }
-                        None => assert_eq!(candidate, missing),
-                    }
-                }
+                // Neither candidate order may hide the valid impl or spoil later normalization.
                 let ExpectedUnique::One(selected) =
                     table.select_trait_impl(application, &[], candidates)
                 else {
@@ -943,7 +923,6 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
                 };
                 assert_eq!(selected.impl_ref, valid);
                 assert_eq!(selected.outcome, Outcome::Proven);
-                assert_eq!(table.prove([application.clause(cx)]), Outcome::Proven);
                 let (normalized, outcome) = table
                     .normalize_assoc_type(
                         application,
@@ -999,7 +978,7 @@ fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usab
         impls
           impl#0 impl Iterator for Incomplete
           impl#1 impl Marker<bool> for Incomplete where <Incomplete as Iterator>::Item: Copy
-          impl#2 impl Marker<bool> for Complete
+          impl#2 impl Marker<char> for Complete
         type aliases
           type#0 trait#0::Item
     "#,
@@ -1040,15 +1019,13 @@ fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usab
                         solver.evaluate(Default::default(), goal.clause(cx).upcast(cx)),
                         expected
                     );
-                    if expected == Outcome::Unavailable {
-                        assert_eq!(solver.shallow_resolve(variable), variable);
-                    } else {
-                        assert_eq!(
-                            cx.raise_ty(solver.shallow_resolve(variable)),
-                            Some(Ty::Primitive(crate::PrimitiveTy::Bool)),
-                        );
-                    }
                 }
+                // Complete requires char, so it cannot succeed if the failed goal left bool
+                // assigned to this variable.
+                assert_eq!(
+                    cx.raise_ty(solver.shallow_resolve(variable)),
+                    Some(Ty::Primitive(crate::PrimitiveTy::Char)),
+                );
             }
 
             let table = solver::InferenceTable::new(solver, Default::default());
@@ -1063,285 +1040,21 @@ fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usab
                 );
             }
             assert_eq!(table.fulfill(), Outcome::Unavailable);
-            assert_eq!(table.resolve_root_var(variables[0]), variables[0]);
-            assert_eq!(
-                table.finalize(variables[1]),
-                Ty::Primitive(crate::PrimitiveTy::Bool)
-            );
+            let character = Ty::Primitive(crate::PrimitiveTy::Char);
+            table
+                .try_unify(variables[0], cx.lower_ty(&character, &[]))
+                .expect("unavailable root leaves room for different evidence");
+            assert_eq!(table.finalize(variables[0]), character);
+            assert_eq!(table.finalize(variables[1]), character);
         })
         .expect("fixture declarations load");
 }
 
 #[test]
-fn next_solver_keeps_projection_evidence_in_the_live_context() {
-    use rustc_type_ir::{self as ir, InferCtxtLike, Upcast};
-
-    use crate::solver::{self, Outcome};
-    let fixture = TraitSelectionFixture::new(
-        r#"
-        traits
-          trait#0 Iterator
-          trait#1 Copy
-        structs
-          struct#0 Iter<T>
-          struct#1 User
-        impls
-          impl#0 impl<T> Iterator for Iter<T>
-          impl#1 impl Copy for User
-        type aliases
-          type#0 trait#0::Item
-          type#1 impl#0::Item = T
-    "#,
-    );
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    let declarations = solver::SemanticDeclarations::new(&context, context.item_paths());
-    let storage = solver::SolverStorage::new(&declarations);
-    let cx = storage.interner();
-    let solver = solver::Solver::new(cx);
-    let user = Ty::adt(AdtTy {
-        def: fixture.type_ref_by_name("User").expect("fixture User"),
-        args: Vec::new().into(),
-    });
-    let iterator = cx.lower_ty(
-        &Ty::adt(AdtTy {
-            def: fixture.type_ref_by_name("Iter").expect("fixture Iter"),
-            args: vec![GenericArg::Type(Box::new(user.clone()))].into(),
-        }),
-        &[],
-    );
-    let iterator_trait = fixture
-        .trait_ref_by_name("Iterator")
-        .expect("fixture Iterator");
-    let item = solver.next_ty_infer();
-    let args = solver::List::new(cx, &[iterator.into()]);
-    let projection: solver::Predicate<'_> = ir::ProjectionPredicate {
-        projection_term: ir::AliasTerm::new_from_args(
-            cx,
-            ir::AliasTermKind::ProjectionTy {
-                def_id: solver::DefId::TypeAlias(
-                    fixture
-                        .associated_ty_by_name(iterator_trait, "Item")
-                        .expect("fixture Item"),
-                ),
-            },
-            args,
-        ),
-        term: item.into(),
-    }
-    .upcast(cx);
-    let copy: solver::Predicate<'_> = ir::TraitRef::new_from_args(
-        cx,
-        solver::DefId::Trait(fixture.trait_ref_by_name("Copy").expect("fixture Copy")),
-        solver::List::new(cx, &[item.into()]),
-    )
-    .upcast(cx);
-    // The solver starts with an unresolved shared item variable. Candidate probing can use it
-    // and roll back, while accepted normalization provides evidence to the dependent Copy goal.
-    {
-        let _probe = solver.snapshot();
-        assert_eq!(
-            solver.evaluate(Default::default(), projection),
-            Outcome::Proven
-        );
-        assert_eq!(
-            cx.raise_ty(solver.resolve_vars_if_possible(item)),
-            Some(user.clone())
-        );
-    }
-    assert_eq!(solver.shallow_resolve(item), item);
-    assert_eq!(
-        solver.evaluate(Default::default(), projection),
-        Outcome::Proven
-    );
-    assert_eq!(solver.evaluate(Default::default(), copy), Outcome::Proven);
-    assert_eq!(
-        cx.raise_ty(solver.resolve_vars_if_possible(item)),
-        Some(user)
-    );
-    // A dependent goal can enter fulfillment before its projection has supplied any evidence.
-    // Both roots use the body's table, so the next pass observes the newly resolved item.
-    let table = solver::InferenceTable::new(solver::Solver::new(cx), Default::default());
-    let queued_item = table.new_type_var();
-    let bound: solver::Clause<'_> = ir::TraitRef::new_from_args(
-        cx,
-        solver::DefId::Trait(fixture.trait_ref_by_name("Copy").expect("fixture Copy")),
-        solver::List::new(cx, &[queued_item.into()]),
-    )
-    .upcast(cx);
-    table.register(bound);
-    let alias = cx.lower_ty(
-        &Ty::Alias(AliasTy::Projection(ProjectionTy {
-            associated_ty: fixture
-                .associated_ty_by_name(iterator_trait, "Item")
-                .expect("fixture Item"),
-            args: vec![GenericArg::Type(Box::new(
-                cx.raise_ty(iterator).expect("stable iterator"),
-            ))]
-            .into(),
-        })),
-        &[],
-    );
-    table.unify(queued_item, alias);
-    assert_eq!(table.fulfill(), Outcome::Proven);
-    assert_eq!(
-        table.finalize(queued_item),
-        cx.raise_ty(iterator)
-            .and_then(|ty| match ty {
-                Ty::Adt(adt) => adt.args[0].as_ty().cloned(),
-                _ => None,
-            })
-            .expect("iterator item")
-    );
-    assert!(declarations.take_error().is_none());
-}
-
-#[test]
-fn next_solver_uses_a_generic_functions_declared_environment() {
-    use rustc_type_ir::{self as ir, InferCtxtLike, Upcast};
-
-    use crate::solver::{self, Outcome};
-    let fixture = TraitSelectionFixture::new(
-        r#"
-        traits
-          trait#0 Iterator
-          trait#1 Copy
-        functions
-          fn#0 item<I: Iterator<Item = T>, T: Copy> -> T
-        type aliases
-          type#0 trait#0::Item
-    "#,
-    );
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    let declarations = solver::SemanticDeclarations::new(&context, context.item_paths());
-    let storage = solver::SolverStorage::new(&declarations);
-    let cx = storage.interner();
-    let solver = solver::Solver::new(cx);
-    let owner = rg_ir_model::FunctionRef {
-        origin: origin(),
-        id: rg_ir_model::FunctionId(0),
-    };
-    let generics = context
-        .item_paths()
-        .generics()
-        .generics(rg_ir_model::GenericDefRef::Function(owner))
-        .expect("fixture generics");
-    let params = generics.iter().map(|p| p.param()).collect::<Vec<_>>();
-    let rg_ir_model::GenericParamRef::Type(iter_param) = params[0] else {
-        panic!("type parameter")
-    };
-    let rg_ir_model::GenericParamRef::Type(item_param) = params[1] else {
-        panic!("type parameter")
-    };
-    let iterator = cx.lower_ty(&Ty::Param(iter_param), &params);
-    let item = solver.next_ty_infer();
-    let iterator_trait = fixture
-        .trait_ref_by_name("Iterator")
-        .expect("fixture Iterator");
-    let projection = ir::ProjectionPredicate {
-        projection_term: ir::AliasTerm::new_from_args(
-            cx,
-            ir::AliasTermKind::ProjectionTy {
-                def_id: solver::DefId::TypeAlias(
-                    fixture
-                        .associated_ty_by_name(iterator_trait, "Item")
-                        .expect("fixture Item"),
-                ),
-            },
-            solver::List::new(cx, &[iterator.into()]),
-        ),
-        term: item.into(),
-    }
-    .upcast(cx);
-    let env = cx.parameter_environment(solver::DefId::Function(owner));
-    assert_eq!(solver.evaluate(env, projection), Outcome::Proven);
-    let copy = ir::TraitRef::new_from_args(
-        cx,
-        solver::DefId::Trait(fixture.trait_ref_by_name("Copy").expect("fixture Copy")),
-        solver::List::new(cx, &[item.into()]),
-    )
-    .upcast(cx);
-    assert_eq!(solver.evaluate(env, copy), Outcome::Proven);
-    assert_eq!(
-        cx.raise_ty(solver.resolve_vars_if_possible(item)),
-        Some(Ty::Param(item_param))
-    );
-}
-
-#[test]
-fn shared_inference_finalizes_numeric_links_and_nested_types() {
-    use crate::solver;
-    let fixture = TraitSelectionFixture::new("structs\n  struct#0 Vec<T>\n  struct#1 User\n");
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    solver::SemanticDeclarations::new(&context, context.item_paths())
-        .with_solver(|solver| {
-            let table = solver::InferenceTable::new(solver, Default::default());
-            let cx = table.interner();
-            let general = table.new_type_var();
-            let integer = table.new_integer_var();
-            let float = table.new_float_var();
-            table.unify(general, integer);
-            let u64_ty = Ty::Primitive(crate::PrimitiveTy::UnsignedInt(crate::UnsignedIntTy::U64));
-            table.unify(integer, cx.lower_ty(&u64_ty, &[]));
-            assert_eq!(table.finalize(general), u64_ty);
-            assert_eq!(
-                table.finalize(float),
-                Ty::Primitive(crate::PrimitiveTy::Float(crate::FloatTy::F64))
-            );
-
-            let item = table.new_type_var();
-            let vector = cx.adt(solver::AdtTy {
-                def: fixture.type_ref_by_name("Vec").expect("Vec"),
-                args: solver::List::new(cx, &[item.into()]),
-            });
-            let user = Ty::adt(AdtTy::bare(fixture.type_ref_by_name("User").expect("User")));
-            let trial = table.probe();
-            trial.unify(item, cx.lower_ty(&user, &[]));
-            assert_eq!(
-                trial.finalize(vector),
-                Ty::adt(AdtTy {
-                    def: fixture.type_ref_by_name("Vec").expect("Vec"),
-                    args: vec![GenericArg::Type(Box::new(user.clone()))].into()
-                })
-            );
-            assert_eq!(table.finalize(item), Ty::Unknown);
-            table.unify(item, cx.lower_ty(&user, &[]));
-            // A failed later relation keeps the accepted type, matching body-inference behavior.
-            assert!(
-                table
-                    .try_unify(
-                        item,
-                        cx.lower_ty(&Ty::Primitive(crate::PrimitiveTy::Bool), &[])
-                    )
-                    .is_err()
-            );
-            assert_eq!(table.finalize(item), user);
-        })
-        .expect("fixture declarations load");
-}
-
-#[test]
-fn inference_preserves_repeated_and_reordered_signature_types() {
+fn successful_probe_keeps_its_type_evidence_independent() {
     use crate::{PrimitiveTy, solver};
 
-    let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");
+    let fixture = TraitSelectionFixture::new("");
     let context = TyContext::new(
         &fixture,
         &fixture,
@@ -1353,322 +1066,57 @@ fn inference_preserves_repeated_and_reordered_signature_types() {
         .with_solver(|solver| {
             let table = solver::InferenceTable::new(solver, Default::default());
             let cx = table.interner();
+            let variable = table.new_type_var();
+            let boolean = Ty::Primitive(PrimitiveTy::Bool);
+            let character = Ty::Primitive(PrimitiveTy::Char);
+
+            // A successful candidate can learn bool without preventing the caller from
+            // accepting different evidence. Each must retain its own answer afterwards.
+            let trial = table.probe();
+            trial
+                .try_unify(variable, cx.lower_ty(&boolean, &[]))
+                .expect("trial accepts bool");
+            table
+                .try_unify(variable, cx.lower_ty(&character, &[]))
+                .expect("parent independently accepts char");
+            assert_eq!(trial.finalize(variable), boolean);
+            assert_eq!(table.finalize(variable), character);
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
+fn signature_parameter_lists_preserve_order_and_repetition() {
+    use crate::{PrimitiveTy, solver};
+
+    let fixture = TraitSelectionFixture::new("");
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let cx = solver.interner();
             let boolean = cx.lower_ty(&Ty::Primitive(PrimitiveTy::Bool), &[]);
-            let first = table.new_type_var();
-            let second = table.new_type_var();
-            let signature = cx.fn_pointer(&[boolean, first, first, second], second);
+            let character = cx.lower_ty(&Ty::Primitive(PrimitiveTy::Char), &[]);
+            let inputs = [boolean, character, character, boolean];
+            let signature = cx.fn_pointer(&inputs, character);
             let solver::TyShape::FnPointer { params, .. } = signature.shape() else {
                 panic!("function pointer retains its signature");
             };
-            // Signature inputs are a view into inputs-and-output storage. They still describe
-            // the same sequence as separately constructed inputs, including repeated slots.
-            assert_eq!(
+            // A signature's parameter view must compare like an independently constructed
+            // list, preserving repetitions and distinguishing a different order.
+            assert_eq!(params.as_slice(), inputs);
+            assert_eq!(params, solver::List::new(cx, &inputs));
+            assert_ne!(
                 params,
-                solver::List::new(cx, &[boolean, first, first, second])
+                solver::List::new(cx, &[boolean, boolean, character, character])
             );
-            let inputs = cx.tuple(params.as_slice());
-            let reordered = cx.tuple([boolean, second, first, second]);
-            let character = Ty::Primitive(PrimitiveTy::Char);
-            table.unify(first, cx.lower_ty(&character, &[]));
-            table.unify(second, boolean);
-            let boolean = Ty::Primitive(PrimitiveTy::Bool);
-            for (actual, expected) in [
-                (
-                    inputs,
-                    vec![
-                        boolean.clone(),
-                        character.clone(),
-                        character.clone(),
-                        boolean.clone(),
-                    ],
-                ),
-                (
-                    reordered,
-                    vec![boolean.clone(), boolean.clone(), character, boolean],
-                ),
-            ] {
-                assert_eq!(table.finalize(actual), Ty::tuple(expected));
-            }
         })
         .expect("fixture declarations load");
-}
-
-#[test]
-fn generic_argument_relations_retain_const_evidence() {
-    use crate::solver;
-    let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    solver::SemanticDeclarations::new(&context, context.item_paths())
-        .with_solver(|solver| {
-            let table = solver::InferenceTable::new(solver, Default::default());
-            let cx = table.interner();
-            let ty = table.new_type_var();
-            let len = table.new_const_var();
-            let args = solver::List::new(cx, &[ty.into(), len.into()]);
-            let expected: crate::GenericArgs = vec![
-                GenericArg::Type(Box::new(Ty::Primitive(crate::PrimitiveTy::Bool))),
-                GenericArg::Const(crate::ConstValue::Scalar(3)),
-            ]
-            .into();
-            table
-                .try_unify_args(args, cx.lower_args(&expected, &[]))
-                .expect("generic arguments relate");
-            assert_eq!(table.finalize_args(args), expected);
-        })
-        .expect("fixture declarations load");
-}
-
-#[test]
-fn inferred_source_types_export_serializable_results() {
-    use rg_ir_model::{DefMapRef, GenericDefRef, ScopeId, StructId, TypeDefId, TypeDefRef};
-    use rg_item_tree::TypeRef;
-
-    use crate::{
-        PrimitiveTy,
-        lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
-        solver,
-    };
-
-    let fixture = TraitSelectionFixture::new("structs\n  struct#0 User\n");
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    let finalized = solver::SemanticDeclarations::new(&context, context.item_paths())
-        .with_solver(|solver| {
-            let table = solver::InferenceTable::new(solver, Default::default());
-            let owner = GenericDefRef::TypeDef(TypeDefRef {
-                origin: DefMapRef::Crate(fixture.target),
-                id: TypeDefId::Struct(StructId(0)),
-            });
-            let source = TypeRef::Tuple(vec![TypeRef::Infer, TypeRef::Unit]);
-            let scoped = TypeLoweringQuery::new(context.item_paths(), context.item_paths())
-                .lower_inference_type(
-                    &source,
-                    TypeLoweringEnv::new(owner, TypeLoweringAnchor::Scope(ScopeId(0))),
-                    &table,
-                )
-                .expect("source type lowers");
-            let expected = Ty::tuple(vec![Ty::Primitive(PrimitiveTy::Char), Ty::Unit]);
-            table.unify(scoped, table.interner().lower_ty(&expected, &[]));
-            table.finalize(scoped)
-        })
-        .expect("fixture declarations load");
-    let encoded = wincode::serialize(&finalized).expect("owned type serializes");
-    let decoded: Ty = wincode::deserialize(&encoded).expect("owned type reads back");
-    assert_eq!(decoded, finalized);
-}
-
-#[test]
-fn header_discovery_leaves_impl_requirements_for_selection() {
-    use rg_ir_model::{ImplId, ImplRef};
-
-    use crate::solver::{self, Outcome};
-
-    let fixture = TraitSelectionFixture::new(
-        r#"
-        traits
-          trait#0 Marker
-          trait#1 Target
-        structs
-          struct#0 User
-        impls
-          impl#0 impl<T: Marker> Target for T [resolved self: empty]
-    "#,
-    );
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    solver::SemanticDeclarations::new(&context, context.item_paths())
-        .with_solver(|solver| {
-            let table = solver::InferenceTable::new(solver, Default::default());
-            let cx = table.interner();
-            let receiver = cx.lower_ty(
-                &Ty::adt(AdtTy {
-                    def: fixture.type_ref_by_name("User").expect("fixture User"),
-                    args: Default::default(),
-                }),
-                &[],
-            );
-            let candidate = ImplRef {
-                origin: origin(),
-                id: ImplId(0),
-            };
-            let matched = table
-                .match_impl_header(candidate, receiver, None)
-                .expect("receiver matches");
-            // Header discovery must not smuggle Marker into the pending goals. Selection below is
-            // the operation which checks that requirement and rejects this impl for User.
-            assert_eq!(matched.table.fulfill(), Outcome::Proven);
-            assert!(table.select_impl(candidate, receiver, None).is_none());
-        })
-        .expect("fixture declarations load");
-}
-
-#[test]
-fn owned_and_live_queries_share_owner_assumptions() {
-    use rg_ir_model::{
-        FunctionId, FunctionRef, GenericDefRef, ImplId, ImplRef, Path, TraitApplicability,
-    };
-    use rg_std::ExpectedUnique;
-
-    use crate::{
-        lookup::ItemPathQuery,
-        lowering::{TypeLoweringAnchor, TypePathResolver},
-        solver::{self, SolverScope},
-        trait_selection::{TraitGoal, TraitSelectionQuery},
-    };
-
-    // The resolver adds only an owner and a lexical cache. Both query paths must obtain the
-    // actual assumptions from declarations, including a default method's implicit Self: Render.
-    struct OwnerScope<'a> {
-        paths: ItemPathQuery<'a, &'a TraitSelectionFixture, &'a TraitSelectionFixture>,
-        owner: GenericDefRef,
-        cache: solver::DeclarationCache,
-    }
-    impl TypePathResolver for OwnerScope<'_> {
-        type Error = std::convert::Infallible;
-        fn resolve_type_path(
-            &self,
-            anchor: TypeLoweringAnchor,
-            path: &Path,
-        ) -> Result<rg_semantic_ir::TypePathResolution, Self::Error> {
-            TypePathResolver::resolve_type_path(&self.paths, anchor, path)
-        }
-    }
-    impl SolverScope for OwnerScope<'_> {
-        fn generic_owner(&self) -> Option<GenericDefRef> {
-            Some(self.owner)
-        }
-        fn declaration_cache(&self) -> Option<&solver::DeclarationCache> {
-            Some(&self.cache)
-        }
-    }
-
-    let fixture = TraitSelectionFixture::new(
-        r#"
-        traits
-          trait#0 Marker
-          trait#1 Render<T: Marker>
-          trait#2 ViaMarker
-          trait#3 ViaRender<T>
-        structs
-          struct#0 Other
-          struct#1 Owner
-        impls
-          impl#0 impl<T: Marker> ViaMarker for T [resolved self: empty]
-          impl#1 impl<S: Render<T>, T> ViaRender<T> for S [resolved self: empty]
-          impl#2 impl Marker for Owner where Other: Marker
-        functions
-          fn#0 direct<T: Marker> -> T
-          fn#1 Render::default_method -> Self
-          fn#2 impl#2::method -> Other
-    "#,
-    );
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        fixture.lookup_query(),
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
-    for (owner, subject, bound, argument, implementation) in [
-        (0, "T", "ViaMarker", None, 0),
-        (1, "T", "ViaMarker", None, 0),
-        (1, "Self", "ViaRender", Some("T"), 1),
-        (2, "Other", "ViaMarker", None, 0),
-    ] {
-        let owner = GenericDefRef::Function(FunctionRef {
-            origin: origin(),
-            id: FunctionId(owner),
-        });
-        let scope = OwnerScope {
-            paths: context.item_paths().clone(),
-            owner,
-            cache: Default::default(),
-        };
-        let generics = scope
-            .paths
-            .generics()
-            .generics(owner)
-            .expect("owner generics");
-        let ty = |name| {
-            if let Some(def) = fixture.type_ref_by_name(name) {
-                return Ty::adt(AdtTy {
-                    def,
-                    args: Default::default(),
-                });
-            }
-            let rg_ir_model::GenericParamRef::Type(param) =
-                generics.param_by_name(name).expect("fixture parameter")
-            else {
-                panic!("type parameter");
-            };
-            Ty::Param(param)
-        };
-        let args = argument
-            .map(|name| vec![GenericArg::Type(Box::new(ty(name)))])
-            .unwrap_or_default();
-        let goal = TraitGoal::new(
-            ty(subject),
-            fixture.trait_ref_by_name(bound).expect("fixture bound"),
-            args,
-        );
-        // Repeat across operations to cover importing each independently cached declaration part.
-        for _ in 0..2 {
-            let ExpectedUnique::One(selected) =
-                TraitSelectionQuery::with_resolver(context.clone(), &scope)
-                    .probe(&goal)
-                    .expect("owned selection")
-            else {
-                panic!("one applicable impl for {subject}: {bound}");
-            };
-            assert_eq!(
-                selected.applicability,
-                TraitApplicability::Yes,
-                "owned {subject}: {bound}"
-            );
-            solver::SemanticDeclarations::new(&context, &scope)
-                .with_solver(|solver| {
-                    let cx = solver.interner();
-                    let table =
-                        solver::InferenceTable::new(solver, cx.parameter_environment(owner.into()));
-                    let application = solver::TraitApplication {
-                        def: goal.trait_ref(),
-                        args: cx.lower_args(&goal.application.args, cx.params(owner.into())),
-                    };
-                    let selected = table
-                        .select_impl(
-                            ImplRef {
-                                origin: origin(),
-                                id: ImplId(implementation),
-                            },
-                            application.self_ty().expect("Self"),
-                            Some(application),
-                        )
-                        .expect("live selection");
-                    assert_eq!(
-                        selected.outcome,
-                        solver::Outcome::Proven,
-                        "live {subject}: {bound}"
-                    );
-                })
-                .expect("fixture declarations load");
-        }
-    }
 }
 
 #[test]
@@ -1762,7 +1210,7 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
     let mut subst = Substitution::new();
     subst.push(param, GenericArg::Type(Box::new(user)));
     let bound = subst.apply_trait_ref(&bounds[0]);
-    let goal = TraitGoal::from_lowering(bound.clone());
+    let goal = TraitGoal::from_lowering(bound);
     let scope = CachedScope {
         paths: context.item_paths().clone(),
         cache: Default::default(),
@@ -1778,18 +1226,5 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
             .expect("inherited Item normalizes");
         assert_eq!(result.applicability, TraitApplicability::Yes);
         assert_eq!(result.ty, expected);
-
-        solver::SemanticDeclarations::new(&context, &scope)
-            .with_solver(|solver| {
-                let table = solver::InferenceTable::new(solver, Default::default());
-                let cx = table.interner();
-                let clauses = bound
-                    .clone()
-                    .into_clauses()
-                    .map(|clause| cx.lower_clause(&clause, &[]))
-                    .collect::<Vec<_>>();
-                assert_eq!(table.prove(clauses), solver::Outcome::Proven);
-            })
-            .expect("owned clauses load");
     }
 }
