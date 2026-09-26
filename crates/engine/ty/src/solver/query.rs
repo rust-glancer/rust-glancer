@@ -8,7 +8,7 @@
 //! assignments made while checking the first one. The caller can adopt the chosen table, or
 //! convert its result to owned types before dropping the solver.
 
-use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef};
 use rg_item_tree::FunctionQualifiers;
 use rg_std::ExpectedUnique;
 use rustc_type_ir::{self as ir, Upcast};
@@ -42,25 +42,6 @@ impl<'s> TraitApplication<'s> {
     pub fn clause(self, cx: SolverInterner<'s>) -> Clause<'s> {
         let def = DefId::Trait(self.def);
         ir::TraitRef::new_from_args(cx, def, cx.complete_args(def, self.args)).upcast(cx)
-    }
-
-    /// Turn a binding such as `Iterator<Item = u8>` into `<Self as Iterator>::Item = u8`.
-    pub fn associated_type_eq(
-        self,
-        cx: SolverInterner<'s>,
-        associated_ty: TypeAliasRef,
-        ty: Ty<'s>,
-    ) -> Clause<'s> {
-        let def_id = DefId::TypeAlias(associated_ty);
-        ir::ProjectionPredicate {
-            projection_term: ir::AliasTerm::new_from_args(
-                cx,
-                ir::AliasTermKind::ProjectionTy { def_id },
-                cx.complete_args(def_id, self.args),
-            ),
-            term: ty.into(),
-        }
-        .upcast(cx)
     }
 }
 
@@ -97,12 +78,11 @@ pub struct TraitRefLowering<'s> {
 
 impl<'s> TraitRefLowering<'s> {
     pub fn clauses(&self, cx: SolverInterner<'s>) -> impl Iterator<Item = Clause<'s>> + '_ {
-        std::iter::once(self.application.clause(cx)).chain(self.associated_types.iter().map(
-            move |binding| {
-                self.application
-                    .associated_type_eq(cx, binding.associated_ty, binding.ty)
-            },
-        ))
+        std::iter::once(self.application.clause(cx)).chain(
+            self.associated_types
+                .iter()
+                .map(move |binding| binding.clause(cx)),
+        )
     }
 
     pub fn raise(&self, cx: SolverInterner<'s>) -> crate::TraitRefLowering {
@@ -111,19 +91,43 @@ impl<'s> TraitRefLowering<'s> {
             associated_types: self
                 .associated_types
                 .iter()
-                .map(|b| crate::AssocTypeBinding {
-                    associated_ty: b.associated_ty,
-                    ty: cx.raise_ty(b.ty).unwrap_or(crate::Ty::Unknown),
-                })
+                .map(|binding| binding.raise(cx))
                 .collect(),
         }
     }
 }
 
+/// An equality for one complete projection. Its arguments belong to the trait that declares
+/// the associated type, including any substitutions made while following supertraits.
 #[derive(Debug, Clone, Copy)]
 pub struct AssocTypeBinding<'s> {
-    pub associated_ty: TypeAliasRef,
+    pub projection: ProjectionTy<'s>,
     pub ty: Ty<'s>,
+}
+
+impl<'s> AssocTypeBinding<'s> {
+    pub fn clause(self, cx: SolverInterner<'s>) -> Clause<'s> {
+        let def_id = DefId::TypeAlias(self.projection.associated_ty);
+        ir::ProjectionPredicate {
+            projection_term: ir::AliasTerm::new_from_args(
+                cx,
+                ir::AliasTermKind::ProjectionTy { def_id },
+                cx.complete_args(def_id, self.projection.args),
+            ),
+            term: self.ty.into(),
+        }
+        .upcast(cx)
+    }
+
+    pub fn raise(self, cx: SolverInterner<'s>) -> crate::AssocTypeBinding {
+        crate::AssocTypeBinding {
+            projection: crate::ProjectionTy {
+                associated_ty: self.projection.associated_ty,
+                args: cx.raise_args(self.projection.args),
+            },
+            ty: cx.raise_ty(self.ty).unwrap_or(crate::Ty::Unknown),
+        }
+    }
 }
 
 /// An impl's receiver and optional trait application, with its declaration parameters still
@@ -342,7 +346,7 @@ impl<'s> InferenceTable<'s> {
         &self,
         application: TraitApplication<'s>,
         bindings: &[Clause<'s>],
-        associated_ty: TypeAliasRef,
+        projection: ProjectionTy<'s>,
     ) -> Option<(Ty<'s>, Outcome)> {
         let cx = self.interner();
         let callbacks = cx.track_callbacks();
@@ -350,10 +354,7 @@ impl<'s> InferenceTable<'s> {
         for &binding in bindings {
             self.register(binding);
         }
-        let ty = self.normalize(cx.projection(ProjectionTy {
-            associated_ty,
-            args: application.args,
-        }));
+        let ty = self.normalize(cx.projection(projection));
         // Preparing the projection can read declarations before any goal is evaluated. Check
         // those reads here: fulfillment's per-goal scopes only see failures during that goal.
         if callbacks.failure().is_some() {

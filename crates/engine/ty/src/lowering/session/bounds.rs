@@ -68,10 +68,8 @@ where
         let Some(path_key) = path.as_def_map_path() else {
             return Ok(None);
         };
-        let TypePathResolution::Trait(trait_ref) = self
-            .query
-            .resolver
-            .resolve_type_path(self.anchor, &path_key)?
+        let TypePathResolution::Trait(trait_ref) =
+            self.resolver.resolve_type_path(self.anchor, &path_key)?
         else {
             return Ok(None);
         };
@@ -113,7 +111,6 @@ where
         inference: Option<&InferenceTable<'s>>,
     ) -> Result<TraitApplication<'s>, D::Error> {
         let generics = self
-            .query
             .item_paths
             .generics()
             .generics(GenericDefRef::Trait(trait_ref))?;
@@ -185,7 +182,7 @@ where
     /// source data, but all contribute to the returned list. Declaration parameters stay generic
     /// here; a particular call or impl candidate substitutes its arguments later.
     pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause<'s>>, D::Error> {
-        let generics = self.query.item_paths.generics().generics(self.owner)?;
+        let generics = self.item_paths.generics().generics(self.owner)?;
         let mut inline_bounds = Vec::new();
         for param in generics.iter() {
             let GenericParamRef::Type(param_ref) = param.param() else {
@@ -206,17 +203,13 @@ where
         let mut owner = Some(self.owner);
         while let Some(id) = owner {
             predicate_owners.push(id);
-            owner = self.query.item_paths.generics().parent_generic_def(id)?;
+            owner = self.item_paths.generics().parent_generic_def(id)?;
         }
         predicate_owners.reverse();
 
         let mut where_predicates = Vec::new();
         for &owner in &predicate_owners {
-            if let Some(item) = self
-                .query
-                .item_paths
-                .items()
-                .semantic_item_view(owner.into())?
+            if let Some(item) = self.item_paths.items().semantic_item_view(owner.into())?
                 && let Some(params) = item.generic_params()
             {
                 where_predicates.extend(
@@ -256,7 +249,7 @@ where
             let GenericDefRef::Trait(trait_ref) = owner else {
                 continue;
             };
-            let Some(data) = self.query.item_paths.items().trait_data(trait_ref)? else {
+            let Some(data) = self.item_paths.items().trait_data(trait_ref)? else {
                 continue;
             };
             let Some(param) = generics.iter().find(|param| {
@@ -318,19 +311,13 @@ where
             let Some(alias) = self.associated_type_projection(application, name)? else {
                 continue;
             };
-            // `AssocTypeBinding` belongs to the surrounding trait application. A transformed
-            // supertrait projection needs its own argument list, which that compact goal shape
-            // cannot represent yet. Keeping it unresolved is safer than attaching the equality
-            // to the wrong application; `Fn`/`FnMut` inherit `Output` with the same arguments and
-            // therefore take the supported path.
-            if alias.args != application.args {
-                continue;
-            }
             let Some(ty) = ty else {
                 continue;
             };
+            // Lookup has already substituted any supertrait arguments. A bound on `Derived<T>`
+            // can constrain `<Self as Base<Vec<T>>>::Item`, so keep the projection it returned.
             bindings.push(AssocTypeBinding {
-                associated_ty: alias.associated_ty,
+                projection: alias,
                 ty: self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)?,
             });
         }

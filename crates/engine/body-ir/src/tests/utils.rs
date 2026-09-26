@@ -1160,8 +1160,8 @@ impl CrateBodyIrSnapshot<'_> {
         for binding in &bound.associated_types {
             let name = self
                 .project
-                .resident_item_store(binding.associated_ty.origin)
-                .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                .resident_item_store(binding.projection.associated_ty.origin)
+                .and_then(|items| items.type_alias_data(binding.projection.associated_ty.id))
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());
             args.push(format!("{name} = {}", self.render_ty(&binding.ty)));

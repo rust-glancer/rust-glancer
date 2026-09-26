@@ -314,7 +314,7 @@ impl ViewFixture {
             .collect::<Vec<_>>();
         for binding in &bound.associated_types {
             let name = ItemStoreQuery::new(db)
-                .type_alias_data(binding.associated_ty)
+                .type_alias_data(binding.projection.associated_ty)
                 .expect("fixture associated type should load while rendering an opaque bound")
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());

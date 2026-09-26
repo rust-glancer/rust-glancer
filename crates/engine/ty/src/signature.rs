@@ -14,7 +14,7 @@ use rg_item_tree::FunctionQualifiers;
 use rg_semantic_ir::ItemStoreSource;
 
 use crate::{
-    AssocTypeBinding, Clause, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
+    Clause, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringQuery, TypePathResolver},
 };
@@ -125,45 +125,14 @@ where
         &self,
         param: TypeParamRef,
     ) -> Result<Vec<TraitRefLowering>, D::Error> {
-        let GenericDefRef::Function(function) = param.owner else {
-            return Ok(Vec::new());
-        };
         let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
-        let clauses = lowering.with_storage(|cx| {
+        lowering.with_storage(|cx| {
             Ok(lowering
-                .predicates(cx, function.into())?
-                .unwrap_or_default()
+                .function_type_param_bounds(cx, param)?
                 .into_iter()
-                .map(|clause| cx.raise_clause(clause))
-                .collect::<Vec<_>>())
-        })?;
-        let subject = Ty::Param(param);
-        let mut bounds = Vec::new();
-        for clause in &clauses {
-            let Clause::Implemented(application) = clause else {
-                continue;
-            };
-            if application.self_ty() != Some(&subject) {
-                continue;
-            }
-            let associated_types = clauses
-                .iter()
-                .filter_map(|clause| {
-                    let Clause::AliasEq { alias, ty } = clause else {
-                        return None;
-                    };
-                    (alias.args == application.args).then(|| AssocTypeBinding {
-                        associated_ty: alias.associated_ty,
-                        ty: ty.clone(),
-                    })
-                })
-                .collect();
-            bounds.push(TraitRefLowering {
-                application: application.clone(),
-                associated_types,
-            });
-        }
-        Ok(bounds)
+                .map(|bound| bound.raise(cx))
+                .collect())
+        })
     }
 
     pub fn field_ty(&self, field: FieldRef) -> Result<Option<Ty>, D::Error> {

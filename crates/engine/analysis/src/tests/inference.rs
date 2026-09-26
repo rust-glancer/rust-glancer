@@ -3060,3 +3060,56 @@ pub fn check_parent() {
         "#]],
     );
 }
+
+#[test]
+fn infers_inherited_associated_equalities_and_displays_their_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_inherited_equalities"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub struct Vec<T> { pub value: T }
+pub struct Option<T> { pub value: T }
+pub trait Base<T> {
+    type Item;
+    fn item(&self) -> Self::Item;
+}
+pub trait Derived<T>: Base<Vec<T>> {}
+pub trait Further<T>: Derived<Option<T>> {}
+pub trait Other<T> { type Item; }
+
+pub fn direct<V: Derived<u8, Item = u64>>(value: V) {
+    let result = value.item()$direct$;
+}
+pub fn further<V: Further<u8, Item = bool>>(value: V) {
+    let result = value.item()$further$;
+}
+pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
+    let saved = value$bounds$;
+    let result = saved.item()$display_result$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("inherited equality", "direct"),
+            AnalysisQuery::ty("two supertrait substitutions", "further"),
+            AnalysisQuery::ty("bindings stay with their trait", "bounds"),
+            AnalysisQuery::ty("argument impl Trait equality", "display_result"),
+        ],
+        expect![[r#"
+            inherited equality
+            - u64
+
+            two supertrait substitutions
+            - bool
+
+            bindings stay with their trait
+            - impl trait analysis_inherited_equalities[lib]::crate::Derived<u8, Item = u64> + trait analysis_inherited_equalities[lib]::crate::Other<u8, Item = bool>
+
+            argument impl Trait equality
+            - u64
+        "#]],
+    );
+}

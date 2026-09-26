@@ -8,9 +8,9 @@ use rg_def_map::{
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
-    GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitDefRef, TraitId,
-    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    GenericDefRef, GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId,
+    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -28,7 +28,7 @@ use rg_text::Name;
 use crate::{
     AdtTy, AliasTy, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
     lookup::ItemPathQuery,
-    lowering::TypeLoweringQuery,
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     signature::SemanticSignatureQuery,
     solver::{self, InferenceTable, Outcome},
 };
@@ -1229,7 +1229,7 @@ impl TraitSelectionSnapshot {
                     .goal
                     .associated_types
                     .iter()
-                    .map(|bound| application.associated_type_eq(cx, bound.associated_ty, bound.ty))
+                    .map(|bound| bound.clause(cx))
                     .collect::<Vec<_>>();
                 let candidates = crate::lookup::TraitImplFilter::from(
                     &cx.raise_ty(application.self_ty().expect("Self"))
@@ -1299,16 +1299,28 @@ impl TraitSelectionSnapshot {
                     .goal
                     .associated_types
                     .iter()
-                    .map(|bound| application.associated_type_eq(cx, bound.associated_ty, bound.ty))
+                    .map(|bound| bound.clause(cx))
                     .collect::<Vec<_>>();
-                let associated_ty = context
+                let owner = GenericDefRef::Trait(application.def);
+                let anchor = context
                     .item_paths()
                     .items()
-                    .declared_associated_type_by_name(application.def, &parsed.assoc_name)
+                    .type_path_context_for_generic_def(owner)
+                    .expect("fixture lookup")
+                    .expect("fixture trait context");
+                let mut session =
+                    TypeLoweringQuery::new(context.item_paths(), context.item_paths())
+                        .session(
+                            cx,
+                            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(anchor)),
+                        )
+                        .expect("fixture lowering session");
+                let projection = session
+                    .associated_type_projection(&application, &Name::new(&parsed.assoc_name))
                     .expect("fixture lookup")
                     .expect("fixture alias");
                 let Some((ty, outcome)) =
-                    table.normalize_assoc_type(application, &bindings, associated_ty)
+                    table.normalize_assoc_type(application, &bindings, projection)
                 else {
                     writeln!(dump, "  result: none").expect("string write");
                     return;
@@ -1354,7 +1366,7 @@ impl TraitSelectionSnapshot {
                 args.extend(bound.associated_types.iter().map(|binding| {
                     format!(
                         "{} = {}",
-                        self.render_associated_ty_name(binding.associated_ty),
+                        self.render_associated_ty_name(binding.projection.associated_ty),
                         self.render_ty(&binding.ty)
                     )
                 }));
@@ -1457,7 +1469,7 @@ impl TraitSelectionSnapshot {
         args.extend(goal.associated_types.iter().map(|binding| {
             format!(
                 "{} = {}",
-                self.render_associated_ty_name(binding.associated_ty),
+                self.render_associated_ty_name(binding.projection.associated_ty),
                 self.render_live_ty(cx, binding.ty, vars)
             )
         }));
@@ -1755,15 +1767,7 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
     pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery<'s> {
         let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
             .expect("trait query should be written as `Self: Trait<Args>`");
-        let (trait_ref, mut args, associated_types) = self.parse_trait_path(trait_path);
-        args.insert(0, self.parse_infer_ty(self_ty).into());
-        let goal = solver::TraitRefLowering {
-            application: solver::TraitApplication {
-                def: trait_ref,
-                args: solver::List::new(self.table.interner(), &args),
-            },
-            associated_types,
-        };
+        let goal = self.parse_trait_path(trait_path, self_ty);
         ParsedTraitQuery {
             goal,
             vars: self.vars,
@@ -1783,15 +1787,7 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
         let inner = &text[1..angle_end];
         let (self_ty, trait_path) = split_top_level_keyword(inner, " as ")
             .expect("associated projection query should contain ` as `");
-        let (trait_ref, mut args, associated_types) = self.parse_trait_path(trait_path);
-        args.insert(0, self.parse_infer_ty(self_ty).into());
-        let goal = solver::TraitRefLowering {
-            application: solver::TraitApplication {
-                def: trait_ref,
-                args: solver::List::new(self.table.interner(), &args),
-            },
-            associated_types,
-        };
+        let goal = self.parse_trait_path(trait_path, self_ty);
         ParsedAssocQuery {
             goal,
             assoc_name: assoc_name.to_string(),
@@ -1799,40 +1795,51 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
         }
     }
 
-    fn parse_trait_path(
-        &mut self,
-        text: &str,
-    ) -> (
-        TraitDefRef,
-        Vec<solver::GenericArg<'s>>,
-        Vec<solver::AssocTypeBinding<'s>>,
-    ) {
+    fn parse_trait_path(&mut self, text: &str, self_ty: &str) -> solver::TraitRefLowering<'s> {
         let (trait_name, args) = parse_path_head_and_args(text.trim());
         let trait_ref = self
             .fixture
             .trait_ref_by_name(trait_name)
             .unwrap_or_else(|| panic!("query refers to unknown trait `{trait_name}`"));
         let mut positional = Vec::new();
-        let mut associated_types = Vec::new();
+        let mut bindings = Vec::new();
         for arg in args {
             if let Some((name, ty)) = split_top_level_keyword(arg, " = ") {
-                let associated_ty = self
-                    .fixture
-                    .associated_ty_by_name(trait_ref, name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "query refers to unknown associated type `{name}` on trait `{trait_name}`"
-                        )
-                    });
-                associated_types.push(solver::AssocTypeBinding {
-                    associated_ty,
-                    ty: self.parse_infer_ty(ty),
-                });
+                bindings.push((Name::new(name), self.parse_infer_ty(ty)));
             } else {
                 positional.push(self.parse_infer_ty(arg).into());
             }
         }
-        (trait_ref, positional, associated_types)
+        positional.insert(0, self.parse_infer_ty(self_ty).into());
+        let cx = self.table.interner();
+        let application = solver::TraitApplication {
+            def: trait_ref,
+            args: solver::List::new(cx, &positional),
+        };
+        let paths = ItemPathQuery::new(self.fixture, self.fixture);
+        let owner = GenericDefRef::Trait(trait_ref);
+        let anchor = paths
+            .items()
+            .type_path_context_for_generic_def(owner)
+            .expect("fixture lookup")
+            .expect("fixture trait context");
+        let mut session = TypeLoweringQuery::new(&paths, &paths)
+            .session(
+                cx,
+                TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(anchor)),
+            )
+            .expect("fixture lowering session");
+        let associated_types = bindings.into_iter().map(|(name, ty)| {
+            let projection = session
+                .associated_type_projection(&application, &name)
+                .expect("fixture projection lookup")
+                .unwrap_or_else(|| panic!("query refers to unknown associated type `{name}` on trait `{trait_name}`"));
+            solver::AssocTypeBinding { projection, ty }
+        }).collect();
+        solver::TraitRefLowering {
+            application,
+            associated_types,
+        }
     }
 
     fn parse_infer_ty(&mut self, text: &str) -> solver::Ty<'s> {

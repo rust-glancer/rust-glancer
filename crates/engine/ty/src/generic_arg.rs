@@ -6,7 +6,7 @@
 
 use std::fmt;
 
-use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -211,11 +211,12 @@ impl TraitApplication {
 
 /// One resolved associated-type equality written beside a trait application.
 ///
-/// In `Iterator<Item = User>`, this records the semantic `Iterator::Item` declaration and `User`.
-/// The `Self: Iterator` application remains positional and is stored separately.
+/// For `Derived<T>: Base<Vec<T>>`, a bound `Derived<T, Item = User>` constrains
+/// `<Self as Base<Vec<T>>>::Item`. Keep that projection's arguments here: they can differ from
+/// the arguments of the trait beside which the equality was written.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct AssocTypeBinding {
-    pub associated_ty: TypeAliasRef,
+    pub projection: ProjectionTy,
     pub ty: Ty,
 }
 
@@ -234,17 +235,12 @@ impl TraitRefLowering {
     pub fn into_clauses(self) -> impl Iterator<Item = Clause> {
         let application = self.application;
         let associated_types = self.associated_types;
-        std::iter::once(Clause::Implemented(application.clone())).chain(
-            associated_types
-                .into_iter()
-                .map(move |binding| Clause::AliasEq {
-                    alias: ProjectionTy {
-                        associated_ty: binding.associated_ty,
-                        args: application.args.clone(),
-                    },
-                    ty: binding.ty,
-                }),
-        )
+        std::iter::once(Clause::Implemented(application)).chain(associated_types.into_iter().map(
+            |binding| Clause::AliasEq {
+                alias: binding.projection,
+                ty: binding.ty,
+            },
+        ))
     }
 }
 

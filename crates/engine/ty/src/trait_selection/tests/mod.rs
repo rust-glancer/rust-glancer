@@ -274,6 +274,82 @@ fn probe_checks_goal_associated_type_equality_constraints() {
 }
 
 #[test]
+fn inherited_equalities_preserve_supertrait_arguments() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Base<T>
+              trait#1 Derived<T>: Base<Vec<T>>
+              trait#2 Further<T>: Derived<Option<T>>
+            structs
+              struct#0 Vec<T>
+              struct#1 Option<T>
+              struct#2 Producer<T>
+              struct#3 User
+            impls
+              impl#0 impl<T> Base<Vec<T>> for Producer<T>
+              impl#1 impl<T> Derived<T> for Producer<T>
+              impl#2 impl<T> Further<T> for Producer<Option<T>>
+            type aliases
+              type#0 trait#0::Item
+              type#1 impl#0::Item = T
+            functions
+              fn#0 opaque -> impl Further<User, Item = Option<User>>
+        "#,
+        vec![
+            TraitSelectionCase::normalize_assoc(
+                "inherited projection",
+                "<Producer<User> as Derived<User>>::Item",
+            ),
+            TraitSelectionCase::normalize_assoc(
+                "two supertrait substitutions",
+                "<Producer<Option<User>> as Further<User>>::Item",
+            ),
+            TraitSelectionCase::probe(
+                "equality constrains live projection arguments",
+                "Producer<?item>: Further<?arg, Item = Option<User>>",
+            ),
+            TraitSelectionCase::normalize_assoc(
+                "opaque equality keeps transformed arguments",
+                "<opaque#0 as Base<Vec<Option<User>>>>::Item",
+            ),
+        ],
+        expect![[r#"
+            inherited projection
+              query: selection
+              goal: <Producer<User> as Derived<User>>::Item
+              result: projected
+                final: User
+                applicability: yes
+
+            two supertrait substitutions
+              query: selection
+              goal: <Producer<Option<User>> as Further<User>>::Item
+              result: projected
+                final: Option<User>
+                applicability: yes
+
+            equality constrains live projection arguments
+              query: selection
+              goal: Producer<?item>: Further<?arg, Item = Option<User>>
+              result: one
+                impl: impl#2
+                applicability: yes
+                vars
+                  ?arg = User
+                  ?item = Option<User>
+
+            opaque equality keeps transformed arguments
+              query: selection
+              goal: <impl Further<User, Item = Option<User>> as Base<Vec<Option<User>>>>::Item
+              result: projected
+                final: Option<User>
+                applicability: yes
+        "#]],
+    );
+}
+
+#[test]
 fn solver_resolves_impl_predicate_associated_type_equality_constraints() {
     check_trait_selection_queries(
         r#"
@@ -869,7 +945,14 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
                 assert_eq!(selected.outcome, Outcome::Proven);
                 assert_eq!(table.prove([application.clause(cx)]), Outcome::Proven);
                 let (normalized, outcome) = table
-                    .normalize_assoc_type(application, &[], item)
+                    .normalize_assoc_type(
+                        application,
+                        &[],
+                        solver::ProjectionTy {
+                            associated_ty: item,
+                            args: application.args,
+                        },
+                    )
                     .expect("independent normalization succeeds");
                 assert_eq!(outcome, Outcome::Proven);
                 assert_eq!(
@@ -1585,5 +1668,128 @@ fn owned_and_live_queries_share_owner_assumptions() {
                 })
                 .expect("fixture declarations load");
         }
+    }
+}
+
+#[test]
+fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
+    use rg_ir_model::{FunctionId, FunctionRef, Path, TraitApplicability};
+
+    use crate::{
+        Substitution,
+        lookup::ItemPathQuery,
+        lowering::{TypeLoweringAnchor, TypePathResolver},
+        signature::SemanticSignatureQuery,
+        solver,
+        trait_selection::{TraitGoal, TraitSelectionQuery},
+    };
+
+    struct CachedScope<'a> {
+        paths: ItemPathQuery<'a, &'a TraitSelectionFixture, &'a TraitSelectionFixture>,
+        cache: solver::DeclarationCache,
+    }
+    impl TypePathResolver for CachedScope<'_> {
+        type Error = std::convert::Infallible;
+
+        fn resolve_type_path(
+            &self,
+            anchor: TypeLoweringAnchor,
+            path: &Path,
+        ) -> Result<rg_semantic_ir::TypePathResolution, Self::Error> {
+            TypePathResolver::resolve_type_path(&self.paths, anchor, path)
+        }
+    }
+    impl solver::SolverScope for CachedScope<'_> {
+        fn declaration_cache(&self) -> Option<&solver::DeclarationCache> {
+            Some(&self.cache)
+        }
+    }
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Base<T>
+              trait#1 Derived<T>: Base<Vec<T>>
+              trait#2 Further<T>: Derived<Option<T>>
+            structs
+              struct#0 Vec<T>
+              struct#1 Option<T>
+              struct#2 User
+            functions
+              fn#0 factory<T> -> impl Further<T, Item = Option<T>>
+            type aliases
+              type#0 trait#0::Item
+        "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    let signatures = SemanticSignatureQuery::new(&fixture, &fixture);
+    let function = FunctionRef {
+        origin: origin(),
+        id: FunctionId(0),
+    };
+    let signature = signatures
+        .function(function)
+        .expect("signature loads")
+        .expect("factory");
+    let Ty::Alias(AliasTy::Opaque(opaque)) = signature.ret else {
+        panic!("factory returns an opaque type");
+    };
+    let bounds = signatures
+        .opaque_bounds(&opaque)
+        .expect("bounds load")
+        .expect("opaque bounds");
+    let param = context
+        .item_paths()
+        .generics()
+        .generics(function.into())
+        .expect("factory generics")
+        .param_by_name("T")
+        .expect("factory T");
+    let user = Ty::adt(AdtTy {
+        def: fixture.type_ref_by_name("User").expect("User"),
+        args: Default::default(),
+    });
+    let expected = Ty::adt(AdtTy {
+        def: fixture.type_ref_by_name("Option").expect("Option"),
+        args: vec![GenericArg::Type(Box::new(user.clone()))].into(),
+    });
+    let mut subst = Substitution::new();
+    subst.push(param, GenericArg::Type(Box::new(user)));
+    let bound = subst.apply_trait_ref(&bounds[0]);
+    let goal = TraitGoal::from_lowering(bound.clone());
+    let scope = CachedScope {
+        paths: context.item_paths().clone(),
+        cache: Default::default(),
+    };
+
+    // Each query gets fresh solver storage. Repeating it imports the declaration clauses from
+    // the shared owned cache, while the substituted bound also crosses the owned/live boundary.
+    for _ in 0..2 {
+        let query = TraitSelectionQuery::with_resolver(context.clone(), &scope);
+        let result = query
+            .normalize_assoc_type(&goal, "Item")
+            .expect("normalization loads")
+            .expect("inherited Item normalizes");
+        assert_eq!(result.applicability, TraitApplicability::Yes);
+        assert_eq!(result.ty, expected);
+
+        solver::SemanticDeclarations::new(&context, &scope)
+            .with_solver(|solver| {
+                let table = solver::InferenceTable::new(solver, Default::default());
+                let cx = table.interner();
+                let clauses = bound
+                    .clone()
+                    .into_clauses()
+                    .map(|clause| cx.lower_clause(&clause, &[]))
+                    .collect::<Vec<_>>();
+                assert_eq!(table.prove(clauses), solver::Outcome::Proven);
+            })
+            .expect("owned clauses load");
     }
 }

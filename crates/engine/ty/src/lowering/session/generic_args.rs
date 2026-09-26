@@ -196,7 +196,6 @@ where
         subst: &Substitution<'s>,
     ) -> Result<Ty<'s>, D::Error> {
         let Some(context) = self
-            .query
             .item_paths
             .items()
             .type_path_context_for_generic_def(owner)?
@@ -222,7 +221,6 @@ where
         subst: &Substitution<'s>,
     ) -> Result<Const<'s>, D::Error> {
         let Some(context) = self
-            .query
             .item_paths
             .items()
             .type_path_context_for_generic_def(owner)?

@@ -117,10 +117,7 @@ impl Substitution {
                 args: ty.args.iter().map(|arg| self.apply_arg(arg)).collect(),
             }),
             Ty::Alias(alias) => Ty::Alias(match alias {
-                AliasTy::Projection(alias) => AliasTy::Projection(ProjectionTy {
-                    associated_ty: alias.associated_ty,
-                    args: alias.args.iter().map(|arg| self.apply_arg(arg)).collect(),
-                }),
+                AliasTy::Projection(alias) => AliasTy::Projection(self.apply_projection(alias)),
                 AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueTy {
                     opaque: alias.opaque,
                     args: alias.args.iter().map(|arg| self.apply_arg(arg)).collect(),
@@ -163,6 +160,13 @@ impl Substitution {
         args.iter().map(|arg| self.apply_arg(arg)).collect()
     }
 
+    fn apply_projection(&self, projection: &ProjectionTy) -> ProjectionTy {
+        ProjectionTy {
+            associated_ty: projection.associated_ty,
+            args: self.apply_args(&projection.args),
+        }
+    }
+
     pub fn apply_trait_application(&self, application: &TraitApplication) -> TraitApplication {
         TraitApplication {
             def: application.def,
@@ -177,7 +181,7 @@ impl Substitution {
                 .associated_types
                 .iter()
                 .map(|binding| AssocTypeBinding {
-                    associated_ty: binding.associated_ty,
+                    projection: self.apply_projection(&binding.projection),
                     ty: self.apply(&binding.ty),
                 })
                 .collect(),

@@ -51,7 +51,6 @@ where
                 && let Some(name) = path.segments.last().map(|segment| &segment.name)
             {
                 let param_source = self
-                    .query
                     .item_paths
                     .generics()
                     .generics(param.owner)?
@@ -62,7 +61,6 @@ where
                     && let GenericDefRef::Trait(trait_ref) = param.owner
                 {
                     let generics = self
-                        .query
                         .item_paths
                         .generics()
                         .generics(GenericDefRef::Trait(trait_ref))?;
@@ -109,10 +107,7 @@ where
         let Some(path_key) = path.as_def_map_path() else {
             return Ok(self.cx.unknown());
         };
-        let resolution = self
-            .query
-            .resolver
-            .resolve_type_path(self.anchor, &path_key)?;
+        let resolution = self.resolver.resolve_type_path(self.anchor, &path_key)?;
         let syntax_args = path
             .segments
             .last()
@@ -125,7 +120,6 @@ where
                     return Ok(self_ty);
                 }
                 let generics = self
-                    .query
                     .item_paths
                     .generics()
                     .generics(GenericDefRef::TypeDef(def))?;
@@ -140,7 +134,6 @@ where
             }
             TypePathResolution::TypeDef(def) => {
                 let generics = self
-                    .query
                     .item_paths
                     .generics()
                     .generics(GenericDefRef::TypeDef(def))?;
@@ -176,7 +169,6 @@ where
         let impl_ref = match context.self_owner {
             Some(SelfTypeOwner::TypeDef(def)) => {
                 let generics = self
-                    .query
                     .item_paths
                     .generics()
                     .generics(GenericDefRef::TypeDef(def))?;
@@ -193,7 +185,7 @@ where
             // Trait `Self` is a generic parameter and is lowered before owner-type lookup.
             Some(SelfTypeOwner::Trait(_)) | None => return Ok(None),
         };
-        let Some(data) = self.query.item_paths.items().impl_data(impl_ref)? else {
+        let Some(data) = self.item_paths.items().impl_data(impl_ref)? else {
             return Ok(None);
         };
 
@@ -269,11 +261,11 @@ where
         if self.alias_stack.contains(&alias) {
             return Ok(self.cx.unknown());
         }
-        let Some(data) = self.query.item_paths.items().type_alias_data(alias)? else {
+        let Some(data) = self.item_paths.items().type_alias_data(alias)? else {
             return Ok(self.cx.unknown());
         };
         let alias_owner = GenericDefRef::TypeAlias(alias);
-        let generics = self.query.item_paths.generics().generics(alias_owner)?;
+        let generics = self.item_paths.generics().generics(alias_owner)?;
 
         // Associated aliases inherit their trait/impl parameters. Those identities already occur
         // in the active substitution, while written args belong only to the alias's own section.
@@ -306,7 +298,6 @@ where
             return Ok(self.cx.unknown());
         };
         let Some(context) = self
-            .query
             .item_paths
             .items()
             .type_path_context_for_owner(alias.origin, data.owner)?

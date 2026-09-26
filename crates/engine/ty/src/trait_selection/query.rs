@@ -4,14 +4,16 @@
 //! normalizes them in a scoped table, and freezes its result before releasing all solver storage.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
+use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
+use rg_text::Name;
 
 use super::TraitGoal;
 use crate::{
     Substitution, TraitApplication, Ty, TyContext,
     lookup::{ItemPathQuery, TraitImplFilter},
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{self, DefId, InferenceTable, Outcome, SemanticDeclarations, SolverScope},
 };
 
@@ -182,13 +184,7 @@ where
             let bindings = goal
                 .associated_types
                 .iter()
-                .map(|bound| {
-                    application.associated_type_eq(
-                        cx,
-                        bound.associated_ty,
-                        cx.lower_ty(&bound.ty, params),
-                    )
-                })
+                .map(|bound| cx.lower_assoc_binding(bound, params).clause(cx))
                 .collect::<Vec<_>>();
             table
                 .select_trait_impl(
@@ -232,38 +228,56 @@ where
         })
     }
 
+    /// Resolve a named associated type from a trait goal, including inherited declarations.
+    /// Lookup supplies the projection's supertrait arguments; the original trait application
+    /// and its equalities are still checked as requirements of this query.
     pub fn normalize_assoc_type(
         &self,
         goal: &TraitGoal,
         name: &str,
     ) -> Result<Option<AssocProjectionResult>, I::Error> {
-        let items = self.context.item_paths().items();
-        let Some(alias) = items.declared_associated_type_by_name(goal.trait_ref(), name)? else {
-            return Ok(None);
-        };
         self.with_table(|table, params| {
             let cx = table.interner();
+            let callbacks = cx.track_callbacks();
             let application = solver::TraitApplication {
                 def: goal.trait_ref(),
                 args: cx.lower_args(&goal.application.args, params),
             };
+            // This lookup starts from a complete trait application, so any supertrait syntax
+            // belongs to the trait's declaration. Give it a source walk in the existing storage.
+            let owner = GenericDefRef::Trait(application.def);
+            let Some(context) = self
+                .context
+                .item_paths()
+                .items()
+                .type_path_context_for_generic_def(owner)?
+            else {
+                return Ok(None);
+            };
+            let mut session = TypeLoweringQuery::new(self.context.item_paths(), &self.resolver)
+                .session(
+                    cx,
+                    TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+                )?;
+            let Some(projection) =
+                session.associated_type_projection(&application, &Name::new(name))?
+            else {
+                return Ok(None);
+            };
             let bindings = goal
                 .associated_types
                 .iter()
-                .map(|bound| {
-                    application.associated_type_eq(
-                        cx,
-                        bound.associated_ty,
-                        cx.lower_ty(&bound.ty, params),
-                    )
-                })
+                .map(|bound| cx.lower_assoc_binding(bound, params).clause(cx))
                 .collect::<Vec<_>>();
-            table
-                .normalize_assoc_type(application, &bindings, alias)
+            if callbacks.failure().is_some() {
+                return Ok(None);
+            }
+            Ok(table
+                .normalize_assoc_type(application, &bindings, projection)
                 .map(|(ty, outcome)| AssocProjectionResult {
                     ty: table.finalize(ty),
                     applicability: SelectedImpl::applicability(outcome),
-                })
-        })
+                }))
+        })?
     }
 }

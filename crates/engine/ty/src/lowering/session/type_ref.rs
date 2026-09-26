@@ -123,7 +123,7 @@ where
                     owner: self.owner,
                     id: OpaqueTyId(self.next_opaque_index()),
                 };
-                let generics = self.query.item_paths.generics().generics(self.owner)?;
+                let generics = self.item_paths.generics().generics(self.owner)?;
                 let opaque = OpaqueTy {
                     opaque,
                     args: self
@@ -182,7 +182,6 @@ where
         };
 
         Ok(self
-            .query
             .item_paths
             .generics()
             .generics(self.owner)?

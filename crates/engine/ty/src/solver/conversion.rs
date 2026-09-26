@@ -12,7 +12,8 @@ use rustc_type_ir::{
 };
 
 use super::{
-    Clause, Const, DefId, GenericArgs, List, Param, Region, SolverInterner, Ty,
+    AssocTypeBinding, Clause, Const, DefId, GenericArgs, List, Param, ProjectionTy, Region,
+    SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
 
@@ -198,23 +199,31 @@ impl<'s> SolverInterner<'s> {
         )
     }
 
+    pub(crate) fn lower_assoc_binding(
+        self,
+        binding: &crate::AssocTypeBinding,
+        params: &[GenericParamRef],
+    ) -> AssocTypeBinding<'s> {
+        AssocTypeBinding {
+            projection: ProjectionTy {
+                associated_ty: binding.projection.associated_ty,
+                args: self.lower_args(&binding.projection.args, params),
+            },
+            ty: self.lower_ty(&binding.ty, params),
+        }
+    }
+
     pub fn lower_clause(self, clause: &crate::Clause, params: &[GenericParamRef]) -> Clause<'s> {
         match clause {
             crate::Clause::Implemented(tr) => self.lower_trait_ref(tr, params).upcast(self),
-            crate::Clause::AliasEq { alias, ty } => ir::ProjectionPredicate {
-                projection_term: ir::AliasTerm::new_from_args(
-                    self,
-                    ir::AliasTermKind::ProjectionTy {
-                        def_id: DefId::TypeAlias(alias.associated_ty),
-                    },
-                    self.complete_args(
-                        DefId::TypeAlias(alias.associated_ty),
-                        self.lower_args(&alias.args, params),
-                    ),
-                ),
-                term: self.lower_ty(ty, params).into(),
+            crate::Clause::AliasEq { alias, ty } => AssocTypeBinding {
+                projection: ProjectionTy {
+                    associated_ty: alias.associated_ty,
+                    args: self.lower_args(&alias.args, params),
+                },
+                ty: self.lower_ty(ty, params),
             }
-            .upcast(self),
+            .clause(self),
         }
     }
 

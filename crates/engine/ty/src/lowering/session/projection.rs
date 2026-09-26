@@ -59,11 +59,10 @@ where
         if lineage.contains(&application.def) {
             return Ok(None);
         }
-        let Some(data) = self.query.item_paths.items().trait_data(application.def)? else {
+        let Some(data) = self.item_paths.items().trait_data(application.def)? else {
             return Ok(None);
         };
         if let Some(alias) = self
-            .query
             .item_paths
             .items()
             .declared_associated_type_by_name(application.def, name.as_str())?
@@ -76,7 +75,7 @@ where
 
         let super_traits = data.super_traits.clone();
         let owner = GenericDefRef::Trait(application.def);
-        let generics = self.query.item_paths.generics().generics(owner)?;
+        let generics = self.item_paths.generics().generics(owner)?;
         let Some(self_param) = generics.iter().find_map(|param| {
             matches!(param.source(), GenericParamSource::TraitSelf).then_some(param.param())
         }) else {
@@ -143,11 +142,10 @@ where
         if lineage.contains(&trait_ref) {
             return Ok(false);
         }
-        let Some(data) = self.query.item_paths.items().trait_data(trait_ref)? else {
+        let Some(data) = self.item_paths.items().trait_data(trait_ref)? else {
             return Ok(false);
         };
         if self
-            .query
             .item_paths
             .items()
             .declared_associated_type_by_name(trait_ref, name.as_str())?
@@ -214,7 +212,7 @@ where
         self_ty: Ty<'s>,
         assoc_name: &Name,
     ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
-        let generics = self.query.item_paths.generics().generics(self.owner)?;
+        let generics = self.item_paths.generics().generics(self.owner)?;
         let mut bound_groups = Vec::new();
         if let Some(candidate) = generics
             .iter()
@@ -240,7 +238,6 @@ where
         predicate_owners.push(self.owner);
         for owner in predicate_owners {
             let predicates = self
-                .query
                 .item_paths
                 .items()
                 .semantic_item_view(owner.into())?
@@ -262,7 +259,6 @@ where
                     continue;
                 };
                 let predicate_param = self
-                    .query
                     .item_paths
                     .generics()
                     .generics(owner)?

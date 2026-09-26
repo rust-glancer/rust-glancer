@@ -6,16 +6,22 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
-    ItemOwner, StaticRef, TraitDefRef, TypeAliasRef,
+    ItemOwner, StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::{ParamKind, SelfParamKind, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext};
-
-use super::{
-    ImplTraitMode, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
+use rustc_type_ir::{
+    ClauseKind,
+    inherent::{IntoKind as _, Term as _},
 };
-use crate::solver::{
-    CallableSignature, Clause, ImplHeader, List, OpaqueTy, SolverInterner, TraitRefLowering, Ty,
+
+use super::TypeLoweringQuery;
+use crate::{
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypePathResolver, session::ImplTraitMode},
+    solver::{
+        AssocTypeBinding, CallableSignature, Clause, DefId, ImplHeader, List, OpaqueTy,
+        SolverInterner, TraitApplication, TraitRefLowering, Ty,
+    },
 };
 
 pub(crate) struct TraitHeader<'s> {
@@ -136,6 +142,79 @@ where
         )?
         .lower_clauses()
         .map(Some)
+    }
+
+    /// Group a parameter's clauses back into trait bounds for display, including `impl Trait`.
+    /// An equality belongs beside a trait only if looking up its associated name produces the
+    /// same complete projection. Equal argument lists alone cannot identify the declaring trait,
+    /// and inherited types may use different arguments after a supertrait substitution.
+    pub(crate) fn function_type_param_bounds<'s>(
+        &self,
+        cx: SolverInterner<'s>,
+        param: TypeParamRef,
+    ) -> Result<Vec<TraitRefLowering<'s>>, D::Error> {
+        let GenericDefRef::Function(_) = param.owner else {
+            return Ok(Vec::new());
+        };
+        let Some(context) = self
+            .item_paths
+            .items()
+            .type_path_context_for_generic_def(param.owner)?
+        else {
+            return Ok(Vec::new());
+        };
+        let mut session = self.session(
+            cx,
+            TypeLoweringEnv::new(param.owner, TypeLoweringAnchor::Context(context)),
+        )?;
+        let clauses = session.lower_clauses()?;
+        let subject = session.param_ty(param);
+        let mut bounds = Vec::new();
+        for clause in &clauses {
+            let ClauseKind::Trait(predicate) = clause.kind().skip_binder() else {
+                continue;
+            };
+            let DefId::Trait(def) = predicate.trait_ref.def_id else {
+                continue;
+            };
+            let application = TraitApplication {
+                def,
+                args: predicate.trait_ref.args,
+            };
+            if application.self_ty() != Some(subject) {
+                continue;
+            }
+            let mut associated_types = Vec::new();
+            for clause in &clauses {
+                let ClauseKind::Projection(predicate) = clause.kind().skip_binder() else {
+                    continue;
+                };
+                let DefId::TypeAlias(associated_ty) = predicate.projection_term.def_id() else {
+                    continue;
+                };
+                let Some(data) = self.item_paths.items().type_alias_data(associated_ty)? else {
+                    continue;
+                };
+                let Some(projection) =
+                    session.associated_type_projection(&application, &data.name)?
+                else {
+                    continue;
+                };
+                if projection.associated_ty == associated_ty
+                    && projection.args == predicate.projection_term.args
+                {
+                    associated_types.push(AssocTypeBinding {
+                        projection,
+                        ty: predicate.term.expect_ty(),
+                    });
+                }
+            }
+            bounds.push(TraitRefLowering {
+                application,
+                associated_types,
+            });
+        }
+        Ok(bounds)
     }
 
     pub fn field_ty<'s>(
