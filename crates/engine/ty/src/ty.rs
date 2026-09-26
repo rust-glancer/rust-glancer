@@ -1,8 +1,8 @@
-//! Canonical semantic type shapes.
+//! Owned semantic types that can outlive a type operation.
 //!
-//! Item declarations keep source-shaped `TypeRef` values for display and navigation. After the
-//! lowering boundary, type algorithms use only the identities and full argument lists in this
-//! module; they do not compare source text or reinterpret declaration syntax.
+//! Item declarations keep source-shaped `TypeRef` values; lowering and inference use scoped
+//! `solver::Ty` values. Saved facts, shared declaration templates, and independent query results
+//! use these owned shapes, which carry declaration identities but no inference-table state.
 
 use std::fmt;
 
@@ -13,16 +13,13 @@ use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{
-    ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy,
-    inference::{InferVarId, InferVarKind},
-};
+use crate::{ConstValue, GenericArg, GenericArgs, Lifetime, Mutability, PrimitiveTy};
 
 /// Identity of one anonymous closure type.
 ///
 /// Expression indices are only unique inside one body. The body identity is therefore part of the
-/// type identity before a closure enters the crate-scoped trait solver; otherwise two bodies whose
-/// first closure is `e0` could reuse the same cached Chalk answer.
+/// type identity when a closure enters a type query; otherwise two bodies whose
+/// first closure is `e0` could be mistaken for the same closure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureTyId {
     body: BodyRef,
@@ -43,9 +40,8 @@ impl fmt::Display for ClosureTyId {
 
 /// Anonymous closure type together with the callable signature inferred for that expression.
 ///
-/// The signature types may contain body inference variables. Keeping them in the closure type is
-/// intentional: expected `Fn*` bounds, the closure patterns/body, and Chalk all constrain the same
-/// slots instead of exchanging a separate body-only witness.
+/// The scoped solver keeps signature components connected during inference, then publishes this
+/// owned signature with every remaining variable finalized.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureTy {
     pub id: ClosureTyId,
@@ -55,7 +51,11 @@ pub struct ClosureTy {
     pub ret: Box<Ty>,
 }
 
-/// Owned semantic types shared by indexing and body analysis.
+/// Owned types for saved facts, independent query results, and shared declaration templates.
+///
+/// Inference variables live only in `solver::Ty`. A body exports its learned assignments into
+/// these types at completion; an unanswered variable becomes `Unknown`. Declaration parameters
+/// and projections can remain, because their identities do not depend on an inference table.
 ///
 /// Every identity-carrying variant is self-contained: syntax text is not an equality key, generic
 /// parameters carry their owner, and inherent `Self` is the same `Adt` as its concrete spelling.
@@ -96,13 +96,6 @@ pub enum Ty {
     // of identity even when it consists entirely of unknown or inferred positions.
     FnDef(FnDefTy),
     Unknown,
-    /// Transient inference variable. It must be finalized before persistence.
-    InferVar {
-        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarKind>")]
-        kind: InferVarKind,
-        #[wincode(with = "rg_wincode_utils::WincodeUnsupported<InferVarId>")]
-        id: InferVarId,
-    },
 }
 
 impl Ty {
@@ -178,10 +171,6 @@ impl Ty {
         Self::Adt(ty)
     }
 
-    pub(crate) fn var_for_kind(kind: InferVarKind, id: InferVarId) -> Self {
-        Self::InferVar { kind, id }
-    }
-
     /// Projects the identity result of a path lookup into a semantic type.
     ///
     /// Transparent aliases require recursive lowering and traits are not types, so those cases are
@@ -208,31 +197,23 @@ impl Ty {
         }
     }
 
+    /// Visit this type and each inner type behind a written `&T` or `&mut T`.
+    /// Patterns and type-definition queries only need these wrappers; member lookup also needs
+    /// trait `Deref` and uses the inference table's receiver walk instead.
+    pub fn reference_chain(&self) -> impl Iterator<Item = &Self> {
+        const MAX_REFERENCE_PEELING_DEPTH: usize = 8;
+        std::iter::successors(Some(self), |ty| {
+            ty.reference_inner().map(|(inner, _)| inner)
+        })
+        .take(MAX_REFERENCE_PEELING_DEPTH + 1)
+    }
+
     pub fn reference_inner(&self) -> Option<(&Self, Mutability)> {
         match self {
             Self::Reference {
                 mutability, inner, ..
             } => Some((inner, *mutability)),
             _ => None,
-        }
-    }
-
-    pub fn has_var(&self) -> bool {
-        match self {
-            Self::InferVar { .. } => true,
-            Self::Tuple(fields) => fields.iter().any(Self::has_var),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.has_var(),
-            Self::FnPointer { params, ret } => params.iter().any(Self::has_var) || ret.has_var(),
-            Self::Adt(ty) => ty.args.iter().any(GenericArg::has_var),
-            Self::Alias(alias) => alias.has_var(),
-            Self::Closure(closure) => {
-                closure.params.iter().any(Self::has_var) || closure.ret.has_var()
-            }
-            Self::FnDef(function) => function.args.iter().any(GenericArg::has_var),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 
@@ -253,11 +234,7 @@ impl Ty {
             }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_unknown),
             Self::Unknown => true,
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::InferVar { .. } => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => false,
         }
     }
 
@@ -281,12 +258,7 @@ impl Ty {
                 closure.params.iter().any(Self::has_projection) || closure.ret.has_projection()
             }
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_projection),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => false,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 
@@ -305,33 +277,7 @@ impl Ty {
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_closure),
             Self::Alias(alias) => alias.args().iter().any(GenericArg::has_closure),
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_closure),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => false,
-        }
-    }
-
-    pub(crate) fn is_projectable(&self) -> bool {
-        match self {
-            Self::Unknown | Self::InferVar { .. } => false,
-            Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
-            Self::Array { inner, .. }
-            | Self::Slice(inner)
-            | Self::Reference { inner, .. }
-            | Self::RawPointer { inner, .. } => inner.is_projectable(),
-            Self::FnPointer { params, ret } => {
-                params.iter().all(Self::is_projectable) && ret.is_projectable()
-            }
-            Self::Adt(ty) => ty.args.iter().all(GenericArg::is_projectable),
-            Self::Alias(alias) => alias.is_projectable(),
-            Self::Closure(closure) => {
-                closure.params.iter().all(Self::is_projectable) && closure.ret.is_projectable()
-            }
-            Self::FnDef(function) => function.args.iter().all(GenericArg::is_projectable),
-            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) => true,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
         }
     }
 }
@@ -352,12 +298,7 @@ impl Shrink for Ty {
             Self::Alias(alias) => Shrink::shrink_to_fit(alias),
             Self::Closure(closure) => Shrink::shrink_to_fit(closure),
             Self::FnDef(function) => Shrink::shrink_to_fit(function),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Param(_)
-            | Self::Unknown
-            | Self::InferVar { .. } => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => {}
         }
     }
 }
@@ -400,28 +341,8 @@ impl AliasTy {
         }
     }
 
-    pub(crate) fn same_definition(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Projection(lhs), Self::Projection(rhs)) => {
-                lhs.associated_ty == rhs.associated_ty
-            }
-            (Self::Opaque(lhs), Self::Opaque(rhs)) => lhs.opaque == rhs.opaque,
-            (Self::Projection(_), Self::Opaque(_)) | (Self::Opaque(_), Self::Projection(_)) => {
-                false
-            }
-        }
-    }
-
-    fn has_var(&self) -> bool {
-        self.args().iter().any(GenericArg::has_var)
-    }
-
     fn has_unknown(&self) -> bool {
         self.args().iter().any(GenericArg::has_unknown)
-    }
-
-    fn is_projectable(&self) -> bool {
-        self.args().iter().all(GenericArg::is_projectable)
     }
 }
 
@@ -434,14 +355,6 @@ impl AliasTy {
 pub struct ProjectionTy {
     pub associated_ty: TypeAliasRef,
     pub args: GenericArgs,
-}
-
-impl ProjectionTy {
-    /// Compare projections after bijectively renaming transient inference-variable IDs.
-    pub(crate) fn equivalent_modulo_inference_ids(&self, other: &Self) -> bool {
-        self.associated_ty == other.associated_ty
-            && self.args.equivalent_modulo_inference_ids(&other.args)
-    }
 }
 
 /// One opaque `impl Trait` occurrence instantiated with its owner's generic arguments.

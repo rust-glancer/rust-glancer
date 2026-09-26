@@ -2,12 +2,11 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ScopeId};
-use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
+use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_ty::{
-    GenericArgs, TraitRefLowering, Ty,
-    inference::InferenceTable,
+    TraitRefLowering, Ty,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
 };
 
@@ -34,31 +33,6 @@ where
         lowering.lower(ty, TypeLoweringEnv::new(self.body_owner(), self.anchor()))
     }
 
-    pub(crate) fn resolve_with_inference(
-        &self,
-        ty: &TypeRef,
-        table: &mut InferenceTable,
-    ) -> Result<Ty, PackageStoreError> {
-        let item_paths = self.context.item_paths();
-        let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
-        lowering
-            .session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?
-            .lower_type_ref_with_inference(ty, table)
-    }
-
-    pub(crate) fn resolve_generic_args_for(
-        &self,
-        generics: &rg_semantic_ir::Generics<'_>,
-        args: &[ItemGenericArg],
-        inference: Option<&mut InferenceTable>,
-    ) -> Result<GenericArgs, PackageStoreError> {
-        let item_paths = self.context.item_paths();
-        let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
-        let mut session =
-            lowering.session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?;
-        session.lower_generic_args_for(generics, args, inference)
-    }
-
     pub(crate) fn resolve_trait_ref(
         &self,
         bound: &TypeRef,
@@ -66,9 +40,13 @@ where
     ) -> Result<Option<TraitRefLowering>, PackageStoreError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
-        let mut session =
-            lowering.session(TypeLoweringEnv::new(self.body_owner(), self.anchor()))?;
-        session.lower_trait_ref(bound, self_ty)
+        lowering.with_storage(|cx| {
+            let self_ty = cx.lower_ty(&self_ty, cx.params(self.body_owner().into()));
+            Ok(lowering
+                .session(cx, TypeLoweringEnv::new(self.body_owner(), self.anchor()))?
+                .lower_trait_ref(bound, self_ty)?
+                .map(|bound| bound.raise(cx)))
+        })
     }
 
     fn body_owner(&self) -> GenericDefRef {

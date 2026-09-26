@@ -11,7 +11,9 @@ pub struct Vec<T, A = Global> {
 
 impl<T> Vec<T> {
     pub fn new() -> Self {}
+}
 
+impl<T, A: Allocator + core::marker::Destruct> Vec<T, A> {
     pub fn push(&mut self, _value: T) {}
 }
 

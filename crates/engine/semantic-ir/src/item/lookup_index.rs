@@ -83,6 +83,7 @@ pub struct ItemLookupIndex {
     pub(crate) inherent_functions_by_type_and_name:
         HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
     pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
+    pub(crate) structural_inherent_functions_by_name: HashMap<Name, UniqueVec<FunctionRef>>,
     // Implementation navigation and qualified paths still ask which impls mention one nominal
     // type. Trait-item lookup uses the trait-keyed map below instead.
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
@@ -140,6 +141,11 @@ impl ItemLookupIndex {
                 .map(UniqueVec::len)
                 .sum::<usize>()
             + self.structural_inherent_impls.len()
+            + self
+                .structural_inherent_functions_by_name
+                .values()
+                .map(UniqueVec::len)
+                .sum::<usize>()
             + self
                 .trait_impls_by_type
                 .values()
@@ -219,6 +225,7 @@ impl ItemLookupIndex {
                                 .push(trait_ref);
                         }
                     }
+
                     // Associated type completion uses the trait-wide surface above. Named type
                     // projection follows written trait bounds, so it needs no reverse name index.
                     AssocItemId::TypeAlias(_) => {}
@@ -232,34 +239,40 @@ impl ItemLookupIndex {
         // the header pass, so receiver lookup does not need to reopen every canonical header.
         for (impl_ref, impl_data) in store.impls_with_refs() {
             if impl_data.trait_ref.is_none() {
-                if impl_data.resolved_self_ty.is_empty() {
-                    // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not have
-                    // a nominal receiver key. Keep them in a small side list so structural method
-                    // lookup does not scan every visible impl.
-                    self.structural_inherent_impls.push(impl_ref);
-                }
+                let functions_by_name =
+                    if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
+                        self.inherent_impls_by_type
+                            .entry(*self_ty)
+                            .or_default()
+                            .push(impl_ref);
+                        self.inherent_functions_by_type_and_name
+                            .entry(*self_ty)
+                            .or_default()
+                    } else if impl_data.resolved_self_ty.is_empty() {
+                        // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not have
+                        // a nominal receiver key. Keep them in a small side list so structural method
+                        // lookup does not scan every visible impl.
+                        self.structural_inherent_impls.push(impl_ref);
+                        &mut self.structural_inherent_functions_by_name
+                    } else {
+                        continue;
+                    };
 
-                if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
-                    self.inherent_impls_by_type
-                        .entry(*self_ty)
-                        .or_default()
-                        .push(impl_ref);
-                    for item in &impl_data.items {
-                        if let AssocItemId::Function(id) = item {
-                            let function_ref = FunctionRef {
-                                origin: impl_ref.origin,
-                                id: *id,
-                            };
-                            let Some(function_data) = store.function_data(*id) else {
-                                continue;
-                            };
-                            self.inherent_functions_by_type_and_name
-                                .entry(*self_ty)
-                                .or_default()
-                                .entry(function_data.name.clone())
-                                .or_default()
-                                .push(function_ref);
-                        }
+                // Both receiver families can answer named lookup before callers open headers.
+                // The broad impl indexes remain useful when listing all associated items.
+                for item in &impl_data.items {
+                    if let AssocItemId::Function(id) = item {
+                        let function_ref = FunctionRef {
+                            origin: impl_ref.origin,
+                            id: *id,
+                        };
+                        let Some(function_data) = store.function_data(*id) else {
+                            continue;
+                        };
+                        functions_by_name
+                            .entry(function_data.name.clone())
+                            .or_default()
+                            .push(function_ref);
                     }
                 }
             } else {
@@ -336,7 +349,7 @@ impl ItemLookupIndex {
     }
 }
 
-/// All impls of one trait plus the receiver lanes used by native candidate discovery.
+/// All impls of one trait plus the receiver lanes used by impl discovery.
 ///
 /// For `impl Marker for u32`, `impl<T> Marker for [T]`, and `impl<T> Marker for T`, `all` contains
 /// all three declarations, `direct_by_self_head` has primitive and slice entries, and `fallbacks`
@@ -344,7 +357,7 @@ impl ItemLookupIndex {
 /// while still considering the blanket one.
 ///
 /// Nominal direct impls already live in `trait_impls_by_type`, so this value duplicates only
-/// structural and fallback impl identities. The complete list remains necessary for Chalk roots,
+/// structural and fallback impl identities. The complete list remains necessary for trait solver enumeration,
 /// implementation navigation, and unresolved receiver fallbacks.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub(crate) struct IndexedTraitImpls {

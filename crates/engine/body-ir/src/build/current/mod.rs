@@ -20,7 +20,6 @@ use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
 use rg_text::NameInterner;
-use rg_ty::trait_selection::TraitSelectionSession;
 
 use self::body::CurrentBodyBuilder;
 pub use self::types::{
@@ -111,10 +110,8 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         associations: &DeclarationAssociationIndex,
         source_changed: bool,
         selection: CurrentSourceSelection,
-        trait_selection: TraitSelectionSession,
         mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
-        let trait_selection = trait_selection.with_cancellation(self.cancellation.clone());
         let mut checkpoint = |phase| {
             checkpoint(phase).context("observe current preparation")?;
             rg_std::check_cancel!(self.cancellation, "current preparation phase");
@@ -147,7 +144,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             associations,
             self.lookup_cache.clone(),
             selection,
-            trait_selection,
+            self.cancellation.clone(),
         )
         .build(
             || Self::allocate_body(ids, saved_bodies, crate_ref),
@@ -176,6 +173,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         candidates.push(impl_);
                         continue;
                     }
+
                     // At `impl Service for Worker { $0`, the parser can end the impl at `{`.
                     // Whitespace after an unclosed member list still belongs to that impl. Read
                     // the captured syntax here; the completion marker must not enter semantics.

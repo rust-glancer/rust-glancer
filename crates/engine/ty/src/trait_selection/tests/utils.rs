@@ -1,8 +1,4 @@
-use std::{
-    collections::HashMap,
-    convert::Infallible,
-    fmt::{Debug, Write as _},
-};
+use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
 
 use expect_test::Expect;
 use rg_def_map::{
@@ -12,9 +8,9 @@ use rg_def_map::{
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
-    GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
-    ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId, TraitApplicability, TraitDefRef,
-    TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    GenericDefRef, GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId,
+    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -30,15 +26,11 @@ use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
 use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
-    inference::{InferVarKind, InferenceTable},
+    AdtTy, AliasTy, GenericArg, OpaqueTy, PrimitiveTy, Ty, TyContext,
     lookup::ItemPathQuery,
-    lowering::SemanticSignatureQuery,
-    trait_selection::{
-        TraitGoal, TraitSelectionQuery, TraitSelectionSession,
-        candidate::TraitCandidate,
-        chalk::{ChalkInferenceCache, ChalkOutcome, ChalkTraitSolver},
-    },
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    signature::SemanticSignatureQuery,
+    solver::{self, InferenceTable, Outcome},
 };
 
 pub(super) struct TraitSelectionFixture {
@@ -99,95 +91,6 @@ impl TraitSelectionFixture {
                 id: *id,
             })
         })
-    }
-
-    /// Add one dependency impl whose macro-generated `Self` type could not be resolved.
-    ///
-    /// The declaration still names a trait from the main fixture. This mirrors dependencies such
-    /// as `metal`, whose impl is legal for a local generated type but enters the conservative
-    /// receiver fallback lane because that type's spelling is unavailable to semantic lowering.
-    pub(super) fn with_unknown_self_impl_dependency(
-        mut self,
-        dependency: CrateRef,
-        trait_name: &str,
-    ) -> Self {
-        let dependency_origin = DefMapRef::Crate(dependency);
-        let trait_ref = self
-            .trait_ref_by_name(trait_name)
-            .unwrap_or_else(|| panic!("fixture should contain trait `{trait_name}`"));
-        let trait_data = self
-            .store
-            .trait_data(trait_ref.id)
-            .expect("fixture trait should have declaration data");
-
-        // Let the dependency's written trait path resolve to the declaration in the main fixture.
-        // The impl's self type deliberately stays source-level unknown.
-        let mut def_map_builder = DefMapBuilder::new(dependency);
-        let root_module = def_map_builder.alloc_module(ModuleData {
-            name: None,
-            name_span: None,
-            docs: None,
-            user_facing_attrs: Default::default(),
-            visibility: Visibility::Public,
-            parent: None,
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: vec![LocalImplId(0)],
-            imports: Vec::new(),
-            unresolved_imports: Vec::new(),
-            scope: Default::default(),
-            origin: ModuleOrigin::Root { file_id: FileId(1) },
-        });
-        let dependency_module = ModuleRef {
-            origin: dependency_origin,
-            module: root_module,
-        };
-        let mut scope = ModuleScopeBuilder::default();
-        scope.insert_binding(
-            &trait_data.name,
-            Namespace::Types,
-            ScopeBinding::new(
-                DefId::Local(trait_data.local_def),
-                Visibility::Public,
-                ScopeBindingProvenance::Direct,
-            ),
-        );
-        def_map_builder
-            .module_mut(root_module)
-            .expect("dependency root module should exist")
-            .scope = scope.freeze();
-
-        let mut store_builder = ItemStoreBuilder::new(dependency_origin, 0);
-        store_builder.impls.alloc(ImplData {
-            local_impl: LocalImplRef {
-                origin: dependency_origin,
-                local_impl: LocalImplId(0),
-            },
-            source: ItemSource {
-                file_id: FileId(1),
-                kind: ItemSourceKind::Generated(GeneratedItemRef {
-                    source: GeneratedSourceId(1),
-                    item: ItemTreeId(0),
-                }),
-            },
-            owner: dependency_module,
-            generics: GenericParams::default(),
-            trait_ref: Some(path_ty(trait_name, Vec::new())),
-            self_ty: TypeRef::unknown_from_text("macro generated self type"),
-            resolved_self_ty: ExpectedUnique::new(),
-            resolved_trait_ref: resolved_one(trait_ref),
-            items: Vec::new(),
-            is_unsafe: false,
-        });
-        let store = store_builder.build();
-        let lookup_index = ItemLookupIndex::build_from_store(&store, &HashMap::new());
-        self.dependencies.push(TraitSelectionDependency {
-            target: dependency,
-            def_map: def_map_builder.build(),
-            store,
-            lookup_index,
-        });
-        self
     }
 }
 
@@ -419,19 +322,6 @@ pub(super) fn generics(types: Vec<TypeParamData>) -> GenericParams {
     }
 }
 
-pub(super) fn nominal_infer_ty(def: TypeDefRef, args: Vec<GenericArg>) -> Ty {
-    Ty::Adt(AdtTy {
-        def,
-        args: args.into(),
-    })
-}
-
-fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
-    let mut resolved = ExpectedUnique::new();
-    resolved.push(value);
-    resolved
-}
-
 pub(super) fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
     trait_data_with_items(index, name, generics, Vec::new())
 }
@@ -492,20 +382,6 @@ pub(super) fn type_alias_data(
     }
 }
 
-pub(super) fn query(
-    fixture: &TraitSelectionFixture,
-) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    query_with_session(fixture, TraitSelectionSession::new(fixture.target))
-}
-
-pub(super) fn query_with_session(
-    fixture: &TraitSelectionFixture,
-    session: TraitSelectionSession,
-) -> TraitSelectionQuery<'_, &TraitSelectionFixture, &TraitSelectionFixture> {
-    let lookup_query = fixture.lookup_query();
-    TraitSelectionQuery::new(TyContext::new(fixture, fixture, lookup_query, session))
-}
-
 #[derive(Clone, Copy)]
 enum FixtureSection {
     Traits,
@@ -528,6 +404,12 @@ struct TraitSelectionFixtureParser<'a> {
 }
 
 impl<'a> TraitSelectionFixtureParser<'a> {
+    fn resolved_one<T: PartialEq>(value: T) -> ExpectedUnique<T> {
+        let mut resolved = ExpectedUnique::new();
+        resolved.push(value);
+        resolved
+    }
+
     fn new(source: &'a str) -> Self {
         Self {
             source,
@@ -660,7 +542,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             trait_ref: Some(trait_ty),
             self_ty,
             resolved_self_ty,
-            resolved_trait_ref: resolved_one(trait_ref),
+            resolved_trait_ref: Self::resolved_one(trait_ref),
             items: Vec::new(),
             is_unsafe: false,
         };
@@ -677,7 +559,15 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         let (name, ret_ty) = rest
             .split_once(" -> ")
             .expect("function fixture should be written as `name -> ReturnType`");
-        let (owner, name) = if let Some((trait_name, function_name)) = name.split_once("::") {
+        let (owner, name) = if let Some((implementation, function_name)) = name.split_once("::")
+            && let Some(index) = implementation.strip_prefix("impl#")
+        {
+            let impl_id = ImplId(parse_usize(index, "function impl owner"));
+            self.impls[impl_id.0]
+                .items
+                .push(AssocItemId::Function(FunctionId(id)));
+            (ItemOwner::Impl(impl_id), function_name)
+        } else if let Some((trait_name, function_name)) = name.split_once("::") {
             let trait_ref = *self
                 .trait_refs_by_name
                 .get(trait_name)
@@ -689,6 +579,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         } else {
             (ItemOwner::Module(module()), name)
         };
+        let (name, generics) = Self::parse_named_generics(name);
         self.functions.push(FunctionData {
             local_def: None,
             source: dummy_source(),
@@ -699,7 +590,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             visibility: VisibilityLevel::Public,
             docs: None,
             signature: FunctionSignature::from_item(&FunctionItem {
-                generics: GenericParams::default(),
+                generics,
                 params: Vec::new(),
                 ret_ty: Some(parse_type_ref(ret_ty)),
                 qualifiers: FunctionQualifiers::default(),
@@ -762,7 +653,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 .type_refs_by_name
                 .get(note)
                 .unwrap_or_else(|| panic!("unknown resolved self type `{note}`"));
-            return resolved_one(def);
+            return Self::resolved_one(def);
         }
 
         let name = Self::type_ref_path_name(self_ty)
@@ -771,7 +662,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .type_refs_by_name
             .get(&name)
             .unwrap_or_else(|| panic!("unknown impl self type `{name}`"));
-        resolved_one(def)
+        Self::resolved_one(def)
     }
 
     fn local_impl(index: usize) -> LocalImplRef {
@@ -1253,13 +1144,6 @@ impl TraitSelectionCase {
         }
     }
 
-    pub(super) fn candidate_probe(title: &'static str, goal: impl Into<String>) -> Self {
-        Self {
-            title,
-            kind: TraitSelectionCaseKind::CandidateProbe(goal.into()),
-        }
-    }
-
     pub(super) fn normalize_assoc(title: &'static str, goal: impl Into<String>) -> Self {
         Self {
             title,
@@ -1267,29 +1151,14 @@ impl TraitSelectionCase {
         }
     }
 
-    pub(super) fn chalk_normalize_assoc(title: &'static str, goal: impl Into<String>) -> Self {
-        Self {
-            title,
-            kind: TraitSelectionCaseKind::ChalkNormalizeAssoc(goal.into()),
-        }
-    }
-
     fn query_name(&self) -> &'static str {
-        match &self.kind {
-            TraitSelectionCaseKind::Probe(_) | TraitSelectionCaseKind::NormalizeAssoc(_) => {
-                "selection"
-            }
-            TraitSelectionCaseKind::CandidateProbe(_) => "candidate",
-            TraitSelectionCaseKind::ChalkNormalizeAssoc(_) => "chalk",
-        }
+        "selection"
     }
 }
 
 enum TraitSelectionCaseKind {
     Probe(String),
-    CandidateProbe(String),
     NormalizeAssoc(String),
-    ChalkNormalizeAssoc(String),
 }
 
 pub(super) fn check_trait_selection_queries(
@@ -1305,6 +1174,9 @@ pub(super) fn check_trait_selection_queries(
     expect.assert_eq(&actual);
 }
 
+/// Render shared solver operations while their tables are still alive, so cases can inspect
+/// named variables such as `?Item` after selection or normalization. The owned query adapter
+/// finalizes those variables before returning and would hide the relationships being tested.
 struct TraitSelectionSnapshot {
     fixture: TraitSelectionFixture,
     cases: Vec<TraitSelectionCase>,
@@ -1329,224 +1201,144 @@ impl TraitSelectionSnapshot {
 
         match &case.kind {
             TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(goal, dump),
-            TraitSelectionCaseKind::CandidateProbe(goal) => {
-                self.render_candidate_probe_case(goal, dump);
-            }
-            TraitSelectionCaseKind::NormalizeAssoc(goal) => {
-                self.render_normalize_case(goal, false, dump);
-            }
-            TraitSelectionCaseKind::ChalkNormalizeAssoc(goal) => {
-                self.render_normalize_case(goal, true, dump);
-            }
+            TraitSelectionCaseKind::NormalizeAssoc(goal) => self.render_normalize_case(goal, dump),
         }
     }
 
     fn render_probe_case(&self, goal: &str, dump: &mut String) {
-        let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_goal(goal);
-        writeln!(
-            dump,
-            "  goal: {}",
-            self.render_goal(&parsed.goal, &parsed.var_names)
-        )
-        .expect("string writes should not fail");
-
-        let result = query(&self.fixture)
-            .probe(&parsed.goal, &parsed.table)
-            .expect("trait selection fixture query should not fail");
-
-        match result {
-            ExpectedUnique::Empty => {
-                writeln!(dump, "  result: empty").expect("string writes should not fail");
-            }
-            ExpectedUnique::Ambiguous => {
-                writeln!(dump, "  result: ambiguous").expect("string writes should not fail");
-            }
-            ExpectedUnique::One(selection) => {
-                writeln!(dump, "  result: one").expect("string writes should not fail");
+        let context = TyContext::new(
+            &self.fixture,
+            &self.fixture,
+            self.fixture.lookup_query(),
+            self.fixture.target,
+            rg_std::CancellationToken::new(),
+        );
+        solver::SemanticDeclarations::new(&context, context.item_paths())
+            .with_solver(|solver| {
+                let table = InferenceTable::new(solver, Default::default());
+                let cx = table.interner();
+                let parsed = TraitSelectionQueryParser::new(&self.fixture, &table).parse_goal(goal);
                 writeln!(
                     dump,
-                    "    impl: impl#{}",
-                    selection.trait_impl.impl_ref.id.0
+                    "  goal: {}",
+                    self.render_live_goal(cx, &parsed.goal, &parsed.vars)
                 )
-                .expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    applicability: {}",
-                    Self::render_applicability(selection.applicability)
+                .expect("string write");
+                let application = parsed.goal.application;
+                let bindings = parsed
+                    .goal
+                    .associated_types
+                    .iter()
+                    .map(|bound| bound.clause(cx))
+                    .collect::<Vec<_>>();
+                let candidates = crate::lookup::TraitImplFilter::from(
+                    &cx.raise_ty(application.self_ty().expect("Self"))
+                        .unwrap_or(Ty::Unknown),
                 )
-                .expect("string writes should not fail");
-                self.render_named_vars(&parsed.vars, &selection.table, dump);
-            }
-        }
-    }
-
-    fn render_candidate_probe_case(&self, goal: &str, dump: &mut String) {
-        let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_goal(goal);
-        writeln!(
-            dump,
-            "  goal: {}",
-            self.render_goal(&parsed.goal, &parsed.var_names)
-        )
-        .expect("string writes should not fail");
-
-        let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
-        let session = TraitSelectionSession::new(self.fixture.target);
-        let lookup_query = self.fixture.lookup_query();
-        let candidates = TraitCandidate::probe_all(
-            &item_paths,
-            &lookup_query,
-            &session,
-            &parsed.goal,
-            &parsed.table,
-        )
-        .expect("trait candidate fixture query should not fail");
-        match candidates.as_slice() {
-            [] => {
-                writeln!(dump, "  result: empty").expect("string writes should not fail");
-            }
-            [_first, _second, ..] => {
-                writeln!(dump, "  result: ambiguous").expect("string writes should not fail");
-            }
-            [candidate] => {
-                writeln!(dump, "  result: one").expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    impl: impl#{}",
-                    candidate.trait_impl.impl_ref.id.0
-                )
-                .expect("string writes should not fail");
-                writeln!(
-                    dump,
-                    "    applicability: {}",
-                    Self::render_applicability(candidate.applicability)
-                )
-                .expect("string writes should not fail");
-                self.render_named_vars(&parsed.vars, &candidate.table, dump);
-            }
-        }
-    }
-
-    fn render_normalize_case(&self, goal: &str, chalk_direct: bool, dump: &mut String) {
-        let parsed = TraitSelectionQueryParser::new(&self.fixture).parse_assoc_goal(goal);
-        writeln!(
-            dump,
-            "  goal: <{} as {}>::{}",
-            self.render_infer_ty_with_vars(parsed.goal.self_ty(), &parsed.var_names),
-            self.render_trait_path_with_vars(&parsed.goal, &parsed.var_names),
-            parsed.assoc_name
-        )
-        .expect("string writes should not fail");
-
-        let projection = if chalk_direct {
-            let item_paths = ItemPathQuery::new(&self.fixture, &self.fixture);
-            let crate_items =
-                CrateItemQuery::new(&self.fixture, &self.fixture, self.fixture.target);
-            let session = TraitSelectionSession::new(self.fixture.target);
-            let solver = ChalkTraitSolver::new();
-            let inference_cache = ChalkInferenceCache::new();
-            let lookup_query = self.fixture.lookup_query();
-            let associated_ty = self
-                .fixture
-                .associated_ty_by_name(parsed.goal.trait_ref(), &parsed.assoc_name)
-                .expect("projection fixture should declare the requested associated type");
-            let outcome = solver
-                .normalize_assoc_type(
-                    &item_paths,
-                    &crate_items,
-                    &lookup_query,
-                    &session,
-                    &inference_cache,
-                    &parsed.goal,
-                    associated_ty,
-                    None,
-                    &parsed.table,
-                )
-                .expect("Chalk fixture projection should not fail");
-            match outcome {
-                ChalkOutcome::Proven(projection) | ChalkOutcome::Ambiguous(Some(projection)) => {
-                    Some(projection)
+                .candidates(&context, application.def)
+                .expect("fixture lookup");
+                let selected = table.select_trait_impl(
+                    application,
+                    &bindings,
+                    candidates.into_iter().map(|candidate| candidate.impl_ref),
+                );
+                match selected {
+                    ExpectedUnique::Empty => {
+                        writeln!(dump, "  result: empty").expect("string write")
+                    }
+                    ExpectedUnique::Ambiguous => {
+                        writeln!(dump, "  result: ambiguous").expect("string write")
+                    }
+                    ExpectedUnique::One(selected) => {
+                        writeln!(
+                            dump,
+                            "  result: one\n    impl: impl#{}\n    applicability: {}",
+                            selected.impl_ref.id.0,
+                            if selected.outcome == Outcome::Proven {
+                                "yes"
+                            } else {
+                                "maybe"
+                            }
+                        )
+                        .expect("string write");
+                        self.render_named_vars(&parsed.vars, &selected.table, dump);
+                    }
                 }
-                ChalkOutcome::Ambiguous(None)
-                | ChalkOutcome::NoSolution
-                | ChalkOutcome::Unsupported
-                | ChalkOutcome::Exhausted => None,
-            }
-        } else {
-            query(&self.fixture)
-                .normalize_assoc_type(&parsed.goal, &parsed.assoc_name, &parsed.table)
-                .expect("trait selection fixture projection should not fail")
-        };
-
-        let Some(projection) = projection else {
-            writeln!(dump, "  result: none").expect("string writes should not fail");
-            return;
-        };
-
-        writeln!(dump, "  result: projected").expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    infer: {}",
-            self.render_infer_ty_with_vars(&projection.ty, &parsed.var_names)
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    final: {}",
-            self.render_ty(&projection.table.finalize(&projection.ty))
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "    applicability: {}",
-            Self::render_applicability(projection.applicability)
-        )
-        .expect("string writes should not fail");
-        self.render_named_vars(&parsed.vars, &projection.table, dump);
+            })
+            .expect("fixture declarations load");
     }
 
-    fn render_named_vars(&self, vars: &[NamedInferVar], table: &InferenceTable, dump: &mut String) {
-        if vars.is_empty() {
-            return;
-        }
-
-        writeln!(dump, "    vars").expect("string writes should not fail");
-        for var in vars {
-            let result = self.render_ty(&table.finalize(&var.ty));
-            writeln!(dump, "      ?{} = {result}", var.name)
-                .expect("string writes should not fail");
-        }
-    }
-
-    fn render_goal(&self, goal: &TraitGoal, var_names: &HashMap<String, String>) -> String {
-        format!(
-            "{}: {}",
-            self.render_infer_ty_with_vars(goal.self_ty(), var_names),
-            self.render_trait_path_with_vars(goal, var_names)
-        )
-    }
-
-    fn render_trait_path_with_vars(
-        &self,
-        goal: &TraitGoal,
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        let name = self.render_trait_ref(goal.trait_ref());
-        let mut args = goal
-            .iter_positional_args()
-            .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
-            .collect::<Vec<_>>();
-        for binding in &goal.associated_types {
-            args.push(format!(
-                "{} = {}",
-                self.render_associated_ty_name(binding.associated_ty),
-                self.render_infer_ty_with_vars(&binding.ty, var_names)
-            ));
-        }
-        if args.is_empty() {
-            return name;
-        }
-
-        format!("{}<{}>", name, args.join(", "))
+    fn render_normalize_case(&self, goal: &str, dump: &mut String) {
+        let context = TyContext::new(
+            &self.fixture,
+            &self.fixture,
+            self.fixture.lookup_query(),
+            self.fixture.target,
+            rg_std::CancellationToken::new(),
+        );
+        solver::SemanticDeclarations::new(&context, context.item_paths())
+            .with_solver(|solver| {
+                let table = InferenceTable::new(solver, Default::default());
+                let cx = table.interner();
+                let parsed =
+                    TraitSelectionQueryParser::new(&self.fixture, &table).parse_assoc_goal(goal);
+                writeln!(
+                    dump,
+                    "  goal: <{} as {}>::{}",
+                    self.render_live_ty(
+                        cx,
+                        parsed.goal.application.self_ty().expect("Self"),
+                        &parsed.vars
+                    ),
+                    self.render_live_trait(cx, &parsed.goal, &parsed.vars),
+                    parsed.assoc_name
+                )
+                .expect("string write");
+                let application = parsed.goal.application;
+                let bindings = parsed
+                    .goal
+                    .associated_types
+                    .iter()
+                    .map(|bound| bound.clause(cx))
+                    .collect::<Vec<_>>();
+                let owner = GenericDefRef::Trait(application.def);
+                let anchor = context
+                    .item_paths()
+                    .items()
+                    .type_path_context_for_generic_def(owner)
+                    .expect("fixture lookup")
+                    .expect("fixture trait context");
+                let mut session =
+                    TypeLoweringQuery::new(context.item_paths(), context.item_paths())
+                        .session(
+                            cx,
+                            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(anchor)),
+                        )
+                        .expect("fixture lowering session");
+                let projection = session
+                    .associated_type_projection(&application, &Name::new(&parsed.assoc_name))
+                    .expect("fixture lookup")
+                    .expect("fixture alias");
+                let Some((ty, outcome)) =
+                    table.normalize_assoc_type(application, &bindings, projection)
+                else {
+                    writeln!(dump, "  result: none").expect("string write");
+                    return;
+                };
+                writeln!(
+                    dump,
+                    "  result: projected\n    final: {}\n    applicability: {}",
+                    self.render_ty(&table.finalize(ty)),
+                    if outcome == Outcome::Proven {
+                        "yes"
+                    } else {
+                        "maybe"
+                    }
+                )
+                .expect("string write");
+                self.render_named_vars(&parsed.vars, &table, dump);
+            })
+            .expect("fixture declarations load");
     }
 
     fn render_associated_ty_name(&self, associated_ty: TypeAliasRef) -> String {
@@ -1557,18 +1349,33 @@ impl TraitSelectionSnapshot {
             .unwrap_or_else(|| format!("type#{}", associated_ty.id.0))
     }
 
-    fn render_infer_opaque_with_vars(
-        &self,
-        opaque: &OpaqueTy,
-        var_names: &HashMap<String, String>,
-    ) -> String {
+    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
         let mut bounds = SemanticSignatureQuery::new(&self.fixture, &self.fixture)
             .opaque_bounds(opaque)
-            .expect("fixture opaque predicates should lower while rendering a type")
+            .expect("fixture opaque bounds")
             .unwrap_or_default()
             .into_iter()
             .map(|bound| {
-                self.render_trait_path_with_vars(&TraitGoal::from_lowering(bound), var_names)
+                let mut args = bound
+                    .application
+                    .args
+                    .iter()
+                    .skip(1)
+                    .map(|arg| self.render_generic_arg(arg))
+                    .collect::<Vec<_>>();
+                args.extend(bound.associated_types.iter().map(|binding| {
+                    format!(
+                        "{} = {}",
+                        self.render_associated_ty_name(binding.projection.associated_ty),
+                        self.render_ty(&binding.ty)
+                    )
+                }));
+                let name = self.render_trait_ref(bound.application.def);
+                if args.is_empty() {
+                    name
+                } else {
+                    format!("{name}<{}>", args.join(", "))
+                }
             })
             .collect::<Vec<_>>();
         bounds.sort();
@@ -1577,10 +1384,6 @@ impl TraitSelectionSnapshot {
         } else {
             format!("impl {}", bounds.join(" + "))
         }
-    }
-
-    fn render_opaque(&self, opaque: &OpaqueTy) -> String {
-        self.render_infer_opaque_with_vars(opaque, &HashMap::new())
     }
 
     fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
@@ -1620,109 +1423,161 @@ impl TraitSelectionSnapshot {
         }
     }
 
-    fn render_infer_ty_with_vars(&self, ty: &Ty, var_names: &HashMap<String, String>) -> String {
-        match ty {
-            Ty::InferVar { kind, id } => match kind {
-                InferVarKind::Type => Self::render_named_var("?", id, var_names),
-                InferVarKind::Integer => Self::render_named_var("?int", id, var_names),
-                InferVarKind::Float => Self::render_named_var("?float", id, var_names),
-            },
-            Ty::Unit => "()".to_string(),
-            Ty::Never => "!".to_string(),
-            Ty::Primitive(primitive) => Self::render_primitive(*primitive),
-            Ty::Tuple(fields) => self.render_infer_tuple_with_vars(fields, var_names),
-            Ty::Array { inner, len } => {
-                format!(
-                    "[{}; {}]",
-                    self.render_infer_ty_with_vars(inner, var_names),
-                    len
-                )
+    fn render_named_vars<'s>(
+        &self,
+        vars: &[NamedInferVar<'s>],
+        table: &InferenceTable<'s>,
+        dump: &mut String,
+    ) {
+        if vars.is_empty() {
+            return;
+        }
+        writeln!(dump, "    vars").expect("string write");
+        for var in vars {
+            let result = self.render_ty(&table.finalize(var.ty));
+            writeln!(dump, "      ?{} = {result}", var.name).expect("string write");
+        }
+    }
+
+    fn render_live_goal<'s>(
+        &self,
+        cx: solver::SolverInterner<'s>,
+        goal: &solver::TraitRefLowering<'s>,
+        vars: &[NamedInferVar<'s>],
+    ) -> String {
+        format!(
+            "{}: {}",
+            self.render_live_ty(cx, goal.application.self_ty().expect("Self"), vars),
+            self.render_live_trait(cx, goal, vars)
+        )
+    }
+
+    fn render_live_trait<'s>(
+        &self,
+        cx: solver::SolverInterner<'s>,
+        goal: &solver::TraitRefLowering<'s>,
+        vars: &[NamedInferVar<'s>],
+    ) -> String {
+        let name = self.render_trait_ref(goal.application.def);
+        let mut args = goal
+            .application
+            .args
+            .iter()
+            .skip(1)
+            .map(|arg| self.render_live_arg(cx, arg, vars))
+            .collect::<Vec<_>>();
+        args.extend(goal.associated_types.iter().map(|binding| {
+            format!(
+                "{} = {}",
+                self.render_associated_ty_name(binding.projection.associated_ty),
+                self.render_live_ty(cx, binding.ty, vars)
+            )
+        }));
+        if args.is_empty() {
+            name
+        } else {
+            format!("{name}<{}>", args.join(", "))
+        }
+    }
+
+    fn render_live_args<'s>(
+        &self,
+        cx: solver::SolverInterner<'s>,
+        args: solver::GenericArgs<'s>,
+        vars: &[NamedInferVar<'s>],
+    ) -> String {
+        if args.is_empty() {
+            return String::new();
+        }
+        format!(
+            "<{}>",
+            args.iter()
+                .map(|arg| self.render_live_arg(cx, arg, vars))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+
+    fn render_live_arg<'s>(
+        &self,
+        cx: solver::SolverInterner<'s>,
+        arg: solver::GenericArg<'s>,
+        vars: &[NamedInferVar<'s>],
+    ) -> String {
+        match arg.as_ty() {
+            Some(ty) => self.render_live_ty(cx, ty, vars),
+            None => self.render_generic_arg(&cx.raise_args(solver::List::new(cx, &[arg]))[0]),
+        }
+    }
+
+    fn render_live_ty<'s>(
+        &self,
+        cx: solver::SolverInterner<'s>,
+        ty: solver::Ty<'s>,
+        vars: &[NamedInferVar<'s>],
+    ) -> String {
+        if let Some(var) = vars.iter().find(|var| var.ty == ty) {
+            return format!("?{}", var.name);
+        }
+        use solver::TyShape as S;
+        match ty.shape() {
+            S::Tuple(fields) => {
+                let mut fields = fields
+                    .iter()
+                    .map(|field| self.render_live_ty(cx, field, vars))
+                    .collect::<Vec<_>>();
+                if fields.len() == 1 {
+                    fields[0].push(',');
+                }
+                format!("({})", fields.join(", "))
             }
-            Ty::Slice(inner) => {
-                format!("[{}]", self.render_infer_ty_with_vars(inner, var_names))
-            }
-            Ty::Reference {
+            S::Array { inner, len } => format!(
+                "[{}; {}]",
+                self.render_live_ty(cx, inner, vars),
+                cx.raise_const(len)
+            ),
+            S::Slice(inner) => format!("[{}]", self.render_live_ty(cx, inner, vars)),
+            S::Reference {
                 mutability, inner, ..
-            } => {
-                format!(
-                    "{}{}",
-                    mutability.render_prefix(),
-                    self.render_infer_ty_with_vars(inner, var_names)
-                )
-            }
-            Ty::RawPointer { mutability, inner } => {
-                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+            } => format!(
+                "{}{}",
+                mutability.render_prefix(),
+                self.render_live_ty(cx, inner, vars)
+            ),
+            S::RawPointer { mutability, inner } => {
+                let qualifier = if mutability == rg_ir_model::Mutability::Mutable {
                     "mut"
                 } else {
                     "const"
                 };
-                format!(
-                    "*{qualifier} {}",
-                    self.render_infer_ty_with_vars(inner, var_names)
-                )
+                format!("*{qualifier} {}", self.render_live_ty(cx, inner, vars))
             }
-            Ty::FnPointer { params, ret } => {
-                let params = params
+            S::FnPointer { params, ret } => format!(
+                "fn({}) -> {}",
+                params
                     .iter()
-                    .map(|param| self.render_infer_ty_with_vars(param, var_names))
+                    .map(|ty| self.render_live_ty(cx, ty, vars))
                     .collect::<Vec<_>>()
-                    .join(", ");
-                format!(
-                    "fn({params}) -> {}",
-                    self.render_infer_ty_with_vars(ret, var_names)
-                )
-            }
-            Ty::Closure(closure) => format!("{{closure#{}}}", closure.id),
-            Ty::FnDef(function) => format!(
+                    .join(", "),
+                self.render_live_ty(cx, ret, vars)
+            ),
+            S::FnDef(function) => format!(
                 "{{fn-item:{:?}{}}}",
                 function.def,
-                self.render_infer_generic_args_with_vars(&function.args, var_names)
+                self.render_live_args(cx, function.args, vars)
             ),
-            Ty::Adt(ty) => self.render_infer_nominal_ty_with_vars(ty, var_names),
-            Ty::Param(param) => self.render_type_param(*param),
-            Ty::Alias(AliasTy::Projection(alias)) => format!(
+            S::Adt(adt) => format!(
+                "{}{}",
+                self.render_type_def_ref(adt.def),
+                self.render_live_args(cx, adt.args, vars)
+            ),
+            S::Alias(solver::AliasTy::Projection(alias)) => format!(
                 "projection {}{}",
                 self.render_associated_ty_name(alias.associated_ty),
-                self.render_infer_generic_args_with_vars(&alias.args, var_names)
+                self.render_live_args(cx, alias.args, vars)
             ),
-            Ty::Alias(AliasTy::Opaque(opaque)) => {
-                self.render_infer_opaque_with_vars(opaque, var_names)
-            }
-            Ty::Unknown => "_".to_string(),
+            _ => self.render_ty(&cx.raise_ty(ty).unwrap_or(Ty::Unknown)),
         }
-    }
-
-    fn render_named_var(
-        fallback_prefix: &str,
-        id: &impl Debug,
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        let id = Self::render_debug_tuple_id(id);
-        if let Some(name) = var_names.get(&id) {
-            return format!("?{name}");
-        }
-
-        format!("{fallback_prefix}{id}")
-    }
-
-    fn render_infer_tuple_with_vars(
-        &self,
-        fields: &[Ty],
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        if fields.is_empty() {
-            return "()".to_string();
-        }
-
-        let mut rendered = fields
-            .iter()
-            .map(|field| self.render_infer_ty_with_vars(field, var_names))
-            .collect::<Vec<_>>();
-        if rendered.len() == 1 {
-            rendered[0].push(',');
-        }
-
-        format!("({})", rendered.join(", "))
     }
 
     fn render_ty(&self, ty: &Ty) -> String {
@@ -1770,11 +1625,6 @@ impl TraitSelectionSnapshot {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::InferVar { kind, id } => match kind {
-                InferVarKind::Type => Self::render_named_var("?", id, &HashMap::new()),
-                InferVarKind::Integer => Self::render_named_var("?int", id, &HashMap::new()),
-                InferVarKind::Float => Self::render_named_var("?float", id, &HashMap::new()),
-            },
             Ty::Unknown => "_".to_string(),
         }
     }
@@ -1793,27 +1643,6 @@ impl TraitSelectionSnapshot {
         }
 
         format!("({})", rendered.join(", "))
-    }
-
-    fn render_infer_nominal_ty_with_vars(
-        &self,
-        ty: &AdtTy,
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        let name = self.render_type_def_ref(ty.def);
-        if ty.args.is_empty() {
-            return name;
-        }
-
-        format!(
-            "{}<{}>",
-            name,
-            ty.args
-                .iter()
-                .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
     }
 
     fn render_nominal_ty(&self, ty: &AdtTy) -> String {
@@ -1851,23 +1680,6 @@ impl TraitSelectionSnapshot {
             .unwrap_or_else(|| "<missing-param>".to_string())
     }
 
-    fn render_infer_generic_args_with_vars(
-        &self,
-        args: &[GenericArg],
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        if args.is_empty() {
-            return String::new();
-        }
-        format!(
-            "<{}>",
-            args.iter()
-                .map(|arg| self.render_infer_generic_arg_with_vars(arg, var_names))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }
-
     fn render_generic_args(&self, args: &[GenericArg]) -> String {
         if args.is_empty() {
             return String::new();
@@ -1881,31 +1693,11 @@ impl TraitSelectionSnapshot {
         )
     }
 
-    fn render_infer_generic_arg_with_vars(
-        &self,
-        arg: &GenericArg,
-        var_names: &HashMap<String, String>,
-    ) -> String {
-        match arg {
-            GenericArg::Type(ty) => self.render_infer_ty_with_vars(ty, var_names),
-            GenericArg::Lifetime(lifetime) => lifetime.to_string(),
-            GenericArg::Const(value) => value.to_string(),
-        }
-    }
-
     fn render_generic_arg(&self, arg: &GenericArg) -> String {
         match arg {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.to_string(),
             GenericArg::Const(value) => value.to_string(),
-        }
-    }
-
-    fn render_applicability(applicability: TraitApplicability) -> &'static str {
-        match applicability {
-            TraitApplicability::Yes => "yes",
-            TraitApplicability::Maybe => "maybe",
-            TraitApplicability::No => "no",
         }
     }
 
@@ -1939,69 +1731,50 @@ impl TraitSelectionSnapshot {
             .to_string(),
         }
     }
-
-    fn render_debug_tuple_id(id: &impl Debug) -> String {
-        let text = format!("{id:?}");
-        text.strip_prefix("InferVarId(")
-            .and_then(|text| text.strip_suffix(')'))
-            .unwrap_or(&text)
-            .to_string()
-    }
 }
 
-pub(super) struct ParsedTraitQuery {
-    pub(super) goal: TraitGoal,
-    pub(super) table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_names: HashMap<String, String>,
+pub(super) struct ParsedTraitQuery<'s> {
+    pub(super) goal: solver::TraitRefLowering<'s>,
+    vars: Vec<NamedInferVar<'s>>,
 }
 
-pub(super) struct ParsedAssocQuery {
-    pub(super) goal: TraitGoal,
+pub(super) struct ParsedAssocQuery<'s> {
+    pub(super) goal: solver::TraitRefLowering<'s>,
     pub(super) assoc_name: String,
-    pub(super) table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_names: HashMap<String, String>,
+    vars: Vec<NamedInferVar<'s>>,
 }
 
-struct NamedInferVar {
+struct NamedInferVar<'s> {
     name: String,
-    ty: Ty,
+    ty: solver::Ty<'s>,
 }
 
-pub(super) struct TraitSelectionQueryParser<'a> {
+pub(super) struct TraitSelectionQueryParser<'a, 's> {
     fixture: &'a TraitSelectionFixture,
-    table: InferenceTable,
-    vars: Vec<NamedInferVar>,
-    var_by_name: HashMap<String, Ty>,
+    vars: Vec<NamedInferVar<'s>>,
+    table: &'a InferenceTable<'s>,
 }
 
-impl<'a> TraitSelectionQueryParser<'a> {
-    pub(super) fn new(fixture: &'a TraitSelectionFixture) -> Self {
+impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
+    pub(super) fn new(fixture: &'a TraitSelectionFixture, table: &'a InferenceTable<'s>) -> Self {
         Self {
             fixture,
-            table: InferenceTable::new(),
             vars: Vec::new(),
-            var_by_name: HashMap::new(),
+            table,
         }
     }
 
-    pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery {
+    pub(super) fn parse_goal(mut self, text: &str) -> ParsedTraitQuery<'s> {
         let (self_ty, trait_path) = split_top_level_keyword(text, ": ")
             .expect("trait query should be written as `Self: Trait<Args>`");
-        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
-        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
-        goal.associated_types = associated_types;
-        let var_names = self.var_name_map();
+        let goal = self.parse_trait_path(trait_path, self_ty);
         ParsedTraitQuery {
             goal,
-            table: self.table,
             vars: self.vars,
-            var_names,
         }
     }
 
-    pub(super) fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery {
+    pub(super) fn parse_assoc_goal(mut self, text: &str) -> ParsedAssocQuery<'s> {
         let text = text.trim();
         assert!(
             text.starts_with('<'),
@@ -2014,55 +1787,66 @@ impl<'a> TraitSelectionQueryParser<'a> {
         let inner = &text[1..angle_end];
         let (self_ty, trait_path) = split_top_level_keyword(inner, " as ")
             .expect("associated projection query should contain ` as `");
-        let (trait_ref, args, associated_types) = self.parse_trait_path(trait_path);
-        let mut goal = TraitGoal::new(self.parse_infer_ty(self_ty), trait_ref, args);
-        goal.associated_types = associated_types;
-        let var_names = self.var_name_map();
+        let goal = self.parse_trait_path(trait_path, self_ty);
         ParsedAssocQuery {
             goal,
             assoc_name: assoc_name.to_string(),
-            table: self.table,
             vars: self.vars,
-            var_names,
         }
     }
 
-    fn parse_trait_path(
-        &mut self,
-        text: &str,
-    ) -> (TraitDefRef, Vec<GenericArg>, Vec<AssocTypeBinding>) {
+    fn parse_trait_path(&mut self, text: &str, self_ty: &str) -> solver::TraitRefLowering<'s> {
         let (trait_name, args) = parse_path_head_and_args(text.trim());
         let trait_ref = self
             .fixture
             .trait_ref_by_name(trait_name)
             .unwrap_or_else(|| panic!("query refers to unknown trait `{trait_name}`"));
         let mut positional = Vec::new();
-        let mut associated_types = Vec::new();
+        let mut bindings = Vec::new();
         for arg in args {
             if let Some((name, ty)) = split_top_level_keyword(arg, " = ") {
-                let associated_ty = self
-                    .fixture
-                    .associated_ty_by_name(trait_ref, name)
-                    .unwrap_or_else(|| {
-                        panic!(
-                            "query refers to unknown associated type `{name}` on trait `{trait_name}`"
-                        )
-                    });
-                associated_types.push(AssocTypeBinding {
-                    associated_ty,
-                    ty: self.parse_infer_ty(ty),
-                });
+                bindings.push((Name::new(name), self.parse_infer_ty(ty)));
             } else {
-                positional.push(GenericArg::Type(Box::new(self.parse_infer_ty(arg))));
+                positional.push(self.parse_infer_ty(arg).into());
             }
         }
-        (trait_ref, positional, associated_types)
+        positional.insert(0, self.parse_infer_ty(self_ty).into());
+        let cx = self.table.interner();
+        let application = solver::TraitApplication {
+            def: trait_ref,
+            args: solver::List::new(cx, &positional),
+        };
+        let paths = ItemPathQuery::new(self.fixture, self.fixture);
+        let owner = GenericDefRef::Trait(trait_ref);
+        let anchor = paths
+            .items()
+            .type_path_context_for_generic_def(owner)
+            .expect("fixture lookup")
+            .expect("fixture trait context");
+        let mut session = TypeLoweringQuery::new(&paths, &paths)
+            .session(
+                cx,
+                TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(anchor)),
+            )
+            .expect("fixture lowering session");
+        let associated_types = bindings.into_iter().map(|(name, ty)| {
+            let projection = session
+                .associated_type_projection(&application, &name)
+                .expect("fixture projection lookup")
+                .unwrap_or_else(|| panic!("query refers to unknown associated type `{name}` on trait `{trait_name}`"));
+            solver::AssocTypeBinding { projection, ty }
+        }).collect();
+        solver::TraitRefLowering {
+            application,
+            associated_types,
+        }
     }
 
-    fn parse_infer_ty(&mut self, text: &str) -> Ty {
+    fn parse_infer_ty(&mut self, text: &str) -> solver::Ty<'s> {
+        let cx = self.table.interner();
         let text = text.trim();
         if text == "_" {
-            return Ty::Unknown;
+            return cx.unknown();
         }
         if let Some(name) = text.strip_prefix('?') {
             return self.type_var(name);
@@ -2072,19 +1856,19 @@ impl<'a> TraitSelectionQueryParser<'a> {
                 origin: origin(),
                 id: FunctionId(parse_usize(index, "opaque function id")),
             };
-            return SemanticSignatureQuery::new(self.fixture, self.fixture)
-                .function(function)
+            let paths = ItemPathQuery::new(self.fixture, self.fixture);
+            return TypeLoweringQuery::new(&paths, &paths)
+                .function(cx, function)
                 .expect("fixture opaque signature should lower")
                 .unwrap_or_else(|| panic!("query refers to unknown opaque function `{index}`"))
                 .ret;
         }
         if let Some(ty) = parse_bracket_ty(text) {
             return match ty {
-                ParsedBracketTy::Slice(inner) => Ty::Slice(Box::new(self.parse_infer_ty(inner))),
-                ParsedBracketTy::Array { inner, len } => Ty::Array {
-                    inner: Box::new(self.parse_infer_ty(inner)),
-                    len: len.into(),
-                },
+                ParsedBracketTy::Slice(inner) => cx.slice(self.parse_infer_ty(inner)),
+                ParsedBracketTy::Array { inner, len } => {
+                    cx.array(self.parse_infer_ty(inner), cx.lower_const(len.into(), &[]))
+                }
             };
         }
 
@@ -2095,35 +1879,40 @@ impl<'a> TraitSelectionQueryParser<'a> {
             .unwrap_or_else(|| panic!("query refers to unknown type `{name}`"));
         let args = args
             .into_iter()
-            .map(|arg| GenericArg::Type(Box::new(self.parse_infer_ty(arg))))
-            .collect();
-        nominal_infer_ty(def, args)
+            .map(|arg| self.parse_infer_ty(arg).into())
+            .collect::<Vec<_>>();
+        cx.adt(solver::AdtTy {
+            def,
+            args: solver::List::new(cx, &args),
+        })
     }
 
-    fn type_var(&mut self, name: &str) -> Ty {
-        if let Some(ty) = self.var_by_name.get(name) {
-            return ty.clone();
+    fn type_var(&mut self, name: &str) -> solver::Ty<'s> {
+        if let Some(var) = self.vars.iter().find(|var| var.name == name) {
+            return var.ty;
         }
-
         let ty = self.table.new_type_var();
-        self.var_by_name.insert(name.to_string(), ty.clone());
         self.vars.push(NamedInferVar {
             name: name.to_string(),
-            ty: ty.clone(),
+            ty,
         });
         ty
     }
+}
 
-    fn var_name_map(&self) -> HashMap<String, String> {
-        self.vars
-            .iter()
-            .filter_map(|var| match &var.ty {
-                Ty::InferVar { id, .. } => Some((
-                    TraitSelectionSnapshot::render_debug_tuple_id(id),
-                    var.name.clone(),
-                )),
-                _ => None,
-            })
-            .collect()
-    }
+pub(super) fn prove_fixture_goal(fixture: &TraitSelectionFixture, goal: &str) -> Outcome {
+    let context = TyContext::new(
+        fixture,
+        fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let table = InferenceTable::new(solver, Default::default());
+            let parsed = TraitSelectionQueryParser::new(fixture, &table).parse_goal(goal);
+            table.prove([parsed.goal.application.clause(table.interner())])
+        })
+        .expect("fixture declarations load")
 }

@@ -15,8 +15,6 @@
 //! few body item stores that can affect this body and builds a compact overlay index. Later
 //! queries read the same index through [`BodyLocalItemCache`](crate::resolution::cache::BodyLocalItemCache).
 
-use std::collections::HashSet;
-
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
 use rg_package_store::PackageStoreError;
@@ -84,11 +82,12 @@ where
     }
 
     /// Return body-local impls for already-selected traits in one store pass.
-    pub(super) fn trait_impls_for_traits(
-        &self,
-        trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<impl Iterator<Item = TraitImplRef> + '_, PackageStoreError> {
-        let trait_refs = trait_refs.into_iter().collect::<HashSet<_>>();
+    pub(crate) fn trait_impls_for_traits<'a>(
+        &'a self,
+        trait_refs: &'a [TraitDefRef],
+    ) -> Result<impl Iterator<Item = TraitImplRef> + 'a, PackageStoreError> {
+        // Solver queries usually ask for one trait and encounter no local impls. Borrow the
+        // requested names; an empty index performs no membership work or allocation.
         Ok(self
             .index()?
             .trait_impls

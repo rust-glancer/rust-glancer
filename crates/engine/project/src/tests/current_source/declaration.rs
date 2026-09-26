@@ -275,7 +275,6 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
                     .expect("associations exist"),
                 true,
                 CurrentSourceSelection::AtOffset(offset),
-                db.trait_selection(crate_ref),
                 |checkpoint| {
                     anyhow::ensure!(
                         !cancel || checkpoint != CurrentSourceBuildCheckpoint::DeclarationsPrepared,

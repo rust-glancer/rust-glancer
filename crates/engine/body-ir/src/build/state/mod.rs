@@ -17,7 +17,6 @@ use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_text::NameInterner;
-use rg_ty::trait_selection::{TraitSelectionDeclarationCache, TraitSelectionSession};
 
 use super::lower::{BodyTaskSource, LoweredCrateBodies};
 use crate::{BodyFacts, BodyLocalItems, CrateBodies};
@@ -138,7 +137,6 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-        declarations: &TraitSelectionDeclarationCache,
         item_lookup_cache: &ItemLookupQueryCache,
     ) -> anyhow::Result<CrateBodies> {
         let span = tracing::debug_span!(
@@ -191,16 +189,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
                 "slow Body IR crate resolution phase"
             );
         }
-        let trait_selection =
-            TraitSelectionSession::new_with_declaration_cache(self.crate_ref, declarations.clone())
-                .with_cancellation(self.cancellation.clone());
-        let semantic_timings = self.resolve_semantics(
-            def_map,
-            semantic_ir,
-            &item_lookup_query,
-            &trait_selection,
-            |_| Ok(()),
-        )?;
+        let semantic_timings =
+            self.resolve_semantics(def_map, semantic_ir, &item_lookup_query, |_| Ok(()))?;
         let body_local_impl_headers_ms = semantic_timings.impl_headers.as_millis();
         let pattern_bindings_ms = semantic_timings.pattern_bindings.as_millis();
         let bodies_ms = semantic_timings.bodies.as_millis();

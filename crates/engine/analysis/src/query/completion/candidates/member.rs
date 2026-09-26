@@ -33,7 +33,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         let members = MemberView::new(self.db);
         let mut fields = Vec::new();
         for field in members
-            .field_candidates_for_ty(receiver.body_ir().crate_ref, &receiver_ty)
+            .field_candidates_for_ty(receiver.body_ir(), &receiver_ty)
             .context("collect dot field candidates")?
         {
             rg_std::check_cancel!(self.db, "completion candidate");

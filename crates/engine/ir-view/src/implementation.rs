@@ -11,7 +11,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::ItemStoreQuery;
 use rg_std::UniqueVec;
-use rg_ty::{Ty, TyContext, autoderef::ReferencePeelingCandidates, lookup::ImplementationQuery};
+use rg_ty::{Ty, TyContext, lookup::ImplementationQuery};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView, ty::IndexedType};
 
@@ -187,9 +187,9 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         body_ref: BodyRef,
         ty: &Ty,
     ) -> anyhow::Result<()> {
-        for candidate in ReferencePeelingCandidates::new(ty) {
+        for candidate in ty.reference_chain() {
             rg_std::check_cancel!(self.db, "implementation lookup");
-            for nominal in candidate.ty().as_adts() {
+            for nominal in candidate.as_adts() {
                 self.push_body_local_impls_for_type_def(implementations, body_ref, nominal.def)
                     .context("collect body-local nominal implementations")?;
             }
@@ -229,7 +229,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             self.db,
             self.db,
             item_lookup_query,
-            self.db.trait_selection(use_site),
+            use_site,
+            self.db.cancellation().clone(),
         )))
     }
 

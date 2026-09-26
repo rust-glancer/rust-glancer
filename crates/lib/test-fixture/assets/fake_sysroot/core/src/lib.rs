@@ -24,13 +24,13 @@ impl str {
 }
 
 #[lang = "fn_once"]
-pub trait FnOnce<Args> {
+pub trait FnOnce<Args: marker::Tuple> {
     #[lang = "fn_once_output"]
     type Output;
 }
 
 #[lang = "fn_mut"]
-pub trait FnMut<Args>: FnOnce<Args> {}
+pub trait FnMut<Args: marker::Tuple>: FnOnce<Args> {}
 
 #[lang = "fn"]
-pub trait Fn<Args>: FnMut<Args> {}
+pub trait Fn<Args: marker::Tuple>: FnMut<Args> {}

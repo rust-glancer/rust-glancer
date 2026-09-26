@@ -11,6 +11,46 @@ use super::utils::{
 };
 
 #[test]
+fn infers_inherent_impl_bounds_from_constructor_arguments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_inherent_constructor_bounds"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub trait Marker {}
+impl Marker for User {}
+pub struct Wrapper<T> { pub value: T }
+impl<T: Marker> Wrapper<T> {
+    pub fn new(value: T) -> Self { Self { value } }
+}
+
+pub fn use_it() {
+    let wrapper = Wrapper::new(User)$type_wrapper$;
+    let value = wrapper.value$type_value$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("constructor result", "type_wrapper")
+                .in_lib("analysis_inherent_constructor_bounds"),
+            AnalysisQuery::ty("inferred member", "type_value")
+                .in_lib("analysis_inherent_constructor_bounds"),
+        ],
+        expect![[r#"
+            constructor result
+            - nominal struct analysis_inherent_constructor_bounds[lib]::crate::Wrapper<nominal struct analysis_inherent_constructor_bounds[lib]::crate::User>
+
+            inferred member
+            - nominal struct analysis_inherent_constructor_bounds[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn refines_unsuffixed_numeric_literals_from_let_annotations() {
     check_analysis_queries(
         r#"
@@ -50,7 +90,7 @@ pub fn use_it() {
             - f32
 
             mismatched numeric literal
-            - <unknown>
+            - i32
         "#]],
     );
 }
@@ -116,13 +156,13 @@ pub fn use_it() {
             - (u64, (f32, bool))
 
             conflicting tuple integer field
-            - <unknown>
+            - i32
 
             conflicting tuple float field
             - f32
 
             conflicting tuple expression
-            - (<unknown>, f32)
+            - (i32, f32)
         "#]],
     );
 }
@@ -1239,7 +1279,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
             - nominal enum analysis_callable_closure_bound_inference[lib]::crate::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
 
             conflicting generic closure return result
-            - <unknown>
+            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
         "#]],
     );
 }
@@ -1667,6 +1707,7 @@ pub struct Vec<T> {
 
 pub fn id<T>(value: T) -> T {}
 pub fn wrap<T>(value: T) -> Vec<T> {}
+pub fn array<T, const N: usize>(value: [T; N]) -> [T; N] { value }
 pub fn make_user() -> User {}
 pub fn missing<T>() -> T {}
 pub fn takes_vec(value: Vec<User>) {}
@@ -1676,6 +1717,9 @@ pub fn use_it(user: User) {
     let from_call = id(make_user())$type_from_call$;
     let wrapped = wrap(user)$type_wrapped$;
     let explicit = wrap::<_>(user)$type_explicit$;
+    let byte = id(1u8)$type_byte$;
+    let flag = id(true)$type_flag$;
+    let array = array([true; 3])$type_array$;
 
     let from_return: User = id(missing()$type_inner_from_return$)$type_outer_from_return$;
     takes_vec(wrap::<_>(missing()$type_inner_from_arg$)$type_outer_arg$);
@@ -1686,6 +1730,9 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("generic arg from call result", "type_from_call"),
             AnalysisQuery::ty("wrapped generic arg", "type_wrapped"),
             AnalysisQuery::ty("explicit wildcard generic arg", "type_explicit"),
+            AnalysisQuery::ty("independent byte call", "type_byte"),
+            AnalysisQuery::ty("independent bool call", "type_flag"),
+            AnalysisQuery::ty("inferred array element and length", "type_array"),
             AnalysisQuery::ty(
                 "inner generic call solved from return",
                 "type_inner_from_return",
@@ -1710,6 +1757,15 @@ pub fn use_it(user: User) {
             explicit wildcard generic arg
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
 
+            independent byte call
+            - u8
+
+            independent bool call
+            - bool
+
+            inferred array element and length
+            - [bool; 3]
+
             inner generic call solved from return
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
 
@@ -1721,6 +1777,41 @@ pub fn use_it(user: User) {
 
             outer generic call solved from arg
             - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+        "#]],
+    );
+}
+
+#[test]
+fn alias_placeholders_share_later_evidence_between_components() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "source_type_identity"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+type Pair<T> = (T, T);
+fn missing<T>() -> T { loop {} }
+fn require(_: u16) {}
+
+pub fn use_it() {
+    let $pair$pair: Pair<_> = missing();
+    let $right$right = pair.1;
+    require(pair.0);
+}
+"#,
+        &[
+            AnalysisQuery::ty("alias shares its inferred argument", "pair"),
+            AnalysisQuery::ty("second component learns from the first", "right"),
+        ],
+        expect![[r#"
+            alias shares its inferred argument
+            - (u16, u16)
+
+            second component learns from the first
+            - u16
         "#]],
     );
 }
@@ -2037,13 +2128,13 @@ pub fn selected_inherent_receiver() {
             - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
 
             conflicting receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
 
             conflicting receiver argument
             - bool
 
             conflicting receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
 
             selected receiver initializer
             - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
@@ -2432,6 +2523,11 @@ pub enum Action {
     Pair((u64, f32)),
 }
 
+pub enum Borrowed<'a, T, const N: usize> {
+    Array(&'a [T; N]),
+}
+use Borrowed::Array;
+
 pub fn use_it(user: User, error: Error) {
     let slot = Slot::<u64>::Put(1$type_payload$)$type_slot$;
 
@@ -2440,6 +2536,7 @@ pub fn use_it(user: User, error: Error) {
 
     let _action = Action::Set(1$type_action_int$, 1.0$type_action_float$);
     let _pair = Action::Pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+    let borrowed = Array(&[user; 3])$type_imported_variant$;
 }
 "#,
         &[
@@ -2452,6 +2549,10 @@ pub fn use_it(user: User, error: Error) {
             AnalysisQuery::ty("enum variant tuple integer field", "type_pair_int"),
             AnalysisQuery::ty("enum variant tuple float field", "type_pair_float"),
             AnalysisQuery::ty("enum variant tuple payload", "type_pair"),
+            AnalysisQuery::ty(
+                "imported variant retains all generic kinds",
+                "type_imported_variant",
+            ),
         ],
         expect![[r#"
             enum variant explicit generic payload
@@ -2480,6 +2581,9 @@ pub fn use_it(user: User, error: Error) {
 
             enum variant tuple payload
             - (u64, f32)
+
+            imported variant retains all generic kinds
+            - nominal enum analysis_enum_payload_inference[lib]::crate::Borrowed<'_, nominal struct analysis_enum_payload_inference[lib]::crate::User, 3>
         "#]],
     );
 }
@@ -2581,7 +2685,7 @@ pub fn use_it(user: User, error: Error) {
             - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::Error>
 
             record conflicting generic field result
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<<unknown>>
+            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<nominal struct analysis_bidirectional_record_inference[lib]::crate::User>
         "#]],
     );
 }
@@ -2803,6 +2907,273 @@ pub fn use_it(flag: bool) {
 
             projected call result
             - i32
+        "#]],
+    );
+}
+
+#[test]
+fn generic_body_projection_feeds_a_dependent_call_obligation() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_shared_solver_environment"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Produce {
+    type Item;
+    fn get(self) -> Self::Item;
+}
+
+pub trait Marker {}
+pub fn consume<T: Marker>(value: T) -> T { value }
+pub fn relay<I: Produce<Item = T>, T: Marker>(input: I) -> T {
+    let item = input.get()$projected_item$;
+    consume(item)$consumed_item$
+}
+"#,
+        &[
+            AnalysisQuery::ty("projection under generic assumptions", "projected_item"),
+            AnalysisQuery::ty(
+                "dependent obligation under generic assumptions",
+                "consumed_item",
+            ),
+        ],
+        expect![[r#"
+            projection under generic assumptions
+            - param T
+
+            dependent obligation under generic assumptions
+            - param T
+        "#]],
+    );
+}
+
+#[test]
+fn infers_iterator_items_with_unrelated_reference_impls() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_iterator_impl_shapes"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Reflect {}
+impl<'a> IntoIterator for &'a dyn Reflect {
+    type Item = u32;
+    type IntoIter = Items<u32>;
+    fn into_iter(self) -> Self::IntoIter { loop {} }
+}
+pub struct Items<T> { value: T }
+impl<T> Iterator for Items<T> { type Item = T; }
+pub struct User { pub id: u64 }
+pub fn run() {
+    let items = Items { value: User { id: 7 } };
+    for item in items.into_iter() {
+        item.id$iterator_field$;
+    }
+}
+"#,
+        &[AnalysisQuery::ty("iterator item field", "iterator_field")
+            .in_lib("analysis_iterator_impl_shapes")],
+        expect![[r#"
+            iterator item field
+            - u64
+        "#]],
+    );
+}
+
+#[test]
+fn infers_trait_arguments_from_a_unique_methods_signature() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_call_arguments"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Marker {}
+pub struct User { pub id: u64 }
+impl Marker for User {}
+pub struct Handler;
+pub trait Convert<T> { fn convert(&self, value: T) -> T; }
+impl<T: Marker> Convert<T> for Handler {
+    fn convert(&self, value: T) -> T { value }
+}
+
+pub fn run() {
+    let user = Handler.convert(User { id: 7 });
+    user.id$converted_field$;
+}
+"#,
+        &[AnalysisQuery::ty("converted field", "converted_field")],
+        expect![[r#"
+            converted field
+            - u64
+        "#]],
+    );
+}
+
+#[test]
+fn infers_projection_after_numeric_receiver_becomes_known() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_deferred_numeric_projection"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub struct User { pub id: u64 }
+pub trait Produce { type Item; }
+pub trait Reflect {}
+impl Produce for &dyn Reflect { type Item = bool; }
+impl Produce for u32 { type Item = User; }
+pub fn produce<T: Produce>(value: T) -> T::Item { loop {} }
+pub fn run() {
+    let number = 0;
+    let item = produce(number)$produced$;
+    let other = User { id: 1 };
+    other.id$independent_field$;
+    let _: u32 = number;
+    item.id$projected_field$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("projection after numeric evidence", "produced"),
+            AnalysisQuery::ty("independent field", "independent_field"),
+            AnalysisQuery::ty("projected field", "projected_field"),
+        ],
+        expect![[r#"
+            projection after numeric evidence
+            - nominal struct analysis_deferred_numeric_projection[lib]::crate::User
+
+            independent field
+            - u64
+
+            projected field
+            - u64
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_impl_bound_aliases_before_checking_applicability() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_impl_bound_aliases"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Marker {}
+pub struct Good;
+pub struct Other;
+impl Marker for Good {}
+
+pub struct Factory<T> { pub value: T }
+impl<T> Factory<T> where Self::Item: Marker {
+    type Item = T;
+    pub fn get(self) -> Self::Item { self.value }
+}
+
+pub fn saved() {
+    let good = Factory { value: Good }.get()$saved_good$;
+    let other = Factory { value: Other }.get()$saved_other$;
+}
+
+pub fn lexical() {
+    struct Local;
+    impl Local where Local::Item: Marker {
+        type Item = Good;
+        fn get(self) -> Self::Item { Good }
+    }
+    let value = Local.get()$local_good$;
+}
+
+pub struct Guard;
+impl Guard where Other: Marker {
+    pub fn requires_parent_bound(self) -> bool { true }
+}
+pub fn check_parent() {
+    let result = Guard.requires_parent_bound()$parent_bound$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("saved alias with satisfied bound", "saved_good"),
+            AnalysisQuery::ty("saved alias with unsatisfied bound", "saved_other"),
+            AnalysisQuery::ty("body-local alias in its own bound", "local_good"),
+            AnalysisQuery::ty("nongeneric enclosing impl requirement", "parent_bound"),
+        ],
+        expect![[r#"
+            saved alias with satisfied bound
+            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
+
+            saved alias with unsatisfied bound
+            - <unknown>
+
+            body-local alias in its own bound
+            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
+
+            nongeneric enclosing impl requirement
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn infers_inherited_associated_equalities_and_displays_their_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_inherited_equalities"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub struct Vec<T> { pub value: T }
+pub struct Option<T> { pub value: T }
+pub trait Base<T> {
+    type Item;
+    fn item(&self) -> Self::Item;
+}
+pub trait Derived<T>: Base<Vec<T>> {}
+pub trait Further<T>: Derived<Option<T>> {}
+pub trait Other<T> { type Item; }
+
+pub fn direct<V: Derived<u8, Item = u64>>(value: V) {
+    let result = value.item()$direct$;
+}
+pub fn further<V: Further<u8, Item = bool>>(value: V) {
+    let result = value.item()$further$;
+}
+pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
+    let saved = value$bounds$;
+    let result = saved.item()$display_result$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("inherited equality", "direct"),
+            AnalysisQuery::ty("two supertrait substitutions", "further"),
+            AnalysisQuery::ty("bindings stay with their trait", "bounds"),
+            AnalysisQuery::ty("argument impl Trait equality", "display_result"),
+        ],
+        expect![[r#"
+            inherited equality
+            - u64
+
+            two supertrait substitutions
+            - bool
+
+            bindings stay with their trait
+            - impl trait analysis_inherited_equalities[lib]::crate::Derived<u8, Item = u64> + trait analysis_inherited_equalities[lib]::crate::Other<u8, Item = bool>
+
+            argument impl Trait equality
+            - u64
         "#]],
     );
 }

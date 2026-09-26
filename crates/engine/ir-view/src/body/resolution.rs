@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use rg_body_ir::{BodyAssociatedPathPrefix, BodyResolutionContext, BodyView};
 use rg_ir_model::{
-    BodyRef, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId,
+    BodyRef, DefMapRef, EnumVariantRef, FieldRef, ModuleId, ModuleRef, Path, ScopeId,
     identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
@@ -88,7 +88,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             .db
             .item_lookup_query(body_ref.crate_ref)
             .context("assemble item lookup query for body type path")?;
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -97,7 +96,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 body_ref,
                 body.structure(),
                 &item_lookup_query,
-                trait_selection,
+                self.db.cancellation().clone(),
             )
             .type_path_query()
             .resolve_in_scope(scope, path)
@@ -118,7 +117,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -127,7 +125,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 body_ref,
                 body.structure(),
                 &item_lookup_query,
-                trait_selection,
+                self.db.cancellation().clone(),
             )
             .resolve_type_ref(scope, type_ref)
             .context("lower body type reference")?,
@@ -147,7 +145,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -155,7 +152,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             body_ref,
             body.structure(),
             &item_lookup_query,
-            trait_selection,
+            self.db.cancellation().clone(),
         )
         .type_path_query()
         .resolve_enum_variant_in_scope(scope, path)
@@ -175,7 +172,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -183,7 +179,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             body_ref,
             body.structure(),
             &item_lookup_query,
-            trait_selection,
+            self.db.cancellation().clone(),
         )
         .value_paths()
         .resolve_nonlocal_path_declarations(scope, path)
@@ -203,7 +199,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(Ty::Unknown);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         BodyResolutionContext::new(
             self.db,
@@ -211,11 +206,36 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             body_ref,
             body.structure(),
             &item_lookup_query,
-            trait_selection,
+            self.db.cancellation().clone(),
         )
         .value_paths()
         .resolve_nonlocal_path_ty(scope, path)
         .context("resolve nonlocal body value type")
+    }
+
+    /// Return fields using the body's assumptions and declaration overlay during autoderef.
+    pub(crate) fn field_candidate_refs_for_ty(
+        &self,
+        body_ref: BodyRef,
+        ty: &Ty,
+    ) -> anyhow::Result<Vec<FieldRef>> {
+        let Some((body, item_lookup_query)) = self
+            .body_with_lookup(body_ref)
+            .context("load body field context")?
+        else {
+            return Ok(Vec::new());
+        };
+        BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            body.structure(),
+            &item_lookup_query,
+            self.db.cancellation().clone(),
+        )
+        .fields()
+        .field_candidates_for_ty(ty)
+        .context("resolve body field candidates")
     }
 
     /// Return body-aware method refs for a receiver type.
@@ -231,7 +251,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -240,7 +259,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 body_ref,
                 body.structure(),
                 &item_lookup_query,
-                trait_selection,
+                self.db.cancellation().clone(),
             )
             .methods()
             .method_candidates_for_ty(scope, ty)
@@ -265,7 +284,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -274,7 +292,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 body_ref,
                 body.structure(),
                 &item_lookup_query,
-                trait_selection,
+                self.db.cancellation().clone(),
             )
             .associated_item_candidates(scope, prefix)
             .context("resolve body associated item candidates")?,
@@ -298,7 +316,6 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         else {
             return Ok(None);
         };
-        let trait_selection = self.db.trait_selection_for_body(body_ref);
 
         Ok(Some(
             BodyResolutionContext::new(
@@ -307,7 +324,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
                 body_ref,
                 body.structure(),
                 &item_lookup_query,
-                trait_selection,
+                self.db.cancellation().clone(),
             )
             .trait_associated_item_candidates(scope, trait_ref)
             .context("resolve body trait item candidates")?,

@@ -1,4 +1,4 @@
-//! Callable selected through a method receiver or associated-item prefix.
+//! Function candidates selected through an associated-item prefix.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
@@ -8,11 +8,11 @@ use rg_ty::{Substitution, Ty, lookup::ReceiverFunctionCandidate, trait_selection
 
 use crate::resolution::BodyResolutionContext;
 
-/// One callable with all receiver and impl evidence needed to instantiate its signature.
+/// One associated function with the owned receiver and impl bindings found during path lookup.
 ///
-/// Dot methods and static associated functions differ only in whether their declaration has a
-/// `self` parameter. Once that syntax check is made, both must apply receiver bindings, selected
-/// trait arguments, and explicit qualification in the same order.
+/// The bindings combine the receiver's arguments, the selected trait's arguments, and any written
+/// qualification. For `<Widget as Factory<u16>>::make`, the written `u16` takes precedence over
+/// an unknown argument left by impl selection.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct BodyCallableCandidate {
     pub(crate) function: FunctionRef,
@@ -50,13 +50,14 @@ impl BodyCallableCandidate {
         if let Some(selection) = trait_selection.as_ref() {
             // Keep impl-owned bindings as well as trait-owned arguments. Trait declarations mainly
             // consume the latter, while this also stays correct for fail-soft impl-owned items.
-            subst.extend(selection.subst.as_substitution().clone());
+            subst.extend(selection.subst.clone());
             subst.extend(
                 context
                     .generics()
                     .subst_for_trait_application(selection.application())?,
             );
         }
+
         // Written qualification is strongest at this call site. Applying it last makes
         // `<Widget as Factory<u16>>::make` retain `u16` even if selection kept an inference hole.
         if let Some(extra_subst) = extra_subst {

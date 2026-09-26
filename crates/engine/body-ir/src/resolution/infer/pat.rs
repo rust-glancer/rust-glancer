@@ -10,12 +10,15 @@ use rg_ir_model::{FieldKey, Mutability, PatId};
 use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{ExpectedAdtTyExt, Ty};
+use rg_ty::{
+    ExpectedAdtTyExt,
+    solver::{Ty, TyShape},
+};
 
-use super::{InferenceContext, fulfill::DeferredKind};
+use super::{BodyInference, deferred::DeferredKind};
 use crate::body::{BindingKind, BodyPath, PatKind, RecordPatField};
 
-impl<'query, D, I> InferenceContext<'query, D, I>
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -27,10 +30,7 @@ where
             .body
             .owner()
             .function()
-            .map(|function| self.context.signatures().function(function))
-            .transpose()
-            .context("resolve function signature")?
-            .flatten();
+            .and_then(|function| self.cx.function_signature(function));
         // A missing arrow has no body expectation, even though the semantic signature uses unit.
         if let Some(function) = self.body.owner().function()
             && self
@@ -42,26 +42,29 @@ where
         {
             self.return_ty = signature
                 .as_ref()
-                .map(|signature| signature.ret.clone())
-                .unwrap_or(Ty::Unknown);
+                .map(|signature| signature.ret)
+                .unwrap_or(self.cx.unknown());
         }
         for (index, param) in self.body.function_params().iter().enumerate() {
             let parameter_ty = signature
                 .as_ref()
-                .and_then(|signature| signature.params.get(index));
+                .and_then(|signature| signature.params.get(index))
+                .copied();
             // `self` and incomplete ordinary parameters can have bindings without a pattern.
             // Seed them here, using the position already known from this declaration walk.
             for binding in &param.bindings {
                 rg_std::check_cancel!(self.context, "infer parameter binding");
                 let data = self.body.binding_unchecked(*binding);
                 let ty = if param.bindings.len() == 1
-                    && let Some(ty) = parameter_ty.filter(|ty| !matches!(ty, Ty::Unknown))
+                    && let Some(ty) = parameter_ty
+                        .as_ref()
+                        .filter(|ty| !matches!((ty).shape(), TyShape::Unknown))
                 {
-                    ty.clone()
+                    *ty
                 } else if let Some(annotation) = &data.annotation {
                     self.context
-                        .type_refs(data.scope)
-                        .resolve(annotation)
+                        .live()
+                        .type_ref(data.scope, annotation, self.inference.table())
                         .context("resolve parameter binding annotation")?
                 } else if let BindingKind::SelfParam(kind) = data.kind
                     && data.name.as_deref() == Some("self")
@@ -73,26 +76,29 @@ where
                         .self_adt_ty(function)
                         .context("resolve self parameter")?
                         .into_adt_ty();
+                    let ty = self.lower(&ty);
                     match kind {
                         SelfParamKind::Value => ty,
-                        SelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                        SelfParamKind::Explicit => Ty::Unknown,
+                        SelfParamKind::Reference { mutability } => {
+                            self.cx.reference(mutability, ty)
+                        }
+                        SelfParamKind::Explicit => self.cx.unknown(),
                     }
                 } else {
-                    Ty::Unknown
+                    self.cx.unknown()
                 };
-                self.inference.set_binding_ty(*binding, &ty);
+                self.inference.set_binding_ty(*binding, ty);
             }
             let Some(pat) = param.pat else { continue };
             let ty = match parameter_ty {
-                Some(ty) => ty.clone(),
+                Some(ty) => ty,
                 None => match &param.annotation {
                     Some(annotation) => self
                         .context
-                        .type_refs(self.body.param_scope())
-                        .resolve(annotation)
+                        .live()
+                        .type_ref(self.body.param_scope(), annotation, self.inference.table())
                         .context("resolve parameter annotation")?,
-                    None => Ty::Unknown,
+                    None => self.cx.unknown(),
                 },
             };
             self.infer_pattern(pat, &ty)
@@ -103,7 +109,7 @@ where
 
     /// Patterns can own expressions even when no type shape is available, as in `const { KEY }`.
     /// Visit those expressions at the introduction site, independently of deferred projection.
-    pub(super) fn infer_pattern(&mut self, pat: PatId, expected: &Ty) -> anyhow::Result<()> {
+    pub(super) fn infer_pattern(&mut self, pat: PatId, expected: &Ty<'s>) -> anyhow::Result<()> {
         self.infer_pattern_exprs(pat)
             .context("infer pattern expressions")?;
         self.infer_pat(pat, expected, None)
@@ -117,7 +123,7 @@ where
             return Ok(());
         };
         if let PatKind::ConstBlock { expr: Some(expr) } = data.kind {
-            self.infer_expr(expr, &Ty::Unknown)
+            self.infer_expr(expr, &self.cx.unknown())
                 .context("infer const pattern")?;
         }
         for child in data.kind.child_pats() {
@@ -132,14 +138,14 @@ where
     fn infer_pat(
         &mut self,
         pat: PatId,
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         if !self.try_infer_pat(pat, expected_ty, default_ref)? {
             self.defer(
                 DeferredKind::Pattern {
                     pat,
-                    expected: expected_ty.clone(),
+                    expected: *expected_ty,
                     default_ref,
                 },
                 None,
@@ -156,12 +162,12 @@ where
     pub(super) fn try_infer_pat(
         &mut self,
         pat: PatId,
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         mut default_ref: Option<Mutability>,
     ) -> Result<bool, PackageStoreError> {
         crate::profile::metric::PATTERN_VISITS.inc();
         let mut expected_ty = self.inference.root_resolved_ty(expected_ty);
-        if matches!(expected_ty, Ty::Unknown) {
+        if matches!((expected_ty).shape(), TyShape::Unknown) {
             // A raw unknown has no link to future evidence, so retrying it cannot reveal a shape.
             return Ok(true);
         }
@@ -179,9 +185,9 @@ where
             data.kind,
             PatKind::Record { .. } | PatKind::TupleStruct { .. }
         ) {
-            while let Ty::Reference {
+            while let TyShape::Reference {
                 inner, mutability, ..
-            } = expected_ty
+            } = expected_ty.shape()
             {
                 // Peeling `&Some(value)` makes `value` a shared borrow. An inner `&mut`
                 // cannot make that borrow mutable again after a shared reference was crossed.
@@ -192,16 +198,17 @@ where
             }
         }
 
-        if matches!(expected_ty, Ty::InferVar { .. } | Ty::Alias(_))
-            && matches!(
-                data.kind,
-                PatKind::TupleStruct { .. }
-                    | PatKind::Record { .. }
-                    | PatKind::Tuple { .. }
-                    | PatKind::Slice { .. }
-                    | PatKind::Ref { .. }
-            )
-        {
+        if matches!(
+            (expected_ty).shape(),
+            TyShape::InferVar { .. } | TyShape::Alias(_)
+        ) && matches!(
+            data.kind,
+            PatKind::TupleStruct { .. }
+                | PatKind::Record { .. }
+                | PatKind::Tuple { .. }
+                | PatKind::Slice { .. }
+                | PatKind::Ref { .. }
+        ) {
             return Ok(false);
         }
         match data.kind {
@@ -221,10 +228,10 @@ where
                         default_ref
                     };
                     let binding_ty = match by_ref {
-                        Some(mutability) => Ty::reference(mutability, expected_ty.clone()),
-                        None => expected_ty.clone(),
+                        Some(mutability) => self.cx.reference(mutability, expected_ty),
+                        None => expected_ty,
                     };
-                    self.inference.set_binding_infer_ty(binding, binding_ty);
+                    self.inference.set_binding_ty(binding, binding_ty);
                 }
                 if let Some(subpat) = subpat {
                     self.infer_pat(subpat, &expected_ty, default_ref)?;
@@ -265,10 +272,10 @@ where
     fn link_tuple_pat(
         &mut self,
         fields: &[PatId],
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
-        let Ty::Tuple(field_tys) = expected_ty else {
+        let TyShape::Tuple(field_tys) = expected_ty.shape() else {
             return Ok(());
         };
         if fields.len() != field_tys.len() {
@@ -276,7 +283,7 @@ where
         }
 
         for (field_pat, field_ty) in fields.iter().zip(field_tys) {
-            self.infer_pat(*field_pat, field_ty, default_ref)?;
+            self.infer_pat(*field_pat, &field_ty, default_ref)?;
         }
         Ok(())
     }
@@ -285,11 +292,11 @@ where
     fn link_slice_pat(
         &mut self,
         fields: &[PatId],
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
-        let element_ty = match expected_ty {
-            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
+        let element_ty = match expected_ty.shape() {
+            TyShape::Array { inner, .. } | TyShape::Slice(inner) => inner,
             _ => return Ok(()),
         };
 
@@ -301,7 +308,7 @@ where
             {
                 continue;
             }
-            self.infer_pat(*field, element_ty, default_ref)?;
+            self.infer_pat(*field, &element_ty, default_ref)?;
         }
         Ok(())
     }
@@ -311,7 +318,7 @@ where
         &mut self,
         pat: PatId,
         pat_mutability: Mutability,
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
     ) -> Result<(), PackageStoreError> {
         let Some((inner_ty, mutability)) = expected_ty.reference_inner() else {
             return Ok(());
@@ -320,7 +327,7 @@ where
             return Ok(());
         }
 
-        self.infer_pat(pat, inner_ty, None)
+        self.infer_pat(pat, &inner_ty, None)
     }
 
     /// Project tuple-variant payload fields from the expected enum instantiation.
@@ -328,16 +335,17 @@ where
         &mut self,
         path: Option<&BodyPath>,
         fields: &[PatId],
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
-            if let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field_key)?
-            {
+            if let Some(field_ty) = self.context.live().pattern_field(
+                path,
+                *expected_ty,
+                &field_key,
+                self.inference.table(),
+            )? {
                 self.infer_pat(*field_pat, &field_ty, default_ref)?;
             }
         }
@@ -349,15 +357,16 @@ where
         &mut self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
-        expected_ty: &Ty,
+        expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
     ) -> Result<(), PackageStoreError> {
         for field in fields {
-            if let Some(field_ty) =
-                self.context
-                    .fields()
-                    .pattern_field_ty(path, expected_ty, &field.key)?
-            {
+            if let Some(field_ty) = self.context.live().pattern_field(
+                path,
+                *expected_ty,
+                &field.key,
+                self.inference.table(),
+            )? {
                 self.infer_pat(field.pat, &field_ty, default_ref)?;
             }
         }

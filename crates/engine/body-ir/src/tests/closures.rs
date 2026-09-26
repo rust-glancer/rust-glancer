@@ -447,7 +447,7 @@ pub fn use_it() {
 
 #[test]
 fn callable_evidence_flows_through_generic_function_pointers() {
-    // A function pointer introduces its own Chalk binder. The surrounding function's `R` must be
+    // A function pointer introduces its own signature binder. The surrounding function's `R` must be
     // shifted through that binder before the outer `FnOnce` obligation substitutes its variables.
     check_project_body_ir_with_fake_sysroot(
         r#"

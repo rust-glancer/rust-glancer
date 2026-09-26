@@ -10,19 +10,19 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FieldKey, StmtId, identity::DeclarationRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::Ty;
+use rg_ty::solver::{Ty, TyShape};
 
-use super::{InferenceContext, fulfill::DeferredKind};
+use super::{BodyInference, deferred::DeferredKind};
 use crate::body::{ExprAssignOp, ExprKind, ExprWrapperKind, StmtKind, facts::BodyResolution};
 
-impl<'query, D, I> InferenceContext<'query, D, I>
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     /// Infer one expression against its expectation and store its type in inference state.
     /// Shared variables carry later evidence without revisiting this subtree.
-    pub(super) fn infer_expr(&mut self, expr: ExprId, expected: &Ty) -> anyhow::Result<()> {
+    pub(super) fn infer_expr(&mut self, expr: ExprId, expected: &Ty<'s>) -> anyhow::Result<()> {
         #[cfg(test)]
         self.before_expression();
         rg_std::check_cancel!(self.context, "expression resolution");
@@ -40,7 +40,7 @@ where
         result
     }
 
-    fn infer_expr_inner(&mut self, expr: ExprId, expected: &Ty) -> anyhow::Result<()> {
+    fn infer_expr_inner(&mut self, expr: ExprId, expected: &Ty<'s>) -> anyhow::Result<()> {
         // Syntax belongs to the immutable body, independently of the mutable inference state.
         let body = self.body;
         match body.expr_unchecked(expr).kind {
@@ -60,7 +60,7 @@ where
                 self.fulfill_pending().context("complete block inference")?;
                 if let Some(tail) = tail {
                     let ty = self.inference.expr_slot(tail);
-                    self.inference.set_expr_fact_allowing_weak_slot(expr, ty);
+                    self.inference.set_expr_ty(expr, ty);
                 } else {
                     // A tailless block is normally unit, but its final statement can make it
                     // diverge. Recognize the direct diverging forms as well as an inferred `!`.
@@ -79,19 +79,28 @@ where
                             | ExprKind::Continue { .. }
                             | ExprKind::Yeet { .. }
                             | ExprKind::Become { .. } => true,
-                            _ => matches!(self.inference.root_resolved_expr_ty(expr), Ty::Never),
+                            _ => matches!(
+                                (self.inference.root_resolved_expr_ty(expr)).shape(),
+                                TyShape::Never
+                            ),
                         }
                     });
-                    self.inference
-                        .set_expr_ty(expr, if diverges { Ty::Never } else { Ty::Unit });
+                    self.inference.set_expr_ty(
+                        expr,
+                        if diverges {
+                            self.cx.never()
+                        } else {
+                            self.cx.unit()
+                        },
+                    );
                 }
             }
             ExprKind::Call { callee, ref args } => {
-                self.infer_optional(callee, &Ty::Unknown)
+                self.infer_optional(callee, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if let Some(callee) = callee {
                     let callee_ty = self.inference.root_resolved_expr_ty(callee);
-                    if matches!(callee_ty, Ty::Adt(_)) {
+                    if matches!((callee_ty).shape(), TyShape::Adt(_)) {
                         self.inference.set_expr_ty(expr, callee_ty);
                     }
                 }
@@ -112,14 +121,19 @@ where
                     self.inference.constrain_expr_ty(expr, expected);
                     let ty = self.inference.root_resolved_expr_ty(expr);
                     for (index, arg) in args.iter().enumerate() {
-                        let expected = match ty.as_adts() {
-                            [nominal] => self
+                        let expected = match ty.as_adt() {
+                            Some(nominal) => self
                                 .context
-                                .fields()
-                                .enum_variant_field_ty(nominal, variant, &FieldKey::Tuple(index))
+                                .live()
+                                .enum_variant_field(
+                                    nominal,
+                                    variant,
+                                    &FieldKey::Tuple(index),
+                                    self.inference.table(),
+                                )
                                 .context("resolve variant field type")?
-                                .unwrap_or(Ty::Unknown),
-                            _ => Ty::Unknown,
+                                .unwrap_or(self.cx.unknown()),
+                            None => self.cx.unknown(),
                         };
                         self.infer_expr(*arg, &expected)
                             .context("infer variant argument")?;
@@ -132,7 +146,7 @@ where
             ExprKind::MethodCall {
                 receiver, ref args, ..
             } => {
-                self.infer_optional(receiver, &Ty::Unknown)
+                self.infer_optional(receiver, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.method_calls.push(expr);
                 self.infer_call(expr, args, receiver, expected)
@@ -144,46 +158,44 @@ where
                 // tuple must still be able to constrain a field that is unknown here.
                 let mut field_tys = Vec::with_capacity(fields.len());
                 for (index, field) in fields.iter().enumerate() {
-                    let expected = match &expected {
-                        Ty::Tuple(types) if types.len() == fields.len() => &types[index],
-                        _ => &Ty::Unknown,
+                    let expected = match expected.shape() {
+                        TyShape::Tuple(types) if types.len() == fields.len() => types[index],
+                        _ => self.cx.unknown(),
                     };
-                    self.infer_expr(*field, expected)
+                    self.infer_expr(*field, &expected)
                         .context("infer tuple field")?;
                     field_tys.push(self.inference.expr_slot(*field));
                 }
-                self.inference
-                    .set_expr_fact_allowing_weak_slot(expr, Ty::tuple(field_tys));
+                self.inference.set_expr_ty(expr, self.cx.tuple(field_tys));
             }
             ExprKind::Array { ref elements } => {
                 let expected = self.inference.root_resolved_ty(expected);
-                let element_ty = match &expected {
-                    Ty::Array { inner, len }
+                let element_ty = match expected.shape() {
+                    TyShape::Array { inner, len }
                         if matches!(
-                            len,
+                            self.cx.raise_const(len),
                             rg_ty::ConstValue::Unknown | rg_ty::ConstValue::Param(_)
-                        ) || *len == rg_ty::ConstValue::Scalar(elements.len() as u128) =>
+                        ) || self.cx.raise_const(len)
+                            == rg_ty::ConstValue::Scalar(elements.len() as u128) =>
                     {
-                        inner.as_ref()
+                        inner
                     }
-                    _ => &Ty::Unknown,
+                    _ => self.cx.unknown(),
                 };
                 // Every element shares this destination. Expected types and later sibling
                 // evidence constrain the same live slots, without revisiting earlier elements.
                 if !elements.is_empty() {
                     let shared_element = self.inference.table_mut().new_type_var();
                     for element in elements {
-                        self.infer_expr(*element, element_ty)
+                        self.infer_expr(*element, &element_ty)
                             .context("infer array element")?;
                         let ty = self.inference.expr_slot(*element);
                         self.inference.constrain_infer_tys(&shared_element, &ty);
                     }
-                    self.inference.set_expr_fact_allowing_weak_slot(
+                    self.inference.set_expr_ty(
                         expr,
-                        Ty::Array {
-                            inner: Box::new(shared_element),
-                            len: rg_ty::ConstValue::Scalar(elements.len() as u128),
-                        },
+                        self.cx
+                            .array(shared_element, self.cx.scalar(elements.len() as u128)),
                     );
                 }
             }
@@ -193,32 +205,37 @@ where
                 ref len_text,
             } => {
                 let expected = self.inference.root_resolved_ty(expected);
-                let element_ty = match &expected {
-                    Ty::Array { inner, .. } => inner.as_ref(),
-                    _ => &Ty::Unknown,
+                let element_ty = match expected.shape() {
+                    TyShape::Array { inner, .. } => inner,
+                    _ => self.cx.unknown(),
                 };
-                self.infer_optional(initializer, element_ty)
+                self.infer_optional(initializer, &element_ty)
                     .context("infer array initializer")?;
-                self.infer_optional(repeat, &Ty::Unknown)
+                self.infer_optional(repeat, &self.cx.unknown())
                     .context("infer array length")?;
                 if let Some(initializer) = initializer {
                     let ty = self.inference.expr_slot(initializer);
-                    self.inference.set_expr_fact_allowing_weak_slot(
+                    self.inference.set_expr_ty(
                         expr,
-                        Ty::Array {
-                            inner: Box::new(ty),
-                            len: len_text
-                                .as_deref()
-                                .map(rg_ty::ConstValue::from_syntax)
-                                .unwrap_or(rg_ty::ConstValue::Unknown),
-                        },
+                        self.cx.array(
+                            ty,
+                            self.cx.lower_const(
+                                len_text
+                                    .as_deref()
+                                    .map(rg_ty::ConstValue::from_syntax)
+                                    .unwrap_or(rg_ty::ConstValue::Unknown),
+                                self.inference
+                                    .table()
+                                    .params(self.body.owner().generic_def().into()),
+                            ),
+                        ),
                     );
                 }
             }
             ExprKind::Index { base, index } => {
-                self.infer_optional(base, &Ty::Unknown)
+                self.infer_optional(base, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.infer_optional(index, &Ty::Unknown)
+                self.infer_optional(index, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.inference.expr_slot(expr);
                 if base.is_some() {
@@ -227,7 +244,7 @@ where
                 }
             }
             ExprKind::Field { base, .. } => {
-                self.infer_optional(base, &Ty::Unknown)
+                self.infer_optional(base, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.inference.expr_slot(expr);
                 if base.is_some() {
@@ -236,28 +253,32 @@ where
                 }
             }
             ExprKind::Range { start, end, .. } => {
-                self.infer_optional(start, &Ty::Unknown)
+                self.infer_optional(start, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.infer_optional(end, &Ty::Unknown)
+                self.infer_optional(end, &self.cx.unknown())
                     .context("infer optional expression")?;
             }
             ExprKind::Cast {
                 expr: inner,
                 ref ty,
             } => {
-                self.infer_optional(inner, &Ty::Unknown)
+                self.infer_optional(inner, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if let Some(ty) = ty {
                     let ty = self
                         .context
-                        .type_refs(self.body.expr_unchecked(expr).scope)
-                        .resolve(ty)
+                        .live()
+                        .type_ref(
+                            self.body.expr_unchecked(expr).scope,
+                            ty,
+                            self.inference.table(),
+                        )
                         .context("resolve cast type")?;
                     self.inference.set_expr_ty(expr, ty);
                 }
             }
             ExprKind::Unary { expr: inner, .. } => {
-                self.infer_optional(inner, &Ty::Unknown)
+                self.infer_optional(inner, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if inner.is_some() {
                     self.inference.expr_slot(expr);
@@ -266,9 +287,9 @@ where
                 }
             }
             ExprKind::Binary { lhs, rhs, .. } => {
-                self.infer_optional(lhs, &Ty::Unknown)
+                self.infer_optional(lhs, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.infer_optional(rhs, &Ty::Unknown)
+                self.infer_optional(rhs, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if lhs.is_some() && rhs.is_some() {
                     self.inference.expr_slot(expr);
@@ -277,7 +298,7 @@ where
                 }
             }
             ExprKind::Assign { target, op, value } => {
-                self.infer_optional(target, &Ty::Unknown)
+                self.infer_optional(target, &self.cx.unknown())
                     .context("infer optional expression")?;
                 let ty = match (target, op) {
                     (Some(target), Some(ExprAssignOp::Assign))
@@ -288,30 +309,30 @@ where
                     {
                         self.inference.expr_slot(target)
                     }
-                    _ => Ty::Unknown,
+                    _ => self.cx.unknown(),
                 };
-                self.infer_optional(value, &Ty::Unknown)
+                self.infer_optional(value, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if let Some(value) = value {
                     self.coerce_expr_ty(value, &ty);
                 }
-                self.inference.set_expr_ty(expr, Ty::Unit);
+                self.inference.set_expr_ty(expr, self.cx.unit());
             }
             ExprKind::Match {
                 scrutinee,
                 ref arms,
             } => {
-                self.infer_optional(scrutinee, &Ty::Unknown)
+                self.infer_optional(scrutinee, &self.cx.unknown())
                     .context("infer optional expression")?;
                 let scrutinee = scrutinee
                     .map(|expr| self.inference.expr_slot(expr))
-                    .unwrap_or(Ty::Unknown);
+                    .unwrap_or(self.cx.unknown());
                 for arm in arms {
                     if let Some(pat) = arm.pat {
                         self.infer_pattern(pat, &scrutinee)
                             .context("infer match pattern")?;
                     }
-                    self.infer_optional(arm.guard, &Ty::Unknown)
+                    self.infer_optional(arm.guard, &self.cx.unknown())
                         .context("infer optional expression")?;
                     self.infer_optional(arm.expr, expected)
                         .context("infer optional expression")?;
@@ -324,12 +345,12 @@ where
                 then_branch,
                 else_branch,
             } => {
-                self.infer_optional(condition, &Ty::Unknown)
+                self.infer_optional(condition, &self.cx.unknown())
                     .context("infer optional expression")?;
                 let branch_expected = if else_branch.is_some() {
                     expected
                 } else {
-                    &Ty::Unknown
+                    &self.cx.unknown()
                 };
                 self.infer_optional(then_branch, branch_expected)
                     .context("infer optional expression")?;
@@ -339,22 +360,22 @@ where
                     self.infer_branch_result(expr, then_branch.into_iter().chain([else_branch]))
                         .context("infer if result")?;
                 } else {
-                    self.inference.set_expr_ty(expr, Ty::Unit);
+                    self.inference.set_expr_ty(expr, self.cx.unit());
                 }
             }
             ExprKind::Let {
                 pat, initializer, ..
             } => {
-                self.infer_optional(initializer, &Ty::Unknown)
+                self.infer_optional(initializer, &self.cx.unknown())
                     .context("infer optional expression")?;
                 let ty = initializer
                     .map(|expr| self.inference.expr_slot(expr))
-                    .unwrap_or(Ty::Unknown);
+                    .unwrap_or(self.cx.unknown());
                 if let Some(pat) = pat {
                     self.infer_pattern(pat, &ty).context("infer let pattern")?;
                 }
                 self.inference
-                    .set_expr_ty(expr, Ty::Primitive(rg_ty::PrimitiveTy::Bool));
+                    .set_expr_ty(expr, self.cx.primitive(rg_ty::PrimitiveTy::Bool));
             }
             ExprKind::Closure {
                 scope,
@@ -367,17 +388,17 @@ where
                     .context("infer closure")?;
             }
             ExprKind::Loop { body, .. } => {
-                self.infer_optional(body, &Ty::Unknown)
+                self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
             }
             ExprKind::While {
                 condition, body, ..
             } => {
-                self.infer_optional(condition, &Ty::Unknown)
+                self.infer_optional(condition, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.infer_optional(body, &Ty::Unknown)
+                self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.inference.set_expr_ty(expr, Ty::Unit);
+                self.inference.set_expr_ty(expr, self.cx.unit());
             }
             ExprKind::For {
                 pat,
@@ -385,32 +406,29 @@ where
                 body,
                 ..
             } => {
-                self.infer_optional(iterable, &Ty::Unknown)
+                self.infer_optional(iterable, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if let (Some(pat), Some(iterable)) = (pat, iterable) {
                     // The loop pattern can use its item slot before `IntoIterator::Item` is
                     // known. A later projection fills the same slot, including its binding uses.
                     let item = self.inference.table_mut().new_type_var();
-                    self.run_or_defer(DeferredKind::IteratorItem {
-                        iterable,
-                        item: item.clone(),
-                    })
-                    .context("register pending inference")?;
+                    self.run_or_defer(DeferredKind::IteratorItem { iterable, item })
+                        .context("register pending inference")?;
                     self.infer_pattern(pat, &item)
                         .context("infer iterator pattern")?;
                 }
-                self.infer_optional(body, &Ty::Unknown)
+                self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
-                self.inference.set_expr_ty(expr, Ty::Unit);
+                self.inference.set_expr_ty(expr, self.cx.unit());
             }
             ExprKind::Break { value, .. }
             | ExprKind::Yield { value }
             | ExprKind::Yeet { value }
             | ExprKind::Become { value } => {
-                self.infer_optional(value, &Ty::Unknown)
+                self.infer_optional(value, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if !matches!(self.body.expr_unchecked(expr).kind, ExprKind::Yield { .. }) {
-                    self.inference.set_expr_ty(expr, Ty::Never);
+                    self.inference.set_expr_ty(expr, self.cx.never());
                 }
             }
             ExprKind::Record {
@@ -423,9 +441,13 @@ where
                     Some(path) => self
                         .context
                         .value_paths()
-                        .resolve_record_expr_path(self.body.expr_unchecked(expr).scope, path)
+                        .resolve_record_expr_path(
+                            self.body.expr_unchecked(expr).scope,
+                            path,
+                            self.inference.table(),
+                        )
                         .context("resolve record path")?,
-                    None => (BodyResolution::Unknown, Ty::Unknown),
+                    None => (BodyResolution::Unknown, self.cx.unknown()),
                 };
                 self.inference.set_expr_facts(expr, resolution, ty);
                 // Path lookup supplies the record's identity and written generic arguments.
@@ -435,36 +457,36 @@ where
                 self.inference.constrain_expr_ty(expr, expected);
                 let ty = self.inference.root_resolved_expr_ty(expr);
                 for field in fields {
-                    let expected = match ty.as_adts() {
-                        [nominal] => self
-                            .context
-                            .fields()
-                            .declared(nominal, &field.key)
-                            .context("resolve record field")?
-                            .and_then(|field| field.ty().cloned())
-                            .unwrap_or(Ty::Unknown),
-                        _ => Ty::Unknown,
-                    };
+                    let expected = self
+                        .context
+                        .live()
+                        .field(ty, &field.key, self.inference.table())
+                        .context("resolve record field")?
+                        .map(|(_, ty)| ty)
+                        .unwrap_or(self.cx.unknown());
                     self.infer_optional(field.value, &expected)
                         .context("infer optional expression")?;
                 }
-                self.infer_optional(spread.as_ref().and_then(|spread| spread.expr), &Ty::Unknown)
-                    .context("infer optional expression")?;
+                self.infer_optional(
+                    spread.as_ref().and_then(|spread| spread.expr),
+                    &self.cx.unknown(),
+                )
+                .context("infer optional expression")?;
             }
             ExprKind::Wrapper { kind, inner } => {
                 let resolved_expected = self.inference.root_resolved_ty(expected);
-                let inner_expected = match (&kind, &resolved_expected) {
-                    (ExprWrapperKind::Paren | ExprWrapperKind::Await, _) => expected.clone(),
+                let inner_expected = match (&kind, resolved_expected.shape()) {
+                    (ExprWrapperKind::Paren | ExprWrapperKind::Await, _) => *expected,
                     (
                         ExprWrapperKind::Ref { mutability },
-                        Ty::Reference {
+                        TyShape::Reference {
                             mutability: expected_mutability,
                             inner,
                             ..
                         },
-                    ) if mutability == expected_mutability => inner.as_ref().clone(),
-                    (ExprWrapperKind::Return, _) => self.return_ty.clone(),
-                    _ => Ty::Unknown,
+                    ) if *mutability == expected_mutability => inner,
+                    (ExprWrapperKind::Return, _) => self.return_ty,
+                    _ => self.cx.unknown(),
                 };
                 self.infer_optional(inner, &inner_expected)
                     .context("infer wrapped expression")?;
@@ -478,11 +500,13 @@ where
                     // TODO: Model arbitrary Future::Output when inference coverage expands.
                     let ty = match kind {
                         ExprWrapperKind::Paren | ExprWrapperKind::Await => inner_ty,
-                        ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
-                        ExprWrapperKind::Return => Ty::Never,
+                        ExprWrapperKind::Ref { mutability } => {
+                            self.cx.reference(mutability, inner_ty)
+                        }
+                        ExprWrapperKind::Return => self.cx.never(),
                         ExprWrapperKind::Try => unreachable!("try operands are deferred above"),
                     };
-                    self.inference.set_expr_fact_allowing_weak_slot(expr, ty);
+                    self.inference.set_expr_ty(expr, ty);
                     if matches!(kind, ExprWrapperKind::Paren) {
                         self.inference.set_expr_resolution(
                             expr,
@@ -490,12 +514,12 @@ where
                         );
                     }
                 } else if matches!(kind, ExprWrapperKind::Return) {
-                    self.inference.set_expr_ty(expr, Ty::Never);
+                    self.inference.set_expr_ty(expr, self.cx.never());
                 }
             }
             ExprKind::Unknown { ref children } => {
                 for child in children {
-                    self.infer_expr(*child, &Ty::Unknown)
+                    self.infer_expr(*child, &self.cx.unknown())
                         .context("infer unmodeled expression child")?;
                 }
             }
@@ -503,7 +527,7 @@ where
                 let (resolution, ty) = self
                     .context
                     .value_paths()
-                    .resolve_body_path_expr(expr, path)
+                    .resolve_body_path_expr(expr, path, self.cx)
                     .context("resolve body path")?;
                 if let BodyResolution::Binding(binding) = resolution {
                     self.inference.set_expr_resolution(expr, resolution);
@@ -512,20 +536,21 @@ where
                     self.inference.set_expr_facts(expr, resolution, ty);
                 }
             }
+
             // Unsuffixed numbers stay inferable until completion: a later use may require `u64`
             // or `f32`, even when the literal had no expectation at its introduction site.
             ExprKind::Literal { kind } => match kind {
                 crate::body::LiteralKind::Int { primitive_ty: None } => {
                     let ty = self.inference.table_mut().new_integer_var();
-                    self.inference.set_expr_infer_ty(expr, ty);
+                    self.inference.set_expr_ty(expr, ty);
                 }
                 crate::body::LiteralKind::Float { primitive_ty: None } => {
                     let ty = self.inference.table_mut().new_float_var();
-                    self.inference.set_expr_infer_ty(expr, ty);
+                    self.inference.set_expr_ty(expr, ty);
                 }
                 _ => self
                     .inference
-                    .set_expr_ty(expr, rg_ty::ty_for_literal(kind)),
+                    .set_expr_ty(expr, self.lower(&rg_ty::ty_for_literal(kind))),
             },
             ExprKind::BuiltinMacro { kind } => {
                 let ty = self
@@ -533,22 +558,23 @@ where
                     .context("infer builtin macro")?;
                 self.inference.set_expr_ty(expr, ty);
             }
-            ExprKind::Continue { .. } => self.inference.set_expr_ty(expr, Ty::Never),
+            ExprKind::Continue { .. } => self.inference.set_expr_ty(expr, self.cx.never()),
             ExprKind::Underscore => {}
         }
+
         // A block with a diverging tail can satisfy a concrete expected result, while the tail
         // expression itself keeps `!`. This is the small block coercion supported by body facts.
         if matches!(
             self.body.expr_unchecked(expr).kind,
             ExprKind::Block { tail: Some(_), .. }
-        ) && matches!(self.inference.root_resolved_expr_ty(expr), Ty::Never)
-            && !matches!(
-                self.inference.root_resolved_ty(expected),
-                Ty::Unknown | Ty::Never | Ty::InferVar { .. }
-            )
-        {
-            self.inference
-                .set_expr_fact_allowing_weak_slot(expr, expected.clone());
+        ) && matches!(
+            (self.inference.root_resolved_expr_ty(expr)).shape(),
+            TyShape::Never
+        ) && !matches!(
+            (self.inference.root_resolved_ty(expected)).shape(),
+            TyShape::Unknown | TyShape::Never | TyShape::InferVar { .. }
+        ) {
+            self.inference.set_coerced_expr_ty(expr, *expected);
         } else {
             self.coerce_expr_ty(expr, expected);
         }
@@ -558,7 +584,7 @@ where
     pub(super) fn infer_optional(
         &mut self,
         expr: Option<ExprId>,
-        expected: &Ty,
+        expected: &Ty<'s>,
     ) -> anyhow::Result<()> {
         match expr {
             Some(expr) => self
@@ -596,19 +622,19 @@ where
                 let expected = match annotation {
                     Some(annotation) => self
                         .context
-                        .type_refs(scope)
-                        .resolve_with_inference(annotation, self.inference.table_mut())
+                        .live()
+                        .type_ref(scope, annotation, self.inference.table())
                         .context("resolve let annotation")?,
-                    None => Ty::Unknown,
+                    None => self.cx.unknown(),
                 };
                 self.infer_optional(initializer, &expected)
                     .context("infer optional expression")?;
                 // Written types remain the binding's contract even when incomplete source has
                 // an incompatible initializer. Inferred bindings instead share the producer slot.
-                let ty = if matches!(expected, Ty::Unknown) {
+                let ty = if matches!((expected).shape(), TyShape::Unknown) {
                     initializer
                         .map(|expr| self.inference.expr_slot(expr))
-                        .unwrap_or(Ty::Unknown)
+                        .unwrap_or(self.cx.unknown())
                 } else {
                     expected
                 };
@@ -616,11 +642,11 @@ where
                     self.infer_pattern(pat, &ty)
                         .context("infer binding pattern")?;
                 }
-                self.infer_optional(else_branch, &Ty::Unknown)
+                self.infer_optional(else_branch, &self.cx.unknown())
                     .context("infer optional expression")?;
             }
             StmtKind::Expr { expr, .. } => {
-                self.infer_expr(expr, &Ty::Unknown)
+                self.infer_expr(expr, &self.cx.unknown())
                     .context("infer statement expression")?;
             }
             StmtKind::Item { .. } | StmtKind::ItemIgnored => {}

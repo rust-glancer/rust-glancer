@@ -34,7 +34,11 @@ impl LangItemIndex {
                     | LangItem::Fn
                     | LangItem::FnMut
                     | LangItem::FnOnce
-                    | LangItem::PointeeSized,
+                    | LangItem::PointeeSized
+                    | LangItem::Sized
+                    | LangItem::MetaSized
+                    | LangItem::Tuple
+                    | LangItem::Destruct,
                 ItemId::Trait(_)
             ) | (LangItem::IntoIter, ItemId::Function(_))
                 | (

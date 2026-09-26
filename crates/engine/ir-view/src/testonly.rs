@@ -11,7 +11,7 @@ use rg_semantic_ir::{
 };
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{IndexedViewDb, ty::IndexedType};
@@ -249,7 +249,6 @@ impl ViewFixture {
                 self.render_generic_args(&alias.args)
             ),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
-            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }
@@ -315,7 +314,7 @@ impl ViewFixture {
             .collect::<Vec<_>>();
         for binding in &bound.associated_types {
             let name = ItemStoreQuery::new(db)
-                .type_alias_data(binding.associated_ty)
+                .type_alias_data(binding.projection.associated_ty)
                 .expect("fixture associated type should load while rendering an opaque bound")
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());
@@ -462,6 +461,7 @@ impl ViewFixture {
                     trait_data.name
                 )
             }
+
             // TODO: Render enough impl owner detail for snapshots to distinguish distinct impls.
             ItemOwner::Impl(_) => "impl".to_string(),
         }

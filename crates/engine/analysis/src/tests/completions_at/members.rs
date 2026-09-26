@@ -5,6 +5,244 @@ use expect_test::expect;
 use crate::tests::utils::{
     AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
 };
+
+#[test]
+fn finds_methods_from_caller_bounds_without_concrete_impls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "bound_members"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub trait Base<T> {
+        fn render_base(&self) -> T;
+    }
+    pub trait Render: Base<u16> {
+        fn render(&self) -> u32;
+    }
+}
+
+pub fn inspect<T: api::Render>(value: T) {
+    let $direct$direct = value.$render$render();
+    let $inherited$inherited = value.$base$render_base();
+    value.$members$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct bound result", "direct"),
+            AnalysisQuery::ty("supertrait result", "inherited"),
+            AnalysisQuery::goto("direct declaration", "render"),
+            AnalysisQuery::goto("supertrait declaration", "base"),
+            AnalysisQuery::complete("saved bound methods", "members").matching("render"),
+            AnalysisQuery::complete_with_source("request-local bound methods", "members")
+                .matching("render"),
+        ],
+        expect![[r#"
+            direct bound result
+            - u32
+
+            supertrait result
+            - u16
+
+            direct declaration
+            - fn render @ 6:12-6:18
+
+            supertrait declaration
+            - fn render_base @ 3:12-3:23
+
+            saved bound methods
+            - trait_method render
+            - trait_method render_base
+
+            request-local bound methods
+            - trait_method render
+            - trait_method render_base
+        "#]],
+    );
+}
+
+#[test]
+fn finds_members_through_generic_deref_bounds() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app"]
+resolver = "3"
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /app/src/lib.rs
+pub struct Widget {
+    pub value: u16,
+}
+
+impl Widget {
+    pub fn value_len(&self) -> u32 { 0 }
+}
+
+pub fn inspect<P, Q>(value: &P)
+where
+    P: core::ops::Deref<Target = Q>,
+    Q: core::ops::Deref<Target = Widget>,
+{
+    let $field$field = value.value;
+    let $method$method = value.value_len();
+    value.$members$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through generic Deref chain", "field").in_lib("app"),
+            AnalysisQuery::ty("method through generic Deref chain", "method").in_lib("app"),
+            AnalysisQuery::complete("generic Deref members", "members")
+                .in_lib("app")
+                .matching("value"),
+            AnalysisQuery::complete_with_source("request-local Deref members", "members")
+                .in_lib("app")
+                .matching("value"),
+        ],
+        expect![[r#"
+            field through generic Deref chain
+            - u16
+
+            method through generic Deref chain
+            - u32
+
+            generic Deref members
+            - field value
+            - inherent_method value_len
+
+            request-local Deref members
+            - field value
+            - inherent_method value_len
+        "#]],
+    );
+}
+
+#[test]
+fn finds_methods_using_enclosing_trait_and_impl_bounds() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "owner_bound_members"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+// There is no concrete Marker impl; each body relies on its enclosing bounds.
+pub trait Marker {}
+pub trait ViaMarker { fn from_marker(&self) -> bool; }
+impl<T: Marker> ViaMarker for T {
+    fn from_marker(&self) -> bool { true }
+}
+pub trait ViaRender<T> { fn from_render(&self) -> u16; }
+impl<S: Render<T>, T: Marker> ViaRender<T> for S {
+    fn from_render(&self) -> u16 { 0 }
+}
+
+pub fn direct<T: Marker>(value: T) {
+    let $function_result$result = value.from_marker();
+    value.$function_members$;
+}
+
+pub trait Render<T: Marker> {
+    fn default_method(&self, value: T) {
+        let $trait_result$result = value.from_marker();
+        value.$trait_members$;
+        let $self_result$result = self.from_render();
+        self.$self_members$;
+    }
+}
+
+pub struct Other;
+pub struct Owner;
+impl Owner where Other: Marker {
+    pub fn method(&self, value: Other) {
+        let $impl_result$result = value.from_marker();
+        value.$impl_members$;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("function bound", "function_result"),
+            AnalysisQuery::complete("saved function bound", "function_members")
+                .matching("from_marker"),
+            AnalysisQuery::complete_with_source("request-local function bound", "function_members")
+                .matching("from_marker"),
+            AnalysisQuery::ty("trait parameter bound", "trait_result"),
+            AnalysisQuery::complete("saved trait parameter bound", "trait_members")
+                .matching("from_marker"),
+            AnalysisQuery::complete_with_source(
+                "request-local trait parameter bound",
+                "trait_members",
+            )
+            .matching("from_marker"),
+            AnalysisQuery::ty("implicit Self bound", "self_result"),
+            AnalysisQuery::complete("saved implicit Self bound", "self_members")
+                .matching("from_render"),
+            AnalysisQuery::complete_with_source(
+                "request-local implicit Self bound",
+                "self_members",
+            )
+            .matching("from_render"),
+            AnalysisQuery::ty("nongeneric impl bound", "impl_result"),
+            AnalysisQuery::complete("saved nongeneric impl bound", "impl_members")
+                .matching("from_marker"),
+            AnalysisQuery::complete_with_source(
+                "request-local nongeneric impl bound",
+                "impl_members",
+            )
+            .matching("from_marker"),
+        ],
+        expect![[r#"
+            function bound
+            - bool
+
+            saved function bound
+            - trait_method from_marker
+
+            request-local function bound
+            - trait_method from_marker
+
+            trait parameter bound
+            - bool
+
+            saved trait parameter bound
+            - trait_method from_marker
+
+            request-local trait parameter bound
+            - trait_method from_marker
+
+            implicit Self bound
+            - u16
+
+            saved implicit Self bound
+            - trait_method from_render
+
+            request-local implicit Self bound
+            - trait_method from_render
+
+            nongeneric impl bound
+            - bool
+
+            saved nongeneric impl bound
+            - trait_method from_marker
+
+            request-local nongeneric impl bound
+            - trait_method from_marker
+        "#]],
+    );
+}
+
 #[test]
 fn completes_inherent_and_trait_methods_at_partial_and_bare_dot_sites() {
     check_analysis_queries(
@@ -455,7 +693,7 @@ pub trait Displayed {
 pub struct User;
 
 impl User {
-    pub fn label(&self) {}
+    pub fn label(&self) -> u32 { 0 }
 }
 
 impl Named for User {
@@ -467,15 +705,21 @@ impl Displayed for User {
 }
 
 pub fn use_it(user: User) {
-    user.$0label();
+    let $picked$picked = user.$0label();
 }
 "#,
-        &[AnalysisQuery::complete("same-name completions", "0")],
+        &[
+            AnalysisQuery::complete("same-name completions", "0"),
+            AnalysisQuery::ty("inherent call takes precedence", "picked"),
+        ],
         expect![[r#"
             same-name completions
             - inherent_method label
             - trait_method label
             - trait_method label
+
+            inherent call takes precedence
+            - u32
         "#]],
     );
 }

@@ -10,9 +10,12 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
-chalk-engine.workspace = true
-chalk-ir.workspace = true
-chalk-solve.workspace = true
+bumpalo.workspace = true
+ena.workspace = true
+rustc_abi.workspace = true
+rustc_index.workspace = true
+rustc_next_trait_solver.workspace = true
+rustc_type_ir.workspace = true
 rg_def_map.workspace = true
 rg_ir_model.workspace = true
 rg_item_tree.workspace = true

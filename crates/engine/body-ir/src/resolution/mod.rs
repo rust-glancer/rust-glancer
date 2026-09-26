@@ -16,5 +16,5 @@ mod query;
 pub(crate) use self::infer::InferenceContext;
 pub use self::{
     context::BodyResolutionContext,
-    query::{BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery},
+    query::{BodyFieldQuery, BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery},
 };

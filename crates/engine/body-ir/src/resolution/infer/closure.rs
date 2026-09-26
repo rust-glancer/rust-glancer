@@ -7,12 +7,12 @@ use rg_ir_model::{ExprId, ScopeId};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::Ty;
+use rg_ty::solver::TyShape;
 
-use super::InferenceContext;
+use super::BodyInference;
 use crate::body::{ClosureParamData, ExprKind};
 
-impl<'query, D, I> InferenceContext<'query, D, I>
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -28,28 +28,28 @@ where
         body: Option<ExprId>,
     ) -> anyhow::Result<()> {
         self.prepare_closure(expr);
-        let Ty::Closure(signature) = self.inference.root_resolved_expr_ty(expr) else {
+        let TyShape::Closure(signature) = self.inference.root_resolved_expr_ty(expr).shape() else {
             unreachable!("closure signature was prepared")
         };
-        for (param, ty) in params.iter().zip(&signature.params) {
+        for (param, ty) in params.iter().zip(signature.params) {
             if let Some(annotation) = &param.annotation {
                 let annotation = self
                     .context
-                    .type_refs(scope)
-                    .resolve(annotation)
+                    .live()
+                    .type_ref(scope, annotation, self.inference.table())
                     .context("resolve closure parameter")?;
-                self.inference.constrain_infer_tys(ty, &annotation);
+                self.inference.constrain_infer_tys(&ty, &annotation);
             }
             if let Some(pat) = param.pat {
-                self.infer_pattern(pat, ty)
+                self.infer_pattern(pat, &ty)
                     .context("infer closure pattern")?;
             }
         }
         if let Some(annotation) = ret_ty {
             let annotation = self
                 .context
-                .type_refs(scope)
-                .resolve(annotation)
+                .live()
+                .type_ref(scope, annotation, self.inference.table())
                 .context("resolve closure result")?;
             self.inference
                 .constrain_infer_tys(&signature.ret, &annotation);
@@ -64,7 +64,10 @@ where
     /// `infer_closure` also prepares standalone closures; an existing signature keeps its slots.
     pub(super) fn prepare_closure(&mut self, expr: ExprId) {
         if let ExprKind::Closure { params, .. } = &self.body.expr_unchecked(expr).kind
-            && !matches!(self.inference.root_resolved_expr_ty(expr), Ty::Closure(_))
+            && !matches!(
+                (self.inference.root_resolved_expr_ty(expr)).shape(),
+                TyShape::Closure(_)
+            )
         {
             self.inference
                 .set_expr_closure_ty(self.context.body_ref(), expr, params.len());

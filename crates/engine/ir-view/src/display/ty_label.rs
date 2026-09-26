@@ -10,7 +10,7 @@ use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -147,9 +147,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Some(application) => self.render_trait_impl_projection(projection, application),
                 None => Ok(None),
             },
-            // UI surfaces should only see finalized types. If a transient solver variable leaks
-            // here, render it like unknown instead of exposing an internal slot identity.
-            Ty::InferVar { .. } | Ty::Unknown => Ok(None),
+            Ty::Unknown => Ok(None),
         }
     }
 
@@ -268,7 +266,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let items = ItemStoreQuery::new(self.db);
         for binding in &bound.associated_types {
             let name = items
-                .type_alias_data(binding.associated_ty)?
+                .type_alias_data(binding.projection.associated_ty)?
                 .map(|data| self.syntax.identifier(&data.name).to_string())
                 .unwrap_or_else(|| "_".to_string());
             let ty = self
@@ -313,7 +311,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let mut output = None;
         for binding in &bound.associated_types {
             if items
-                .type_alias_data(binding.associated_ty)?
+                .type_alias_data(binding.projection.associated_ty)?
                 .is_some_and(|data| data.name.as_str() == "Output")
             {
                 output = Some(&binding.ty);

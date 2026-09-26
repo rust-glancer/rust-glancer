@@ -195,9 +195,6 @@ impl<'a> ProjectSnapshot<'a> {
                     associations,
                     source_changed,
                     selection,
-                    view_db
-                        .trait_selection(crate_ref)
-                        .with_cancellation(cancellation.clone()),
                     &mut checkpoint,
                 )
                 .context("prepare current-source target")?;

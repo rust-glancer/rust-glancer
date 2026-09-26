@@ -9,12 +9,7 @@ use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, Typ
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{OperationError, UniqueVec};
 
-use crate::{
-    Ty, TyContext,
-    autoderef::{Autoderef, AutoderefMode, ReferencePeelingCandidates},
-    inference::InferenceTable,
-    lookup::ImplMatcher,
-};
+use crate::{Ty, TyContext, solver::SemanticDeclarations};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
@@ -34,9 +29,9 @@ where
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
     pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
         let mut impls = UniqueVec::new();
-        for candidate in ReferencePeelingCandidates::new(ty) {
+        for candidate in ty.reference_chain() {
             rg_std::check_cancel!(self.context, "implementation candidates");
-            for ty in candidate.ty().as_adts() {
+            for ty in candidate.as_adts() {
                 rg_std::check_cancel!(self.context, "implementation candidates");
                 for impl_ref in self.impls_for_type_def(ty.def)? {
                     rg_std::check_cancel!(self.context, "implementation candidates");
@@ -129,42 +124,36 @@ where
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        let autoderef = Autoderef::new(self.context.clone());
-        let matcher = ImplMatcher::new(self.context.clone());
-        let table = InferenceTable::new();
-        let mut functions = UniqueVec::new();
-
-        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
-            rg_std::check_cancel!(self.context, "implementation candidates");
-            let candidate = candidate.map_err(OperationError::Source)?;
-            for ty in candidate.ty().as_adts() {
-                rg_std::check_cancel!(self.context, "implementation candidates");
-                let trait_impls = self.context.item_lookup().trait_impls_for_type(ty.def)?;
-                for trait_impl in trait_impls {
+        let declarations = SemanticDeclarations::new(&self.context, self.context.item_paths());
+        declarations
+            .with_table(|table, params| {
+                let receiver = table.interner().lower_ty(receiver_ty, params);
+                let mut functions = UniqueVec::new();
+                for receiver in table.method_receivers(receiver) {
                     rg_std::check_cancel!(self.context, "implementation candidates");
-                    if trait_impl.trait_ref != trait_ref {
+                    let Some(ty) = receiver.as_adt() else {
                         continue;
-                    }
-                    // The nominal type match can still include generic impls for other concrete
-                    // args. Reuse method lookup's applicability check so implementation lookup
-                    // follows the receiver the user actually called the method on.
-                    if !matcher
-                        .trait_impl_applicability(trait_impl, ty, &table)
-                        .map_err(OperationError::Source)?
-                        .is_applicable()
-                    {
-                        continue;
-                    }
-                    for function in self.matching_impl_methods(trait_impl.impl_ref, method_name)? {
+                    };
+                    for trait_impl in self.context.item_lookup().trait_impls_for_type(ty.def)? {
                         rg_std::check_cancel!(self.context, "implementation candidates");
-                        functions.push(function);
+                        if trait_impl.trait_ref != trait_ref
+                            || table
+                                .select_impl(trait_impl.impl_ref, receiver, None)
+                                .is_none()
+                        {
+                            continue;
+                        }
+                        for function in
+                            self.matching_impl_methods(trait_impl.impl_ref, method_name)?
+                        {
+                            functions.push(function);
+                        }
                     }
                 }
-            }
-        }
-
-        rg_std::check_cancel!(self.context, "implementation candidates");
-        Ok(functions)
+                rg_std::check_cancel!(self.context, "implementation candidates");
+                Ok(functions)
+            })
+            .map_err(OperationError::Source)?
     }
 
     fn impl_methods_for_trait_method_any_receiver(

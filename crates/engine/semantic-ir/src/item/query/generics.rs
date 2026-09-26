@@ -2,7 +2,7 @@
 //!
 //! The item store remains useful for display because it keeps names, bounds, and defaults. This
 //! query adds the owner relationships and implicit parameters needed by semantic types, then
-//! exposes one canonical order to type lowering, substitutions, inference, and Chalk.
+//! exposes one canonical order to type lowering, substitutions, inference, and trait solving.
 
 use rg_ir_model::{
     ConstParamRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner, LifetimeParamRef,
@@ -117,7 +117,13 @@ where
         Ok(Generics::new(owner, parent, own_params))
     }
 
-    fn parent_generic_def(&self, owner: GenericDefRef) -> Result<Option<GenericDefRef>, S::Error> {
+    /// Find the enclosing trait or impl whose parameters and requirements this item inherits.
+    /// An item in `impl Widget where SomeType: Marker` inherits that where-clause even though
+    /// the impl declares no parameters.
+    pub fn parent_generic_def(
+        &self,
+        owner: GenericDefRef,
+    ) -> Result<Option<GenericDefRef>, S::Error> {
         let can_inherit = matches!(
             owner,
             GenericDefRef::Function(_) | GenericDefRef::TypeAlias(_) | GenericDefRef::Const(_)

@@ -16,12 +16,9 @@ use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::ExpectedUnique;
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Ty,
-    autoderef::ReferencePeelingCandidates,
     lookup::ItemPathQuery,
-    lowering::{
-        SemanticSignatureQuery, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery,
-        TypePathResolver as _,
-    },
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver as _},
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -69,8 +66,9 @@ impl IndexedType {
 
     /// Iterate nominal definitions represented by this type after peeling references.
     pub fn nominal_type_defs(&self) -> impl Iterator<Item = TypeDefRef> + '_ {
-        ReferencePeelingCandidates::new(self.raw())
-            .filter_map(|candidate| candidate.ty().as_adts().first().map(|ty| ty.def))
+        self.raw()
+            .reference_chain()
+            .filter_map(|candidate| candidate.as_adts().first().map(|ty| ty.def))
     }
 
     /// Return the nominal definition only when reference peeling identifies exactly one.
@@ -131,12 +129,7 @@ impl IndexedType {
                 Self::collect_nominal_type_defs(&closure.ret, type_defs);
             }
             Ty::FnDef(function) => Self::collect_nominal_type_args(&function.args, type_defs),
-            Ty::Unit
-            | Ty::Never
-            | Ty::Primitive(_)
-            | Ty::Param(_)
-            | Ty::Unknown
-            | Ty::InferVar { .. } => {}
+            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => {}
         }
     }
 

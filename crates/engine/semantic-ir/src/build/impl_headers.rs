@@ -143,7 +143,7 @@ pub(super) fn apply_impl_header_resolutions(
 ///
 /// Element types, array lengths, and generic arguments are left for the exact type-layer matcher.
 /// `type Alias = u32; impl Trait for Alias` deliberately remains a fallback because discovering
-/// its primitive head would require alias normalization. Native proof can still normalize and
+/// its primitive head would require alias normalization. Trait solving can still normalize and
 /// accept it later; the declaration index merely declines to put it in the direct `u32` lane.
 fn trait_impl_self_head(
     db: &SemanticIrReadTxn<'_>,

@@ -1,4 +1,4 @@
-use rg_ir_model::{BindingId, CrateId, CrateRef, ExprId, PackageSlot};
+use rg_ir_model::{CrateId, CrateRef, ExprId, PackageSlot};
 use rg_ty::{ConstValue, GenericArg};
 
 use crate::{ExprKind, testonly::BodyIrFixture};
@@ -35,16 +35,6 @@ pub fn use_it(value: &[u8; 3]) {
     let mut selected_calls = Vec::new();
     for (_, body) in crate_bodies.body_views() {
         assert_eq!(body.exprs().len(), body.expr_facts().len());
-        // Inference variables belong to the resolution pass. Persisted facts expose only stable
-        // semantic types, even when written `_` forced the pass to create a temporary slot.
-        for binding_idx in 0..body.bindings().len() {
-            let ty = body
-                .binding_ty(BindingId(binding_idx))
-                .expect("every binding has a persisted type");
-            assert!(!ty.has_var());
-        }
-        assert!(body.expr_facts().iter().all(|facts| !facts.ty.has_var()));
-
         for (expr_idx, data) in body.exprs().iter().enumerate() {
             let expr = ExprId(expr_idx);
             if matches!(
@@ -64,8 +54,8 @@ pub fn use_it(value: &[u8; 3]) {
         call.generic_args().as_slice(),
         [
             GenericArg::Lifetime(_),
-            GenericArg::Type(ty),
+            GenericArg::Type(_),
             GenericArg::Const(ConstValue::Scalar(3)),
-        ] if !ty.has_var()
+        ]
     ));
 }

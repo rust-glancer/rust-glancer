@@ -13,7 +13,7 @@ use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
-    lowering::SemanticSignatureQuery,
+    signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -1097,7 +1097,6 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
-            Ty::InferVar { kind, id } => format!("infer {kind:?} {id:?}"),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }
@@ -1161,8 +1160,8 @@ impl CrateBodyIrSnapshot<'_> {
         for binding in &bound.associated_types {
             let name = self
                 .project
-                .resident_item_store(binding.associated_ty.origin)
-                .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                .resident_item_store(binding.projection.associated_ty.origin)
+                .and_then(|items| items.type_alias_data(binding.projection.associated_ty.id))
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());
             args.push(format!("{name} = {}", self.render_ty(&binding.ty)));

@@ -1,7 +1,7 @@
 //! Shared provider construction for body resolution.
 //!
 //! Resolution components should not each remember how to wire DefMap, item-store, lookup-query,
-//! solver-session, and body providers together. This context keeps that routing in one place while
+//! cancellation, and body providers together. This context keeps that routing in one place while
 //! still exposing only read-only access to the active body.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
@@ -9,35 +9,30 @@ use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathResolution};
+use rg_std::CancellationToken;
 use rg_ty::{
     Ty, TyContext,
-    autoderef::Autoderef,
-    lookup::{AssociatedItemCandidateRef, ImplMatcher, ItemPathQuery},
-    lowering::{SemanticSignatureQuery, TypeLoweringAnchor, TypePathResolver},
-    trait_selection::{TraitSelectionQuery, TraitSelectionSession},
+    lookup::{AssociatedItemCandidateRef, ImplQuery, ItemPathQuery},
+    lowering::{TypeLoweringAnchor, TypePathResolver},
+    signature::SemanticSignatureQuery,
 };
 
-use super::cache::{
-    BodyLocalItemCache, BodyMethodCache, BodyResolutionCaches, BodyTraitLookupCache,
-};
+use super::cache::{BodyLocalItemCache, BodyResolutionCaches, BodyTraitLookupCache};
 use crate::{
     BodyData,
     resolution::query::{
-        BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery,
-        BodyGenericsQuery, BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery,
-        BodyTypeContextQuery, BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
+        BodyAssociatedItemQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
+        BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeContextQuery,
+        BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
     },
 };
 
 type BodySemanticSignatureQuery<'context, 'query, D, I> =
     SemanticSignatureQuery<'query, D, I, &'context BodyResolutionContext<'query, D, I>>;
 
-type BodyImplMatcher<'context, 'query, D, I> =
-    ImplMatcher<'query, D, I, &'context BodyResolutionContext<'query, D, I>>;
-
 /// Read-only provider bundle shared by body semantic queries.
 ///
-/// The context keeps DefMap, item-store, item-lookup-query, trait-selection, and active-body routing
+/// The context keeps DefMap, item-store, item-lookup-query, and active-body routing
 /// coherent while small query objects own the actual operations. Queries borrow immutable body
 /// structure and receive any needed resolutions or live types explicitly. The same context can
 /// therefore stay in place while inference updates its facts and type slots.
@@ -68,18 +63,14 @@ where
         body_ref: BodyRef,
         body: &'a BodyData,
         item_lookup_query: &ItemLookupQuery<'a>,
-        trait_selection: TraitSelectionSession,
+        cancellation: CancellationToken,
     ) -> Self {
-        assert_eq!(
-            body_ref.crate_ref,
-            trait_selection.use_site(),
-            "trait-selection session must match the body use-site crate"
-        );
         let ty = TyContext::new(
             def_maps.clone(),
             item_stores.clone(),
             item_lookup_query.clone(),
-            trait_selection,
+            body_ref.crate_ref,
+            cancellation,
         );
         Self {
             def_maps,
@@ -113,10 +104,6 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
         &self.caches.body_local_items
     }
 
-    pub(crate) fn method_cache(&self) -> &BodyMethodCache {
-        &self.caches.methods
-    }
-
     pub(crate) fn ty_context(&self) -> TyContext<'a, D, I>
     where
         D: Clone,
@@ -145,6 +132,10 @@ where
 
     pub(crate) fn item_paths(&self) -> ItemPathQuery<'a, D, I> {
         self.ty.item_paths().clone()
+    }
+
+    pub(crate) fn live(&self) -> super::query::LiveBodyQuery<'a, D, I> {
+        super::query::LiveBodyQuery::new(self.clone())
     }
 
     pub(crate) fn signatures<'context>(
@@ -212,11 +203,7 @@ where
         BodyTraitQuery::new(self.clone())
     }
 
-    pub(crate) fn calls(&self) -> BodyCallQuery<'a, D, I> {
-        BodyCallQuery::new(self.clone())
-    }
-
-    pub(crate) fn fields(&self) -> BodyFieldQuery<'a, D, I> {
+    pub fn fields(&self) -> BodyFieldQuery<'a, D, I> {
         BodyFieldQuery::new(self.clone())
     }
 
@@ -236,17 +223,8 @@ where
         BodyMethodQuery::new(self.clone())
     }
 
-    pub(crate) fn impl_matcher<'context>(&'context self) -> BodyImplMatcher<'context, 'a, D, I> {
-        ImplMatcher::with_resolver(self.ty.clone(), self)
-    }
-
-    pub(crate) fn autoderef(&self) -> Autoderef<'a, D, I> {
-        Autoderef::new(self.ty.clone())
-    }
-
-    /// Build trait selection in this body's crate-scoped solver session.
-    pub(crate) fn trait_selection(&self) -> TraitSelectionQuery<'a, D, I> {
-        TraitSelectionQuery::new(self.ty.clone())
+    pub(crate) fn impl_query(&self) -> ImplQuery<'a, D, I, &Self> {
+        ImplQuery::with_resolver(self.ty.clone(), self)
     }
 }
 
@@ -270,5 +248,29 @@ where
                 self.type_path_query().resolve_in_context(context, path)
             }
         }
+    }
+}
+
+impl<'a, D, I> rg_ty::solver::SolverScope for BodyResolutionContext<'a, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+{
+    fn local_trait_impls(
+        &self,
+        trait_ref: rg_ir_model::TraitDefRef,
+    ) -> Result<Vec<rg_ir_model::TraitImplRef>, PackageStoreError> {
+        Ok(self
+            .body_local_items()
+            .trait_impls_for_traits(&[trait_ref])?
+            .collect())
+    }
+
+    fn generic_owner(&self) -> Option<rg_ir_model::GenericDefRef> {
+        Some(self.body().owner().generic_def())
+    }
+
+    fn declaration_cache(&self) -> Option<&rg_ty::solver::DeclarationCache> {
+        Some(&self.caches.solver_declarations)
     }
 }

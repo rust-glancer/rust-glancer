@@ -1,14 +1,17 @@
 //! Pattern binding candidate materialization.
 //!
 //! Lowering has to build scopes before value-name resolution is available, so ambiguous identifier
-//! patterns temporarily occupy binding slots. This pass decides which slots are real bindings and
-//! compacts the body back to the final binding arena used by all later resolver and analysis code.
+//! patterns temporarily occupy binding slots. This query decides which slots are real bindings.
+//! The caller then compacts the body to its final binding arena, after this query has released
+//! its immutable body view and temporary signature.
 //!
-//! The pass has three phases:
+//! Materialization has three phases:
 //!
 //! 1. Decide which pending binding slots stay active.
 //! 2. Use known pattern input types to catch unit variants such as `None`.
 //! 3. Rewrite every binding reference from pending slot ids to final binding ids.
+
+use std::cell::OnceCell;
 
 use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
@@ -18,10 +21,7 @@ use rg_ir_model::{
 use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::{
-    ExpectedAdtTyExt, Ty, autoderef::ReferencePeelingCandidates,
-    trait_selection::TraitSelectionSession,
-};
+use rg_ty::{ExpectedAdtTyExt, Ty, signature::CallableSignature};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
 use crate::{
@@ -30,21 +30,15 @@ use crate::{
     resolution::BodyResolutionContext,
 };
 
-/// Resolves lowered binding candidates into the final body binding arena.
-///
-/// After this pass, consumers should see ordinary `BindingId`s only. Ambiguous pattern identifiers
-/// that resolved as consts/statics/unit variants remain visible through their pattern path, not as
-/// fake local bindings.
-pub(crate) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
-    def_maps: &'query D,
-    item_stores: &'query I,
-    item_lookup_query: &'query ItemLookupQuery<'query>,
-    body_ref: rg_ir_model::BodyRef,
-    trait_selection: &'query TraitSelectionSession,
-    body: &'body mut LoweredBodyData,
+/// Decide which lowered pattern identifiers are bindings. The body remains immutable until
+/// all decisions are made: lexical lookup still needs the original pending binding identities.
+pub(crate) struct PatternBindingQuery<'query, D, I> {
+    context: BodyResolutionContext<'query, &'query D, &'query I>,
+    body: &'query LoweredBodyData,
+    signature: OnceCell<Option<CallableSignature>>,
 }
 
-impl<'query, 'body, D, I> PatternBindingMaterializationPass<'query, 'body, D, I>
+impl<'query, D, I> PatternBindingQuery<'query, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
@@ -52,38 +46,27 @@ where
     pub(crate) fn new(
         def_maps: &'query D,
         item_stores: &'query I,
-        item_lookup_query: &'query ItemLookupQuery<'query>,
+        item_lookup_query: &ItemLookupQuery<'query>,
         body_ref: rg_ir_model::BodyRef,
-        body: &'body mut LoweredBodyData,
-        trait_selection: &'query TraitSelectionSession,
+        body: &'query LoweredBodyData,
+        cancellation: &rg_std::CancellationToken,
     ) -> Self {
         Self {
-            def_maps,
-            item_stores,
-            item_lookup_query,
-            body_ref,
-            trait_selection,
+            context: BodyResolutionContext::new(
+                def_maps,
+                item_stores,
+                body_ref,
+                body.body(),
+                item_lookup_query,
+                cancellation.clone(),
+            ),
             body,
+            signature: OnceCell::new(),
         }
     }
 
-    fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::new(
-            self.def_maps,
-            self.item_stores,
-            self.body_ref,
-            self.body.body(),
-            self.item_lookup_query,
-            self.trait_selection.clone(),
-        )
-    }
-
-    /// Materializes all pending binding candidates into the final structural body.
-    pub(crate) fn materialize(self) -> Result<(), PackageStoreError> {
-        if !self.body.has_pending_bindings() {
-            return Ok(());
-        }
-
+    /// Compute the final binding membership, then release the borrowed view before compaction.
+    pub(crate) fn active_bindings(self) -> Result<Vec<bool>, PackageStoreError> {
         // `active` is indexed by the original pending binding ids. We keep this temporary view
         // while lookup still needs source-order visibility against the lowered scope lists.
         let pending_count = self.body.body().bindings().len();
@@ -103,8 +86,7 @@ where
         // pattern input, so run that pass after the first active binding set exists.
         let pending_tys = self.pending_binding_tys(&active)?;
         self.deactivate_unit_variant_pattern_bindings(&mut active, &pending_tys)?;
-        self.body.compact_bindings(&active);
-        Ok(())
+        Ok(active)
     }
 
     /// Returns binding types in the pending-id space used during materialization.
@@ -200,7 +182,7 @@ where
         pending_tys: &[Ty],
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
-            let ty = self.context().type_refs(scope).resolve(annotation)?;
+            let ty = self.context.type_refs(scope).resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }
@@ -240,6 +222,7 @@ where
                 // wrappers keeps common cases useful without trying to type-check the expression.
                 self.pending_expr_ty(*inner, active, pending_tys)
             }
+
             // Materialization runs before body inference, so other expression forms have no
             // semantic fact to consult yet.
             _ => Ok(Ty::Unknown),
@@ -365,7 +348,7 @@ where
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
             let Some(field_ty) =
-                self.context()
+                self.context
                     .fields()
                     .pattern_field_ty(path, expected_ty, &field_key)?
             else {
@@ -385,7 +368,7 @@ where
     ) -> Result<(), PackageStoreError> {
         for field in fields {
             let Some(field_ty) =
-                self.context()
+                self.context
                     .fields()
                     .pattern_field_ty(path, expected_ty, &field.key)?
             else {
@@ -408,22 +391,21 @@ where
             return Ok(false);
         };
 
-        for candidate in ReferencePeelingCandidates::new(expected_ty) {
+        for candidate in expected_ty.reference_chain() {
             for enum_ty in candidate
-                .ty()
                 .as_adts()
                 .iter()
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
             {
                 let Some(variant_ref) = self
-                    .context()
+                    .context
                     .item_query()
                     .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
                 else {
                     continue;
                 };
                 let Some(variant_data) =
-                    self.context().item_query().enum_variant_data(variant_ref)?
+                    self.context.item_query().enum_variant_data(variant_ref)?
                 else {
                     continue;
                 };
@@ -461,7 +443,7 @@ where
         }
 
         let (resolution, _) = self
-            .context()
+            .context
             .value_paths()
             .resolve_nonlocal_path_expr(binding_data.scope, &path)?;
 
@@ -480,10 +462,10 @@ where
         // Check the body-local lexical module first, then the owner/fallback modules used by
         // ordinary body lookup. This keeps body-local consts visible without losing crate items.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
+            origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
         };
-        let def_maps = self.context().def_map_query();
+        let def_maps = self.context.def_map_query();
         let body_defs = def_maps
             .scope_resolver()
             .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
@@ -517,7 +499,7 @@ where
         &self,
         defs: Vec<DefId>,
     ) -> Result<bool, PackageStoreError> {
-        let item_query = self.context().item_query();
+        let item_query = self.context.item_query();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -591,7 +573,15 @@ where
                 .bindings
                 .len()
                 == 1
-            && let Some(signature) = self.context().signatures().function(function)?
+            && let Some(signature) = {
+                // Several parameters can need the same interpreted signature. Load it only
+                // after a parameter needs it, and keep it within this immutable body query.
+                if self.signature.get().is_none() {
+                    let signature = self.context.signatures().function(function)?;
+                    let _ = self.signature.set(signature);
+                }
+                self.signature.get().and_then(Option::as_ref)
+            }
             && let Some(param_ty) = signature.params.get(param_index)
             && !matches!(param_ty, Ty::Unknown)
         {
@@ -600,7 +590,7 @@ where
 
         if let Some(annotation) = &binding_data.annotation {
             return self
-                .context()
+                .context
                 .type_refs(binding_data.scope)
                 .resolve(annotation);
         }
@@ -610,7 +600,7 @@ where
             && let Some(function) = self.body.body().owner().function()
         {
             let ty = self
-                .context()
+                .context
                 .functions()
                 .self_adt_ty(function)?
                 .into_adt_ty();

@@ -25,7 +25,6 @@ use rg_parse::{CurrentSource, DeclarationAssociationIndex};
 use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
-use rg_ty::trait_selection::TraitSelectionSession;
 
 use super::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
@@ -68,7 +67,7 @@ pub(super) struct CurrentBodyBuilder<'source, 'db> {
     associations: &'source DeclarationAssociationIndex,
     item_lookup_cache: ItemLookupQueryCache,
     selection: CurrentSourceSelection,
-    trait_selection: TraitSelectionSession,
+    cancellation: rg_std::CancellationToken,
 }
 
 impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
@@ -86,7 +85,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         associations: &'source DeclarationAssociationIndex,
         item_lookup_cache: ItemLookupQueryCache,
         selection: CurrentSourceSelection,
-        trait_selection: TraitSelectionSession,
+        cancellation: rg_std::CancellationToken,
     ) -> Self {
         Self {
             parse_package,
@@ -100,7 +99,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             associations,
             item_lookup_cache,
             selection,
-            trait_selection,
+            cancellation,
         }
     }
 
@@ -111,13 +110,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     /// prepares those inputs, then runs the shared body worklist. The caller supplies new body ids
     /// when saved identities cannot be reused and receives checkpoints where cancelled work can
     /// stop.
-    #[rg_std::cancelable("select current bodies", token = self.trait_selection.cancellation())]
+    #[rg_std::cancelable("select current bodies", token = self.cancellation)]
     pub fn build(
         self,
         mut synthetic_body_ref: impl FnMut() -> anyhow::Result<BodyRef>,
         mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<CurrentBodyBuildOutcome> {
-        let cancellation = self.trait_selection.cancellation().clone();
+        let cancellation = self.cancellation.clone();
         let started = Instant::now();
 
         // 1. Parse the editor text and choose the syntax bodies requested by the cursor or range.
@@ -364,7 +363,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             self.def_map,
             self.semantic_ir,
             &item_lookup_query,
-            &self.trait_selection,
             |stage| {
                 checkpoint(match stage {
                     BodySemanticStage::ImplHeaders => {

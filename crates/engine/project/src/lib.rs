@@ -15,7 +15,7 @@
 //!
 //! These layers meet through explicit snapshots. Resident and offloaded packages remain the same
 //! logical package slots, so query code does not branch on storage location. Request-owned decoded
-//! payloads and solver sessions are released when the query finishes.
+//! payloads and solver arenas are released when the query finishes.
 //!
 //! When adding another shortcut, keep three facts next to its owner: what exact semantic state
 //! makes reuse safe, who releases the retained data, and which ordinary path runs when it is

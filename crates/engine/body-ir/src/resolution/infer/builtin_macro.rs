@@ -10,11 +10,11 @@ use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, Type
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_text::Name;
-use rg_ty::{PrimitiveTy, Ty, UnsignedIntTy};
+use rg_ty::{PrimitiveTy, UnsignedIntTy, solver::Ty};
 
-use super::InferenceContext;
+use super::BodyInference;
 
-impl<'query, D, I> InferenceContext<'query, D, I>
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -24,21 +24,24 @@ where
         &self,
         expr: ExprId,
         kind: BuiltinMacroExprKind,
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty<'s>, PackageStoreError> {
         match kind {
-            BuiltinMacroExprKind::Cfg => Ok(Ty::Primitive(PrimitiveTy::Bool)),
-            BuiltinMacroExprKind::Column | BuiltinMacroExprKind::Line => {
-                Ok(Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U32)))
-            }
+            BuiltinMacroExprKind::Cfg => Ok(self.cx.primitive(PrimitiveTy::Bool)),
+            BuiltinMacroExprKind::Column | BuiltinMacroExprKind::Line => Ok(self
+                .cx
+                .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U32))),
             BuiltinMacroExprKind::Concat
             | BuiltinMacroExprKind::Env
             | BuiltinMacroExprKind::File
             | BuiltinMacroExprKind::IncludeStr
             | BuiltinMacroExprKind::ModulePath
-            | BuiltinMacroExprKind::Stringify => Ok(Self::static_str_ty()),
-            BuiltinMacroExprKind::IncludeBytes => Ok(Ty::reference(
+            | BuiltinMacroExprKind::Stringify => Ok(self.static_str_ty()),
+            BuiltinMacroExprKind::IncludeBytes => Ok(self.cx.reference(
                 Mutability::Shared,
-                Ty::slice(Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8))),
+                self.cx.slice(
+                    self.cx
+                        .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
+                ),
             )),
             BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
                 self.fmt_arguments_ty(expr)
@@ -47,14 +50,14 @@ where
         }
     }
 
-    fn fmt_arguments_ty(&self, expr: ExprId) -> Result<Ty, PackageStoreError> {
+    fn fmt_arguments_ty(&self, expr: ExprId) -> Result<Ty<'s>, PackageStoreError> {
         self.resolve_synthetic_type_ref(
             expr,
             self.synthetic_type_path(expr, &["core", "fmt", "Arguments"], Vec::new()),
         )
     }
 
-    fn option_env_ty(&self, expr: ExprId) -> Result<Ty, PackageStoreError> {
+    fn option_env_ty(&self, expr: ExprId) -> Result<Ty<'s>, PackageStoreError> {
         let synthetic_span = self.synthetic_span_for_expr(expr);
         let str_ref = TypeRef::Reference {
             lifetime: None,
@@ -85,13 +88,15 @@ where
         &self,
         expr: ExprId,
         ty: TypeRef,
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty<'s>, PackageStoreError> {
         let expr_data = self.context.body().expr_unchecked(expr);
 
         // Builtins produce compiler-known types, but some fixtures and partial workspaces cannot
         // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
         // synthetic syntax as if the user had written it.
-        self.context.type_refs(expr_data.scope).resolve(&ty)
+        self.context
+            .live()
+            .type_ref(expr_data.scope, &ty, self.inference.table())
     }
 
     fn synthetic_type_path(
@@ -131,7 +136,8 @@ where
         }
     }
 
-    fn static_str_ty() -> Ty {
-        Ty::reference(Mutability::Shared, Ty::Primitive(PrimitiveTy::Str))
+    fn static_str_ty(&self) -> Ty<'s> {
+        self.cx
+            .reference(Mutability::Shared, self.cx.primitive(PrimitiveTy::Str))
     }
 }

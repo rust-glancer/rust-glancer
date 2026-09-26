@@ -8,8 +8,8 @@ use rg_ir_model::{GenericParamRef, TypeParamRef};
 use rg_semantic_ir::Generics;
 
 use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, Clause, ClosureTy, ConstValue, FnDefTy, GenericArg,
-    GenericArgs, Lifetime, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
+    AdtTy, AliasTy, AssocTypeBinding, ClosureTy, ConstValue, FnDefTy, GenericArg, GenericArgs,
+    Lifetime, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
 };
 
 /// Semantic substitution keyed by owner-scoped parameter identity.
@@ -30,29 +30,6 @@ impl Substitution {
                 .iter()
                 .zip(args.iter().cloned())
                 .map(|(param, arg)| (param.param(), arg))
-                .collect(),
-        )
-    }
-
-    pub fn identity(generics: &Generics<'_>) -> Self {
-        Self(
-            generics
-                .iter()
-                .map(|param| {
-                    let param = param.param();
-                    let arg = match param {
-                        GenericParamRef::Lifetime(param) => {
-                            GenericArg::Lifetime(Lifetime::Param(param))
-                        }
-                        GenericParamRef::Type(param) => {
-                            GenericArg::Type(Box::new(Ty::Param(param)))
-                        }
-                        GenericParamRef::Const(param) => {
-                            GenericArg::Const(ConstValue::Param(param))
-                        }
-                    };
-                    (param, arg)
-                })
                 .collect(),
         )
     }
@@ -140,10 +117,7 @@ impl Substitution {
                 args: ty.args.iter().map(|arg| self.apply_arg(arg)).collect(),
             }),
             Ty::Alias(alias) => Ty::Alias(match alias {
-                AliasTy::Projection(alias) => AliasTy::Projection(ProjectionTy {
-                    associated_ty: alias.associated_ty,
-                    args: alias.args.iter().map(|arg| self.apply_arg(arg)).collect(),
-                }),
+                AliasTy::Projection(alias) => AliasTy::Projection(self.apply_projection(alias)),
                 AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueTy {
                     opaque: alias.opaque,
                     args: alias.args.iter().map(|arg| self.apply_arg(arg)).collect(),
@@ -166,9 +140,7 @@ impl Substitution {
                     .collect(),
                 ret: Box::new(self.apply(&closure.ret)),
             }),
-            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Unknown | Ty::InferVar { .. } => {
-                ty.clone()
-            }
+            Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Unknown => ty.clone(),
         }
     }
 
@@ -188,6 +160,13 @@ impl Substitution {
         args.iter().map(|arg| self.apply_arg(arg)).collect()
     }
 
+    fn apply_projection(&self, projection: &ProjectionTy) -> ProjectionTy {
+        ProjectionTy {
+            associated_ty: projection.associated_ty,
+            args: self.apply_args(&projection.args),
+        }
+    }
+
     pub fn apply_trait_application(&self, application: &TraitApplication) -> TraitApplication {
         TraitApplication {
             def: application.def,
@@ -202,25 +181,10 @@ impl Substitution {
                 .associated_types
                 .iter()
                 .map(|binding| AssocTypeBinding {
-                    associated_ty: binding.associated_ty,
+                    projection: self.apply_projection(&binding.projection),
                     ty: self.apply(&binding.ty),
                 })
                 .collect(),
-        }
-    }
-
-    pub fn apply_clause(&self, clause: &Clause) -> Clause {
-        match clause {
-            Clause::Implemented(application) => {
-                Clause::Implemented(self.apply_trait_application(application))
-            }
-            Clause::AliasEq { alias, ty } => Clause::AliasEq {
-                alias: ProjectionTy {
-                    associated_ty: alias.associated_ty,
-                    args: self.apply_args(&alias.args),
-                },
-                ty: self.apply(ty),
-            },
         }
     }
 
