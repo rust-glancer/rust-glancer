@@ -158,8 +158,9 @@ where
     }
 
     /// Pick a unique usable target and instantiate its signature before visiting arguments.
-    /// The target's trial table carries any receiver constraints found during lookup. Adopting it
-    /// keeps those constraints and its pending bounds connected to the call's new variables.
+    /// Direct calls prepare in the body's table. Member lookup supplies a separate table with
+    /// receiver evidence; adopt it only after its signature is ready. Either path rolls back
+    /// an incomplete preparation, including variables and obligations created while lowering.
     pub(super) fn prepare_call(
         &mut self,
         call: ExprId,
@@ -186,50 +187,55 @@ where
         if targets.next().is_some() {
             return Ok(None);
         }
-        self.inference.table.adopt(target.table);
         let function = target.function;
-        let generics = self
-            .context
-            .item_paths()
-            .generics()
-            .generics(GenericDefRef::Function(function))?;
-        let mut subst = target.subst;
-        if !target.explicit_args.is_empty() {
-            let args = self.context.live().generic_args(
-                target.scope,
-                &generics,
-                &target.explicit_args,
-                self.inference.table(),
-            )?;
-            for (param, arg) in generics
-                .iter_self()
-                .zip(args.iter().skip(generics.parent_len()))
-            {
-                subst.insert(param.param(), arg);
+        let table = target.table.as_ref().unwrap_or(self.inference.table());
+        let prepared = table.commit_if_some(|table| {
+            let generics = self
+                .context
+                .item_paths()
+                .generics()
+                .generics(GenericDefRef::Function(function))?;
+            let mut subst = target.subst;
+            if !target.explicit_args.is_empty() {
+                let args = self.context.live().generic_args(
+                    target.scope,
+                    &generics,
+                    &target.explicit_args,
+                    table,
+                )?;
+                for (param, arg) in generics
+                    .iter_self()
+                    .zip(args.iter().skip(generics.parent_len()))
+                {
+                    subst.insert(param.param(), arg);
+                }
             }
-        }
-        subst.fresh_for(self.inference.table(), generics.iter().map(|p| p.param()));
-        let Some(signature) = self
-            .inference
-            .table()
-            .instantiate_function(function, &subst)
-        else {
+            subst.fresh_for(table, generics.iter().map(|p| p.param()));
+            let Some(mut signature) = table.instantiate_function(function, &subst) else {
+                return Ok(None);
+            };
+            // Normalize once and retain the resulting slots. Later argument evidence can finish
+            // these goals without rebuilding the call substitution.
+            signature.ret = table.normalize(signature.ret);
+            Ok(Some(PreparedCall {
+                call,
+                selected: SelectedCall {
+                    function,
+                    generic_args: subst.args_for(self.cx, generics.iter().map(|p| p.param())),
+                },
+                signature,
+                first_written_param_idx: target.first_written,
+                receiver_ty: target.receiver,
+            }))
+        })?;
+        let Some(prepared) = prepared else {
             return Ok(None);
         };
-        // Normalize once and retain the resulting slots. The solver retries the generated goals
-        // when arguments or expectations make progress, without rebuilding the call substitution.
-        let return_ty = self.inference.table().normalize(signature.ret);
-        self.inference.set_expr_ty(call, return_ty);
-        Ok(Some(PreparedCall {
-            call,
-            selected: SelectedCall {
-                function,
-                generic_args: subst.args_for(self.cx, generics.iter().map(|p| p.param())),
-            },
-            signature,
-            first_written_param_idx: target.first_written,
-            receiver_ty: target.receiver,
-        }))
+        if let Some(table) = target.table {
+            self.inference.table.adopt(table);
+        }
+        self.inference.set_expr_ty(call, prepared.signature.ret);
+        Ok(Some(prepared))
     }
 
     /// Connect argument results to the prepared signature, then retain the call for finalization.

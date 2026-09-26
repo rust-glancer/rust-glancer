@@ -2523,6 +2523,11 @@ pub enum Action {
     Pair((u64, f32)),
 }
 
+pub enum Borrowed<'a, T, const N: usize> {
+    Array(&'a [T; N]),
+}
+use Borrowed::Array;
+
 pub fn use_it(user: User, error: Error) {
     let slot = Slot::<u64>::Put(1$type_payload$)$type_slot$;
 
@@ -2531,6 +2536,7 @@ pub fn use_it(user: User, error: Error) {
 
     let _action = Action::Set(1$type_action_int$, 1.0$type_action_float$);
     let _pair = Action::Pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+    let borrowed = Array(&[user; 3])$type_imported_variant$;
 }
 "#,
         &[
@@ -2543,6 +2549,10 @@ pub fn use_it(user: User, error: Error) {
             AnalysisQuery::ty("enum variant tuple integer field", "type_pair_int"),
             AnalysisQuery::ty("enum variant tuple float field", "type_pair_float"),
             AnalysisQuery::ty("enum variant tuple payload", "type_pair"),
+            AnalysisQuery::ty(
+                "imported variant retains all generic kinds",
+                "type_imported_variant",
+            ),
         ],
         expect![[r#"
             enum variant explicit generic payload
@@ -2571,6 +2581,9 @@ pub fn use_it(user: User, error: Error) {
 
             enum variant tuple payload
             - (u64, f32)
+
+            imported variant retains all generic kinds
+            - nominal enum analysis_enum_payload_inference[lib]::crate::Borrowed<'_, nominal struct analysis_enum_payload_inference[lib]::crate::User, 3>
         "#]],
     );
 }

@@ -24,7 +24,8 @@ use rustc_type_ir::{
 
 use super::{
     Clause, Const, DefId, GenericArg, GenericArgs, List, Outcome, ParamEnv, Predicate, Region,
-    Solver, SolverInterner, Ty, infer::OpaqueEntries,
+    Solver, SolverInterner, Ty,
+    infer::{OpaqueEntries, Snapshot},
 };
 
 // Safety cap for passes over the goal queue in one fulfillment call. A chain of goals can keep
@@ -156,6 +157,33 @@ impl<'s> InferenceTable<'s> {
         let result = Self::new(self.solver.clone(), self.env);
         *result.projections.borrow_mut() = self.projections.borrow().clone();
         result
+    }
+
+    /// Prepare an operation in this table, keeping its work only when it returns a usable result.
+    /// For example, preparing `make::<T>()` can allocate variables and register bounds before a
+    /// missing signature makes us abandon the call. None of that work may reach the next call.
+    ///
+    /// Assignments use the solver's undo log instead of copying every existing variable. Keep
+    /// the caller's pending work aside while the closure runs: it can register or fulfill its
+    /// own goals without consuming the caller's goals. On success, append the new work to the
+    /// original queues. On `None`, an error, or unavailable callback data, restore the originals.
+    pub fn commit_if_some<T, E>(
+        &self,
+        infer: impl FnOnce(&Self) -> Result<Option<T>, E>,
+    ) -> Result<Option<T>, E> {
+        let callbacks = self.interner().track_callbacks();
+        let transaction = InferenceTransaction {
+            table: self,
+            snapshot: Some(self.solver.snapshot()),
+            pending: self.pending.take(),
+            projections: self.projections.take(),
+            failed: self.failed.replace(false),
+        };
+        let result = infer(self)?.filter(|_| callbacks.failure().is_none());
+        if result.is_some() {
+            transaction.commit();
+        }
+        Ok(result)
     }
 
     pub fn fallback_numeric(&self) {
@@ -633,6 +661,39 @@ impl<'s> InferenceTable<'s> {
 
     pub fn lower(&self, ty: &crate::Ty, owner: DefId) -> Ty<'s> {
         self.interner().lower_ty(ty, self.interner().params(owner))
+    }
+}
+
+/// Hold the caller's goal queues while an operation works on the same inference variables.
+/// The guard restores them on every exit, including unwinding; the solver snapshot separately
+/// undoes assignments and fresh variables unless committed.
+struct InferenceTransaction<'a, 's> {
+    table: &'a InferenceTable<'s>,
+    snapshot: Option<Snapshot<'a, 's>>,
+    pending: Vec<Pending<'s>>,
+    projections: Vec<(Ty<'s>, Ty<'s>)>,
+    failed: bool,
+}
+
+impl InferenceTransaction<'_, '_> {
+    fn commit(mut self) {
+        self.snapshot.take().expect("active transaction").commit();
+    }
+}
+
+impl Drop for InferenceTransaction<'_, '_> {
+    fn drop(&mut self) {
+        if self.snapshot.is_none() {
+            // Reuse the original buffers: moving all earlier goals into a fresh buffer on every
+            // call would just replace variable-table copying with goal-queue copying.
+            self.pending.append(&mut self.table.pending.borrow_mut());
+            self.projections
+                .append(&mut self.table.projections.borrow_mut());
+            self.failed |= self.table.failed.get();
+        }
+        *self.table.pending.borrow_mut() = std::mem::take(&mut self.pending);
+        *self.table.projections.borrow_mut() = std::mem::take(&mut self.projections);
+        self.table.failed.set(self.failed);
     }
 }
 

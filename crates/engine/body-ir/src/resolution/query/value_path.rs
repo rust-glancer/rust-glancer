@@ -493,20 +493,9 @@ where
                         }
                         BodyValueCandidate::EnumVariant(variant_ref, owner) => {
                             declarations.push(DeclarationRef::EnumVariant(variant_ref));
-                            let args = self
-                                .context
-                                .item_query()
-                                .generic_params_for_type_def(owner)?
-                                .map(|params| {
-                                    params
-                                        .types()
-                                        .map(|_| cx.unknown().into())
-                                        .collect::<Vec<_>>()
-                                })
-                                .unwrap_or_default();
                             tys.push(cx.adt(AdtTy {
                                 def: owner,
-                                args: List::new(cx, &args),
+                                args: cx.unknown_args(solver::DefId::Adt(owner)),
                             }));
                         }
                     }

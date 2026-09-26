@@ -941,13 +941,13 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
             }
             // An unavailable environment remains an unavailable input to its own table; it
             // must neither become valid on the second proof nor poison a different table.
-            let missing_owner = solver::DefId::Function(rg_ir_model::FunctionRef {
+            let missing_function = rg_ir_model::FunctionRef {
                 origin: origin(),
                 id: rg_ir_model::FunctionId(99),
-            });
+            };
             let incomplete = solver::InferenceTable::new(
                 solver::Solver::new(cx),
-                cx.parameter_environment(missing_owner),
+                cx.parameter_environment(solver::DefId::Function(missing_function)),
             );
             for _ in 0..2 {
                 assert_eq!(
@@ -956,6 +956,39 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
                 );
                 assert_eq!(table.prove([application.clause(cx)]), Outcome::Proven);
             }
+
+            // Abandoning call preparation must undo its assignments and normalization goals,
+            // while the projection queued before the call can still finish afterwards.
+            let prior_item = table.normalize(cx.projection(solver::ProjectionTy {
+                associated_ty: item,
+                args: application.args,
+            }));
+            let variable = table.new_type_var();
+            let boolean = Ty::Primitive(crate::PrimitiveTy::Bool);
+            let result = table
+                .commit_if_some(|preparing| {
+                    let boolean = cx.lower_ty(&boolean, &[]);
+                    preparing
+                        .try_unify(variable, boolean)
+                        .expect("tentative bool");
+                    preparing.normalize(cx.projection(solver::ProjectionTy {
+                        associated_ty: item,
+                        args: solver::List::new(cx, &[boolean.into()]),
+                    }));
+                    Ok::<_, std::convert::Infallible>(preparing.instantiate_function(
+                        missing_function,
+                        &solver::InferenceSubstitution::new(),
+                    ))
+                })
+                .expect("fixture reads are infallible");
+            assert!(result.is_none());
+            let character = Ty::Primitive(crate::PrimitiveTy::Char);
+            table
+                .try_unify(variable, cx.lower_ty(&character, &[]))
+                .expect("abandoned preparation leaves room for char");
+            assert_eq!(table.fulfill(), Outcome::Proven);
+            assert_eq!(table.finalize(variable), character);
+            assert_eq!(table.finalize(prior_item), boolean);
         })
         .expect("fixture declarations load");
 }

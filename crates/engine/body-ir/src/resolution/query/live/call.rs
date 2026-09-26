@@ -21,9 +21,9 @@ use crate::{
     body::{ExprKind, facts::BodyResolution},
 };
 
-/// A function candidate together with the receiver evidence found while considering it.
-/// Its table is a separate trial: competing candidates must not constrain one another. If call
-/// inference chooses this target, it adopts the table and reuses the receiver's substitutions.
+/// A function candidate together with any receiver evidence found while considering it.
+/// Member lookup keeps that evidence in a separate table so candidates cannot constrain one
+/// another. A directly resolved function needs no trial; its signature uses the body's table.
 pub(crate) struct LiveCallTarget<'s> {
     pub function: FunctionRef,
     pub explicit_args: Vec<ItemGenericArg>,
@@ -31,7 +31,7 @@ pub(crate) struct LiveCallTarget<'s> {
     pub subst: InferenceSubstitution<'s>,
     pub receiver: Option<Ty<'s>>,
     pub first_written: usize,
-    pub table: InferenceTable<'s>,
+    pub table: Option<InferenceTable<'s>>,
     // Lookup can retain a declaration for navigation even when its trial cannot supply types.
     pub can_infer: bool,
 }
@@ -137,7 +137,7 @@ where
                                 subst: InferenceSubstitution::new(),
                                 receiver: None,
                                 first_written: 0,
-                                table: table.probe(),
+                                table: None,
                                 can_infer: true,
                             });
                         }
@@ -167,7 +167,7 @@ where
                 subst: candidate.subst,
                 receiver: Some(receiver),
                 first_written: usize::from(matches!(lookup, FunctionLookup::Method(_))),
-                table: candidate.table,
+                table: Some(candidate.table),
                 // A possible proof can learn from call arguments later. Missing callback data
                 // still leaves a navigation candidate, but cannot supply inference evidence.
                 can_infer: matches!(candidate.outcome, Outcome::Proven | Outcome::Ambiguous),
