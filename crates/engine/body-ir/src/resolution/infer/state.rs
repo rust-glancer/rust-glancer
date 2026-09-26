@@ -10,7 +10,7 @@ use rg_ty::{
     solver::{InferVarKind, InferenceTable, Ty, TyShape},
 };
 
-use super::call::CallInferenceState;
+use super::call::SelectedCall;
 use crate::{BodyFacts, ExprFacts, body::facts::BodyResolution};
 
 #[derive(Clone)]
@@ -26,7 +26,7 @@ struct LiveExprFacts<'s> {
 /// The arenas keep those links alongside declaration resolutions; `finish` writes owned facts.
 pub(crate) struct InferenceState<'s> {
     pub(super) table: InferenceTable<'s>,
-    call_inference: Vec<Option<CallInferenceState<'s>>>,
+    selected_calls: Vec<Option<SelectedCall<'s>>>,
     exprs: Arena<ExprId, LiveExprFacts<'s>>,
     binding_tys: Arena<BindingId, Ty<'s>>,
 }
@@ -36,7 +36,7 @@ impl<'s> InferenceState<'s> {
         let unknown = table.interner().unknown();
         Self {
             table,
-            call_inference: (0..expr_count).map(|_| None).collect(),
+            selected_calls: (0..expr_count).map(|_| None).collect(),
             exprs: Arena::from_vec(vec![
                 LiveExprFacts {
                     resolution: BodyResolution::Unknown,
@@ -56,33 +56,18 @@ impl<'s> InferenceState<'s> {
         &mut self.table
     }
 
-    pub(super) fn take_call_inference(&mut self, call: ExprId) -> Option<CallInferenceState<'s>> {
-        self.call_inference[call.0].take()
-    }
-
     pub(crate) fn selected_call_function(&self, call: ExprId) -> Option<rg_ir_model::FunctionRef> {
-        self.call_inference[call.0]
+        self.selected_calls[call.0]
             .as_ref()
-            .map(CallInferenceState::function)
+            .map(SelectedCall::function)
     }
 
-    pub(super) fn set_call_inference(&mut self, call: ExprId, state: CallInferenceState<'s>) {
-        self.call_inference[call.0] = Some(state);
-    }
-
-    pub(crate) fn call_is_selected(&self, call: ExprId) -> bool {
-        self.call_inference[call.0].is_some()
+    pub(super) fn set_selected_call(&mut self, call: ExprId, selected: SelectedCall<'s>) {
+        self.selected_calls[call.0] = Some(selected);
     }
 
     pub(super) fn call_result_is_pending(&self, call: ExprId, ty: &Ty<'s>) -> bool {
-        !self.call_is_selected(call) && self.root_resolved_expr_ty(call) == *ty
-    }
-
-    pub(crate) fn call_input(&self, call: ExprId) -> Ty<'s> {
-        self.call_inference[call.0]
-            .as_ref()
-            .map(|s| s.input(self.table.interner()))
-            .unwrap_or(self.table.interner().unknown())
+        self.selected_calls[call.0].is_none() && self.root_resolved_expr_ty(call) == *ty
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> Ty<'s> {
@@ -214,7 +199,7 @@ impl<'s> InferenceState<'s> {
     pub(crate) fn finish(self) -> BodyFacts {
         let Self {
             table,
-            call_inference,
+            selected_calls,
             exprs,
             binding_tys,
         } = self;
@@ -235,10 +220,10 @@ impl<'s> InferenceState<'s> {
                 .map(|ty| table.finalize(ty))
                 .collect(),
         );
-        let calls = call_inference
+        let calls = selected_calls
             .into_iter()
             .enumerate()
-            .filter_map(|(index, state)| state.map(|s| (ExprId(index), s.finalize(&table))))
+            .filter_map(|(index, selected)| selected.map(|s| (ExprId(index), s.finalize(&table))))
             .collect();
         BodyFacts::new(binding_tys, exprs, calls)
     }

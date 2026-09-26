@@ -21,34 +21,6 @@ pub struct Autoderef<'table, 's> {
     seen: UniqueVec<Ty<'s>>,
 }
 
-impl<'s> InferenceTable<'s> {
-    pub fn autoderef(&self, ty: Ty<'s>) -> Autoderef<'_, 's> {
-        Autoderef {
-            table: self,
-            current: Some(ty),
-            seen: UniqueVec::new(),
-        }
-    }
-
-    /// Try each autoderef type as a method receiver. If the chain ends at `[T; N]`, also try
-    /// `[T]`; this unsizing step is available even when the array reached the autoderef limit.
-    pub fn method_receivers(&self, ty: Ty<'s>) -> impl Iterator<Item = Ty<'s>> {
-        let mut autoderef = self.autoderef(ty);
-        let mut slice_element = None;
-        std::iter::from_fn(move || {
-            // Delay even constructing the slice until lookup has tried the array itself.
-            if let Some(inner) = slice_element.take() {
-                return Some(self.interner().slice(inner));
-            }
-            let ty = autoderef.next()?;
-            if let TyShape::Array { inner, .. } = ty.shape() {
-                slice_element = Some(inner);
-            }
-            Some(ty)
-        })
-    }
-}
-
 impl<'s> Iterator for Autoderef<'_, 's> {
     type Item = Ty<'s>;
 
@@ -95,5 +67,33 @@ impl<'s> Iterator for Autoderef<'_, 's> {
         }
         self.current = Some(ty);
         Some(ty)
+    }
+}
+
+impl<'s> InferenceTable<'s> {
+    pub fn autoderef(&self, ty: Ty<'s>) -> Autoderef<'_, 's> {
+        Autoderef {
+            table: self,
+            current: Some(ty),
+            seen: UniqueVec::new(),
+        }
+    }
+
+    /// Try each autoderef type as a method receiver. If the chain ends at `[T; N]`, also try
+    /// `[T]`; this unsizing step is available even when the array reached the autoderef limit.
+    pub fn method_receivers(&self, ty: Ty<'s>) -> impl Iterator<Item = Ty<'s>> {
+        let mut autoderef = self.autoderef(ty);
+        let mut slice_element = None;
+        std::iter::from_fn(move || {
+            // Delay even constructing the slice until lookup has tried the array itself.
+            if let Some(inner) = slice_element.take() {
+                return Some(self.interner().slice(inner));
+            }
+            let ty = autoderef.next()?;
+            if let TyShape::Array { inner, .. } = ty.shape() {
+                slice_element = Some(inner);
+            }
+            Some(ty)
+        })
     }
 }

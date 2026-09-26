@@ -61,6 +61,85 @@ pub fn use_it(value: &[u8; 3]) {
 }
 
 #[test]
+fn selected_method_facts_keep_parent_args_and_later_inference() {
+    use rg_ir_model::{BodyRef, PrimitiveTy, UnsignedIntTy, identity::DeclarationRef};
+    use rg_ty::Ty;
+
+    let fixture = BodyIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "selected_method_facts"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+struct Wrapper<'a, T, const N: usize> { value: &'a [T; N] }
+impl<'a, T, const N: usize> Wrapper<'a, T, N> {
+    fn make<U>(&self) -> (T, U) { loop {} }
+}
+
+pub fn use_it(wrapper: Wrapper<'_, u8, 3>) {
+    let result = wrapper.make::<_>();
+    let _: (u8, bool) = result;
+}
+"#,
+    );
+    let crate_ref = CrateRef {
+        package: PackageSlot(0),
+        crate_id: CrateId(0),
+    };
+    let function = fixture
+        .resident_crate_ir(crate_ref)
+        .expect("fixture items")
+        .functions_with_refs()
+        .find_map(|(function, data)| (data.name == "make").then_some(function))
+        .expect("fixture method");
+    let bodies = fixture
+        .body_ir_db()
+        .resident_package(crate_ref.package)
+        .expect("fixture package")
+        .crate_bodies(crate_ref.crate_id)
+        .expect("fixture bodies");
+    let (body_id, body, expr) = bodies
+        .body_views()
+        .find_map(|(body_id, body)| {
+            body.exprs()
+                .iter()
+                .position(|expr| matches!(expr.kind, ExprKind::MethodCall { .. }))
+                .map(|index| (body_id, body, ExprId(index)))
+        })
+        .expect("fixture method call");
+    let call = body.call_facts(expr).expect("selected method call");
+
+    // The impl arguments precede the method's U. U learns bool only from the later binding,
+    // after argument checking has finished, and navigation must keep the selected method.
+    let [
+        GenericArg::Lifetime(_),
+        GenericArg::Type(parent_ty),
+        GenericArg::Const(ConstValue::Scalar(3)),
+        GenericArg::Type(method_ty),
+    ] = call.generic_args().as_slice()
+    else {
+        panic!("unexpected method arguments: {:?}", call.generic_args());
+    };
+    assert_eq!(
+        parent_ty.as_ref(),
+        &Ty::Primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8))
+    );
+    assert_eq!(method_ty.as_ref(), &Ty::Primitive(PrimitiveTy::Bool));
+    assert_eq!(call.function(), function);
+    let body_ref = BodyRef {
+        crate_ref,
+        body: body_id,
+    };
+    assert_eq!(
+        body.expr_declarations(body_ref, expr),
+        vec![DeclarationRef::from(function)]
+    );
+}
+
+#[test]
 fn alias_placeholders_share_evidence_and_generic_calls_stay_independent() {
     use rg_ir_model::{BindingId, PrimitiveTy, UnsignedIntTy};
     use rg_ty::Ty;

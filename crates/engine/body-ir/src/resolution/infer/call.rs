@@ -1,65 +1,49 @@
 //! Instantiate each selected call once in the body's shared inference context.
 //!
 //! Arguments, expected returns, callable bounds, and projection results all constrain the same
-//! variables. Fulfillment owns the outstanding goals; calls retain their signature and identities.
+//! variables. The signature is needed while checking arguments. Afterward, only the selected
+//! function and its live generic arguments stay with the body; fulfillment owns outstanding goals.
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, GenericDefRef, GenericParamRef};
+use rg_ir_model::{ExprId, FunctionRef, GenericDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{
-    CallableSignature, InferenceSubstitution, InferenceTable, SolverInterner, Ty, TyShape,
-};
+use rg_ty::solver::{CallableSignature, GenericArgs, InferenceTable, SolverInterner, Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
 use crate::{CallFacts, body::ExprKind};
 
-/// The chosen function and one instantiation of its signature for this call.
+/// What remains of a call after its arguments have been connected to the signature.
 ///
-/// For `fn id<T>(value: T) -> T`, a call retains `T = ?T` and uses that same `?T` for its argument
-/// and result. Rebuilding the substitution on a retry would allocate a different variable and
-/// lose the connection to evidence already gathered from arguments or an expected return type.
-pub(super) struct CallInferenceState<'s> {
-    function: rg_ir_model::FunctionRef,
-    generic_params: Vec<GenericParamRef>,
-    signature: CallableSignature<'s>,
-    subst: InferenceSubstitution<'s>,
-    // `value.method(arg)` supplies `self` separately; `Type::method(value, arg)` writes it out.
-    first_written_param_idx: usize,
-    receiver_ty: Option<Ty<'s>>,
+/// In `let value = make(); require_u8(value);`, `make<T>() -> T` is selected before `T` is known.
+/// Retaining its live `?T` lets the later argument constrain the published call facts too.
+/// The arguments include parent generics and keep declaration order for finalization.
+pub(super) struct SelectedCall<'s> {
+    function: FunctionRef,
+    generic_args: GenericArgs<'s>,
 }
 
-impl<'s> CallInferenceState<'s> {
-    pub(super) fn function(&self) -> rg_ir_model::FunctionRef {
+impl<'s> SelectedCall<'s> {
+    pub(super) fn function(&self) -> FunctionRef {
         self.function
     }
 
-    pub(super) fn input(&self, cx: SolverInterner<'s>) -> Ty<'s> {
-        cx.tuple(
-            self.generic_params
-                .iter()
-                .filter_map(|p| self.subst.get(*p).and_then(|a| a.as_ty()))
-                .collect::<Vec<_>>(),
-        )
-    }
-
     pub(super) fn finalize(&self, table: &InferenceTable<'s>) -> CallFacts {
-        CallFacts::new(
-            self.function,
-            table.finalize_args(
-                self.subst
-                    .args_for(table.interner(), self.generic_params.iter().copied()),
-            ),
-        )
+        CallFacts::new(self.function, table.finalize_args(self.generic_args))
     }
 }
 
-/// A selected call held while its arguments are being visited. Its signature supplies argument
-/// expectations; finishing the call connects those arguments and puts the state back in the body.
+/// A call held while its arguments are being visited and connected to the signature.
+/// The signature supplies argument expectations. Once checking is done, it and the receiver
+/// information can be dropped; only `selected` is retained until body finalization.
 pub(super) struct PreparedCall<'s> {
     call: ExprId,
-    state: CallInferenceState<'s>,
+    selected: SelectedCall<'s>,
+    signature: CallableSignature<'s>,
+    // `value.method(arg)` supplies `self` separately; `Type::method(value, arg)` writes it out.
+    first_written_param_idx: usize,
+    receiver_ty: Option<Ty<'s>>,
 }
 
 impl<'s> PreparedCall<'s> {
@@ -69,7 +53,7 @@ impl<'s> PreparedCall<'s> {
         arg_count: usize,
         cx: SolverInterner<'s>,
     ) -> Ty<'s> {
-        let params = &self.state.signature.params[self.state.first_written_param_idx..];
+        let params = &self.signature.params[self.first_written_param_idx..];
         if params.len() == arg_count {
             params[index]
         } else {
@@ -102,14 +86,14 @@ where
                 .table()
                 .canonicalize(&self.inference.expr_ty(expr))
         });
-        let transfer = self
+        let prepared = self
             .prepare_call(call, receiver)
             .context("select call signature")?;
         self.inference.expr_slot(call);
         // A selected generic signature can use the expectation to infer its type arguments.
         // An unresolved call or root projection may instead turn out to return `!`; its expected
         // type is applied by the expression's coercion after the pending work is registered.
-        if transfer.is_some()
+        if prepared.is_some()
             && !self
                 .inference
                 .table()
@@ -124,31 +108,32 @@ where
             ) {
                 continue;
             }
-            let expected = transfer
+            let expected = prepared
                 .as_ref()
-                .map(|transfer| transfer.argument_expected_ty(index, args.len(), self.cx))
+                .map(|prepared| prepared.argument_expected_ty(index, args.len(), self.cx))
                 .unwrap_or(self.cx.unknown());
             self.infer_expr(*arg, &expected)
                 .context("infer call argument")?;
         }
-        let selected = transfer.is_some();
-        if let Some(transfer) = transfer {
-            self.finish_call(transfer, args)
-                .context("apply call signature")?;
-        }
-        let pending = DeferredKind::Call { call };
-        let receiver_changed = lookup_input
-            != receiver.map(|expr| {
-                self.inference
-                    .table()
-                    .canonicalize(&self.inference.expr_ty(expr))
-            });
-        if !selected && receiver_changed {
-            // Ordinary argument inference can refine the same local used as this receiver.
-            self.run_or_defer(pending)
-                .context("retry call after argument inference")?;
+        if let Some(prepared) = prepared {
+            self.finish_call(prepared, args);
         } else {
-            self.defer(pending, None);
+            // Only lookup needs a body-level retry. Once a call is selected, its remaining
+            // predicates and projections are already in the inference table's goal queue.
+            let pending = DeferredKind::Call { call };
+            let receiver_changed = lookup_input
+                != receiver.map(|expr| {
+                    self.inference
+                        .table()
+                        .canonicalize(&self.inference.expr_ty(expr))
+                });
+            if receiver_changed {
+                // Ordinary argument inference can refine the same local used as this receiver.
+                self.run_or_defer(pending)
+                    .context("retry call after argument inference")?;
+            } else {
+                self.defer(pending, None);
+            }
         }
 
         // Callable bounds can now constrain the prepared closure signatures. Make that evidence
@@ -181,9 +166,6 @@ where
         receiver: Option<ExprId>,
     ) -> Result<Option<PreparedCall<'s>>, PackageStoreError> {
         crate::profile::metric::CALL_ATTEMPTS.inc();
-        if let Some(state) = self.inference.take_call_inference(call) {
-            return Ok(Some(PreparedCall { call, state }));
-        }
         let resolution = match self.body.expr_unchecked(call).kind {
             ExprKind::Call {
                 callee: Some(callee),
@@ -240,37 +222,31 @@ where
         self.inference.set_expr_ty(call, return_ty);
         Ok(Some(PreparedCall {
             call,
-            state: CallInferenceState {
+            selected: SelectedCall {
                 function,
-                generic_params: generics.iter().map(|p| p.param()).collect(),
-                signature,
-                subst,
-                first_written_param_idx: target.first_written,
-                receiver_ty: target.receiver,
+                generic_args: subst.args_for(self.cx, generics.iter().map(|p| p.param())),
             },
+            signature,
+            first_written_param_idx: target.first_written,
+            receiver_ty: target.receiver,
         }))
     }
 
     /// Connect argument results to the prepared signature, then retain the call for finalization.
     /// Bounds can remain pending: later body evidence still reaches their shared variables.
-    pub(super) fn finish_call(
-        &mut self,
-        transfer: PreparedCall<'s>,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let state = transfer.state;
+    pub(super) fn finish_call(&mut self, prepared: PreparedCall<'s>, args: &[ExprId]) {
         for (arg, param) in args.iter().zip(
-            state
+            prepared
                 .signature
                 .params
                 .iter()
-                .skip(state.first_written_param_idx),
+                .skip(prepared.first_written_param_idx),
         ) {
             self.coerce_expr_ty(*arg, &param);
         }
-        if state.first_written_param_idx == 1
-            && let Some(receiver) = state.receiver_ty
-            && let Some(param) = state.signature.params.first()
+        if prepared.first_written_param_idx == 1
+            && let Some(receiver) = prepared.receiver_ty
+            && let Some(param) = prepared.signature.params.first()
         {
             let param = match param.shape() {
                 TyShape::Reference { inner, .. } => inner,
@@ -279,7 +255,7 @@ where
             self.inference.table().unify(receiver, param);
         }
         let _ = self.inference.table().fulfill();
-        self.inference.set_call_inference(transfer.call, state);
-        Ok(())
+        self.inference
+            .set_selected_call(prepared.call, prepared.selected);
     }
 }

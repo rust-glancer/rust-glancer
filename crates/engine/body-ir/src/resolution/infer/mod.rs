@@ -4,9 +4,9 @@
 //! Each expression records its type and connects it to its children through shared inference
 //! variables. Later evidence can travel through those variables without walking the syntax again.
 //!
-//! `state` keeps these relationships, `call` retains each selected function's substitutions, and
-//! `deferred` retries lookups and projections that need more evidence. Completion resolves the live
-//! variables before moving the expression and binding facts into `BodyFacts`.
+//! `state` keeps these relationships, `call` retains each selected function's live generic arguments,
+//! and `deferred` retries lookups and projections that need more evidence. Finalization resolves the
+//! live variables before moving the expression and binding facts into `BodyFacts`.
 
 use std::collections::VecDeque;
 

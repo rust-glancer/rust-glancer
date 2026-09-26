@@ -53,6 +53,35 @@ pub struct CallbackScope<'s> {
     parent: Option<u64>,
 }
 
+impl CallbackScope<'_> {
+    /// Return the last reason reported for missing data in this scope, including nested scopes.
+    /// `None` means no callback reported missing data; the solver may still reject the goal.
+    pub fn failure(&self) -> Option<&'static str> {
+        let callbacks = &self.cx.0.callbacks;
+        (callbacks.failures.get() != self.start).then(|| {
+            callbacks
+                .reason
+                .get()
+                .expect("a failed callback records its reason")
+        })
+    }
+}
+
+impl Drop for CallbackScope<'_> {
+    fn drop(&mut self) {
+        // Resume checking the caller's scope. Leave the failure count alone: that caller may
+        // need to reject its own result because of a declaration read which failed inside us.
+        self.cx.0.callbacks.active_start.set(self.parent);
+        if self.failure().is_some() {
+            // The compiler may cache an answer before our caller checks callback availability.
+            // Reusing it would skip the failed callback and make the next attempt look complete.
+            // We cannot identify which answers depended on that read, so clear the solver answer
+            // cache. Declaration reads check completeness before caching their source data.
+            *self.cx.0.cache.borrow_mut() = Default::default();
+        }
+    }
+}
+
 impl<'s> SolverInterner<'s> {
     /// Include input preparation in the scope: lowering a type or loading an impl can fail before
     /// goal evaluation starts. Keep guards nested, dropping an inner scope before its caller's.
@@ -83,34 +112,5 @@ impl<'s> SolverInterner<'s> {
             .active_start
             .get()
             .is_some_and(|start| callbacks.failures.get() != start)
-    }
-}
-
-impl CallbackScope<'_> {
-    /// Return the last reason reported for missing data in this scope, including nested scopes.
-    /// `None` means no callback reported missing data; the solver may still reject the goal.
-    pub fn failure(&self) -> Option<&'static str> {
-        let callbacks = &self.cx.0.callbacks;
-        (callbacks.failures.get() != self.start).then(|| {
-            callbacks
-                .reason
-                .get()
-                .expect("a failed callback records its reason")
-        })
-    }
-}
-
-impl Drop for CallbackScope<'_> {
-    fn drop(&mut self) {
-        // Resume checking the caller's scope. Leave the failure count alone: that caller may
-        // need to reject its own result because of a declaration read which failed inside us.
-        self.cx.0.callbacks.active_start.set(self.parent);
-        if self.failure().is_some() {
-            // The compiler may cache an answer before our caller checks callback availability.
-            // Reusing it would skip the failed callback and make the next attempt look complete.
-            // We cannot identify which answers depended on that read, so clear the solver answer
-            // cache. Declaration reads check completeness before caching their source data.
-            *self.cx.0.cache.borrow_mut() = Default::default();
-        }
     }
 }

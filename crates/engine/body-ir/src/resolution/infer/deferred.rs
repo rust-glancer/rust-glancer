@@ -179,10 +179,6 @@ where
     /// A supplied previous input keeps changes made during an attempt visible to the retry loop.
     /// Without one, queue against the current input.
     pub(super) fn defer(&mut self, kind: DeferredKind<'s>, previous_input: Option<Ty<'s>>) {
-        if matches!(&kind, DeferredKind::Call { call, .. } if self.inference.call_is_selected(*call))
-        {
-            return;
-        }
         let input = self.deferred_input(&kind);
         let input_changed = previous_input
             .as_ref()
@@ -281,27 +277,14 @@ where
         let expr_ty = |expr| self.inference.expr_ty(expr);
         let input = match kind {
             DeferredKind::Call { call } => {
-                let (receiver, args) = match &self.body.expr_unchecked(*call).kind {
-                    ExprKind::Call { args, .. } => (None, args),
-                    ExprKind::MethodCall { receiver, args, .. } => (*receiver, args),
+                let receiver = match self.body.expr_unchecked(*call).kind {
+                    ExprKind::Call { .. } => None,
+                    ExprKind::MethodCall { receiver, .. } => receiver,
                     _ => unreachable!("pending call owns a call expression"),
                 };
-                // Before selection, only receiver evidence can change call lookup. Once a
-                // signature is selected, arguments, the result, and its generic bindings can
-                // all change the remaining proof or projection work.
-                if self.inference.selected_call_function(*call).is_none() {
-                    receiver.map(expr_ty).unwrap_or(self.cx.unknown())
-                } else {
-                    self.cx.tuple(
-                        receiver
-                            .into_iter()
-                            .chain(args.iter().copied())
-                            .chain([*call])
-                            .map(expr_ty)
-                            .chain([self.inference.call_input(*call)])
-                            .collect::<Vec<_>>(),
-                    )
-                }
+                // Only unselected calls wait here, and receiver evidence can change their
+                // lookup. Selected calls' predicates and projections are retried by the solver.
+                receiver.map(expr_ty).unwrap_or(self.cx.unknown())
             }
             DeferredKind::Member { expr } => match self.body.expr_unchecked(*expr).kind {
                 ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
@@ -385,14 +368,14 @@ where
                     ExprKind::MethodCall { receiver, args, .. } => (*receiver, args.as_slice()),
                     _ => unreachable!("pending call owns a call expression"),
                 };
-                if let Some(transfer) = self
+                let Some(prepared) = self
                     .prepare_call(*call, receiver)
                     .context("select pending call signature")?
-                {
-                    self.finish_call(transfer, args)
-                        .context("complete pending call")?;
-                }
-                Ok(self.inference.call_is_selected(*call))
+                else {
+                    return Ok(false);
+                };
+                self.finish_call(prepared, args);
+                Ok(true)
             }
             DeferredKind::Pattern {
                 pat,
