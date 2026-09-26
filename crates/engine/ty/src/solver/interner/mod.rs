@@ -5,21 +5,24 @@
 //! Interning gives repeated type shapes the same address, so the solver can compare them cheaply.
 
 mod availability;
+mod declarations;
 mod lists;
 
-use std::{cell::RefCell, fmt, sync::Arc};
+use std::{cell::RefCell, fmt};
 
 use rustc_type_ir::{
-    self as ir, TypeFoldable, TypeVisitableExt, Upcast, VisitorResult,
+    self as ir, TypeFoldable, TypeVisitableExt, VisitorResult,
     data_structures::HashMap,
     inherent::{GenericArgs as _, Ty as _},
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
 
-use self::{availability::CallbackAvailability, lists::ListInterners};
+use self::{
+    availability::CallbackAvailability, declarations::WorkingDeclarations, lists::ListInterners,
+};
 pub use self::{availability::CallbackScope, lists::ListElement};
 use super::{
-    Declaration, DeclarationKind, DeclarationProvider, Solver,
+    DeclarationKind, DeclarationProvider, Solver,
     declarations::LangItem,
     profile::SolverProfile,
     types::{
@@ -29,19 +32,6 @@ use super::{
     },
 };
 use crate::lookup::TraitImplFilter;
-
-// Declaration templates and generic metadata are stable throughout an operation. Keep them
-// beside the arena so repeated callbacks reuse working types. Nothing here enters the semantic
-// snapshot. Do not cache a template built using callback fallback values: reading it from the
-// cache would skip the callback that reported missing data and make it look complete.
-#[derive(Default)]
-struct WorkingDeclarations<'s> {
-    templates: HashMap<DefId, Arc<Declaration<'s>>>,
-    adts: HashMap<DefId, AdtDef>,
-    generics: HashMap<DefId, Generics<'s>>,
-    impl_traits: HashMap<DefId, ir::TraitRef<SolverInterner<'s>>>,
-    clauses: HashMap<(DefId, bool), List<'s, Clause<'s>>>,
-}
 
 /// The owner of every temporary solver value in a body or standalone query.
 ///
@@ -149,75 +139,6 @@ impl<'s> SolverInterner<'s> {
         self.0.provider.is_cancelled()
     }
 
-    pub(crate) fn declaration(self, id: DefId) -> Arc<Declaration<'s>> {
-        if let Some(data) = self.0.declarations.borrow().templates.get(&id) {
-            self.profile(|p| p.declaration_hits += 1);
-            return data.clone();
-        }
-        // Lowering a declaration can read types or bounds from other declarations. Keep this
-        // scope alive until we decide whether to cache it: Some(declaration) can still contain
-        // fallback data from one of those nested reads.
-        let _callbacks = self.track_callbacks();
-        if let Some(data) = self.0.provider.declaration(self, id) {
-            let data = Arc::new(data);
-            if !self.has_unavailable() {
-                self.0
-                    .declarations
-                    .borrow_mut()
-                    .templates
-                    .insert(id, data.clone());
-            }
-            return data;
-        }
-        self.unavailable("missing declaration");
-        Arc::new(Declaration {
-            name: String::new(),
-            generics: Vec::new(),
-            parent_count: 0,
-            parent: None,
-            predicates: Vec::new(),
-            bounds: Vec::new(),
-            lang_item: None,
-            kind: DeclarationKind::Unavailable,
-        })
-    }
-
-    pub fn params(self, owner: DefId) -> &'s [rg_ir_model::GenericParamRef] {
-        self.generics(owner).params
-    }
-
-    pub(crate) fn generics(self, id: DefId) -> Generics<'s> {
-        if let Some(&generics) = self.0.declarations.borrow().generics.get(&id) {
-            return generics;
-        }
-        let _callbacks = self.track_callbacks();
-        let Some(data) = self.0.provider.generics(id) else {
-            self.unavailable("missing declaration generics");
-            return Generics {
-                params: &[],
-                parent_count: 0,
-            };
-        };
-        // Parameter identities are already cached by declaration. Unlike a type's arguments,
-        // they rarely recur under another owner, so a second content interner adds little reuse.
-        self.profile(|p| {
-            p.parameter_slice_requests += u64::from(!data.params.is_empty());
-            p.parameter_slice_bytes += std::mem::size_of_val(data.params.as_slice()) as u64;
-        });
-        let generics = Generics {
-            params: self.0.arena.alloc_slice_copy(&data.params),
-            parent_count: data.parent_count,
-        };
-        if !self.has_unavailable() {
-            self.0
-                .declarations
-                .borrow_mut()
-                .generics
-                .insert(id, generics);
-        }
-        generics
-    }
-
     /// A named item can be known before any arguments are inferred. Preserve every parameter's
     /// kind and position without importing the declaration's own parameters into that use site.
     pub fn unknown_args(self, owner: DefId) -> GenericArgs<'s> {
@@ -297,61 +218,6 @@ impl<'s> SolverInterner<'s> {
             .borrow_mut()
             .insert(&value.0.internee, value);
         value
-    }
-
-    pub(crate) fn field_tys(self, id: DefId) -> Vec<Ty<'s>> {
-        let d = self.declaration(id);
-        match &d.kind {
-            DeclarationKind::Adt { fields, .. } => fields.clone(),
-            _ => {
-                self.unavailable("missing ADT fields");
-                Vec::new()
-            }
-        }
-    }
-
-    /// Collect the assumptions available inside this item, such as `T: Clone` inside
-    /// `fn f<T: Clone>()`. Later goals reuse these assumptions without reading them again.
-    /// If preparing them needs unavailable data, carry that failure in the environment so
-    /// each later goal knows its inputs were incomplete even after this callback scope ends.
-    pub fn parameter_environment(self, id: DefId) -> ParamEnv<'s> {
-        let callbacks = self.track_callbacks();
-        let mut clauses = self.declaration_clauses(id, false).to_vec();
-        // A trait's own methods may assume `Self: Trait`, in addition to its declared bounds.
-        // This assumption belongs in the caller environment, not in the trait's super-predicates.
-        let mut owner = Some(id);
-        while let Some(id) = owner {
-            if matches!(id, DefId::Trait(_)) {
-                clauses.push(
-                    ir::TraitRef::new_from_args(self, id, GenericArgs::identity_for_item(self, id))
-                        .upcast(self),
-                );
-            }
-            owner = self.declaration(id).parent;
-        }
-        let clauses = ir::elaborate::elaborate(self, clauses).collect::<Vec<_>>();
-        ParamEnv {
-            clauses: List::new(self, &clauses),
-            unavailable: callbacks.failure().is_some(),
-        }
-    }
-
-    fn declaration_clauses(self, id: DefId, bounds: bool) -> List<'s, Clause<'s>> {
-        if let Some(&clauses) = self.0.declarations.borrow().clauses.get(&(id, bounds)) {
-            return clauses;
-        }
-        let _callbacks = self.track_callbacks();
-        let d = self.declaration(id);
-        let clauses = if bounds { &d.bounds } else { &d.predicates };
-        let clauses = List::new(self, clauses);
-        if !self.has_unavailable() {
-            self.0
-                .declarations
-                .borrow_mut()
-                .clauses
-                .insert((id, bounds), clauses);
-        }
-        clauses
     }
 
     fn require_lang_item(self, item: LangItem) -> DefId {
@@ -508,16 +374,20 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn type_of(self, id: DefId) -> ir::EarlyBinder<Self, Ty<'s>> {
-        let d = self.declaration(id);
-        let ty = match &d.kind {
-            DeclarationKind::Alias(Some(ty)) => *ty,
-            DeclarationKind::Impl { header, .. } => header.self_ty,
-            DeclarationKind::Adt { data, .. } => {
-                Ty::new_adt(self, *data, GenericArgs::identity_for_item(self, id))
-            }
+        let ty = match id {
+            DefId::TypeAlias(alias) => self.alias_value(alias),
+            DefId::Impl(implementation) => self
+                .impl_header(implementation)
+                .map(|header| header.self_ty)
+                .unwrap_or_else(|| self.unknown()),
+            DefId::Adt(_) => Ty::new_adt(
+                self,
+                self.adt_def(id),
+                GenericArgs::identity_for_item(self, id),
+            ),
             _ => {
                 self.unavailable("definition type");
-                Ty::new_error(self, ErrorGuaranteed)
+                self.unknown()
             }
         };
         ir::EarlyBinder::bind(ty)
@@ -544,13 +414,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
 
     type AdtDef = AdtDef;
     fn adt_def(self, id: DefId) -> AdtDef {
-        if let Some(&data) = self.0.declarations.borrow().adts.get(&id) {
-            return data;
-        }
-        if let DefId::Adt(adt) = id
-            && let Some(data) = self.0.provider.adt_def(adt)
-        {
-            self.0.declarations.borrow_mut().adts.insert(id, data);
+        if let DeclarationKind::Adt(data) = self.metadata(id).kind {
             return data;
         }
         self.unavailable("ADT definition");
@@ -567,7 +431,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     fn alias_ty_kind_from_def_id(self, id: DefId) -> ir::AliasTyKind<Self> {
         match id {
             DefId::Opaque(_) => ir::AliasTyKind::Opaque { def_id: id },
-            DefId::TypeAlias(_) => match self.declaration(id).parent {
+            DefId::TypeAlias(_) => match self.metadata(id).parent {
                 Some(DefId::Trait(_)) => ir::AliasTyKind::Projection { def_id: id },
                 Some(DefId::Impl(_)) => ir::AliasTyKind::Inherent { def_id: id },
                 _ => ir::AliasTyKind::Free { def_id: id },
@@ -634,7 +498,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn projection_parent(self, id: DefId) -> DefId {
-        self.declaration(id).parent.unwrap_or_else(|| {
+        self.metadata(id).parent.unwrap_or_else(|| {
             self.unavailable("projection parent");
             DefId::Unavailable
         })
@@ -669,9 +533,11 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn fn_sig(self, id: DefId) -> ir::EarlyBinder<Self, ir::Binder<Self, ir::FnSig<Self>>> {
-        let d = self.declaration(id);
-        let DeclarationKind::Function(sig) = &d.kind else {
-            self.unavailable("function signature");
+        let DefId::Function(function) = id else {
+            self.unavailable("function identity");
+            return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
+        };
+        let Some(sig) = self.function_signature(function) else {
             return ir::EarlyBinder::bind(ir::Binder::dummy(ir::FnSig::dummy()));
         };
         let tys = sig.params.iter().chain([sig.ret]).collect::<Vec<_>>();
@@ -700,9 +566,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn item_bounds(self, id: DefId) -> ir::EarlyBinder<Self, impl IntoIterator<Item = Clause<'s>>> {
-        ir::EarlyBinder::bind(
-            ir::elaborate::elaborate(self, self.declaration_clauses(id, true)).collect::<Vec<_>>(),
-        )
+        ir::EarlyBinder::bind(ir::elaborate::elaborate(self, self.bounds(id)).collect::<Vec<_>>())
     }
 
     fn item_self_bounds(
@@ -710,7 +574,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         id: DefId,
     ) -> ir::EarlyBinder<Self, impl IntoIterator<Item = Clause<'s>>> {
         ir::EarlyBinder::bind(
-            ir::elaborate::elaborate(self, self.declaration_clauses(id, true))
+            ir::elaborate::elaborate(self, self.bounds(id))
                 .filter_only_self()
                 .collect::<Vec<_>>(),
         )
@@ -738,7 +602,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         self,
         id: DefId,
     ) -> ir::EarlyBinder<Self, impl IntoIterator<Item = Clause<'s>>> {
-        ir::EarlyBinder::bind(self.declaration_clauses(id, false))
+        ir::EarlyBinder::bind(self.predicates(id))
     }
 
     fn own_predicates_of(
@@ -753,7 +617,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         id: DefId,
     ) -> ir::EarlyBinder<Self, impl IntoIterator<Item = (Clause<'s>, ())>> {
         ir::EarlyBinder::bind(
-            self.declaration_clauses(id, false)
+            self.predicates(id)
                 .into_iter()
                 .map(|c| (c, ()))
                 .collect::<Vec<_>>(),
@@ -852,28 +716,28 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn as_projection_lang_item(self, id: DefId) -> Option<SolverProjectionLangItem> {
-        match self.declaration(id).lang_item {
+        match self.metadata(id).lang_item {
             Some(LangItem::Projection(item)) => Some(item),
             _ => None,
         }
     }
 
     fn as_trait_lang_item(self, id: DefId) -> Option<SolverTraitLangItem> {
-        match self.declaration(id).lang_item {
+        match self.metadata(id).lang_item {
             Some(LangItem::Trait(item)) => Some(item),
             _ => None,
         }
     }
 
     fn as_adt_lang_item(self, id: DefId) -> Option<SolverAdtLangItem> {
-        match self.declaration(id).lang_item {
+        match self.metadata(id).lang_item {
             Some(LangItem::Adt(item)) => Some(item),
             _ => None,
         }
     }
 
     fn associated_type_def_ids(self, id: DefId) -> impl IntoIterator<Item = DefId> {
-        match &self.declaration(id).kind {
+        match &self.metadata(id).kind {
             DeclarationKind::Trait {
                 associated_types, ..
             } => associated_types.clone(),
@@ -945,7 +809,10 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn has_item_definition(self, id: DefId) -> bool {
-        matches!(self.declaration(id).kind, DeclarationKind::Alias(Some(_)))
+        matches!(
+            self.metadata(id).kind,
+            DeclarationKind::Alias { has_value: true }
+        )
     }
 
     fn impl_specializes(self, _: DefId, _: DefId) -> bool {
@@ -957,30 +824,19 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn impl_trait_ref(self, id: DefId) -> ir::EarlyBinder<Self, ir::TraitRef<Self>> {
-        if let Some(&reference) = self.0.declarations.borrow().impl_traits.get(&id) {
-            return ir::EarlyBinder::bind(reference);
-        }
-        let _callbacks = self.track_callbacks();
-        let d = self.declaration(id);
-        if let DeclarationKind::Impl { header, .. } = &d.kind
-            && let Some(tr) = &header.trait_ref
+        if let DefId::Impl(implementation) = id
+            && let Some(header) = self.impl_header(implementation)
+            && let Some(tr) = header.trait_ref
         {
             let reference = ir::TraitRef::new_from_args(
                 self,
-                DefId::Trait(tr.application.def),
-                self.complete_args(DefId::Trait(tr.application.def), tr.application.args),
+                DefId::Trait(tr.def),
+                self.complete_args(DefId::Trait(tr.def), tr.args),
             );
-            // Compiler error types deliberately relate to any type for error recovery. Missing
-            // source information must not turn that recovery rule into proof of an impl.
+            // Compiler error types relate to anything for recovery. An incomplete header must
+            // not turn that recovery rule into proof of an impl.
             if reference.references_error() {
                 self.unavailable("incomplete impl header");
-            }
-            if !self.has_unavailable() {
-                self.0
-                    .declarations
-                    .borrow_mut()
-                    .impl_traits
-                    .insert(id, reference);
             }
             return ir::EarlyBinder::bind(reference);
         }
@@ -999,7 +855,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
 
     fn trait_is_auto(self, id: DefId) -> bool {
         matches!(
-            self.declaration(id).kind,
+            self.metadata(id).kind,
             DeclarationKind::Trait { is_auto: true, .. }
         )
     }
@@ -1023,7 +879,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
 
     fn trait_is_unsafe(self, id: DefId) -> bool {
         matches!(
-            self.declaration(id).kind,
+            self.metadata(id).kind,
             DeclarationKind::Trait {
                 is_unsafe: true,
                 ..
@@ -1093,7 +949,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn item_name(self, id: DefId) -> Symbol<'s> {
-        Symbol(self.0.arena.alloc_str(&self.declaration(id).name))
+        Symbol(self.0.arena.alloc_str(&self.metadata(id).name))
     }
 }
 

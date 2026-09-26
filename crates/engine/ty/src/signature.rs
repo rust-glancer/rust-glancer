@@ -14,32 +14,30 @@ use rg_item_tree::FunctionQualifiers;
 use rg_semantic_ir::ItemStoreSource;
 
 use crate::{
-    AssocTypeBinding, Clause, OpaqueTy, Substitution, TraitRefLowering, Ty,
+    AssocTypeBinding, Clause, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
     lookup::ItemPathQuery,
     lowering::{TypeLoweringQuery, TypePathResolver},
 };
 
-/// One function's parameters, return, qualifiers, and predicates under an owner-scoped binder.
+/// One function's parameter types, return type, and qualifiers before choosing call arguments.
 ///
-/// Types and clauses retain their owner-scoped parameter refs. A caller chooses whether to keep
-/// those identities or replace them with a call-specific substitution.
+/// For `fn id<T>(value: T) -> T`, both types refer to the function's declared `T`. A caller can
+/// inspect those generic types or substitute the arguments chosen for a particular call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallableSignature {
     pub params: Vec<Ty>,
     pub ret: Ty,
-    pub clauses: Vec<Clause>,
     /// Keep qualifiers beside the lowered types so semantic consumers do not have to reopen the
     /// source-shaped declaration to distinguish safe, unsafe, and async function items.
     pub qualifiers: FunctionQualifiers,
 }
 
-/// Canonical impl self type, optional trait application, and predicates.
+/// The receiver and positional trait arguments of an impl, before checking its requirements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplHeader {
     pub owner: ImplRef,
     pub self_ty: Ty,
-    pub trait_ref: Option<TraitRefLowering>,
-    pub clauses: Vec<Clause>,
+    pub trait_ref: Option<TraitApplication>,
 }
 
 /// Trait `Self` and the predicates exposed to the trait solver.
@@ -87,7 +85,7 @@ where
         }
     }
 
-    /// Lower one complete function declaration into the shared semantic type vocabulary.
+    /// Lower a function's parameter and return types into the shared semantic vocabulary.
     ///
     /// Parameters are visited in source order before the return type. Keeping that walk in one
     /// session gives argument-position parameters and opaque return occurrences repeatable
@@ -130,20 +128,25 @@ where
         let GenericDefRef::Function(function) = param.owner else {
             return Ok(Vec::new());
         };
-        let Some(signature) = self.function(function)? else {
-            return Ok(Vec::new());
-        };
+        let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
+        let clauses = lowering.with_storage(|cx| {
+            Ok(lowering
+                .predicates(cx, function.into())?
+                .unwrap_or_default()
+                .into_iter()
+                .map(|clause| cx.raise_clause(clause))
+                .collect::<Vec<_>>())
+        })?;
         let subject = Ty::Param(param);
         let mut bounds = Vec::new();
-        for clause in &signature.clauses {
+        for clause in &clauses {
             let Clause::Implemented(application) = clause else {
                 continue;
             };
             if application.self_ty() != Some(&subject) {
                 continue;
             }
-            let associated_types = signature
-                .clauses
+            let associated_types = clauses
                 .iter()
                 .filter_map(|clause| {
                     let Clause::AliasEq { alias, ty } = clause else {

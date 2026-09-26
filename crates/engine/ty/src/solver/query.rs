@@ -14,8 +14,8 @@ use rg_std::ExpectedUnique;
 use rustc_type_ir::{self as ir, Upcast};
 
 use super::{
-    Clause, DeclarationKind, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List,
-    Outcome, ProjectionTy, SolverInterner, Ty,
+    Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome, ProjectionTy,
+    SolverInterner, Ty,
 };
 use crate::signature;
 
@@ -70,7 +70,6 @@ impl<'s> TraitApplication<'s> {
 pub struct CallableSignature<'s> {
     pub params: List<'s, Ty<'s>>,
     pub ret: Ty<'s>,
-    pub clauses: List<'s, Clause<'s>>,
     pub qualifiers: FunctionQualifiers,
 }
 
@@ -83,11 +82,6 @@ impl<'s> CallableSignature<'s> {
                 .map(|ty| cx.raise_ty(ty).unwrap_or(crate::Ty::Unknown))
                 .collect(),
             ret: cx.raise_ty(self.ret).unwrap_or(crate::Ty::Unknown),
-            clauses: self
-                .clauses
-                .iter()
-                .map(|clause| cx.raise_clause(clause))
-                .collect(),
             qualifiers: self.qualifiers,
         }
     }
@@ -132,28 +126,34 @@ pub struct AssocTypeBinding<'s> {
     pub ty: Ty<'s>,
 }
 
-/// Declaration parameters remain in this template until an impl is matched to a receiver.
-#[derive(Debug, Clone)]
+/// An impl's receiver and optional trait application, with its declaration parameters still
+/// generic. Matching the impl to a receiver supplies arguments for those parameters; checking
+/// its requirements is a separate operation.
+#[derive(Debug, Clone, Copy)]
 pub struct ImplHeader<'s> {
     pub owner: ImplRef,
     pub self_ty: Ty<'s>,
-    pub trait_ref: Option<TraitRefLowering<'s>>,
-    pub clauses: Vec<Clause<'s>>,
+    pub trait_ref: Option<TraitApplication<'s>>,
 }
 
 impl<'s> ImplHeader<'s> {
-    pub fn raise(&self, cx: SolverInterner<'s>) -> signature::ImplHeader {
+    pub fn raise(self, cx: SolverInterner<'s>) -> signature::ImplHeader {
         signature::ImplHeader {
             owner: self.owner,
             self_ty: cx.raise_ty(self.self_ty).unwrap_or(crate::Ty::Unknown),
-            trait_ref: self.trait_ref.as_ref().map(|bound| bound.raise(cx)),
-            clauses: self
-                .clauses
-                .iter()
-                .map(|&clause| cx.raise_clause(clause))
-                .collect(),
+            trait_ref: self.trait_ref.map(|application| application.raise(cx)),
         }
     }
+}
+
+/// The substitution and trial table learned from matching an impl's receiver and trait arguments.
+/// Associated-item discovery can use this substitution before the impl's requirements are read.
+/// Matching projection types may also queue goals, which full selection still needs to solve.
+pub(crate) struct ImplHeaderMatch<'s> {
+    pub application: Option<TraitApplication<'s>>,
+    pub subst: InferenceSubstitution<'s>,
+    pub table: InferenceTable<'s>,
+    available: bool,
 }
 
 /// Everything learned while checking one impl, including the trial table that owns its variables.
@@ -168,25 +168,6 @@ pub struct ImplSelection<'s> {
     pub table: InferenceTable<'s>,
 }
 
-impl<'s> SolverInterner<'s> {
-    /// The declaration template is shared inside this operation. Reading the enclosing body's
-    /// signature retains its parameters; a call instantiates them through `InferenceTable`.
-    ///
-    /// A declaration read can return fallback data after a nested lookup fails. In that case
-    /// return no signature, so call inference cannot use those fallback types as real constraints.
-    pub fn function_signature(self, function: FunctionRef) -> Option<CallableSignature<'s>> {
-        let callbacks = self.track_callbacks();
-        let declaration = self.declaration(DefId::Function(function));
-        if callbacks.failure().is_some() {
-            return None;
-        }
-        match &declaration.kind {
-            DeclarationKind::Function(signature) => Some(*signature),
-            _ => None,
-        }
-    }
-}
-
 impl<'s> InferenceTable<'s> {
     /// Give each declaration parameter a fresh variable for this use of the declaration.
     /// Two calls to `id<T>` need separate `?T`s so their argument types can differ.
@@ -196,45 +177,52 @@ impl<'s> InferenceTable<'s> {
         subst
     }
 
-    /// Apply one substitution to parameters, return type, and bounds together. A later argument
-    /// can then constrain both the return type and a bound such as `T: Clone` through the same `?T`.
-    pub fn signature(
+    /// Instantiate the signature and register the function's requirements for this call.
+    ///
+    /// For `fn copy<T: Clone>(value: T) -> T` with `T = ?T`, the parameter, return type, and queued
+    /// `?T: Clone` goal all share that variable. Learning the argument type then gives the bound
+    /// the same evidence without rebuilding the signature.
+    pub fn instantiate_function(
         &self,
         function: FunctionRef,
         subst: &InferenceSubstitution<'s>,
     ) -> Option<CallableSignature<'s>> {
         let cx = self.interner();
+        let callbacks = cx.track_callbacks();
         let signature = cx.function_signature(function)?;
+        let clauses = subst.apply(cx, cx.predicates(DefId::Function(function)));
+        if callbacks.failure().is_some() {
+            return None;
+        }
+        for clause in clauses {
+            self.register(clause);
+        }
         Some(CallableSignature {
             params: subst.apply(cx, signature.params),
             ret: subst.apply(cx, signature.ret),
-            clauses: subst.apply(cx, signature.clauses),
             qualifiers: signature.qualifiers,
         })
     }
 
-    /// Match a declaration header before proving its predicates. Source-name discovery needs
-    /// this stage while it is still lowering the very bounds that will form the environment.
+    /// Match an impl's receiver and optional trait arguments without loading its bounds.
+    /// Name lookup uses this while lowering bounds that mention the impl's associated types.
     ///
     /// For `impl<T: Clone> Trait for Vec<T>` and receiver `Vec<u8>`, matching learns `T = u8`
-    /// and queues `u8: Clone`. A successful header match alone does not prove that bound.
-    pub fn match_impl(
+    /// without reading `T: Clone`. Applicability requests that bound only after the header fits.
+    pub(crate) fn match_impl_header(
         &self,
         impl_ref: ImplRef,
         receiver: Ty<'s>,
         expected: Option<TraitApplication<'s>>,
-    ) -> Option<ImplSelection<'s>> {
+    ) -> Option<ImplHeaderMatch<'s>> {
         let cx = self.interner();
         // Loading the header is part of checking this candidate. It can report missing data
         // and make us return None below, before we have a trial table or goals to fulfill.
         // Include those reads in this scope; the next candidate gets its own starting count.
         let callbacks = cx.track_callbacks();
-        let declaration = cx.declaration(DefId::Impl(impl_ref));
-        let DeclarationKind::Impl { header, .. } = &declaration.kind else {
-            return None;
-        };
+        let header = cx.impl_header(impl_ref)?;
         // Instantiate the impl in a separate trial. Its generic parameters must be free to learn
-        // from the receiver without changing the body if this candidate is later rejected.
+        // from the receiver without changing the caller's table if this candidate is rejected.
         let table = self.probe();
         let subst = table.fresh_substitution(DefId::Impl(impl_ref));
         let self_ty = subst.apply(cx, header.self_ty);
@@ -242,8 +230,8 @@ impl<'s> InferenceTable<'s> {
             return None;
         }
         let application = header.trait_ref.as_ref().map(|tr| TraitApplication {
-            def: tr.application.def,
-            args: subst.apply(cx, tr.application.args),
+            def: tr.def,
+            args: subst.apply(cx, tr.args),
         });
         // A receiver match is enough for inherent lookup. A named trait goal also supplies
         // arguments: matching `Convert<u8>` must not accept an impl of `Convert<u16>`.
@@ -255,42 +243,53 @@ impl<'s> InferenceTable<'s> {
                 return None;
             }
         }
-        let clauses = declaration.predicates.iter().map(|&c| subst.apply(cx, c));
-        for clause in clauses {
-            table.register(clause);
-        }
-        let mut outcome = Outcome::Proven;
-        // Matching the parts we could read is useful for discovery, but does not make an
-        // incomplete header reliable. Carry that distinction with the returned candidate.
-        if callbacks.failure().is_some() || receiver.has_unknown() || self_ty.has_unknown() {
-            outcome = Outcome::Unavailable;
-        }
-        Some(ImplSelection {
-            impl_ref,
+        // Matching the readable parts can still help discovery. Carry completeness separately
+        // from proof: an incomplete receiver is not enough evidence to accept this impl later.
+        let available =
+            callbacks.failure().is_none() && !receiver.has_unknown() && !self_ty.has_unknown();
+        Some(ImplHeaderMatch {
             application,
             subst,
-            outcome,
             table,
+            available,
         })
     }
 
-    /// Match one impl and try its queued bounds. A proved failure rejects the impl; an unfinished
-    /// proof remains a possible candidate so editor lookup can still use its declarations.
+    /// Match one impl, then load its requirements and try to prove them with the matched arguments.
+    /// A proved failure rejects the impl; an unfinished proof remains a possible candidate so
+    /// editor lookup can still use its declarations.
     pub fn select_impl(
         &self,
         impl_ref: ImplRef,
         receiver: Ty<'s>,
         expected: Option<TraitApplication<'s>>,
     ) -> Option<ImplSelection<'s>> {
-        let mut selected = self.match_impl(impl_ref, receiver, expected)?;
-        let outcome = selected.table.fulfill();
-        if outcome == Outcome::NoSolution {
+        let cx = self.interner();
+        let callbacks = cx.track_callbacks();
+        let matched = self.match_impl_header(impl_ref, receiver, expected)?;
+        // For `impl<T: Clone> Trait for Vec<T>` matched to `Vec<u8>`, this queues `u8: Clone`.
+        // If a bound names an associated alias, resolving it uses header matching and does not
+        // request these predicates again.
+        let clauses = cx.predicates(DefId::Impl(impl_ref));
+        for clause in clauses {
+            matched.table.register(matched.subst.apply(cx, clause));
+        }
+        let complete = matched.available && callbacks.failure().is_none();
+        let outcome = matched.table.fulfill();
+        if complete && outcome == Outcome::NoSolution {
             return None;
         }
-        if selected.outcome == Outcome::Proven {
-            selected.outcome = outcome;
-        }
-        Some(selected)
+        Some(ImplSelection {
+            impl_ref,
+            application: matched.application,
+            subst: matched.subst,
+            outcome: if complete {
+                outcome
+            } else {
+                Outcome::Unavailable
+            },
+            table: matched.table,
+        })
     }
 
     /// Try each source impl in its own table so competing candidates cannot constrain each
@@ -376,6 +375,19 @@ impl<'s> InferenceTable<'s> {
 }
 
 impl<'s> InferenceSubstitution<'s> {
+    /// Export the learned arguments for one declaration so they can outlive this table.
+    /// Following the table's assignments turns `T = ?T` with `?T = u8` into owned `T = u8`.
+    pub(crate) fn finalize(&self, table: &InferenceTable<'s>, owner: DefId) -> crate::Substitution {
+        let mut subst = crate::Substitution::new();
+        for &param in table.params(owner) {
+            if let Some(arg) = self.get(param) {
+                let args = table.finalize_args(List::new(table.interner(), &[arg]));
+                subst.push(param, args[0].clone());
+            }
+        }
+        subst
+    }
+
     pub fn from_args(
         params: impl IntoIterator<Item = GenericParamRef>,
         args: GenericArgs<'s>,

@@ -227,15 +227,16 @@ where
             }
         }
         subst.fresh_for(self.inference.table(), generics.iter().map(|p| p.param()));
-        let Some(signature) = self.inference.table().signature(function, &subst) else {
+        let Some(signature) = self
+            .inference
+            .table()
+            .instantiate_function(function, &subst)
+        else {
             return Ok(None);
         };
         // Normalize once and retain the resulting slots. The solver retries the generated goals
         // when arguments or expectations make progress, without rebuilding the call substitution.
         let return_ty = self.inference.table().normalize(signature.ret);
-        for clause in signature.clauses {
-            self.inference.table().register(clause);
-        }
         self.inference.set_expr_ty(call, return_ty);
         Ok(Some(PreparedCall {
             call,

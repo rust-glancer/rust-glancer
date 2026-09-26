@@ -5,15 +5,13 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::ItemStoreSource;
 use rg_std::ExpectedUnique;
-use rustc_type_ir::{self as ir, Upcast as _, inherent::GenericArgs as _};
 
 use super::TraitGoal;
 use crate::{
     Substitution, TraitApplication, Ty, TyContext,
     lookup::{ItemPathQuery, TraitImplFilter},
-    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{self, DefId, InferenceTable, Outcome, SemanticDeclarations, SolverScope},
 };
 
@@ -47,14 +45,10 @@ pub(crate) struct SelectedImpl {
 
 impl SelectedImpl {
     fn freeze(selection: solver::ImplSelection<'_>) -> Self {
-        let mut subst = Substitution::new();
         let table = &selection.table;
-        for &param in table.params(DefId::Impl(selection.impl_ref)) {
-            if let Some(arg) = selection.subst.get(param) {
-                let args = table.finalize_args(solver::List::new(table.interner(), &[arg]));
-                subst.push(param, args[0].clone());
-            }
-        }
+        let subst = selection
+            .subst
+            .finalize(table, DefId::Impl(selection.impl_ref));
         Self {
             subst,
             application: selection.application.map(|tr| TraitApplication {
@@ -106,78 +100,51 @@ where
         Self { context, resolver }
     }
 
+    /// Give an owned query the same assumptions as inference inside its enclosing item.
     fn with_table<T>(
         &self,
-        include_bounds: bool,
         run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> T,
     ) -> Result<T, I::Error> {
-        // Loading a whole function signature here would resolve its return path through this
-        // very editor query again. Only generic metadata and declared bounds form the environment.
         let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
         declarations.with_solver(|solver| {
             let cx = solver.interner();
-            let callbacks = cx.track_callbacks();
-            let paths = self.context.item_paths();
-            let (params, clauses, self_trait) = match self.resolver.generic_owner() {
-                Some(owner) => {
-                    let generics = paths.generics().generics(owner)?;
-                    let params = cx.params(DefId::from(owner));
-                    let self_trait = generics.iter().find_map(|p| {
-                        matches!(p.source(), GenericParamSource::TraitSelf)
-                            .then_some(p.param().owner())
-                    });
-                    let clauses = if include_bounds
-                        && let Some(context) =
-                            paths.items().type_path_context_for_generic_def(owner)?
-                    {
-                        TypeLoweringQuery::new(paths, &self.resolver)
-                            .session(
-                                cx,
-                                TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
-                            )?
-                            .lower_clauses()?
-                    } else {
-                        Vec::new()
-                    };
-                    (params, clauses, self_trait)
-                }
-                None => (&[][..], Vec::new(), None),
+            let (params, env) = match self.resolver.generic_owner() {
+                Some(owner) => (
+                    cx.params(owner.into()),
+                    cx.parameter_environment(owner.into()),
+                ),
+                None => (&[][..], Default::default()),
             };
-            let mut clauses = clauses;
-            // A default trait method may use its own trait without a written `Self: Trait`
-            // bound. Mirror the body's environment without loading the whole method signature.
-            if include_bounds && let Some(owner) = self_trait {
-                let owner = DefId::from(owner);
-                clauses.push(
-                    ir::TraitRef::new_from_args(
-                        cx,
-                        owner,
-                        solver::GenericArgs::identity_for_item(cx, owner),
-                    )
-                    .upcast(cx),
-                );
-            }
-            let clauses = ir::elaborate::elaborate(cx, clauses).collect::<Vec<_>>();
-            // Later goals start their own callback scopes after these reads have happened.
-            // Carry incomplete assumptions with the environment so each of those goals sees them.
-            let env = solver::ParamEnv {
-                clauses: solver::List::new(cx, &clauses),
-                unavailable: callbacks.failure().is_some(),
-            };
-            Ok(run(InferenceTable::new(solver, env), params))
-        })?
+            run(InferenceTable::new(solver, env), params)
+        })
     }
 
-    pub(crate) fn match_impl(
+    /// Find an impl's generic arguments from an owned receiver, without checking its bounds.
+    /// Name lookup uses these arguments to interpret the impl's associated declarations.
+    pub(crate) fn match_impl_header(
         &self,
         impl_ref: ImplRef,
         receiver: &Ty,
-    ) -> Result<Option<SelectedImpl>, I::Error> {
-        self.with_table(false, |table, params| {
-            let receiver = table.interner().lower_ty(receiver, params);
+    ) -> Result<Option<Substitution>, I::Error> {
+        let declarations = SemanticDeclarations::new(&self.context, &self.resolver);
+        declarations.with_solver(|solver| {
+            let cx = solver.interner();
+            let params = self
+                .resolver
+                .generic_owner()
+                .map(|owner| cx.params(owner.into()))
+                .unwrap_or_default();
+            let receiver = cx.lower_ty(receiver, params);
+            // A bound such as `where Self::Item: Clone` may have requested this lookup. Use an
+            // empty environment so preparing its assumptions cannot request that bound again.
+            let table = InferenceTable::new(solver, Default::default());
             table
-                .match_impl(impl_ref, receiver, None)
-                .map(SelectedImpl::freeze)
+                .match_impl_header(impl_ref, receiver, None)
+                .map(|matched| {
+                    matched
+                        .subst
+                        .finalize(&matched.table, DefId::Impl(impl_ref))
+                })
         })
     }
 
@@ -189,7 +156,7 @@ where
         if matches!(receiver, Ty::Unknown) {
             return Ok(None);
         }
-        self.with_table(true, |table, params| {
+        self.with_table(|table, params| {
             let receiver = table.interner().lower_ty(receiver, params);
             table
                 .select_impl(impl_ref, receiver, None)
@@ -206,7 +173,7 @@ where
         else {
             return Ok(ExpectedUnique::Empty);
         };
-        self.with_table(true, |table, params| {
+        self.with_table(|table, params| {
             let cx = table.interner();
             let application = solver::TraitApplication {
                 def: goal.trait_ref(),
@@ -249,7 +216,7 @@ where
     /// Keep the original type if solving fails or needs unavailable information; callers can
     /// still display a projection such as `T::Item` instead of losing the whole type.
     pub fn normalize_ty(&self, ty: &Ty) -> Result<Ty, I::Error> {
-        self.with_table(true, |table, params| {
+        self.with_table(|table, params| {
             let callbacks = table.interner().track_callbacks();
             let lowered = table.interner().lower_ty(ty, params);
             let normalized = table.normalize(lowered);
@@ -274,7 +241,7 @@ where
         let Some(alias) = items.declared_associated_type_by_name(goal.trait_ref(), name)? else {
             return Ok(None);
         };
-        self.with_table(true, |table, params| {
+        self.with_table(|table, params| {
             let cx = table.interner();
             let application = solver::TraitApplication {
                 def: goal.trait_ref(),

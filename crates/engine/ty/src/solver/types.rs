@@ -1522,10 +1522,7 @@ impl<'s> ir::inherent::AdtDef<Interner<'s>> for AdtDef {
     }
 
     fn struct_tail_ty(self, cx: Interner<'s>) -> Option<ir::EarlyBinder<Interner<'s>, Ty<'s>>> {
-        cx.field_tys(self.id)
-            .last()
-            .copied()
-            .map(ir::EarlyBinder::bind)
+        cx.field_tys(self.id).last().map(ir::EarlyBinder::bind)
     }
 
     fn all_field_tys(

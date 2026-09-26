@@ -185,7 +185,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         else {
             return Ok(None);
         };
-        Ok(header.trait_ref.map(|lowering| lowering.application))
+        Ok(header.trait_ref)
     }
 
     /// Project supported declarations after resolving the impl's trait identity and substitution.

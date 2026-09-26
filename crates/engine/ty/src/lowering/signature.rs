@@ -1,6 +1,6 @@
-//! Lower complete declarations in the active operation's working type storage.
+//! Lower declaration signatures, receiver types, and bounds into solver types.
 //!
-//! Signatures share one source walk so anonymous parameters and opaque occurrences keep their
+//! Each signature uses one source walk so its anonymous parameters and opaque occurrences keep their
 //! identities. These are templates: call-specific variables are introduced during instantiation.
 
 use rg_def_map::DefMapSource;
@@ -8,10 +8,12 @@ use rg_ir_model::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
     ItemOwner, StaticRef, TraitDefRef, TypeAliasRef,
 };
-use rg_item_tree::{ParamKind, SelfParamKind};
+use rg_item_tree::{ParamKind, SelfParamKind, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource, SelfTypeOwner, TypePathContext};
 
-use super::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver};
+use super::{
+    ImplTraitMode, TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver,
+};
 use crate::solver::{
     CallableSignature, Clause, ImplHeader, List, OpaqueTy, SolverInterner, TraitRefLowering, Ty,
 };
@@ -104,14 +106,36 @@ where
             .map(|ty| session.lower_type_ref(ty))
             .transpose()?
             .unwrap_or(cx.unit());
-        let clauses = session.lower_clauses()?;
-
         Ok(Some(CallableSignature {
             params: List::new(cx, &params),
             ret,
-            clauses: List::new(cx, &clauses),
             qualifiers: data.signature.qualifiers(),
         }))
+    }
+
+    /// Lower the bounds on a declaration, including those inherited from an enclosing owner.
+    ///
+    /// In `impl Widget where Self::Item: Clone`, the bound needs to look up an alias in the same
+    /// impl. Reading the receiver separately lets that lookup finish without lowering this bound
+    /// again. Function signatures are also read separately from their requirements.
+    pub(crate) fn predicates<'s>(
+        &self,
+        cx: SolverInterner<'s>,
+        owner: GenericDefRef,
+    ) -> Result<Option<Vec<Clause<'s>>>, D::Error> {
+        let Some(context) = self
+            .item_paths
+            .items()
+            .type_path_context_for_generic_def(owner)?
+        else {
+            return Ok(None);
+        };
+        self.session(
+            cx,
+            TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+        )?
+        .lower_clauses()
+        .map(Some)
     }
 
     pub fn field_ty<'s>(
@@ -243,19 +267,7 @@ where
                 TypeLoweringAnchor::Context(TypePathContext::module(data.owner)),
             ),
         )?;
-        let mut super_traits = Vec::new();
-        for bound in &data.super_traits {
-            let Some(trait_ty) = bound.required_trait_ty() else {
-                continue;
-            };
-            if let Some(super_trait) = session.lower_trait_ref(trait_ty, self_ty)? {
-                super_traits.push(super_trait);
-            }
-        }
-        let mut clauses = session.lower_clauses()?;
-        for super_trait in &super_traits {
-            clauses.extend(super_trait.clauses(cx));
-        }
+        let clauses = session.lower_clauses()?;
 
         Ok(Some(TraitHeader {
             owner: trait_ref,
@@ -370,19 +382,26 @@ where
             TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
         )?;
         let self_ty = session.lower_type_ref(&data.self_ty)?;
-        let trait_ref = data
-            .trait_ref
-            .as_ref()
-            .map(|trait_ty| session.lower_trait_ref(trait_ty, self_ty))
-            .transpose()?
-            .flatten();
-        let clauses = session.lower_clauses()?;
+        // Matching a receiver must not resolve associated bindings or predicates: those can
+        // themselves name an alias whose discovery needs this header.
+        let trait_ref = if let Some(trait_ty @ TypeRef::Path(path)) = &data.trait_ref
+            && let Some(trait_ref) = session.resolve_trait_def(trait_ty)?
+        {
+            Some(session.lower_trait_application(
+                path,
+                trait_ref,
+                self_ty,
+                ImplTraitMode::Opaque,
+                None,
+            )?)
+        } else {
+            None
+        };
 
         Ok(Some(ImplHeader {
             owner: impl_ref,
             self_ty,
             trait_ref,
-            clauses,
         }))
     }
 }

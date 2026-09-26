@@ -15,11 +15,11 @@ declare_metrics! {
         scope "ty.solver" {
             /// Independent solver arenas created for bodies and standalone queries.
             counter SOLVER_OPERATIONS = "operations";
-            /// Declaration requests served from an operation's owned source cache.
+            /// Declaration-part requests served from the operation's working cache.
             counter SOLVER_DECLARATION_HITS = "declarations.hits";
-            /// Declaration requests served by another operation in the same lexical context.
+            /// Declaration-part requests served from the lexical context's owned cache.
             counter SOLVER_SHARED_DECLARATION_HITS = "declarations.shared_hits";
-            /// Declarations lowered from semantic source storage.
+            /// Declaration parts read or lowered from semantic source storage.
             counter SOLVER_DECLARATION_LOADS = "declarations.loads";
             /// Calls that revisit a table's pending obligations.
             counter SOLVER_FULFILLMENTS = "fulfillment.calls";

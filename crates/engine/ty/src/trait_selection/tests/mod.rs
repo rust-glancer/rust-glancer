@@ -1384,3 +1384,206 @@ fn inferred_source_types_export_serializable_results() {
     let decoded: Ty = wincode::deserialize(&encoded).expect("owned type reads back");
     assert_eq!(decoded, finalized);
 }
+
+#[test]
+fn header_discovery_leaves_impl_requirements_for_selection() {
+    use rg_ir_model::{ImplId, ImplRef};
+
+    use crate::solver::{self, Outcome};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+        traits
+          trait#0 Marker
+          trait#1 Target
+        structs
+          struct#0 User
+        impls
+          impl#0 impl<T: Marker> Target for T [resolved self: empty]
+    "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let table = solver::InferenceTable::new(solver, Default::default());
+            let cx = table.interner();
+            let receiver = cx.lower_ty(
+                &Ty::adt(AdtTy {
+                    def: fixture.type_ref_by_name("User").expect("fixture User"),
+                    args: Default::default(),
+                }),
+                &[],
+            );
+            let candidate = ImplRef {
+                origin: origin(),
+                id: ImplId(0),
+            };
+            let matched = table
+                .match_impl_header(candidate, receiver, None)
+                .expect("receiver matches");
+            // Header discovery must not smuggle Marker into the pending goals. Selection below is
+            // the operation which checks that requirement and rejects this impl for User.
+            assert_eq!(matched.table.fulfill(), Outcome::Proven);
+            assert!(table.select_impl(candidate, receiver, None).is_none());
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
+fn owned_and_live_queries_share_owner_assumptions() {
+    use rg_ir_model::{
+        FunctionId, FunctionRef, GenericDefRef, ImplId, ImplRef, Path, TraitApplicability,
+    };
+    use rg_std::ExpectedUnique;
+
+    use crate::{
+        lookup::ItemPathQuery,
+        lowering::{TypeLoweringAnchor, TypePathResolver},
+        solver::{self, SolverScope},
+        trait_selection::{TraitGoal, TraitSelectionQuery},
+    };
+
+    // The resolver adds only an owner and a lexical cache. Both query paths must obtain the
+    // actual assumptions from declarations, including a default method's implicit Self: Render.
+    struct OwnerScope<'a> {
+        paths: ItemPathQuery<'a, &'a TraitSelectionFixture, &'a TraitSelectionFixture>,
+        owner: GenericDefRef,
+        cache: solver::DeclarationCache,
+    }
+    impl TypePathResolver for OwnerScope<'_> {
+        type Error = std::convert::Infallible;
+        fn resolve_type_path(
+            &self,
+            anchor: TypeLoweringAnchor,
+            path: &Path,
+        ) -> Result<rg_semantic_ir::TypePathResolution, Self::Error> {
+            TypePathResolver::resolve_type_path(&self.paths, anchor, path)
+        }
+    }
+    impl SolverScope for OwnerScope<'_> {
+        fn generic_owner(&self) -> Option<GenericDefRef> {
+            Some(self.owner)
+        }
+        fn declaration_cache(&self) -> Option<&solver::DeclarationCache> {
+            Some(&self.cache)
+        }
+    }
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+        traits
+          trait#0 Marker
+          trait#1 Render<T: Marker>
+          trait#2 ViaMarker
+          trait#3 ViaRender<T>
+        structs
+          struct#0 Other
+          struct#1 Owner
+        impls
+          impl#0 impl<T: Marker> ViaMarker for T [resolved self: empty]
+          impl#1 impl<S: Render<T>, T> ViaRender<T> for S [resolved self: empty]
+          impl#2 impl Marker for Owner where Other: Marker
+        functions
+          fn#0 direct<T: Marker> -> T
+          fn#1 Render::default_method -> Self
+          fn#2 impl#2::method -> Other
+    "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    for (owner, subject, bound, argument, implementation) in [
+        (0, "T", "ViaMarker", None, 0),
+        (1, "T", "ViaMarker", None, 0),
+        (1, "Self", "ViaRender", Some("T"), 1),
+        (2, "Other", "ViaMarker", None, 0),
+    ] {
+        let owner = GenericDefRef::Function(FunctionRef {
+            origin: origin(),
+            id: FunctionId(owner),
+        });
+        let scope = OwnerScope {
+            paths: context.item_paths().clone(),
+            owner,
+            cache: Default::default(),
+        };
+        let generics = scope
+            .paths
+            .generics()
+            .generics(owner)
+            .expect("owner generics");
+        let ty = |name| {
+            if let Some(def) = fixture.type_ref_by_name(name) {
+                return Ty::adt(AdtTy {
+                    def,
+                    args: Default::default(),
+                });
+            }
+            let rg_ir_model::GenericParamRef::Type(param) =
+                generics.param_by_name(name).expect("fixture parameter")
+            else {
+                panic!("type parameter");
+            };
+            Ty::Param(param)
+        };
+        let args = argument
+            .map(|name| vec![GenericArg::Type(Box::new(ty(name)))])
+            .unwrap_or_default();
+        let goal = TraitGoal::new(
+            ty(subject),
+            fixture.trait_ref_by_name(bound).expect("fixture bound"),
+            args,
+        );
+        // Repeat across operations to cover importing each independently cached declaration part.
+        for _ in 0..2 {
+            let ExpectedUnique::One(selected) =
+                TraitSelectionQuery::with_resolver(context.clone(), &scope)
+                    .probe(&goal)
+                    .expect("owned selection")
+            else {
+                panic!("one applicable impl for {subject}: {bound}");
+            };
+            assert_eq!(
+                selected.applicability,
+                TraitApplicability::Yes,
+                "owned {subject}: {bound}"
+            );
+            solver::SemanticDeclarations::new(&context, &scope)
+                .with_solver(|solver| {
+                    let cx = solver.interner();
+                    let table =
+                        solver::InferenceTable::new(solver, cx.parameter_environment(owner.into()));
+                    let application = solver::TraitApplication {
+                        def: goal.trait_ref(),
+                        args: cx.lower_args(&goal.application.args, cx.params(owner.into())),
+                    };
+                    let selected = table
+                        .select_impl(
+                            ImplRef {
+                                origin: origin(),
+                                id: ImplId(implementation),
+                            },
+                            application.self_ty().expect("Self"),
+                            Some(application),
+                        )
+                        .expect("live selection");
+                    assert_eq!(
+                        selected.outcome,
+                        solver::Outcome::Proven,
+                        "live {subject}: {bound}"
+                    );
+                })
+                .expect("fixture declarations load");
+        }
+    }
+}

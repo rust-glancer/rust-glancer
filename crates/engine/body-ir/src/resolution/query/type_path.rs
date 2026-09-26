@@ -243,7 +243,7 @@ where
             if self
                 .context
                 .impl_query()
-                .impl_self_subst_for_impl(impl_ref, &receiver_ty)?
+                .impl_self_substitution(impl_ref, &receiver_ty)?
                 .is_none()
             {
                 continue;

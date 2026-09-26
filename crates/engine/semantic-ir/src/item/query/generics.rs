@@ -117,7 +117,13 @@ where
         Ok(Generics::new(owner, parent, own_params))
     }
 
-    fn parent_generic_def(&self, owner: GenericDefRef) -> Result<Option<GenericDefRef>, S::Error> {
+    /// Find the enclosing trait or impl whose parameters and requirements this item inherits.
+    /// An item in `impl Widget where SomeType: Marker` inherits that where-clause even though
+    /// the impl declares no parameters.
+    pub fn parent_generic_def(
+        &self,
+        owner: GenericDefRef,
+    ) -> Result<Option<GenericDefRef>, S::Error> {
         let can_inherit = matches!(
             owner,
             GenericDefRef::Function(_) | GenericDefRef::TypeAlias(_) | GenericDefRef::Const(_)

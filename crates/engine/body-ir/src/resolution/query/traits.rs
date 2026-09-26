@@ -249,15 +249,15 @@ where
         let Some(header) = impl_query.impl_header(trait_impl.impl_ref)? else {
             return Ok(false);
         };
-        let Some((impl_subst, _applicability)) = impl_query
-            .impl_self_subst_for_impl(trait_impl.impl_ref, &Ty::adt(receiver_ty.clone()))?
+        let Some(impl_subst) = impl_query
+            .impl_self_substitution(trait_impl.impl_ref, &Ty::adt(receiver_ty.clone()))?
         else {
             return Ok(false);
         };
         let Some(impl_trait) = header.trait_ref else {
             return Ok(false);
         };
-        let impl_application = impl_subst.apply_trait_application(&impl_trait.application);
+        let impl_application = impl_subst.apply_trait_application(&impl_trait);
         Ok(impl_application.def == written.def
             && Self::generic_args_match(&written.args, &impl_application.args))
     }

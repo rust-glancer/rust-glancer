@@ -86,6 +86,32 @@ where
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
     ) -> Result<TraitRefLowering<'s>, D::Error> {
+        let application =
+            self.lower_trait_application(path, trait_ref, self_ty, impl_trait_mode, inference)?;
+        let syntax_args = path
+            .segments
+            .last()
+            .map(|segment| segment.args.as_slice())
+            .unwrap_or_default();
+        let associated_types =
+            self.lower_associated_bindings(&application, syntax_args, impl_trait_mode, inference)?;
+        Ok(TraitRefLowering {
+            application,
+            associated_types,
+        })
+    }
+
+    /// Build a trait application from its positional arguments and the supplied `Self` type.
+    /// Associated equalities such as `Item = u8` are left to bound lowering, so an impl header
+    /// can use this without also requesting its predicates.
+    pub(crate) fn lower_trait_application(
+        &mut self,
+        path: &TypePath,
+        trait_ref: TraitDefRef,
+        self_ty: Ty<'s>,
+        impl_trait_mode: ImplTraitMode,
+        inference: Option<&InferenceTable<'s>>,
+    ) -> Result<TraitApplication<'s>, D::Error> {
         let generics = self
             .query
             .item_paths
@@ -105,15 +131,9 @@ where
             .unwrap_or_default();
         let args =
             self.lower_generic_args(&generics, syntax_args, &seed, impl_trait_mode, inference)?;
-        let application = TraitApplication {
+        Ok(TraitApplication {
             def: trait_ref,
             args,
-        };
-        let associated_types =
-            self.lower_associated_bindings(&application, syntax_args, impl_trait_mode, inference)?;
-        Ok(TraitRefLowering {
-            application,
-            associated_types,
         })
     }
 
@@ -160,14 +180,14 @@ where
         Ok(applications)
     }
 
-    /// Lower every trait predicate visible from this owner.
+    /// Collect the bounds written on this declaration and its enclosing trait or impl.
+    /// Generic-parameter bounds, where-clauses, and supertrait bounds are stored separately in
+    /// source data, but all contribute to the returned list. Declaration parameters stay generic
+    /// here; a particular call or impl candidate substitutes its arguments later.
     pub(crate) fn lower_clauses(&mut self) -> Result<Vec<Clause<'s>>, D::Error> {
         let generics = self.query.item_paths.generics().generics(self.owner)?;
         let mut inline_bounds = Vec::new();
-        let mut predicate_owners = UniqueVec::new();
         for param in generics.iter() {
-            let owner = param.param().owner();
-            predicate_owners.push(owner);
             let GenericParamRef::Type(param_ref) = param.param() else {
                 continue;
             };
@@ -180,10 +200,18 @@ where
             };
             inline_bounds.push((param_ref.owner, self.param_ty(param_ref), bounds));
         }
-        predicate_owners.push(self.owner);
+        // Ownership matters even without inherited parameters. A method inside
+        // `impl Widget where SomeType: Marker` still has to see that where-clause.
+        let mut predicate_owners = Vec::new();
+        let mut owner = Some(self.owner);
+        while let Some(id) = owner {
+            predicate_owners.push(id);
+            owner = self.query.item_paths.generics().parent_generic_def(id)?;
+        }
+        predicate_owners.reverse();
 
         let mut where_predicates = Vec::new();
-        for owner in predicate_owners {
+        for &owner in &predicate_owners {
             if let Some(item) = self
                 .query
                 .item_paths
@@ -201,6 +229,8 @@ where
             }
         }
 
+        // Resolve each bound where it was written. For example, `Self` in an impl's where-clause
+        // still refers to that impl when the requested declaration is one of its methods.
         let mut clauses = Vec::new();
         for (owner, subject, bounds) in inline_bounds {
             let anchor = self.anchor_for_owner(owner)?;
@@ -216,6 +246,32 @@ where
             self.with_owner_anchor(owner, anchor, |session| {
                 let subject = session.lower_type_ref(&ty)?;
                 session.lower_bound_clauses(subject, &bounds, &mut clauses)
+            })?;
+        }
+        // `trait Derived: Base` contributes `Self: Base`. Supertrait bounds are stored
+        // separately from generic-parameter bounds and where-clauses, so collect them here.
+        // Include them for the trait itself and for associated items whose enclosing
+        // owner is that trait.
+        for owner in predicate_owners {
+            let GenericDefRef::Trait(trait_ref) = owner else {
+                continue;
+            };
+            let Some(data) = self.query.item_paths.items().trait_data(trait_ref)? else {
+                continue;
+            };
+            let Some(param) = generics.iter().find(|param| {
+                param.param().owner() == owner
+                    && matches!(param.source(), GenericParamSource::TraitSelf)
+            }) else {
+                continue;
+            };
+            let GenericParamRef::Type(param) = param.param() else {
+                continue;
+            };
+            let subject = self.param_ty(param);
+            let anchor = self.anchor_for_owner(owner)?;
+            self.with_owner_anchor(owner, anchor, |session| {
+                session.lower_bound_clauses(subject, &data.super_traits, &mut clauses)
             })?;
         }
         Ok(clauses)

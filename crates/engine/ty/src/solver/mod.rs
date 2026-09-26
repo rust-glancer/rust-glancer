@@ -25,7 +25,7 @@ mod shape;
 mod traverse;
 mod types;
 
-pub(crate) use self::declarations::{Declaration, DeclarationKind, DeclarationProvider};
+pub(crate) use self::declarations::{DeclarationKind, DeclarationMetadata, DeclarationProvider};
 pub use self::{
     declarations::{DeclarationCache, SemanticDeclarations, SolverScope},
     delegate::{Outcome, Solver},

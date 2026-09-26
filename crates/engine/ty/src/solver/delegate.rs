@@ -309,8 +309,8 @@ impl<'s> SolverDelegate for Solver<'s> {
         item: DefId,
         implementation: DefId,
     ) -> FetchEligibleAssocItemResponse<I<'s>> {
-        let item_data = self.interner.declaration(item);
-        let impl_data = self.interner.declaration(implementation);
+        let item_data = self.interner.metadata(item);
+        let impl_data = self.interner.metadata(implementation);
         if let DeclarationKind::Impl {
             associated_types, ..
         } = &impl_data.kind
@@ -321,7 +321,7 @@ impl<'s> SolverDelegate for Solver<'s> {
             {
                 return FetchEligibleAssocItemResponse::Found(*id);
             }
-            if matches!(&item_data.kind, DeclarationKind::Alias(Some(_))) {
+            if matches!(&item_data.kind, DeclarationKind::Alias { has_value: true }) {
                 return FetchEligibleAssocItemResponse::Found(item);
             }
         }

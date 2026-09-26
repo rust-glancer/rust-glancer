@@ -8,7 +8,7 @@ mod receiver;
 mod trait_impl;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ImplRef, TraitApplicability};
+use rg_ir_model::ImplRef;
 use rg_semantic_ir::ItemStoreSource;
 
 pub(crate) use self::candidates::TraitImplFilter;
@@ -48,7 +48,7 @@ where
         Self { context, resolver }
     }
 
-    /// Lower the impl's self type, trait arguments, and bounds through the query's path resolver.
+    /// Lower the impl's receiver and positional trait arguments without its requirements.
     pub fn impl_header(&self, impl_ref: ImplRef) -> Result<Option<ImplHeader>, D::Error> {
         let lowering = TypeLoweringQuery::new(self.context.item_paths(), &self.resolver);
         lowering.with_storage(|cx| {
@@ -58,16 +58,14 @@ where
         })
     }
 
-    /// Match the impl's semantic `Self` pattern and return owner-scoped bindings.
-    pub fn impl_self_subst_for_impl(
+    /// Discover bindings from the impl's receiver pattern. This does not check applicability;
+    /// associated-alias lookup needs these bindings before predicates can be lowered.
+    pub fn impl_self_substitution(
         &self,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<(Substitution, TraitApplicability)>, D::Error> {
-        Ok(
-            TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
-                .match_impl(impl_ref, receiver_ty)?
-                .map(|selected| (selected.subst, selected.applicability)),
-        )
+    ) -> Result<Option<Substitution>, D::Error> {
+        TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
+            .match_impl_header(impl_ref, receiver_ty)
     }
 }

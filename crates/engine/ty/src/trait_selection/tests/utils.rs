@@ -559,7 +559,15 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         let (name, ret_ty) = rest
             .split_once(" -> ")
             .expect("function fixture should be written as `name -> ReturnType`");
-        let (owner, name) = if let Some((trait_name, function_name)) = name.split_once("::") {
+        let (owner, name) = if let Some((implementation, function_name)) = name.split_once("::")
+            && let Some(index) = implementation.strip_prefix("impl#")
+        {
+            let impl_id = ImplId(parse_usize(index, "function impl owner"));
+            self.impls[impl_id.0]
+                .items
+                .push(AssocItemId::Function(FunctionId(id)));
+            (ItemOwner::Impl(impl_id), function_name)
+        } else if let Some((trait_name, function_name)) = name.split_once("::") {
             let trait_ref = *self
                 .trait_refs_by_name
                 .get(trait_name)

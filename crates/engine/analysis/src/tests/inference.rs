@@ -2995,3 +2995,68 @@ pub fn run() {
         "#]],
     );
 }
+
+#[test]
+fn resolves_impl_bound_aliases_before_checking_applicability() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_impl_bound_aliases"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Marker {}
+pub struct Good;
+pub struct Other;
+impl Marker for Good {}
+
+pub struct Factory<T> { pub value: T }
+impl<T> Factory<T> where Self::Item: Marker {
+    type Item = T;
+    pub fn get(self) -> Self::Item { self.value }
+}
+
+pub fn saved() {
+    let good = Factory { value: Good }.get()$saved_good$;
+    let other = Factory { value: Other }.get()$saved_other$;
+}
+
+pub fn lexical() {
+    struct Local;
+    impl Local where Local::Item: Marker {
+        type Item = Good;
+        fn get(self) -> Self::Item { Good }
+    }
+    let value = Local.get()$local_good$;
+}
+
+pub struct Guard;
+impl Guard where Other: Marker {
+    pub fn requires_parent_bound(self) -> bool { true }
+}
+pub fn check_parent() {
+    let result = Guard.requires_parent_bound()$parent_bound$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("saved alias with satisfied bound", "saved_good"),
+            AnalysisQuery::ty("saved alias with unsatisfied bound", "saved_other"),
+            AnalysisQuery::ty("body-local alias in its own bound", "local_good"),
+            AnalysisQuery::ty("nongeneric enclosing impl requirement", "parent_bound"),
+        ],
+        expect![[r#"
+            saved alias with satisfied bound
+            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
+
+            saved alias with unsatisfied bound
+            - <unknown>
+
+            body-local alias in its own bound
+            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
+
+            nongeneric enclosing impl requirement
+            - <unknown>
+        "#]],
+    );
+}
