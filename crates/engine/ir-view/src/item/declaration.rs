@@ -218,15 +218,23 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         })
     }
 
-    /// Return the file backing a root module.
-    pub fn root_module_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let Some(module) = self.db.module_data(module_ref)? else {
+    /// Root modules and `mod foo;` definitions occupy a whole file. Inline modules have no
+    /// separate definition file, and an out-of-line module's file may not have been found.
+    pub fn module_definition_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
+        let Some(module) = self
+            .db
+            .module_data(module_ref)
+            .context("read module definition file")?
+        else {
             return Ok(None);
         };
-        let ModuleOrigin::Root { file_id } = module.origin else {
-            return Ok(None);
-        };
-        Ok(Some(file_id))
+        Ok(match module.origin {
+            ModuleOrigin::Root { file_id } => Some(file_id),
+            ModuleOrigin::OutOfLine {
+                definition_file, ..
+            } => definition_file,
+            ModuleOrigin::Inline { .. } | ModuleOrigin::Synthetic { .. } => None,
+        })
     }
 
     /// Return declaration facts for an inline or out-of-line module declaration.

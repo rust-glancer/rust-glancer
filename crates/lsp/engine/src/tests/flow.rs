@@ -3,6 +3,95 @@ use expect_test::expect;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn goto_definition_on_modules_selects_their_definition_source() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_module_definitions"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod fla$flat$t;
+        pub mod dir$directory$ectory;
+        #[path = "alternate.rs"]
+        pub mod cus$path$tom;
+        pub mod inl$inline$ine {
+            pub mod nes$nested$ted;
+        }
+
+        use fla$reference$t::Item;
+        use inl$inline_reference$ine::nested::Item as Nested;
+        use cra$root$te::custom::Item as Custom;
+
+        //- /src/flat.rs
+        //! Module contents.
+        pub struct Item;
+
+        //- /src/directory/mod.rs
+        pub mod chi$child$ld;
+
+        //- /src/directory/child.rs
+        pub struct Item;
+
+        //- /src/alternate.rs
+        pub struct Item;
+
+        //- /src/inline/nested.rs
+        pub struct Item;
+        "#,
+    )
+    .await;
+
+    fixture
+        .check(
+            &[
+                LspQuery::goto_definition("flat module declaration", "flat"),
+                LspQuery::goto_definition("directory module declaration", "directory"),
+                LspQuery::goto_definition("path attribute module declaration", "path"),
+                LspQuery::goto_definition("nested module in an inline module", "nested"),
+                LspQuery::goto_definition("nested module in another file", "child"),
+                LspQuery::goto_definition("out-of-line module reference", "reference"),
+                LspQuery::goto_definition("inline module declaration", "inline"),
+                LspQuery::goto_definition("inline module reference", "inline_reference"),
+                LspQuery::goto_definition("crate root reference", "root"),
+            ],
+            expect![[r#"
+                flat module declaration
+                - /src/flat.rs:0:0-0:0
+
+                directory module declaration
+                - /src/directory/mod.rs:0:0-0:0
+
+                path attribute module declaration
+                - /src/alternate.rs:0:0-0:0
+
+                nested module in an inline module
+                - /src/inline/nested.rs:0:0-0:0
+
+                nested module in another file
+                - /src/directory/child.rs:0:0-0:0
+
+                out-of-line module reference
+                - /src/flat.rs:0:0-0:0
+
+                inline module declaration
+                - /src/lib.rs:4:8-4:14
+
+                inline module reference
+                - /src/lib.rs:4:8-4:14
+
+                crate root reference
+                - /src/lib.rs:0:0-0:0
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn returns_protocol_edits_for_specialized_and_postfix_completions() {
     let fixture = LspEngineFixture::initialized(
         r#"

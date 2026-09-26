@@ -1,5 +1,6 @@
 //! Concrete navigation target projection.
 
+use anyhow::Context as _;
 use rg_ir_model::{DefMapRef, ModuleRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
@@ -60,26 +61,38 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
 
     fn target_for_module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<NavigationTarget>> {
         let declarations = DeclarationView::new(self.0);
-        if let Some(file_id) = declarations.root_module_file(module_ref)? {
-            // Root modules have no declaration name to jump to, so they navigate to the owning
-            // file. Named modules are ordinary declarations.
+        let declaration = declarations
+            .declaration(DeclarationRef::module(module_ref))
+            .context("read module declaration")?;
+        let name = match &declaration {
+            Some(declaration) => declarations
+                .declaration_site_name(declaration)
+                .context("render module declaration name")?
+                .to_string(),
+            None => "crate".to_string(),
+        };
+
+        if let Some(file_id) = declarations
+            .module_definition_file(module_ref)
+            .context("find module definition file")?
+        {
+            // `mod foo;` points to the file containing foo's contents. Like a crate root, that
+            // file has no name span to select, so navigation lands at the start of the file.
             return Ok(Some(NavigationTarget {
                 crate_ref: module_ref.origin.origin_crate(),
                 source: NavigationTargetSource::Saved,
                 kind: NavigationTargetKind::Module,
-                name: "crate".to_string(),
+                name,
                 file_id,
                 span: None,
             }));
         }
 
-        let Some(declaration) = declarations.declaration(DeclarationRef::module(module_ref))?
-        else {
+        // Inline modules are defined at their declaration. Keep the declaration as a fallback
+        // for `mod foo;` too when its file could not be resolved.
+        let Some(declaration) = declaration else {
             return Ok(None);
         };
-        let name = declarations
-            .declaration_site_name(&declaration)?
-            .to_string();
         Ok(Some(NavigationTarget {
             crate_ref: declaration.crate_ref(),
             source: self.source_for_declaration(DeclarationRef::Module(module_ref)),
