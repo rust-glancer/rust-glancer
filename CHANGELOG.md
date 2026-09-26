@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.1](https://github.com/rust-glancer/rust-glancer/compare/v0.2.0...v0.2.1) (2026-09-26)
+
+
+### Features
+
+* Better hover signature formatting ([#230](https://github.com/rust-glancer/rust-glancer/issues/230)) ([ce24787](https://github.com/rust-glancer/rust-glancer/commit/ce24787202e2b78ce21e67efa7d455d0e827711e))
+* Better purging after indexing ([#224](https://github.com/rust-glancer/rust-glancer/issues/224)) ([336f2c4](https://github.com/rust-glancer/rust-glancer/commit/336f2c40f43f1f8ffe23477f9d952925c6b0916d))
+* Change type inference scheduler from fixed loop to recursive approach ([#225](https://github.com/rust-glancer/rust-glancer/issues/225)) ([6e351fb](https://github.com/rust-glancer/rust-glancer/commit/6e351fb7a1ad947e36251605188c9eea6098d04d))
+* Implement folding ([#211](https://github.com/rust-glancer/rust-glancer/issues/211)) ([8aed80e](https://github.com/rust-glancer/rust-glancer/commit/8aed80e34f2d0cf0585436f74e68a77f317b6217))
+* Support rust syntax and rustdoc links in doccomments and hovers ([#214](https://github.com/rust-glancer/rust-glancer/issues/214)) ([e9aa584](https://github.com/rust-glancer/rust-glancer/commit/e9aa584bb93e51bb2da364b50be2e2d764830c2d))
+* Update rust-analyzer dep ([#227](https://github.com/rust-glancer/rust-glancer/issues/227)) ([c379461](https://github.com/rust-glancer/rust-glancer/commit/c379461da0468a70e44d2217413f1b6d4b5fa528))
+* Yay new trait solver ([#229](https://github.com/rust-glancer/rust-glancer/issues/229)) ([2b6194b](https://github.com/rust-glancer/rust-glancer/commit/2b6194bd6ecd4998dda395400c5230c30ce14c0b))
+
+
+### Bug Fixes
+
+* Fallback on rootUri if no workspace in initial ([#207](https://github.com/rust-glancer/rust-glancer/issues/207)) ([63e67a0](https://github.com/rust-glancer/rust-glancer/commit/63e67a07becf7310ebe8dea7ba9b1d105f9ed4ae))
+* Tech debt management ([#213](https://github.com/rust-glancer/rust-glancer/issues/213)) ([c81f62d](https://github.com/rust-glancer/rust-glancer/commit/c81f62d04188e67b5c97976723208b1ad6dadb8c))
+
+
+### Performance Improvements
+
+* Add dist profile for releases ([#223](https://github.com/rust-glancer/rust-glancer/issues/223)) ([7b72615](https://github.com/rust-glancer/rust-glancer/commit/7b726157454bf2321407d1512ebcaa2ca14e1998))
+
 ## [0.2.0](https://github.com/rust-glancer/rust-glancer/compare/v0.1.1...v0.2.0) (2026-08-31)
 
 
