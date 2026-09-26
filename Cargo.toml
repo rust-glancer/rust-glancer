@@ -96,6 +96,7 @@ memchr = "2.8.0"
 mimalloc = { version = "=0.1.52", default-features = false }
 notify-debouncer-full = "0.7.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
+prettyplease = "0.2.37"
 proc-macro2 = "1.0.106"
 pulldown-cmark = { version = "0.13.4", default-features = false }
 quote = "1.0.45"

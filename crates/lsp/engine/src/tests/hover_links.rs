@@ -50,9 +50,7 @@ async fn hover_links_resolve_in_the_documented_items_scope() {
                 - markdown:
                   ```rust
                   hover_links::api::User
-                  ```
 
-                  ```rust
                   pub struct User
                   ```
 
@@ -109,9 +107,7 @@ async fn hover_links_keep_outer_and_inner_module_scopes() {
                 - markdown:
                   ```rust
                   hover_links::inline
-                  ```
 
-                  ```rust
                   mod inline
                   ```
 
@@ -123,9 +119,7 @@ async fn hover_links_keep_outer_and_inner_module_scopes() {
                 - markdown:
                   ```rust
                   hover_links::outline
-                  ```
 
-                  ```rust
                   mod outline
                   ```
 
@@ -180,9 +174,7 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
                 - markdown:
                   ```rust
                   hover_links::User
-                  ```
 
-                  ```rust
                   pub struct User {
                       pub name: u32,
                   }
@@ -195,9 +187,7 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
                 - markdown:
                   ```rust
                   hover_links::User::new
-                  ```
 
-                  ```rust
                   pub fn new() -> Self
                   ```
 
@@ -208,9 +198,7 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
                 - markdown:
                   ```rust
                   hover_links::Account
-                  ```
 
-                  ```rust
                   pub struct Account
                   ```
 
@@ -221,9 +209,7 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
                 - markdown:
                   ```rust
                   hover_links::api
-                  ```
 
-                  ```rust
                   mod api
                   ```
 
@@ -279,9 +265,7 @@ async fn hover_self_links_preserve_their_owner_identity() {
                 - markdown:
                   ```rust
                   hover_links::Profile
-                  ```
 
-                  ```rust
                   pub struct Profile {
                       pub name: u32,
                   }
@@ -294,9 +278,7 @@ async fn hover_self_links_preserve_their_owner_identity() {
                 - markdown:
                   ```rust
                   hover_links::Factory
-                  ```
 
-                  ```rust
                   pub trait Factory
                   ```
 
@@ -307,9 +289,7 @@ async fn hover_self_links_preserve_their_owner_identity() {
                 - markdown:
                   ```rust
                   hover_links::Factory::make
-                  ```
 
-                  ```rust
                   fn make() -> Self
                   ```
 
@@ -320,9 +300,7 @@ async fn hover_self_links_preserve_their_owner_identity() {
                 - markdown:
                   ```rust
                   hover_links::State
-                  ```
 
-                  ```rust
                   pub enum State {
                       Ready,
                   }
@@ -372,9 +350,7 @@ async fn hover_links_use_unsaved_destination_positions() {
                 - markdown:
                   ```rust
                   hover_links::User
-                  ```
 
-                  ```rust
                   pub struct User
                   ```
 
@@ -402,9 +378,7 @@ async fn hover_links_use_unsaved_destination_positions() {
                 - markdown:
                   ```rust
                   hover_links::User
-                  ```
 
-                  ```rust
                   pub struct User
                   ```
 
@@ -472,9 +446,7 @@ async fn source_doc_links_hover_and_navigate() {
         - markdown:
           ```rust
           source_docs::User::build
-          ```
 
-          ```rust
           pub fn build() -> Self
           ```
 

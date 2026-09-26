@@ -5,6 +5,57 @@ use super::utils::{
 };
 
 #[test]
+fn hovers_with_formatted_function_signatures() {
+    check_analysis_queries(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "analysis_hover_signatures"
+        version = "0.0.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        /// Resolves an implementation header.
+        pub(crate) fn impl_header_$function$with<'query, D, I, R>(
+            item_paths: &ItemPathQuery<'query, D, I>,
+            resolver: &R,
+            impl_ref: ImplRef,
+        ) -> Result<Option<ImplHeader>, D::Error>
+        where
+            D: DefMapSource,
+            I: ItemStoreSource<'query, Error = D::Error>,
+            R: TypePathResolver<Error = D::Error>,
+        {
+            loop {}
+        }
+        "#,
+        &[AnalysisQuery::hover(
+            "hover long function signature",
+            "function",
+        )],
+        expect![[r#"
+            hover long function signature
+            - range: 2:15-2:31
+            - block:
+              kind: fn
+              path: analysis_hover_signatures::impl_header_with
+              signature:
+                pub(crate) fn impl_header_with<'query, D, I, R>(
+                    item_paths: &ItemPathQuery<'query, D, I>,
+                    resolver: &R,
+                    impl_ref: ImplRef,
+                ) -> Result<Option<ImplHeader>, D::Error>
+                where
+                    D: DefMapSource,
+                    I: ItemStoreSource<'query, Error = D::Error>,
+                    R: TypePathResolver<Error = D::Error>,
+              docs:
+                Resolves an implementation header.
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_over_documented_items_and_usages() {
     check_analysis_queries(
         r#"

@@ -255,9 +255,7 @@ pub struct User;
                 - markdown:
                   ```rust
                   doc_edits::Profile
-                  ```
 
-                  ```rust
                   pub struct Profile
                   ```
 

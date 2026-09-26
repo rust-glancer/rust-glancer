@@ -172,9 +172,7 @@ impl F$impl$oo {
                 - markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo
-                  ```
 
-                  ```rust
                   pub struct Foo
                   ```
 
@@ -183,9 +181,7 @@ impl F$impl$oo {
                 - markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo::new
-                  ```
 
-                  ```rust
                   pub fn new()
                   ```
 
@@ -268,9 +264,7 @@ pub mod exports {
                 - markdown:
                   ```rust
                   lsp_dirty_use_paths::api::nested::User
-                  ```
 
-                  ```rust
                   pub struct User
                   ```
 

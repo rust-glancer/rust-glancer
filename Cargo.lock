@@ -1763,6 +1763,7 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "prettyplease",
  "pulldown-cmark",
  "rg_body_ir",
  "rg_def_map",
@@ -1773,6 +1774,7 @@ dependencies = [
  "rg_std",
  "rg_syntax",
  "rg_workspace",
+ "syn 2.0.117",
  "test_fixture",
 ]
 

@@ -11,6 +11,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+prettyplease.workspace = true
 pulldown-cmark.workspace = true
 derive_more = { workspace = true, features = ["display", "from"] }
 rg_syntax.workspace = true
@@ -18,6 +19,7 @@ rg_ir_model.workspace = true
 rg_ir_view.workspace = true
 rg_parse.workspace = true
 rg_std.workspace = true
+syn = { workspace = true, features = ["full", "parsing"] }
 
 [dev-dependencies]
 expect-test.workspace = true

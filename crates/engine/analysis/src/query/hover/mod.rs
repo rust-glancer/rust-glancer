@@ -1,5 +1,7 @@
 //! Builds hover payloads from resolved analysis declarations.
 
+mod formatting;
+
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
 use rg_ir_view::{
@@ -120,6 +122,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         details: DeclarationDetails,
     ) -> anyhow::Result<HoverBlock> {
         let (kind, path, signature, docs) = details.into_parts();
+        // Item previews can contain elided fields (`...`), so retain their existing layout.
+        // Function headers have no preview limit and benefit from Rust-aware line wrapping.
+        let signature = signature.map(|signature| match kind {
+            SymbolKind::Function | SymbolKind::Method => {
+                formatting::function_signature(&signature).unwrap_or(signature)
+            }
+            _ => signature,
+        });
         let doc_links = match &docs {
             Some(docs) => DocumentationLinkResolver::new(self.0.view_db())
                 .resolve(declaration, docs)
