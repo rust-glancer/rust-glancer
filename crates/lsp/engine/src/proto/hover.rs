@@ -46,11 +46,14 @@ impl HoverMarkdown {
         let mut sections = Vec::new();
         for block in info.blocks {
             let mut block_sections = Vec::new();
-            if let Some(path) = block.path {
-                block_sections.push(format!("```rust\n{path}\n```"));
-            }
-            if let Some(signature) = block.signature {
-                block_sections.push(format!("```rust\n{signature}\n```"));
+            // Hover clients can collapse the space between adjacent code blocks. Keep the
+            // blank line inside one block so the path is visibly separated from the signature.
+            let declaration = match (block.path, block.signature) {
+                (Some(path), Some(signature)) => Some(format!("{path}\n\n{signature}")),
+                (path, signature) => path.or(signature),
+            };
+            if let Some(declaration) = declaration {
+                block_sections.push(format!("```rust\n{declaration}\n```"));
             }
             if let Some(ty) = block.ty {
                 block_sections.push(format!("```text\nType: {ty}\n```"));
@@ -144,7 +147,7 @@ mod tests {
 
         assert_eq!(
             markdown.as_deref(),
-            Some("```rust\napp::User\n```\n\n```rust\npub struct User\n```\n\nUser account.")
+            Some("```rust\napp::User\n\npub struct User\n```\n\nUser account.")
         );
     }
 

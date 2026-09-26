@@ -45,9 +45,7 @@ async fn external_source_change_refreshes_saved_project() {
                 - markdown:
                   ```rust
                   lsp_external_flow::ExternalUser
-                  ```
 
-                  ```rust
                   pub old_field: OldName
                   ```
 
@@ -95,9 +93,7 @@ pub fn demo(user: ExternalUser) {
                 - markdown:
                   ```rust
                   lsp_external_flow::ExternalUser
-                  ```
 
-                  ```rust
                   pub new_field: NewName
                   ```
 
@@ -172,9 +168,7 @@ pub struct GeneratedName;
                 - markdown:
                   ```rust
                   lsp_external_created::generated::GeneratedUser
-                  ```
 
-                  ```rust
                   pub generated_field: GeneratedName
                   ```
 

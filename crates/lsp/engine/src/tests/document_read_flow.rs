@@ -86,9 +86,7 @@ pub fn untouched(_changed: usize) {
                 - markdown:
                   ```rust
                   lsp_current_document_reads::User
-                  ```
 
-                  ```rust
                   pub name: Name
                   ```
 
@@ -202,9 +200,7 @@ async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
                 - markdown:
                   ```rust
                   lsp_bodyless_inlay::Value
-                  ```
 
-                  ```rust
                   pub struct Value
                   ```
             "#]],
@@ -255,9 +251,7 @@ fn unfinished
                 - markdown:
                   ```rust
                   lsp_bodyless_inlay::Value
-                  ```
 
-                  ```rust
                   pub struct Value
                   ```
             "#]],

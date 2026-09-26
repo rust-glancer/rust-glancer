@@ -70,9 +70,7 @@ pub fn demo(user: SavedUser) {
                 - markdown:
                   ```rust
                   lsp_save_flow::SavedUser
-                  ```
 
-                  ```rust
                   pub renamed_field: SavedName
                   ```
 

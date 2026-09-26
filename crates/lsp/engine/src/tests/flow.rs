@@ -204,9 +204,7 @@ async fn answers_lsp_queries_from_saved_project() {
                 - markdown:
                   ```rust
                   lsp_saved_flow::make_user
-                  ```
 
-                  ```rust
                   pub fn make_user() -> User
                   ```
 
