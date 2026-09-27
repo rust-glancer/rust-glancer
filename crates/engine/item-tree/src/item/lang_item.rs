@@ -37,6 +37,10 @@ pub enum LangItem {
     /// Builtin obligations in callable and allocator signatures.
     Tuple,
     Destruct,
+    /// The formatting arguments produced by `format_args!`.
+    FormatArguments,
+    /// The `Option` enum, including the result of `option_env!`.
+    Option,
 }
 
 impl LangItem {
@@ -44,7 +48,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -57,6 +61,8 @@ impl LangItem {
         Self::MetaSized,
         Self::Tuple,
         Self::Destruct,
+        Self::FormatArguments,
+        Self::Option,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -81,6 +87,8 @@ impl LangItem {
             "meta_sized" => Self::MetaSized,
             "tuple_trait" => Self::Tuple,
             "destruct" => Self::Destruct,
+            "format_arguments" => Self::FormatArguments,
+            "Option" => Self::Option,
             _ => return None,
         })
     }

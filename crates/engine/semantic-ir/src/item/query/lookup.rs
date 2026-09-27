@@ -153,6 +153,14 @@ impl<'item> ItemLookupQuery<'item> {
         })
     }
 
+    /// Returns the exact visible nominal type carrying one compiler language identity.
+    pub fn lang_type(&self, lang_item: LangItem) -> Option<TypeDefRef> {
+        let SemanticItemRef::TypeDef(type_ref) = self.lang_items.target(lang_item)? else {
+            return None;
+        };
+        Some(type_ref)
+    }
+
     /// Returns the exact visible trait carrying one compiler language identity.
     pub fn lang_trait(&self, lang_item: LangItem) -> Option<TraitDefRef> {
         let SemanticItemRef::Trait(trait_ref) = self.lang_items.target(lang_item)? else {

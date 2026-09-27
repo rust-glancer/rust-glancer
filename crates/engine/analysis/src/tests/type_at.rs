@@ -1052,6 +1052,38 @@ pub fn use_it(array: [Package; 3]) {
 }
 
 #[test]
+fn builtin_macro_types_ignore_local_core_module() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod core {}
+
+pub fn use_it() {
+    let args$type_args$ = format_args!("hello");
+    let maybe_env$type_option$ = option_env!("HOME");
+}
+"#,
+        &[
+            AnalysisQuery::ty("format arguments", "type_args").in_lib("app"),
+            AnalysisQuery::ty("optional environment variable", "type_option").in_lib("app"),
+        ],
+        expect![[r#"
+            format arguments
+            - nominal struct core[lib]::crate::fmt::Arguments
+
+            optional environment variable
+            - nominal enum core[lib]::crate::option::Option<&str>
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_source_backed_builtin_associated_macro_items() {
     check_analysis_queries_with_fake_sysroot(
         r#"

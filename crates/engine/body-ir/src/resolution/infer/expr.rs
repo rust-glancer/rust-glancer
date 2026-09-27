@@ -553,9 +553,7 @@ where
                     .set_expr_ty(expr, self.lower(&rg_ty::ty_for_literal(kind))),
             },
             ExprKind::BuiltinMacro { kind } => {
-                let ty = self
-                    .builtin_macro_ty(expr, kind)
-                    .context("infer builtin macro")?;
+                let ty = self.builtin_macro_ty(kind);
                 self.inference.set_expr_ty(expr, ty);
             }
             ExprKind::Continue { .. } => self.inference.set_expr_ty(expr, self.cx.never()),

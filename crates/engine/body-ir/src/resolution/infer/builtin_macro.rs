@@ -2,137 +2,63 @@
 //!
 //! Def-map marks resolved compiler builtin macro definitions before Body IR lowers them. Body
 //! resolution only needs the conservative type fact for that lowered builtin expression, so this
-//! module keeps the synthetic type construction out of the general expression walker.
+//! module keeps the compiler-known type construction out of the general expression walker.
 
-use rg_def_map::DefMapSource;
-use rg_ir_model::{BuiltinMacroExprKind, ExprId, Mutability, Span};
-use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypePathSegment, TypeRef};
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
-use rg_text::Name;
-use rg_ty::{PrimitiveTy, UnsignedIntTy, solver::Ty};
+use rg_ir_model::{BuiltinMacroExprKind, Mutability};
+use rg_item_tree::LangItem;
+use rg_ty::{
+    PrimitiveTy, UnsignedIntTy,
+    solver::{AdtTy, DefId, List, Ty},
+};
 
 use super::BodyInference;
 
-impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
-where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
-{
+impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I> {
     /// Return the type supplied by a recognized compiler builtin.
-    pub(super) fn builtin_macro_ty(
-        &self,
-        expr: ExprId,
-        kind: BuiltinMacroExprKind,
-    ) -> Result<Ty<'s>, PackageStoreError> {
+    pub(super) fn builtin_macro_ty(&self, kind: BuiltinMacroExprKind) -> Ty<'s> {
         match kind {
-            BuiltinMacroExprKind::Cfg => Ok(self.cx.primitive(PrimitiveTy::Bool)),
-            BuiltinMacroExprKind::Column | BuiltinMacroExprKind::Line => Ok(self
+            BuiltinMacroExprKind::Cfg => self.cx.primitive(PrimitiveTy::Bool),
+            BuiltinMacroExprKind::Column | BuiltinMacroExprKind::Line => self
                 .cx
-                .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U32))),
+                .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U32)),
             BuiltinMacroExprKind::Concat
             | BuiltinMacroExprKind::Env
             | BuiltinMacroExprKind::File
             | BuiltinMacroExprKind::IncludeStr
             | BuiltinMacroExprKind::ModulePath
-            | BuiltinMacroExprKind::Stringify => Ok(self.static_str_ty()),
-            BuiltinMacroExprKind::IncludeBytes => Ok(self.cx.reference(
+            | BuiltinMacroExprKind::Stringify => self.static_str_ty(),
+            BuiltinMacroExprKind::IncludeBytes => self.cx.reference(
                 Mutability::Shared,
                 self.cx.slice(
                     self.cx
                         .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
                 ),
-            )),
-            BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
-                self.fmt_arguments_ty(expr)
-            }
-            BuiltinMacroExprKind::OptionEnv => self.option_env_ty(expr),
-        }
-    }
-
-    fn fmt_arguments_ty(&self, expr: ExprId) -> Result<Ty<'s>, PackageStoreError> {
-        self.resolve_synthetic_type_ref(
-            expr,
-            self.synthetic_type_path(expr, &["core", "fmt", "Arguments"], Vec::new()),
-        )
-    }
-
-    fn option_env_ty(&self, expr: ExprId) -> Result<Ty<'s>, PackageStoreError> {
-        let synthetic_span = self.synthetic_span_for_expr(expr);
-        let str_ref = TypeRef::Reference {
-            lifetime: None,
-            mutability: Mutability::Shared,
-            inner: Box::new(TypeRef::Path(TypePath {
-                source_span: synthetic_span,
-                absolute: false,
-                anchor: None,
-                segments: vec![TypePathSegment {
-                    name: Name::new("str"),
-                    args: Vec::new(),
-                    span: synthetic_span,
-                }],
-            })),
-        };
-
-        self.resolve_synthetic_type_ref(
-            expr,
-            self.synthetic_type_path(
-                expr,
-                &["core", "option", "Option"],
-                vec![ItemGenericArg::Type(str_ref)],
             ),
-        )
-    }
-
-    fn resolve_synthetic_type_ref(
-        &self,
-        expr: ExprId,
-        ty: TypeRef,
-    ) -> Result<Ty<'s>, PackageStoreError> {
-        let expr_data = self.context.body().expr_unchecked(expr);
-
-        // Builtins produce compiler-known types, but some fixtures and partial workspaces cannot
-        // resolve the corresponding `core` paths. Keep those cases unknown instead of surfacing
-        // synthetic syntax as if the user had written it.
-        self.context
-            .live()
-            .type_ref(expr_data.scope, &ty, self.inference.table())
-    }
-
-    fn synthetic_type_path(
-        &self,
-        expr: ExprId,
-        segments: &[&str],
-        final_args: Vec<ItemGenericArg>,
-    ) -> TypeRef {
-        let synthetic_span = self.synthetic_span_for_expr(expr);
-        let final_idx = segments.len().saturating_sub(1);
-        TypeRef::Path(TypePath {
-            source_span: synthetic_span,
-            absolute: false,
-            anchor: None,
-            segments: segments
-                .iter()
-                .enumerate()
-                .map(|(idx, name)| TypePathSegment {
-                    name: Name::new(name),
-                    args: if idx == final_idx {
-                        final_args.clone()
-                    } else {
-                        Default::default()
-                    },
-                    span: synthetic_span,
+            // These macros use compiler language identities. Looking up `core::...` in the
+            // caller's scope would let a local `mod core {}` change their result types.
+            // Without the declarations, there is no nominal type identity to return.
+            BuiltinMacroExprKind::FormatArgs | BuiltinMacroExprKind::FormatArgsNl => {
+                let Some(def) = self
+                    .context
+                    .item_lookup_query()
+                    .lang_type(LangItem::FormatArguments)
+                else {
+                    return self.cx.unknown();
+                };
+                self.cx.adt(AdtTy {
+                    def,
+                    args: self.cx.unknown_args(DefId::Adt(def)),
                 })
-                .collect(),
-        })
-    }
-
-    fn synthetic_span_for_expr(&self, expr: ExprId) -> Span {
-        let expr_data = self.context.body().expr_unchecked(expr);
-        let source_span = expr_data.source.span;
-        Span {
-            start: source_span.start,
-            end: source_span.start,
+            }
+            BuiltinMacroExprKind::OptionEnv => {
+                let Some(def) = self.context.item_lookup_query().lang_type(LangItem::Option) else {
+                    return self.cx.unknown();
+                };
+                self.cx.adt(AdtTy {
+                    def,
+                    args: List::new(self.cx, &[self.static_str_ty().into()]),
+                })
+            }
         }
     }
 

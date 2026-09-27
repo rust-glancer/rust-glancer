@@ -1,8 +1,8 @@
 //! Extraction of compiler language identities from item syntax.
 //!
 //! Item-tree lowering sees `#[lang = "..."]` before semantic item ids exist. It records the small
-//! supported identity on `ItemNode`; semantic lowering can then attach it to the typed trait,
-//! function, or type-alias id without rediscovering the item from its name or path.
+//! supported identity on `ItemNode`; semantic lowering can then attach it to the typed item id
+//! without rediscovering the item from its name or path.
 
 use rg_syntax::{AstNode as _, ast};
 
