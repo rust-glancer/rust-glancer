@@ -424,8 +424,10 @@ impl<'s> SolverInterner<'s> {
                 crate::UnsignedIntTy::Usize => ir::UintTy::Usize,
             }),
             crate::PrimitiveTy::Float(f) => ir::Float(match f {
+                crate::FloatTy::F16 => ir::FloatTy::F16,
                 crate::FloatTy::F32 => ir::FloatTy::F32,
                 crate::FloatTy::F64 => ir::FloatTy::F64,
+                crate::FloatTy::F128 => ir::FloatTy::F128,
             }),
         };
         Ty::new(self, kind)

@@ -318,6 +318,59 @@ pub struct TokenStream;
 }
 
 #[test]
+fn selects_sysroot_crates_own_preludes_without_self_aliases() {
+    utils::check_project_path_resolution_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+pub struct CorePrelude;
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::CorePrelude;
+    }
+}
+pub mod child {}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub struct StdPrelude;
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::StdPrelude;
+        pub use core::prelude::rust_2024::*;
+    }
+}
+#[prelude_import]
+use prelude::rust_2024::*;
+pub mod child {}
+
+//- /sysroot/library/proc_macro/src/lib.rs
+pub struct TokenStream;
+"#,
+        &[
+            PathResolutionQuery::lib("std", "crate::child", "StdPrelude"),
+            PathResolutionQuery::lib("std", "crate::child", "CorePrelude"),
+            PathResolutionQuery::lib("core", "crate::child", "CorePrelude"),
+        ],
+        expect![[r#"
+            std [lib] crate::child resolves StdPrelude -> struct std[lib]::crate::StdPrelude
+            std [lib] crate::child resolves CorePrelude -> struct core[lib]::crate::CorePrelude
+            core [lib] crate::child resolves CorePrelude -> struct core[lib]::crate::CorePrelude
+        "#]],
+    );
+}
+
+#[test]
 fn falls_back_to_core_prelude_when_std_is_unavailable() {
     utils::check_project_path_resolution_with_sysroot(
         r#"

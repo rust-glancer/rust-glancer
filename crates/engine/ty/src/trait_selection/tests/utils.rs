@@ -1725,8 +1725,10 @@ impl TraitSelectionSnapshot {
             }
             .to_string(),
             PrimitiveTy::Float(kind) => match kind {
+                FloatTy::F16 => "f16",
                 FloatTy::F32 => "f32",
                 FloatTy::F64 => "f64",
+                FloatTy::F128 => "f128",
             }
             .to_string(),
         }

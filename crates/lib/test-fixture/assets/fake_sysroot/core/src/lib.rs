@@ -87,3 +87,13 @@ pub trait FnMut<Args: marker::Tuple>: FnOnce<Args> {}
 
 #[lang = "fn"]
 pub trait Fn<Args: marker::Tuple>: FnMut<Args> {}
+
+// Real core has impls for these widths even when application code only uses other types.
+// An unrecognized receiver here must not prevent selecting an unrelated Clone impl.
+impl clone::Clone for f16 {
+    fn clone(&self) -> Self { *self }
+}
+
+impl clone::Clone for f128 {
+    fn clone(&self) -> Self { *self }
+}
