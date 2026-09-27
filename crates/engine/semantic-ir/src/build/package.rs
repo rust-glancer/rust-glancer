@@ -104,7 +104,7 @@ impl<'a, 'db> ItemStoreSourceReader<'a> for CrateLowering<'a, 'db> {
                     )
                 })?
             }
-            ItemSourceKind::Generated(item_ref) => {
+            ItemSourceKind::Generated(item_ref) | ItemSourceKind::Synthetic(item_ref) => {
                 self.generated_items.item(item_ref).with_context(|| {
                     format!(
                         "while attempting to find generated item {:?} from generated source {:?}",

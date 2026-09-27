@@ -11,7 +11,8 @@ use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    ConstExpr, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs, VisibilityLevel,
+    ConstExpr, DeriveAttrs, Documentation, ItemTreeId, TypeBound, TypeRef, UserFacingAttrs,
+    VisibilityLevel,
 };
 
 /// Generic parameters as they were written on one item declaration.
@@ -303,6 +304,7 @@ pub enum SelfParamKind {
 pub struct StructItem {
     pub generics: GenericParams,
     pub fields: FieldList,
+    pub derives: DeriveAttrs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -315,6 +317,7 @@ pub struct UnionItem {
 pub struct EnumItem {
     pub generics: GenericParams,
     pub variants: Vec<EnumVariantItem>,
+    pub derives: DeriveAttrs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -310,6 +310,10 @@ pub struct PartialDefMap<'a> {
 }
 
 impl<'a> PartialDefMap<'a> {
+    pub(crate) fn local_defs(&self) -> &'a [LocalDefData] {
+        self.def_map.local_defs()
+    }
+
     /// Returns module data allocated so far during collection/finalization.
     pub fn module(&self, module_id: ModuleId) -> Option<&'a ModuleData> {
         self.def_map.module(module_id)

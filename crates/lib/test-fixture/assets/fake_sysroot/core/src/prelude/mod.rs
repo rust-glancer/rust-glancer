@@ -1,4 +1,10 @@
 pub mod rust_2024 {
+    pub use crate::clone::Clone;
+    pub use crate::marker::Copy;
+    pub use crate::default::Default;
+    pub use crate::cmp::{PartialEq, Eq, PartialOrd, Ord};
+    pub use crate::fmt::macros::Debug;
+    pub use crate::hash::macros::Hash;
     pub use crate::{
         cfg, cfg_select, column, concat, env, file, format_args, format_args_nl, include,
         include_bytes, include_str, line, module_path, option_env, stringify,

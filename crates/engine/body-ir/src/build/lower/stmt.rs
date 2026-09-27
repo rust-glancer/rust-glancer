@@ -401,9 +401,10 @@ impl BodyLowering<'_> {
             )),
             ast::Item::Const(_) => self.lower_source_declaration(item),
             ast::Item::Enum(item) => {
+                let dollar_crate = self.dollar_crate();
                 let kind = ItemKind::Enum(EnumItem::from_ast(
                     item,
-                    (self.line_index, &mut *self.interner),
+                    (self.line_index, &mut *self.interner, dollar_crate),
                 ));
                 Some(self.named_source_item_node(
                     kind,
@@ -467,9 +468,10 @@ impl BodyLowering<'_> {
             }
             ast::Item::Static(_) => self.lower_source_declaration(item),
             ast::Item::Struct(item) => {
+                let dollar_crate = self.dollar_crate();
                 let kind = ItemKind::Struct(StructItem::from_ast(
                     item,
-                    (self.line_index, &mut *self.interner),
+                    (self.line_index, &mut *self.interner, dollar_crate),
                 ));
                 Some(self.named_source_item_node(
                     kind,

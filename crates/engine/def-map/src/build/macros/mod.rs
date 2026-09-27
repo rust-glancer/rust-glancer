@@ -1,6 +1,6 @@
-//! Expands item-shaped declarative macros during def-map construction.
+//! Expands item-shaped declarative macros and builtin derives during def-map construction.
 //!
-//! Macro expansion is tied to import resolution: a call may need imports to find its definition,
+//! Declarative expansion is tied to import resolution: a call may need imports to find its definition,
 //! and its generated items may add new imports or new macros. This module keeps that loop local to
 //! def-map by parsing expanded token trees into generated syntax and splicing the result according
 //! to the call's placement. Module-position output enters the caller's module; associated output
@@ -9,6 +9,9 @@
 //! For example, `make_types!();` at module scope contributes ordinary module items, while
 //! `impl User { make_methods!(); }` contributes methods or associated consts to that `impl User`.
 //! If `make_methods!` expands to another macro call, that nested call stays in the same impl slot.
+//!
+//! Builtin derives run after imports and declarative expansion have settled. They add only impl
+//! headers, so the settled module scopes stay valid and need no further import-resolution passes.
 //!
 //! Most generated items can be spliced immediately. A generated `mod child;` still needs its child
 //! file, while a generated `include!(...)` needs a real file whose items retain the include call's
@@ -28,6 +31,7 @@ use super::finalize::FinalizeCrateStates;
 use crate::{MacroExpansionLimitGroup, profile::metric};
 
 mod attempts;
+mod builtin_derive;
 mod expand;
 mod generated;
 mod generated_tree;
@@ -39,6 +43,7 @@ pub(super) use self::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
     },
+    builtin_derive::BuiltinDeriveExpansion,
     expand::expand_expansion_attempts,
     generated::{
         PendingGeneratedInclude, PendingGeneratedModule, apply_pending_macro_source_files,

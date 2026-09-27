@@ -10,6 +10,13 @@ pub use core::{
     include_str, line, module_path, option_env, stringify,
 };
 pub use core::cell;
+pub use core::{clone, cmp, default, fmt, hash, marker};
+pub use core::clone::Clone;
+pub use core::marker::Copy;
+pub use core::default::Default;
+pub use core::cmp::{PartialEq, Eq, PartialOrd, Ord};
+pub use core::fmt::macros::Debug;
+pub use core::hash::macros::Hash;
 pub use core::ops;
 pub use alloc_crate::string;
 pub use alloc_crate::string::String;

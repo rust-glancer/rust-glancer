@@ -30,9 +30,10 @@ use super::{
     collect::{CrateState, KnownModuleFiles},
     imports::{ImportResolutionExecutor, ImportWorklist, UnresolvedImports},
     macros::{
-        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
-        apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
-        expand_expansion_attempts, mark_retryable_macros_skipped_by_limit,
+        BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors,
+        MacroExpansionScan, apply_expansion_attempts, apply_pending_macro_source_files,
+        collect_expansion_attempts, expand_expansion_attempts,
+        mark_retryable_macros_skipped_by_limit,
     },
 };
 use crate::{
@@ -801,7 +802,14 @@ pub(super) fn finalize_scopes(
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
                 let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
                 timer.finish();
-                freeze_resolved_scopes(states, resolved.scopes, resolved.unresolved_imports);
+                freeze_resolved_scopes(
+                    old,
+                    item_tree,
+                    states,
+                    interners,
+                    resolved.scopes,
+                    resolved.unresolved_imports,
+                )?;
                 return Ok(());
             }
 
@@ -897,11 +905,14 @@ pub(super) fn finalize_scopes(
             // No imports and no macros changed the visible declarations, so this is the stable
             // scope matrix that can be written into the frozen def maps.
             freeze_resolved_scopes(
+                old,
+                item_tree,
                 states,
+                interners,
                 current_scopes,
                 current_unresolved_imports
                     .expect("stable scopes should have import status from their fixed-point run"),
-            );
+            )?;
             return Ok(());
         }
     }
@@ -981,10 +992,25 @@ fn resolve_import_scopes(
 }
 
 fn freeze_resolved_scopes(
+    old: Option<&DefMapReadTxn<'_>>,
+    item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
+    interners: &mut PackageNameInterners,
     current_scopes: ScopeMatrix,
     unresolved_imports: UnresolvedImports,
-) {
+) -> anyhow::Result<()> {
+    // Builtin derives add impls, but no imports or module bindings. Once normal expansion has
+    // settled, synthesize them once, including derives on declarations produced by macros.
+    let derives = BuiltinDeriveExpansion::collect(
+        &FinalizeResolutionEnv::new(old, states, &current_scopes),
+        states,
+        item_tree,
+        interners,
+    )
+    .context("lower builtin derive impls")?;
+    for derive in derives {
+        derive.apply(states);
+    }
     // The worklist produced each scope and unresolved-import list from the same final wave. Write
     // both into the public DefMap now; there is no need to traverse every import one more time.
 
@@ -1007,6 +1033,7 @@ fn freeze_resolved_scopes(
             freeze_crate_scopes(state, scopes, &unresolved_imports);
         }
     }
+    Ok(())
 }
 
 fn freeze_crate_scopes(

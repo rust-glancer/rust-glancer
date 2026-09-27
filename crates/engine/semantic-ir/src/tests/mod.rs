@@ -1,3 +1,4 @@
+mod builtin_derives;
 mod trait_impl_lookup;
 mod utils;
 

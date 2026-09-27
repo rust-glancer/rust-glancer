@@ -111,7 +111,11 @@ impl<'a> GeneratedSourceLowering<'a> {
             ast::Item::Enum(item) => {
                 let kind = ItemKind::Enum(EnumItem::from_ast(
                     &item,
-                    (&self.line_index, &mut *self.interner),
+                    (
+                        &self.line_index,
+                        &mut *self.interner,
+                        self.origin.dollar_crate,
+                    ),
                 ));
                 let name = self.intern_ast_name(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
@@ -247,7 +251,11 @@ impl<'a> GeneratedSourceLowering<'a> {
             ast::Item::Struct(item) => {
                 let kind = ItemKind::Struct(StructItem::from_ast(
                     &item,
-                    (&self.line_index, &mut *self.interner),
+                    (
+                        &self.line_index,
+                        &mut *self.interner,
+                        self.origin.dollar_crate,
+                    ),
                 ));
                 let name = self.intern_ast_name(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());

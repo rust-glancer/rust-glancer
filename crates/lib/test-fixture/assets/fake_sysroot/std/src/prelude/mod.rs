@@ -1,4 +1,10 @@
 pub mod rust_2024 {
+    pub use core::clone::Clone;
+    pub use core::marker::Copy;
+    pub use core::default::Default;
+    pub use core::cmp::{PartialEq, Eq, PartialOrd, Ord};
+    pub use core::fmt::macros::Debug;
+    pub use core::hash::macros::Hash;
     pub use alloc::string::String;
     pub use alloc::vec::Vec;
     pub use crate::format;
