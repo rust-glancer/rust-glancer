@@ -859,6 +859,50 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
 }
 
 #[test]
+fn trait_proofs_ignore_unresolved_receiver_constructors() {
+    // An unexpanded macro can leave `impl Default for Missing` without its type declaration.
+    // Both direct and blanket impls must remain usable alongside that unreadable receiver.
+    for missing in [
+        "Missing",
+        "&Missing",
+        "&mut Missing",
+        "*const Missing",
+        "*mut Missing",
+        "[Missing]",
+        "[Missing; 4]",
+    ] {
+        let incomplete = format!("impl Default for {missing} [resolved self: empty]");
+        for valid in [
+            "impl<T> Default for Vec<T>",
+            "impl<T> Default for T [resolved self: empty]",
+        ] {
+            for impls in [[incomplete.as_str(), valid], [valid, incomplete.as_str()]] {
+                let fixture = TraitSelectionFixture::new(&format!(
+                    r#"
+                    traits
+                      trait#0 Default
+                    structs
+                      struct#0 Vec<T>
+                      struct#1 User
+                    impls
+                      impl#0 {}
+                      impl#1 {}
+                    "#,
+                    impls[0], impls[1],
+                ));
+                for goal in ["Vec<User>: Default", "Vec<?item>: Default"] {
+                    assert_eq!(
+                        prove_fixture_goal(&fixture, goal),
+                        crate::solver::Outcome::Proven,
+                        "{goal} with impls {impls:?}",
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn unavailable_candidate_does_not_change_independent_selection_or_normalization() {
     use rg_ir_model::{ImplId, ImplRef};
     use rg_std::ExpectedUnique;

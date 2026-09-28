@@ -11,6 +11,54 @@ use super::utils::{
 };
 
 #[test]
+fn infers_default_calls_alongside_unresolved_impl_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_default_with_unresolved_impl"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Default { fn default() -> Self; }
+pub struct Vec<T>(T);
+
+impl Default for MissingGeneratedType { fn default() -> Self {} }
+impl<T> Default for Vec<T> { fn default() -> Self {} }
+type Bytes = Vec<u8>;
+impl Default for AnotherMissingType { fn default() -> Self {} }
+
+pub fn use_it() {
+    let inferred = Vec::default()$inferred$;
+    let explicit = Vec::<u8>::default()$explicit$;
+    let qualified = <Vec<u8> as Default>::default()$qualified$;
+    let alias = Bytes::default()$alias$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("omitted element type", "inferred"),
+            AnalysisQuery::ty("explicit element type", "explicit"),
+            AnalysisQuery::ty("qualified trait call", "qualified"),
+            AnalysisQuery::ty("type alias receiver", "alias"),
+        ],
+        expect![[r#"
+            omitted element type
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<<unknown>>
+
+            explicit element type
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+
+            qualified trait call
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+
+            type alias receiver
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_inherent_impl_bounds_from_constructor_arguments() {
     check_analysis_queries(
         r#"

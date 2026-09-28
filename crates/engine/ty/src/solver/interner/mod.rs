@@ -10,10 +10,11 @@ mod lists;
 
 use std::{cell::RefCell, fmt};
 
+use rg_ir_model::ImplRef;
 use rustc_type_ir::{
     self as ir, TypeFoldable, TypeVisitableExt, VisitorResult,
     data_structures::HashMap,
-    inherent::{GenericArgs as _, Ty as _},
+    inherent::{GenericArgs as _, IntoKind as _, Ty as _},
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
 
@@ -229,6 +230,37 @@ impl<'s> SolverInterner<'s> {
             self.unavailable("missing language item");
             DefId::Unavailable
         })
+    }
+
+    /// An unexpanded macro can leave `impl Default for Missing` without a receiver type.
+    /// Keep that impl out of solver enumeration so it cannot block `Vec<T>: Default` or match
+    /// arbitrary types through compiler error recovery. Failed declaration reads still report
+    /// missing data to the enclosing query; only an unresolved source constructor is ignored.
+    fn impl_has_resolved_self_constructor(self, id: ImplRef) -> bool {
+        let Some(header) = self.impl_header(id) else {
+            return false;
+        };
+        if self.has_unavailable() {
+            return false;
+        }
+        let mut self_ty = header.self_ty;
+        if !self_ty.references_error() {
+            return true;
+        }
+
+        // `&Missing` and `[Missing]` have the same problem as `Missing`. A named constructor
+        // such as `Vec<Missing>` is still identifiable, so leave its incomplete arguments for
+        // the full header checks rather than dropping a potentially relevant impl.
+        loop {
+            self_ty = match self_ty.kind() {
+                ir::Error(_) => return false,
+                ir::Ref(_, inner, _)
+                | ir::RawPtr(inner, _)
+                | ir::Array(inner, _)
+                | ir::Slice(inner) => inner,
+                _ => return true,
+            };
+        }
     }
 }
 
@@ -777,6 +809,9 @@ impl<'s> ir::Interner for SolverInterner<'s> {
                 self.unavailable("cancelled");
                 break;
             }
+            if !self.impl_has_resolved_self_constructor(id) {
+                continue;
+            }
             if let std::ops::ControlFlow::Break(residual) = f(DefId::Impl(id)).branch() {
                 return R::from_residual(residual);
             }
@@ -805,6 +840,9 @@ impl<'s> ir::Interner for SolverInterner<'s> {
                 break;
             }
             self.profile(|p| p.impl_candidates += 1);
+            if !self.impl_has_resolved_self_constructor(id) {
+                continue;
+            }
             if let std::ops::ControlFlow::Break(residual) = f(DefId::Impl(id)).branch() {
                 return R::from_residual(residual);
             }
