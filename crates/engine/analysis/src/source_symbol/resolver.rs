@@ -1,8 +1,10 @@
 //! Resolution of analysis cursor symbols to declarations and types.
 
+use anyhow::Context as _;
 use rg_ir_model::identity::DeclarationRef;
 use rg_ir_view::{
     IndexedViewDb,
+    body::BodyCallView,
     lookup::resolution::ResolutionView,
     ty::{IndexedType, TyView},
 };
@@ -16,6 +18,20 @@ pub(crate) struct SourceSymbolResolver<'a, 'db> {
 impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
     pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
+    }
+
+    /// Preserve the enclosing call when an expression selects a method or associated callee.
+    /// Declaration identities alone do not carry its receiver or generic arguments.
+    pub(crate) fn call_for_symbol(
+        &self,
+        symbol: &SymbolAt,
+    ) -> anyhow::Result<Option<BodyCallView<'a>>> {
+        match symbol {
+            SymbolAt::Expr { expr } => {
+                BodyCallView::for_expr(self.db, *expr).context("read selected call")
+            }
+            _ => Ok(None),
+        }
     }
 
     pub(crate) fn declarations_for_symbol(

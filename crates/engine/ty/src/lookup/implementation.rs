@@ -1,15 +1,21 @@
 //! Implementation lookup over semantic-shaped item stores.
 //!
-//! Goto-implementation needs type/impl reasoning, but not source spans or editor labels. This
-//! query keeps the reusable search at the ref level so view code can project results into the
-//! declaration shape that UI-facing analysis expects.
+//! Navigation needs type/impl reasoning, but not source spans or editor labels. This query keeps
+//! the reusable search at the ref level so view code can project results into the declaration
+//! shape that UI-facing analysis expects.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
+use rg_ir_model::{
+    AssocItemId, FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef,
+};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::{OperationError, UniqueVec};
+use rg_std::{ExpectedUnique, OperationError, UniqueVec};
 
-use crate::{Ty, TyContext, solver::SemanticDeclarations};
+use super::TraitImplFilter;
+use crate::{
+    ConstValue, GenericArg, GenericArgs, Substitution, Ty, TyContext,
+    solver::{Outcome, SemanticDeclarations, SolverScope, TraitApplication},
+};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
@@ -24,6 +30,114 @@ where
     /// Creates implementation lookup in one crate-scoped type-query environment.
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Find the method in the impl that matches a resolved trait call.
+    ///
+    /// A call can name `Convert::convert` with `Self = Source` and `T = u32`. Those recorded
+    /// arguments let us look for `impl Convert<u32> for Source` and then its `convert` method.
+    /// Return a method only when one impl is proven to apply, so navigation can keep the trait
+    /// declaration when the available facts do not establish a destination.
+    pub fn selected_call_implementation(
+        &self,
+        function: FunctionRef,
+        args: &GenericArgs,
+        scope: &impl SolverScope<Error = D::Error>,
+    ) -> Result<Option<FunctionRef>, OperationError<D::Error>> {
+        rg_std::check_cancel!(self.context, "selected call implementation");
+        let paths = self.context.item_paths();
+        let Some(data) = paths
+            .items()
+            .function_data(function)
+            .map_err(OperationError::Source)?
+        else {
+            return Ok(None);
+        };
+        let ItemOwner::Trait(id) = data.owner else {
+            return Ok(None);
+        };
+        let trait_ref = TraitDefRef {
+            origin: function.origin,
+            id,
+        };
+
+        // A call stores the trait's arguments followed by the method's own arguments.
+        // For `Convert<u32>::convert::<u8>`, impl matching needs Self and u32, not the method's
+        // u8. Bind arguments to their parameter identities, then take just the trait's slots.
+        let generics = paths.generics();
+        let function_params = generics
+            .generics(GenericDefRef::Function(function))
+            .map_err(OperationError::Source)?;
+        let trait_params = generics
+            .generics(GenericDefRef::Trait(trait_ref))
+            .map_err(OperationError::Source)?;
+        let args = Substitution::from_args(&function_params, args).args_for(&trait_params);
+        let Some(receiver) = args.first().and_then(GenericArg::as_ty) else {
+            return Ok(None);
+        };
+        // An unknown argument does not identify an impl. Keep the trait declaration instead of
+        // guessing the missing arguments from whichever impls happen to be available.
+        if args
+            .iter()
+            .any(|arg| arg.has_unknown() || matches!(arg, GenericArg::Const(ConstValue::Unknown)))
+        {
+            return Ok(None);
+        }
+
+        // Start with saved impls whose receiver shape could match, then include body-local
+        // impls. This only narrows the search: `Wrapper<User>` and `Wrapper<Account>` have the same
+        // outer shape, so their generic arguments and bounds still need to be checked.
+        let Some(mut candidates) =
+            TraitImplFilter::from(receiver).candidates(&self.context, trait_ref)
+        else {
+            rg_std::check_cancel!(self.context, "selected call implementation");
+            return Ok(None);
+        };
+        candidates.extend(
+            scope
+                .local_trait_impls(trait_ref)
+                .map_err(OperationError::Source)?,
+        );
+
+        // Check the complete trait arguments and each impl's bounds in the calling body's
+        // scope. Self is the receiver type already chosen for this call, including any
+        // dereferencing. Trying more receiver adjustments here could choose another method.
+        let declarations = SemanticDeclarations::new(&self.context, scope);
+        let implementation = declarations
+            .with_table(|table, params| {
+                let cx = table.interner();
+                let callbacks = cx.track_callbacks();
+                let application = TraitApplication {
+                    def: trait_ref,
+                    args: cx.lower_args(&args, params),
+                };
+                if callbacks.failure().is_some() {
+                    return None;
+                }
+                match table.select_trait_impl(
+                    application,
+                    &[],
+                    candidates.into_iter().map(|candidate| candidate.impl_ref),
+                ) {
+                    ExpectedUnique::One(selected) if selected.outcome == Outcome::Proven => {
+                        Some(selected.impl_ref)
+                    }
+                    _ => None,
+                }
+            })
+            .map_err(OperationError::Source)?;
+        rg_std::check_cancel!(self.context, "selected call implementation");
+        let Some(implementation) = implementation else {
+            return Ok(None);
+        };
+
+        // An impl can inherit the trait's default body. It has no method declaration to visit,
+        // so let navigation keep the trait method as its destination in that case.
+        let methods = self.matching_impl_methods(implementation, data.name.as_str())?;
+        Ok(match methods.as_slice() {
+            [method] => Some(*method),
+            _ => None,
+        })
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.

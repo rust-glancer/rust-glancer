@@ -1,19 +1,22 @@
 //! Implementation lookup over indexed views.
 //!
-//! Goto-implementation is an editor query, but the lookup itself needs direct access to crate item
-//! indexes and body expression facts. This view keeps those storage-shaped queries out of analysis.
+//! Definition navigation can select one impl from a call's facts; goto-implementation can collect
+//! several possible impls. Both need crate item indexes and body expression facts, so this view
+//! keeps those storage-shaped queries out of analysis.
 
 use anyhow::Context as _;
-use rg_body_ir::ExprKind;
+use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, FunctionRef, SemanticItemRef, TraitDefRef, TypeDefRef,
-    identity::{DeclarationRef, ExprRef},
+    BodyRef, CrateRef, DefMapRef, FunctionRef, ItemOwner, SemanticItemRef, TraitDefRef, TypeDefRef,
+    identity::DeclarationRef,
 };
 use rg_semantic_ir::ItemStoreQuery;
 use rg_std::UniqueVec;
 use rg_ty::{Ty, TyContext, lookup::ImplementationQuery};
 
-use crate::{IndexedViewDb, lookup::resolution::ResolutionView, ty::IndexedType};
+use crate::{
+    IndexedViewDb, body::BodyCallView, lookup::resolution::ResolutionView, ty::IndexedType,
+};
 
 /// Finds implementation declarations for types, traits, and methods.
 pub struct ImplementationView<'a, 'db> {
@@ -25,32 +28,86 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Self { db }
     }
 
-    /// Return impl methods that may implement a resolved method call.
-    pub fn method_call_implementations(
+    /// Find a concrete impl method using the function and substitutions selected for this call.
+    ///
+    /// For `user.name()` with `user: User`, the facts can name `Named::name` even when
+    /// `impl Named for User` provides the body. Return that impl's method if one impl is proven
+    /// to apply. An inherited default body has no impl method to return; callers decide whether
+    /// to use the trait declaration instead.
+    pub fn selected_call_implementation(
         &self,
-        expr: ExprRef,
-    ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
-        let body_ref = expr.body_ir();
-        let Some(body_data) = self.db.body_ir.body(body_ref)? else {
+        call: &BodyCallView<'_>,
+    ) -> anyhow::Result<Option<FunctionRef>> {
+        let Some(facts) = call.facts() else {
             return Ok(None);
         };
-        let Some(expr_data) = body_data.expr(expr.expr_id()) else {
-            return Ok(None);
-        };
-        let ExprKind::MethodCall {
-            receiver: Some(receiver),
-            ..
-        } = &expr_data.kind
+        // Only a trait-owned function needs another lookup. An inherent method already names
+        // its implementation, and a free function has no impl to look for.
+        let items = ItemStoreQuery::new(self.db);
+        let Some(function) = items
+            .function_data(facts.function())
+            .context("read selected function")?
         else {
             return Ok(None);
         };
-        let receiver_ty = body_data.expr_ty(*receiver);
-        let declarations = ResolutionView::new(self.db).declarations_for_expr(expr)?;
+        if !matches!(function.owner, ItemOwner::Trait(_)) {
+            return Ok(None);
+        }
+
+        // An impl may be declared inside this body or require a bound from the enclosing
+        // function. Give impl selection that context along with the saved crate declarations.
+        let body_ref = call.expr.body_ir();
+        let lookup = self
+            .db
+            .item_lookup_query(body_ref.crate_ref)
+            .context("assemble call impl lookup")?;
+        let scope = BodyResolutionContext::new(
+            self.db,
+            self.db,
+            body_ref,
+            call.body.structure(),
+            &lookup,
+            self.db.cancellation().clone(),
+        );
+        let query = ImplementationQuery::new(TyContext::new(
+            self.db,
+            self.db,
+            lookup,
+            body_ref.crate_ref,
+            self.db.cancellation().clone(),
+        ));
+        query
+            .selected_call_implementation(facts.function(), facts.generic_args(), &scope)
+            .context("select call implementation")
+    }
+
+    /// Find possible impl methods using the receiver written before the dot in `user.name()`.
+    ///
+    /// This can return several candidates, even when the full trait application is not known.
+    /// Associated calls have no dot receiver and use declaration-based implementation lookup.
+    pub fn method_call_implementations(
+        &self,
+        call: &BodyCallView<'_>,
+    ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
+        let Some(receiver) = call.receiver else {
+            return Ok(None);
+        };
+        let receiver_ty = call.body.expr_ty(receiver);
+        // Prefer the function selected for the call. If substitutions were not recorded, its
+        // expression may still name declarations that we can search using the receiver alone.
+        let declarations = match call.facts() {
+            Some(facts) => vec![DeclarationRef::from(facts.function())],
+            None => ResolutionView::new(self.db)
+                .declarations_for_expr(call.expr)
+                .context("read method call declarations")?,
+        };
         if declarations.is_empty() {
             return Ok(None);
         }
 
-        let implementation_query = self.implementation_query(body_ref.crate_ref)?;
+        let implementation_query = self
+            .implementation_query(call.expr.body_ir().crate_ref)
+            .context("assemble method implementation lookup")?;
         let mut implementations = UniqueVec::new();
         for declaration in declarations {
             let Some(function) = self
@@ -59,8 +116,9 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             else {
                 continue;
             };
-            for implementation in
-                implementation_query.function_implementations(function, receiver_ty)?
+            for implementation in implementation_query
+                .function_implementations(function, receiver_ty)
+                .context("find method call implementations")?
             {
                 implementations.push(DeclarationRef::from(implementation));
             }

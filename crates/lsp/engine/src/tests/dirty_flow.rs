@@ -419,6 +419,100 @@ pub fn inspect(user: SavedUser) {
 }
 
 #[tokio::test]
+async fn trait_call_definition_uses_current_body_and_maps_the_impl_destination() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_dirty_trait_call_definition"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        mod consumer;
+        pub trait Named {
+            fn name(&self);
+        }
+        pub struct User;
+        pub struct Account;
+        impl Named for User {
+            fn name(&self) {}
+        }
+        impl Named for Account {
+            fn name(&self) {}
+        }
+
+        //- /src/consumer.rs
+        use crate::{Account, Named, User};
+
+        pub fn inspect(user: User, account: Account) {
+            let value = user;
+            value.name();
+        }
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    fixture.did_open_saved("src/consumer.rs", 1).await;
+    fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            MarkedText::parse(
+                r#"
+// Move the implementation without changing its declaration.
+// Its saved span must be mapped into this editor text.
+mod consumer;
+pub trait Named {
+    fn name(&self);
+}
+pub struct User;
+pub struct Account;
+impl Named for User {
+    fn name(&self) {}
+}
+impl Named for Account {
+    fn name(&self) {}
+}
+"#,
+            ),
+        )
+        .await;
+    let consumer = fixture
+        .did_change_full(
+            "src/consumer.rs",
+            2,
+            MarkedText::parse(
+                r#"
+use crate::{Account, Named, User};
+
+pub fn inspect(user: User, account: Account) {
+    let value = account;
+    value.na$definition$me();
+}
+"#,
+            ),
+        )
+        .await;
+    fixture
+        .check_dirty(
+            &consumer,
+            &[LspQuery::goto_definition(
+                "navigate using the current receiver and destination text",
+                "definition",
+            )],
+            expect![[r#"
+                navigate using the current receiver and destination text
+                - /src/lib.rs:13:7-13:11
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn definition_maps_a_saved_target_into_its_dirty_open_document() {
     let fixture = LspEngineFixture::initialized(
         r#"

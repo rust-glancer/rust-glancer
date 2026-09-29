@@ -4,10 +4,14 @@
 //! views in this module either expose those facts directly or compose the body with the shared
 //! name/type context needed to resolve paths, enum variants, methods, and associated items.
 
+mod call;
 mod resolution;
 mod structure;
 
 pub(crate) use self::resolution::BodyResolutionView;
-pub use self::structure::{
-    BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView, MethodChainExprTy,
+pub use self::{
+    call::BodyCallView,
+    structure::{
+        BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView, MethodChainExprTy,
+    },
 };
