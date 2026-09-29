@@ -1,8 +1,9 @@
 //! Discover function declarations and check them against one live receiver.
 //!
 //! Named calls and completion use the same declarations, lexical overlays, and candidate trials.
-//! A named call gives inherent declarations precedence. Completion keeps both origins, and its
-//! caller visits every receiver adjustment instead of stopping at the first match.
+//! Dot calls and completion keep both inherent and trait declarations. Dot calls compare their
+//! self parameters with the receiver adjustments before applying inherent precedence. Associated
+//! calls already fix Self in the path and can apply that precedence here.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
@@ -20,8 +21,8 @@ use super::LiveBodyQuery;
 use crate::resolution::cache::BodyTraitSurface;
 
 /// The syntax being resolved determines name filtering and whether a self receiver is required.
-/// Completion deliberately collects across inherent and trait origins; named calls apply inherent
-/// precedence before returning candidates to inference.
+/// Dot calls need both origins to compare receiver adjustments before choosing a method.
+/// Associated calls use the path's Self type, without receiver adjustments.
 #[derive(Clone, Copy)]
 pub(crate) enum FunctionLookup<'a, 's> {
     Method(&'a str),
@@ -170,7 +171,7 @@ where
                     outcome: selection.outcome,
                 });
             }
-            if !matches!(request, FunctionLookup::Completion) && !candidates.is_empty() {
+            if matches!(request, FunctionLookup::Associated { .. }) && !candidates.is_empty() {
                 return Ok(candidates);
             }
         }

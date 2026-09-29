@@ -9,7 +9,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FunctionRef, GenericDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{CallableSignature, GenericArgs, InferenceTable, SolverInterner, Ty, TyShape};
+use rg_ty::solver::{CallableSignature, GenericArgs, InferenceTable, SolverInterner, Ty};
 
 use super::{BodyInference, deferred::DeferredKind};
 use crate::{CallFacts, body::ExprKind};
@@ -254,10 +254,8 @@ where
             && let Some(receiver) = prepared.receiver_ty
             && let Some(param) = prepared.signature.params.first()
         {
-            let param = match param.shape() {
-                TyShape::Reference { inner, .. } => inner,
-                _ => *param,
-            };
+            // Lookup retained the adjusted receiver, including any borrow. Relate it to the
+            // complete self parameter so a by-value reference receiver keeps its reference.
             self.inference.table().unify(receiver, param);
         }
         let _ = self.inference.table().fulfill();

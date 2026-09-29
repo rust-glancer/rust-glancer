@@ -271,6 +271,163 @@ pub fn use_it(mut user: User, value: u8) {
 }
 
 #[test]
+fn selects_methods_by_the_adjusted_self_parameter() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "method_receiver_selection"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Record {
+    type Output;
+    fn record(&self) -> Self::Output;
+}
+pub struct Predicate;
+impl Record for Predicate {
+    type Output = u8;
+    fn record(&self) -> u8 { 0 }
+}
+impl<T> Record for &T {
+    type Output = u16;
+    fn record(&self) -> u16 { 0 }
+}
+pub enum Gate { Direct(Predicate) }
+pub struct ReferenceOnly;
+
+#[lang = "deref"]
+pub trait Deref {
+    #[lang = "deref_target"]
+    type Target;
+    fn deref(&self) -> &Self::Target;
+}
+pub struct Wrapper;
+impl Deref for Wrapper {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+impl Record for Wrapper {
+    type Output = u32;
+    fn record(&self) -> u32 { 0 }
+}
+pub struct DerefOnly;
+impl Deref for DerefOnly {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+
+pub struct Precedence;
+impl Precedence {
+    pub fn record(&mut self) -> u64 { 0 }
+}
+impl Record for Precedence {
+    type Output = u32;
+    fn record(&self) -> u32 { 0 }
+}
+pub trait Consume { fn record(self) -> u64; }
+pub struct ValueFirst;
+impl ValueFirst {
+    pub fn record(&self) -> u32 { 0 }
+}
+impl Consume for ValueFirst {
+    fn record(self) -> u64 { 0 }
+}
+pub struct BorrowedValue;
+impl Consume for &BorrowedValue {
+    fn record(self) -> u64 { 0 }
+}
+pub struct SameReceiver;
+impl SameReceiver {
+    pub fn record(&self) -> u64 { 0 }
+}
+impl Record for SameReceiver {
+    type Output = u32;
+    fn record(&self) -> u32 { 0 }
+}
+
+pub fn match_binding(gate: &Gate) {
+    match gate {
+        Gate::Direct(predicate) => { let res$match_binding$ult = predicate.record(); }
+    }
+}
+pub fn double_reference(predicate: &&Predicate) { let res$double_reference$ult = predicate.record(); }
+pub fn reference_only(value: &ReferenceOnly) { let res$reference_only$ult = value.record(); }
+pub fn own_wrapper(value: Wrapper) { let res$own_wrapper$ult = value.record(); }
+pub fn through_deref(value: DerefOnly) { let res$through_deref$ult = value.record(); }
+pub fn borrowed_before_mutable(mut value: Precedence) { let res$borrowed_before_mutable$ult = value.record(); }
+pub fn mutable_receiver(value: &mut Precedence) { let res$mutable_receiver$ult = value.record(); }
+pub fn value_before_borrow(value: ValueFirst) { let res$value_before_borrow$ult = value.record(); }
+pub fn reference_by_value(value: &BorrowedValue) { let res$reference_by_value$ult = value.record(); }
+pub fn inherent_at_same_receiver(value: SameReceiver) { let res$inherent_at_same_receiver$ult = value.record(); }
+pub fn explicit_reference(value: &&Predicate) {
+    let res$explicit_reference$ult = <&Predicate as Record>::record(value);
+}
+"#,
+        &[
+            AnalysisQuery::ty("borrowed match binding", "match_binding"),
+            AnalysisQuery::ty("double reference", "double_reference"),
+            AnalysisQuery::ty("reference-only implementation", "reference_only"),
+            AnalysisQuery::ty("wrapper implementation before Deref", "own_wrapper"),
+            AnalysisQuery::ty("implementation through Deref", "through_deref"),
+            AnalysisQuery::ty(
+                "shared trait receiver before mutable inherent receiver",
+                "borrowed_before_mutable",
+            ),
+            AnalysisQuery::ty(
+                "mutable inherent receiver matches directly",
+                "mutable_receiver",
+            ),
+            AnalysisQuery::ty(
+                "value trait receiver before borrowed inherent receiver",
+                "value_before_borrow",
+            ),
+            AnalysisQuery::ty("reference taken by value", "reference_by_value"),
+            AnalysisQuery::ty(
+                "inherent precedence at the same receiver",
+                "inherent_at_same_receiver",
+            ),
+            AnalysisQuery::ty("explicit reference Self", "explicit_reference"),
+        ],
+        expect![[r#"
+            borrowed match binding
+            - u8
+
+            double reference
+            - u16
+
+            reference-only implementation
+            - u16
+
+            wrapper implementation before Deref
+            - u32
+
+            implementation through Deref
+            - u8
+
+            shared trait receiver before mutable inherent receiver
+            - u32
+
+            mutable inherent receiver matches directly
+            - u64
+
+            value trait receiver before borrowed inherent receiver
+            - u64
+
+            reference taken by value
+            - u64
+
+            inherent precedence at the same receiver
+            - u64
+
+            explicit reference Self
+            - u16
+        "#]],
+    );
+}
+
+#[test]
 fn autoderefs_core_deref_for_member_lookup_and_explicit_deref() {
     check_analysis_queries_with_fake_sysroot(
         r#"
