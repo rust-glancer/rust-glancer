@@ -656,6 +656,96 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn follows_the_selected_self_type_for_trait_method_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_selected_receiver_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Record {
+    fn record(&self);
+}
+pub struct Predicate;
+impl Record for Predicate {
+    fn record(&self) {}
+}
+impl<T> Record for &T {
+    fn record(&self) {}
+}
+pub enum Gate { Direct(Predicate) }
+pub struct ReferenceOnly;
+
+#[lang = "deref"]
+pub trait Deref {
+    #[lang = "deref_target"]
+    type Target;
+    fn deref(&self) -> &Self::Target;
+}
+pub struct Wrapper;
+impl Deref for Wrapper {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+impl Record for Wrapper {
+    fn record(&self) {}
+}
+pub struct DerefOnly;
+impl Deref for DerefOnly {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+
+pub fn match_binding(gate: &Gate) {
+    match gate {
+        Gate::Direct(predicate) => predicate.rec$match_binding$ord(),
+    }
+}
+pub fn double_reference(value: &&Predicate) { value.rec$double_reference$ord(); }
+pub fn reference_only(value: &ReferenceOnly) { value.rec$reference_only$ord(); }
+pub fn own_wrapper(value: Wrapper) { value.rec$own_wrapper$ord(); }
+pub fn through_deref(value: DerefOnly) { value.rec$through_deref$ord(); }
+pub fn explicit_reference(value: &&Predicate) {
+    <&Predicate as Record>::rec$explicit_reference$ord(value);
+}
+"#,
+        &[
+            AnalysisQuery::goto("borrowed match binding", "match_binding"),
+            AnalysisQuery::goto(
+                "double reference selects the reference impl",
+                "double_reference",
+            ),
+            AnalysisQuery::goto("reference-only implementation", "reference_only"),
+            AnalysisQuery::goto("wrapper implementation before Deref", "own_wrapper"),
+            AnalysisQuery::goto("implementation through Deref", "through_deref"),
+            AnalysisQuery::goto("explicit reference Self", "explicit_reference"),
+        ],
+        expect![[r#"
+            borrowed match binding
+            - fn record @ 6:8-6:14
+
+            double reference selects the reference impl
+            - fn record @ 9:8-9:14
+
+            reference-only implementation
+            - fn record @ 9:8-9:14
+
+            wrapper implementation before Deref
+            - fn record @ 26:8-26:14
+
+            implementation through Deref
+            - fn record @ 6:8-6:14
+
+            explicit reference Self
+            - fn record @ 9:8-9:14
+        "#]],
+    );
+}
+
+#[test]
 fn selects_trait_call_definitions_with_finalized_generic_arguments() {
     check_analysis_queries(
         r#"
