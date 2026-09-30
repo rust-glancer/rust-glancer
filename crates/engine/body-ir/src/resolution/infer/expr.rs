@@ -427,14 +427,16 @@ where
                     .pop()
                     .expect("loop retains its target")
                     .values;
-                // Only breaks aimed at this loop let it finish. A break to an outer labeled
-                // block still diverges here, even though it supplies a value to that block.
-                // Missing or truncated syntax cannot establish that the loop has no exit.
-                if body.is_some() && branches.is_empty() && !self.inference_exhausted {
+                // Only breaks aimed at this loop contribute to its result. Keep their live
+                // slots separate until pending payloads have revealed whether they return `!`.
+                if !branches.is_empty() {
+                    self.run_or_defer(DeferredKind::BranchResult { expr, branches })
+                        .context("infer loop result")?;
+                } else if body.is_some() && !self.inference_exhausted {
+                    // A break to an outer label still diverges here. Missing or truncated
+                    // syntax cannot establish that the loop has no exit of its own.
                     self.inference.set_expr_ty(expr, self.cx.never());
                 }
-                // TODO: Infer loop results from their own break payloads. The target is needed
-                // here to distinguish a loop exit from an exit to an enclosing labeled block.
             }
             ExprKind::While {
                 ref label,

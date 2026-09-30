@@ -3427,3 +3427,198 @@ pub fn use_it(flag: bool) {
         "#]],
     );
 }
+
+#[test]
+fn infers_loop_exit_values() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_loop_exits"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool) {
+    let bare = loop { break; };
+    bare$type_bare$;
+    let explicit_unit = loop { break (); };
+    explicit_unit$type_explicit_unit$;
+    let single = loop { break 1u64; };
+    single$type_single$;
+    let branches = loop {
+        if flag { break 2$type_branch_literal$; }
+        break 3u64;
+    };
+    branches$type_branches$;
+    let outer = 'done: loop {
+        let inner = loop { break true; };
+        inner$type_inner$;
+        let shadowed_block = 'done: { break 'done 4u8; };
+        shadowed_block$type_shadowed_block$;
+        let shadowed_loop = 'done: loop { break 'done 5u16; };
+        shadowed_loop$type_shadowed_loop$;
+        loop {
+            if flag { break 'done 6u64; }
+            break;
+        }
+        break 'done 7u64;
+    };
+    outer$type_outer$;
+    let nested_payload = loop { break loop { break 8u32; }; };
+    nested_payload$type_nested_payload$;
+}
+
+pub fn exit_to_block() {
+    let value = 'done: {
+        let inner = loop { break 'done 9u64; };
+        inner$type_outer_exit_loop$;
+    };
+    value$type_outer_exit_block$;
+}
+
+pub fn spin() {
+    let value = loop {};
+    value$type_infinite$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("bare break", "type_bare"),
+            AnalysisQuery::ty("explicit unit payload", "type_explicit_unit"),
+            AnalysisQuery::ty("single value break", "type_single"),
+            AnalysisQuery::ty(
+                "literal constrained by another break",
+                "type_branch_literal",
+            ),
+            AnalysisQuery::ty("multiple break values", "type_branches"),
+            AnalysisQuery::ty("inner loop result", "type_inner"),
+            AnalysisQuery::ty("block shadowing a loop label", "type_shadowed_block"),
+            AnalysisQuery::ty("loop shadowing a loop label", "type_shadowed_loop"),
+            AnalysisQuery::ty("outer loop result", "type_outer"),
+            AnalysisQuery::ty("loop used as break payload", "type_nested_payload"),
+            AnalysisQuery::ty("loop exiting to outer block", "type_outer_exit_loop"),
+            AnalysisQuery::ty("block receiving loop exit", "type_outer_exit_block"),
+            AnalysisQuery::ty("loop without exits", "type_infinite"),
+        ],
+        expect![[r#"
+            bare break
+            - ()
+
+            explicit unit payload
+            - ()
+
+            single value break
+            - u64
+
+            literal constrained by another break
+            - u64
+
+            multiple break values
+            - u64
+
+            inner loop result
+            - bool
+
+            block shadowing a loop label
+            - u8
+
+            loop shadowing a loop label
+            - u16
+
+            outer loop result
+            - u64
+
+            loop used as break payload
+            - u32
+
+            loop exiting to outer block
+            - !
+
+            block receiving loop exit
+            - u64
+
+            loop without exits
+            - !
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_loop_expectations_and_deferred_results() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_loop_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Source;
+impl Source {
+    pub fn value(&self) -> u64 { 1 }
+    pub fn abort(&self) -> ! { loop {} }
+}
+pub fn make<T>() -> T { loop {} }
+pub fn consume(_: u64) {}
+pub fn require_source(_: &Source) {}
+
+pub fn use_it(flag: bool) {
+    let annotated: u64 = loop { break 1$type_annotated_literal$; };
+    let later = loop { break make()$type_generic_payload$; };
+    consume(later);
+    later$type_later_result$;
+
+    let source = make();
+    let result = loop {
+        if flag { break source.abort()$type_diverging_payload$; }
+        break source.value()$type_value_payload$;
+    };
+    require_source(&source);
+    result$type_deferred_result$;
+}
+
+pub fn all_diverging() {
+    let source = make();
+    let result = loop { break source.abort()$type_only_payload$; };
+    require_source(&source);
+    result$type_diverging_result$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("expected break literal", "type_annotated_literal"),
+            AnalysisQuery::ty("generic break payload", "type_generic_payload"),
+            AnalysisQuery::ty("loop constrained by later use", "type_later_result"),
+            AnalysisQuery::ty("deferred diverging payload", "type_diverging_payload"),
+            AnalysisQuery::ty("deferred value payload", "type_value_payload"),
+            AnalysisQuery::ty("deferred loop result", "type_deferred_result"),
+            AnalysisQuery::ty("only payload diverges", "type_only_payload"),
+            AnalysisQuery::ty("all break payloads diverge", "type_diverging_result"),
+        ],
+        expect![[r#"
+            expected break literal
+            - u64
+
+            generic break payload
+            - u64
+
+            loop constrained by later use
+            - u64
+
+            deferred diverging payload
+            - !
+
+            deferred value payload
+            - u64
+
+            deferred loop result
+            - u64
+
+            only payload diverges
+            - !
+
+            all break payloads diverge
+            - !
+        "#]],
+    );
+}
