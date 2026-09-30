@@ -1,3 +1,4 @@
+mod builtin_derives;
 mod utils;
 
 mod code_actions;

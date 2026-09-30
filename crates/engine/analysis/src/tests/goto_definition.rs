@@ -620,7 +620,7 @@ pub fn use_it(pair: Pair) {
 }
 
 #[test]
-fn resolves_direct_trait_method_calls_to_trait_declarations() {
+fn resolves_direct_trait_method_calls_to_impl_methods() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -650,7 +650,330 @@ pub fn use_it(user: User) {
         )],
         expect![[r#"
             goto direct trait method
-            - fn id @ 4:8-4:10
+            - fn id @ 8:8-8:10
+        "#]],
+    );
+}
+
+#[test]
+fn follows_the_selected_self_type_for_trait_method_definitions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_selected_receiver_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Record {
+    fn record(&self);
+}
+pub struct Predicate;
+impl Record for Predicate {
+    fn record(&self) {}
+}
+impl<T> Record for &T {
+    fn record(&self) {}
+}
+pub enum Gate { Direct(Predicate) }
+pub struct ReferenceOnly;
+
+#[lang = "deref"]
+pub trait Deref {
+    #[lang = "deref_target"]
+    type Target;
+    fn deref(&self) -> &Self::Target;
+}
+pub struct Wrapper;
+impl Deref for Wrapper {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+impl Record for Wrapper {
+    fn record(&self) {}
+}
+pub struct DerefOnly;
+impl Deref for DerefOnly {
+    type Target = Predicate;
+    fn deref(&self) -> &Predicate { missing() }
+}
+
+pub fn match_binding(gate: &Gate) {
+    match gate {
+        Gate::Direct(predicate) => predicate.rec$match_binding$ord(),
+    }
+}
+pub fn double_reference(value: &&Predicate) { value.rec$double_reference$ord(); }
+pub fn reference_only(value: &ReferenceOnly) { value.rec$reference_only$ord(); }
+pub fn own_wrapper(value: Wrapper) { value.rec$own_wrapper$ord(); }
+pub fn through_deref(value: DerefOnly) { value.rec$through_deref$ord(); }
+pub fn explicit_reference(value: &&Predicate) {
+    <&Predicate as Record>::rec$explicit_reference$ord(value);
+}
+"#,
+        &[
+            AnalysisQuery::goto("borrowed match binding", "match_binding"),
+            AnalysisQuery::goto(
+                "double reference selects the reference impl",
+                "double_reference",
+            ),
+            AnalysisQuery::goto("reference-only implementation", "reference_only"),
+            AnalysisQuery::goto("wrapper implementation before Deref", "own_wrapper"),
+            AnalysisQuery::goto("implementation through Deref", "through_deref"),
+            AnalysisQuery::goto("explicit reference Self", "explicit_reference"),
+        ],
+        expect![[r#"
+            borrowed match binding
+            - fn record @ 6:8-6:14
+
+            double reference selects the reference impl
+            - fn record @ 9:8-9:14
+
+            reference-only implementation
+            - fn record @ 9:8-9:14
+
+            wrapper implementation before Deref
+            - fn record @ 26:8-26:14
+
+            implementation through Deref
+            - fn record @ 6:8-6:14
+
+            explicit reference Self
+            - fn record @ 9:8-9:14
+        "#]],
+    );
+}
+
+#[test]
+fn selects_trait_call_definitions_with_finalized_generic_arguments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_call_definition_arguments"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Source;
+
+pub trait Convert<T> {
+    fn convert<U>(&self, input: U) -> T;
+}
+
+impl Convert<u32> for Source {
+    fn convert<U>(&self, input: U) -> u32 { 0 }
+}
+
+impl Convert<u16> for Source {
+    fn convert<U>(&self, input: U) -> u16 { 0 }
+}
+
+pub fn use_it(source: Source) {
+    let wide: u32 = source.con$wide$vert::<u8>(0u8);
+    let narrow: u16 = source.con$narrow$vert::<u8>(0u8);
+    let explicit = <Source as Convert<u16>>::con$qualified$vert::<u8>(&source, 0u8);
+    let associated: u32 = Source::con$associated$vert::<u8>(&source, 0u8);
+    let shared: &&Source = &&source;
+    let borrowed: u16 = shared.con$borrowed$vert::<u8>(0u8);
+}
+"#,
+        &[
+            AnalysisQuery::goto("wide conversion", "wide"),
+            AnalysisQuery::goto("narrow conversion", "narrow"),
+            AnalysisQuery::goto("qualified conversion", "qualified"),
+            AnalysisQuery::goto("associated conversion", "associated"),
+            AnalysisQuery::goto("borrowed conversion", "borrowed"),
+            AnalysisQuery::resolve("resolve selected call symbol", "wide"),
+            AnalysisQuery::goto_impl("conversion implementations for receiver", "wide"),
+        ],
+        expect![[r#"
+            wide conversion
+            - fn convert @ 8:8-8:15
+
+            narrow conversion
+            - fn convert @ 12:8-12:15
+
+            qualified conversion
+            - fn convert @ 12:8-12:15
+
+            associated conversion
+            - fn convert @ 8:8-8:15
+
+            borrowed conversion
+            - fn convert @ 12:8-12:15
+
+            resolve selected call symbol
+            - fn convert @ 8:8-8:15
+
+            conversion implementations for receiver
+            - fn convert @ 8:8-8:15
+            - fn convert @ 12:8-12:15
+        "#]],
+    );
+}
+
+#[test]
+fn navigates_blanket_impl_calls_and_preserves_trait_body_destinations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_call_definition_bodies"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Named {
+    fn name(&self) {}
+}
+
+pub struct Wrapper<T>(T);
+pub struct User;
+pub trait Allowed {}
+
+impl<T: Allowed> Named for Wrapper<T> {
+    fn name(&self) {}
+}
+
+impl Named for User {}
+
+pub fn generic<T: Allowed>(wrapped: Wrapper<T>, user: User) {
+    wrapped.na$blanket$me();
+    user.na$default$me();
+    User::na$associated_default$me(&user);
+}
+
+pub fn abstract_call<T: Named>(value: T) {
+    value.na$bound$me();
+}
+"#,
+        &[
+            AnalysisQuery::goto("generic receiver with a blanket impl", "blanket"),
+            AnalysisQuery::goto("inherited default body", "default"),
+            AnalysisQuery::goto("associated call to the default body", "associated_default"),
+            AnalysisQuery::goto("call through a generic bound", "bound"),
+        ],
+        expect![[r#"
+            generic receiver with a blanket impl
+            - fn name @ 10:8-10:12
+
+            inherited default body
+            - fn name @ 2:8-2:12
+
+            associated call to the default body
+            - fn name @ 2:8-2:12
+
+            call through a generic bound
+            - fn name @ 2:8-2:12
+        "#]],
+    );
+}
+
+#[test]
+fn navigates_trait_calls_to_body_local_impl_methods() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_call_definition_local"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Named {
+    fn name(&self);
+}
+
+pub fn use_it() {
+    struct User;
+    impl Named for User {
+        fn name(&self) {}
+    }
+    let user = User;
+    user.na$local$me();
+    User::na$associated$me(&user);
+}
+"#,
+        &[
+            AnalysisQuery::goto("body-local trait implementation", "local"),
+            AnalysisQuery::goto("body-local associated call", "associated"),
+        ],
+        expect![[r#"
+            body-local trait implementation
+            - fn name @ 8:12-8:16
+
+            body-local associated call
+            - fn name @ 8:12-8:16
+        "#]],
+    );
+}
+
+#[test]
+fn navigates_trait_calls_through_deref_to_cross_crate_primitive_impls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["runtime", "app"]
+resolver = "3"
+
+//- /runtime/Cargo.toml
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2024"
+
+//- /runtime/src/lib.rs
+pub trait Named {
+    fn name(&self);
+}
+
+impl Named for u8 {
+    fn name(&self) {}
+}
+
+#[lang = "deref"]
+pub trait Deref {
+    #[lang = "deref_target"]
+    type Target: ?Sized;
+    fn deref(&self) -> &Self::Target;
+}
+
+pub struct Wrapper;
+impl Deref for Wrapper {
+    type Target = u8;
+    fn deref(&self) -> &u8 { missing() }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+runtime = { path = "../runtime" }
+
+//- /app/src/lib.rs
+use runtime::{Named, Wrapper};
+
+pub fn use_it(value: u8, wrapped: Wrapper) {
+    value.na$primitive$me();
+    wrapped.na$deref$me();
+}
+"#,
+        &[
+            AnalysisQuery::goto("primitive trait implementation", "primitive").in_lib("app"),
+            AnalysisQuery::goto("trait implementation after deref", "deref").in_lib("app"),
+        ],
+        expect![[r#"
+            primitive trait implementation
+            - fn name @ 6:8-6:12
+
+            trait implementation after deref
+            - fn name @ 6:8-6:12
         "#]],
     );
 }

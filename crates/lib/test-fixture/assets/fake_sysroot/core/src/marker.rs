@@ -7,3 +7,7 @@ pub trait Tuple {}
 
 #[lang = "destruct"]
 pub trait Destruct {}
+
+pub trait Copy: crate::clone::Clone {}
+#[rustc_builtin_macro]
+pub macro Copy($item:item) {}

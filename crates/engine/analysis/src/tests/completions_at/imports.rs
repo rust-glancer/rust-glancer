@@ -331,12 +331,19 @@ pub fn use_it() {
         ],
         expect![[r#"
             unqualified prelude completions
+            - trait Clone
+            - trait Copy
+            - trait Default
+            - trait Eq
             - trait Fn
             - trait FnMut
             - trait FnOnce
             - trait IntoIterator
             - trait Iterator
             - enum Option
+            - trait Ord
+            - trait PartialEq
+            - trait PartialOrd
             - enum Result
             - struct String
             - struct Vec

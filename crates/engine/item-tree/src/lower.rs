@@ -387,7 +387,7 @@ impl<'db> PackageLowering<'db> {
             ast::Item::Enum(item) => Some(builder.alloc_documented_item(
                 ItemKind::Enum(EnumItem::from_ast(
                     &item,
-                    (builder.line_index, &mut *self.interner),
+                    (builder.line_index, &mut *self.interner, None),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
@@ -525,7 +525,7 @@ impl<'db> PackageLowering<'db> {
             ast::Item::Struct(item) => Some(builder.alloc_documented_item(
                 ItemKind::Struct(StructItem::from_ast(
                     &item,
-                    (builder.line_index, &mut *self.interner),
+                    (builder.line_index, &mut *self.interner, None),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),

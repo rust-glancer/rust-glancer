@@ -1,4 +1,4 @@
-use rg_ir_model::{Mutability, Span};
+use rg_ir_model::{CrateRef, Mutability, Span};
 use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
@@ -8,7 +8,7 @@ use rg_text::{Name, NameInterner};
 
 use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
 use crate::item::{
-    ConstExpr, ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem,
+    ConstExpr, ConstItem, ConstParamData, DeriveAttrs, Documentation, EnumItem, EnumVariantItem,
     ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
     GenericParams, ImplItem, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
     ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
@@ -207,10 +207,14 @@ impl FromAst for ExternBlockItem {
 
 impl FromAst for StructItem {
     type AstNode = ast::Struct;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner, Option<CrateRef>);
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(
+        item: &Self::AstNode,
+        (line_index, interner, dollar_crate): Self::Context<'_>,
+    ) -> Self {
         Self {
+            derives: DeriveAttrs::from_struct(item, dollar_crate),
             generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             fields: FieldList::from_ast(&item.field_list(), (line_index, interner)),
         }
@@ -234,10 +238,14 @@ impl FromAst for UnionItem {
 
 impl FromAst for EnumItem {
     type AstNode = ast::Enum;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner, Option<CrateRef>);
 
-    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(
+        item: &Self::AstNode,
+        (line_index, interner, dollar_crate): Self::Context<'_>,
+    ) -> Self {
         Self {
+            derives: DeriveAttrs::from_enum(item, dollar_crate),
             generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             variants: item
                 .variant_list()

@@ -11,6 +11,54 @@ use super::utils::{
 };
 
 #[test]
+fn infers_default_calls_alongside_unresolved_impl_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_default_with_unresolved_impl"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Default { fn default() -> Self; }
+pub struct Vec<T>(T);
+
+impl Default for MissingGeneratedType { fn default() -> Self {} }
+impl<T> Default for Vec<T> { fn default() -> Self {} }
+type Bytes = Vec<u8>;
+impl Default for AnotherMissingType { fn default() -> Self {} }
+
+pub fn use_it() {
+    let inferred = Vec::default()$inferred$;
+    let explicit = Vec::<u8>::default()$explicit$;
+    let qualified = <Vec<u8> as Default>::default()$qualified$;
+    let alias = Bytes::default()$alias$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("omitted element type", "inferred"),
+            AnalysisQuery::ty("explicit element type", "explicit"),
+            AnalysisQuery::ty("qualified trait call", "qualified"),
+            AnalysisQuery::ty("type alias receiver", "alias"),
+        ],
+        expect![[r#"
+            omitted element type
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<<unknown>>
+
+            explicit element type
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+
+            qualified trait call
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+
+            type alias receiver
+            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+        "#]],
+    );
+}
+
+#[test]
 fn infers_inherent_impl_bounds_from_constructor_arguments() {
     check_analysis_queries(
         r#"
@@ -66,6 +114,10 @@ pub fn use_it() {
     let annotated_int: u64 = 1$type_u64$;
     let default_float = 1.0$type_default_float$;
     let annotated_float: f32 = 1.0$type_f32$;
+    let annotated_half: f16 = 1.0$type_f16$;
+    let annotated_quad: f128 = 1.0$type_f128$;
+    let suffixed_half = 1.0f16$type_suffix_f16$;
+    let suffixed_quad = 1.0f128$type_suffix_f128$;
     let mismatch: bool = 1$type_mismatch$;
 }
 "#,
@@ -74,6 +126,10 @@ pub fn use_it() {
             AnalysisQuery::ty("annotated integer literal", "type_u64"),
             AnalysisQuery::ty("default float literal", "type_default_float"),
             AnalysisQuery::ty("annotated float literal", "type_f32"),
+            AnalysisQuery::ty("annotated half float literal", "type_f16"),
+            AnalysisQuery::ty("annotated quad float literal", "type_f128"),
+            AnalysisQuery::ty("suffixed half float literal", "type_suffix_f16"),
+            AnalysisQuery::ty("suffixed quad float literal", "type_suffix_f128"),
             AnalysisQuery::ty("mismatched numeric literal", "type_mismatch"),
         ],
         expect![[r#"
@@ -89,8 +145,69 @@ pub fn use_it() {
             annotated float literal
             - f32
 
+            annotated half float literal
+            - f16
+
+            annotated quad float literal
+            - f128
+
+            suffixed half float literal
+            - f16
+
+            suffixed quad float literal
+            - f128
+
             mismatched numeric literal
             - i32
+        "#]],
+    );
+}
+
+#[test]
+fn infers_clones_with_extended_float_impls() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_float_clone"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Manual;
+impl Clone for Manual {
+    fn clone(&self) -> Self { Manual }
+}
+
+#[derive(Clone)]
+pub struct Derived;
+
+pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
+    let half_copy = half.clone()$half$;
+    let quad_copy = quad.clone()$quad$;
+    let manual_copy = manual.clone()$manual$;
+    let derived_copy = derived.clone()$derived$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("half float clone", "half"),
+            AnalysisQuery::ty("quad float clone", "quad"),
+            AnalysisQuery::ty("handwritten clone", "manual"),
+            AnalysisQuery::ty("derived clone", "derived"),
+        ]
+        .map(|query| query.in_lib("analysis_float_clone")),
+        expect![[r#"
+            half float clone
+            - f16
+
+            quad float clone
+            - f128
+
+            handwritten clone
+            - nominal struct analysis_float_clone[lib]::crate::Manual
+
+            derived clone
+            - nominal struct analysis_float_clone[lib]::crate::Derived
         "#]],
     );
 }

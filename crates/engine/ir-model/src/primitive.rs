@@ -34,8 +34,10 @@ impl PrimitiveTy {
         Self::UnsignedInt(UnsignedIntTy::U64),
         Self::UnsignedInt(UnsignedIntTy::U128),
         Self::UnsignedInt(UnsignedIntTy::Usize),
+        Self::Float(FloatTy::F16),
         Self::Float(FloatTy::F32),
         Self::Float(FloatTy::F64),
+        Self::Float(FloatTy::F128),
     ];
 
     pub fn from_name(name: &str) -> Option<Self> {
@@ -55,8 +57,10 @@ impl PrimitiveTy {
             "u64" => Self::UnsignedInt(UnsignedIntTy::U64),
             "u128" => Self::UnsignedInt(UnsignedIntTy::U128),
             "usize" => Self::UnsignedInt(UnsignedIntTy::Usize),
+            "f16" => Self::Float(FloatTy::F16),
             "f32" => Self::Float(FloatTy::F32),
             "f64" => Self::Float(FloatTy::F64),
+            "f128" => Self::Float(FloatTy::F128),
             _ => return None,
         })
     }
@@ -166,13 +170,17 @@ impl UnsignedIntTy {
 pub enum FloatTy {
     F32,
     F64,
+    F16,
+    F128,
 }
 
 impl FloatTy {
     pub fn label(self) -> &'static str {
         match self {
+            Self::F16 => "f16",
             Self::F32 => "f32",
             Self::F64 => "f64",
+            Self::F128 => "f128",
         }
     }
 }

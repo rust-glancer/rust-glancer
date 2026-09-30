@@ -67,6 +67,13 @@ impl ItemSource {
         }
     }
 
+    pub fn synthetic(file_id: FileId, source: GeneratedItemRef) -> Self {
+        Self {
+            file_id,
+            kind: ItemSourceKind::Synthetic(source),
+        }
+    }
+
     pub fn body(file_id: FileId, source: BodyItemSourceRef) -> Self {
         Self {
             file_id,
@@ -79,7 +86,7 @@ impl ItemSource {
     pub fn as_item_tree(self) -> Option<ItemTreeRef> {
         match self.kind {
             ItemSourceKind::ItemTree(source) => Some(source),
-            ItemSourceKind::Generated(_) => None,
+            ItemSourceKind::Generated(_) | ItemSourceKind::Synthetic(_) => None,
             ItemSourceKind::Body(_) => None,
         }
     }
@@ -92,6 +99,10 @@ impl ItemSource {
                 item,
             }),
             ItemSourceKind::Generated(source) => ItemSourceKind::Generated(GeneratedItemRef {
+                source: source.source,
+                item,
+            }),
+            ItemSourceKind::Synthetic(source) => ItemSourceKind::Synthetic(GeneratedItemRef {
                 source: source.source,
                 item,
             }),
@@ -114,16 +125,19 @@ impl From<ItemTreeRef> for ItemSource {
     }
 }
 
-/// The storage layer that owns a source item payload.
+/// Where an item payload lives and whether it represents written syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum ItemSourceKind {
     ItemTree(ItemTreeRef),
     Generated(GeneratedItemRef),
+    /// An analysis-only item stored alongside generated items. Its invented signature paths
+    /// have no editable source occurrences, even though the item retains an origin location.
+    Synthetic(GeneratedItemRef),
     Body(BodyItemSourceRef),
 }
 
-/// Item-tree-shaped payload produced for one declarative macro expansion.
+/// Item-tree-shaped payload produced for one macro expansion or synthetic declaration.
 ///
 /// This data is intentionally construction-only. DefMap uses it while collecting scopes and
 /// Semantic IR copies the declaration facts it needs before the surrounding store is dropped.

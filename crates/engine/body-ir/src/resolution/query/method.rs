@@ -43,8 +43,8 @@ where
             let receiver = table.interner().lower_ty(ty, params);
             let lookup = self.context.live();
             let mut candidates = Vec::new();
-            // Completion keeps both origins at every adjustment. Named inference lookup uses
-            // the same candidate operation, but stops at the first depth and prefers inherent items.
+            // Completion keeps both origins at every dereference step. A named call uses the
+            // same declarations, then compares their self parameters to choose one adjustment.
             for receiver in table.method_receivers(receiver) {
                 for candidate in lookup.function_candidates(
                     scope,

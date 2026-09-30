@@ -5,6 +5,7 @@
 //! indexed occurrences or a completion site.
 
 use anyhow::Context as _;
+use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, ItemOwner,
     Span, StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
@@ -190,6 +191,12 @@ where
     fn scan_impls(&mut self) -> anyhow::Result<()> {
         for (impl_ref, data) in self.items.impls_with_refs() {
             rg_std::check_cancel!(self.db, "signature item scan");
+            // A synthesized impl participates in type analysis, but its paths were never written.
+            // For `#[derive(Clone)] struct Foo;`, its `Foo` path must not turn `Clone` into a
+            // renameable occurrence of the struct. Copied generic bounds are scanned on the type.
+            if matches!(data.source.kind, ItemSourceKind::Synthetic(_)) {
+                continue;
+            }
             if !self.file_matches(data.source.file_id) {
                 continue;
             }

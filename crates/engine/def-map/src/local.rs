@@ -120,12 +120,19 @@ impl MacroDefinitionData {
         edition: RustEdition,
         dollar_crate: CrateRef,
     ) -> Self {
+        let builtin = Self::builtin_from_item(item);
         Self {
             edition,
             dollar_crate,
             docs,
-            builtin: Self::builtin_from_item(item),
-            kind: MacroDefinitionKind::Invocation,
+            builtin,
+            // Core spells compiler hooks as macro declarations, but derives must not be offered
+            // as function-like invocations such as `Clone!(...)`.
+            kind: if matches!(builtin, Some(BuiltinMacroKind::Derive(_))) {
+                MacroDefinitionKind::Derive
+            } else {
+                MacroDefinitionKind::Invocation
+            },
             payload: MacroDefinitionPayload::from_item(item),
         }
     }

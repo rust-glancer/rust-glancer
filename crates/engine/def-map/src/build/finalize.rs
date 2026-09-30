@@ -23,16 +23,17 @@ use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntim
 use rg_parse::Package;
 use rg_std::UniqueVec;
 use rg_text::{Name, PackageNameInterners};
-use rg_workspace::{TargetKind, WorkspaceMetadata};
+use rg_workspace::{PackageOrigin, SysrootCrate, TargetKind, WorkspaceMetadata};
 
 use super::{
     MacroSourceFileResolutions,
     collect::{CrateState, KnownModuleFiles},
     imports::{ImportResolutionExecutor, ImportWorklist, UnresolvedImports},
     macros::{
-        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
-        apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
-        expand_expansion_attempts, mark_retryable_macros_skipped_by_limit,
+        BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors,
+        MacroExpansionScan, apply_expansion_attempts, apply_pending_macro_source_files,
+        collect_expansion_attempts, expand_expansion_attempts,
+        mark_retryable_macros_skipped_by_limit,
     },
 };
 use crate::{
@@ -665,12 +666,20 @@ pub(super) fn select_preludes(
         for (crate_slot, state) in package_states.iter().enumerate() {
             let mut prelude_module = None;
 
-            // Normal crates use `std` when available. No-std-shaped crates still need the same
-            // edition prelude, but rooted at `core`. The core crate itself has a crate-local
-            // `prelude` module, so resolve that shape relatively during this early pass.
+            // The sysroot's std and core crates provide their own preludes, even without an
+            // `extern crate self as std` or `core` alias. Resolve their local prelude first:
+            // falling back to core inside std would leave types such as Box unresolved.
+            // Other crates prefer std's edition prelude, falling back to core when unavailable.
             // TODO: Parse crate-level `#![no_std]` and use it to select `core` prelude directly
             // and avoid exposing `std` as an automatic extern root for that crate.
             let prelude_paths = [
+                matches!(
+                    workspace_package.origin,
+                    PackageOrigin::Sysroot(SysrootCrate::Std | SysrootCrate::Core)
+                )
+                .then(|| {
+                    Path::crate_relative_standard_prelude(workspace_package.edition, interner)
+                }),
                 Some(Path::standard_prelude(
                     "std",
                     workspace_package.edition,
@@ -681,9 +690,6 @@ pub(super) fn select_preludes(
                     workspace_package.edition,
                     interner,
                 )),
-                (workspace_package.name == "core").then(|| {
-                    Path::crate_relative_standard_prelude(workspace_package.edition, interner)
-                }),
             ];
 
             for prelude_path in prelude_paths.into_iter().flatten() {
@@ -801,7 +807,14 @@ pub(super) fn finalize_scopes(
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
                 let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
                 timer.finish();
-                freeze_resolved_scopes(states, resolved.scopes, resolved.unresolved_imports);
+                freeze_resolved_scopes(
+                    old,
+                    item_tree,
+                    states,
+                    interners,
+                    resolved.scopes,
+                    resolved.unresolved_imports,
+                )?;
                 return Ok(());
             }
 
@@ -897,11 +910,14 @@ pub(super) fn finalize_scopes(
             // No imports and no macros changed the visible declarations, so this is the stable
             // scope matrix that can be written into the frozen def maps.
             freeze_resolved_scopes(
+                old,
+                item_tree,
                 states,
+                interners,
                 current_scopes,
                 current_unresolved_imports
                     .expect("stable scopes should have import status from their fixed-point run"),
-            );
+            )?;
             return Ok(());
         }
     }
@@ -981,10 +997,25 @@ fn resolve_import_scopes(
 }
 
 fn freeze_resolved_scopes(
+    old: Option<&DefMapReadTxn<'_>>,
+    item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
+    interners: &mut PackageNameInterners,
     current_scopes: ScopeMatrix,
     unresolved_imports: UnresolvedImports,
-) {
+) -> anyhow::Result<()> {
+    // Builtin derives add impls, but no imports or module bindings. Once normal expansion has
+    // settled, synthesize them once, including derives on declarations produced by macros.
+    let derives = BuiltinDeriveExpansion::collect(
+        &FinalizeResolutionEnv::new(old, states, &current_scopes),
+        states,
+        item_tree,
+        interners,
+    )
+    .context("lower builtin derive impls")?;
+    for derive in derives {
+        derive.apply(states);
+    }
     // The worklist produced each scope and unresolved-import list from the same final wave. Write
     // both into the public DefMap now; there is no need to traverse every import one more time.
 
@@ -1007,6 +1038,7 @@ fn freeze_resolved_scopes(
             freeze_crate_scopes(state, scopes, &unresolved_imports);
         }
     }
+    Ok(())
 }
 
 fn freeze_crate_scopes(

@@ -697,7 +697,8 @@ impl MacroExpansionAttempt {
                 macro_name,
                 macro_source_file_resolutions,
             ),
-            BuiltinMacroKind::Unsupported => {
+            BuiltinMacroKind::Derive(_) | BuiltinMacroKind::Unsupported => {
+                // This path handles calls written with `!`; derives are collected from attributes.
                 Self::unsupported_builtin(crate_ref, call_id, call, macro_name)
             }
         }

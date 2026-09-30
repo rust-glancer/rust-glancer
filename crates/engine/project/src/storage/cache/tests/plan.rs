@@ -132,7 +132,7 @@ pub struct DevHelper;
         workspace cache plan
 
         package #0 app
-        schema 7
+        schema 8
         source workspace
         edition 2024
         manifest Cargo.toml
@@ -148,7 +148,7 @@ pub struct DevHelper;
         - dev_support -> dev-helper (#3) [dev]
 
         package #1 build-helper
-        schema 7
+        schema 8
         source path
         edition 2021
         manifest build-helper/Cargo.toml
@@ -158,7 +158,7 @@ pub struct DevHelper;
         - <none>
 
         package #2 dep-pkg
-        schema 7
+        schema 8
         source path
         edition 2021
         manifest dep/Cargo.toml
@@ -168,7 +168,7 @@ pub struct DevHelper;
         - <none>
 
         package #3 dev-helper
-        schema 7
+        schema 8
         source path
         edition 2018
         manifest dev-helper/Cargo.toml

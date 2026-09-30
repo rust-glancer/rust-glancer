@@ -9,13 +9,15 @@ use rg_ir_model::{BuiltinMacroExprKind, FileId};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::ItemTreeId;
+use crate::{BuiltinDeriveKind, ItemTreeId};
 
 /// Compiler-provided macro definition selected through normal macro resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
 #[shrink(leaf)]
 pub enum BuiltinMacroKind {
+    /// Builtin derive whose impl header can be synthesized during DefMap construction.
+    Derive(BuiltinDeriveKind),
     /// Builtin expression macro that Body IR can represent without declarative expansion.
     Expr(BuiltinMacroExprKind),
     /// Builtin that selects one source stream from cfg predicates.
@@ -31,6 +33,9 @@ pub enum BuiltinMacroKind {
 impl BuiltinMacroKind {
     /// Classify a definition explicitly marked by rustc as compiler-provided.
     pub fn from_rustc_builtin_macro_name(name: &str) -> Self {
+        if let Some(kind) = BuiltinDeriveKind::from_macro_name(name) {
+            return Self::Derive(kind);
+        }
         if let Some(kind) = BuiltinMacroExprKind::from_macro_name(name) {
             return Self::Expr(kind);
         }

@@ -87,6 +87,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             BodyMacroCallee::Builtin {
                 kind:
                     BuiltinMacroKind::Include
+                    | BuiltinMacroKind::Derive(_)
                     | BuiltinMacroKind::IgnoredByDefMap
                     | BuiltinMacroKind::Unsupported,
                 ..
@@ -188,6 +189,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             BodyMacroCallee::Builtin {
                 kind:
                     BuiltinMacroKind::Expr(_)
+                    | BuiltinMacroKind::Derive(_)
                     | BuiltinMacroKind::Include
                     | BuiltinMacroKind::IgnoredByDefMap
                     | BuiltinMacroKind::Unsupported,

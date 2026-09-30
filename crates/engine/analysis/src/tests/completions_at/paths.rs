@@ -59,6 +59,8 @@ pub fn body(param: u8) {
             - primitive_type char
             - keyword crate
             - keyword dyn
+            - primitive_type f128
+            - primitive_type f16
             - primitive_type f32
             - primitive_type f64
             - keyword fn
@@ -128,6 +130,8 @@ pub fn body(param: u8) {
             - primitive_type char
             - keyword crate
             - keyword dyn
+            - primitive_type f128
+            - primitive_type f16
             - primitive_type f32
             - primitive_type f64
             - keyword fn

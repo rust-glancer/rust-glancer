@@ -13,6 +13,7 @@ pub use self::{
         StructItem, TraitItem, TypeAliasItem, TypeOrConstParamData, TypeParamData, UnionItem,
         WherePredicate,
     },
+    derive::{BuiltinDeriveKind, DeriveAttrs, DeriveMacroCall},
     docs::{Documentation, DocumentationPlacement, DocumentationSource},
     import::{
         ExternCrateItem, ImportAlias, UseImport, UseImportKind, UseItem, UsePath, UsePathSegment,
@@ -35,6 +36,7 @@ pub use self::{
 
 mod attrs;
 mod decl;
+mod derive;
 mod docs;
 mod import;
 mod kind;

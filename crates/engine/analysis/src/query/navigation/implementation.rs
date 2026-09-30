@@ -1,15 +1,12 @@
 //! Goto-implementation query flow.
 
+use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId};
 use rg_ir_view::implementation::ImplementationView;
 use rg_std::UniqueVec;
 
 use super::target::NavigationTargetProjection;
-use crate::{
-    Analysis,
-    model::{NavigationTarget, SymbolAt},
-    source_symbol::SourceSymbolResolver,
-};
+use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolver};
 
 /// Implements goto-implementation with the facts rust-glancer already collects.
 ///
@@ -34,15 +31,22 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         };
 
         let implementations = ImplementationView::new(self.0.view_db());
-        if let SymbolAt::Expr { expr } = &symbol
-            && let Some(declarations) = implementations.method_call_implementations(*expr)?
+        let source_symbols = SourceSymbolResolver::new(self.0.view_db());
+        // A dot call supplies a receiver that can narrow the possible implementations. Keep
+        // all matching methods here; unlike definition navigation, this query need not prove
+        // one complete trait application. Associated calls continue through their declarations.
+        if let Some(call) = source_symbols
+            .call_for_symbol(&symbol)
+            .context("resolve implementation call context")?
+            && let Some(declarations) = implementations
+                .method_call_implementations(&call)
+                .context("find method call implementations")?
         {
             return NavigationTargetProjection::new(self.0.view_db())
                 .targets_for_declarations(declarations);
         }
 
         let mut declarations = UniqueVec::new();
-        let source_symbols = SourceSymbolResolver::new(self.0.view_db());
         for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
             declarations
                 .extend(implementations.implementations_for_declaration(crate_ref, declaration)?);
