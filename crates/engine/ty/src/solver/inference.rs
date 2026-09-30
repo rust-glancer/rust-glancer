@@ -450,6 +450,12 @@ impl<'s> InferenceTable<'s> {
                     }
                     Err(_) => {
                         cx.profile(|p| *p.outcomes.entry("no_solution").or_default() += 1);
+                        // Only unanswered projections can describe an unknown result. Once the
+                        // solver rejects one, retaining its spelling would publish a type such
+                        // as <&Result<T, E> as Try>::Output even though that impl does not exist.
+                        if let Some(projection) = pending.normalization {
+                            self.projections.borrow_mut().retain(|p| *p != projection);
+                        }
                         // Earlier successful obligations keep their guidance, but a failed root
                         // cannot leave any of its speculative assignments in the table.
                         self.failed.set(true);

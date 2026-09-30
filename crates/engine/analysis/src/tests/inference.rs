@@ -685,13 +685,9 @@ pub struct Result<T, E> {
     err: E,
 }
 
-pub type AliasResult<T> = Result<T, Error>;
-
 pub fn make_vec<T>() -> Vec<T> {}
 pub fn make_option<T>() -> Option<T> {}
 pub fn make_result<T, E>() -> Result<T, E> {}
-pub fn make_result_with_error<T>() -> Result<T, Error> {}
-pub fn make_alias_result<T>() -> AliasResult<T> {}
 
 pub struct Factory;
 
@@ -711,10 +707,6 @@ pub fn use_it(builder: Builder) {
     let method: Vec<User> = builder.build_vec()$type_method$;
     let option: Option<User> = make_option()$type_option$;
     let result: Result<User, Error> = make_result()$type_result$;
-    let try_user: User = make_result_with_error()$type_try_inner$?$type_try_output$;
-    let alias_try_user: User = make_alias_result()$type_alias_try_inner$?$type_alias_try_output$;
-    let explicit_alias_try_user: User =
-        make_alias_result::<_>()$type_explicit_alias_try_inner$?$type_explicit_alias_try_output$;
     let unconstrained = make_vec()$type_unconstrained$;
 }
 "#,
@@ -727,21 +719,6 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("method generic return shape", "type_method"),
             AnalysisQuery::ty("single-param generic return shape", "type_option"),
             AnalysisQuery::ty("multi-param generic return shape", "type_result"),
-            AnalysisQuery::ty("try inner generic result", "type_try_inner"),
-            AnalysisQuery::ty("try output from generic result", "type_try_output"),
-            AnalysisQuery::ty("alias try inner generic result", "type_alias_try_inner"),
-            AnalysisQuery::ty(
-                "alias try output from generic result",
-                "type_alias_try_output",
-            ),
-            AnalysisQuery::ty(
-                "explicit wildcard alias try inner generic result",
-                "type_explicit_alias_try_inner",
-            ),
-            AnalysisQuery::ty(
-                "explicit wildcard alias try output from generic result",
-                "type_explicit_alias_try_output",
-            ),
             AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
         ],
         expect![[r#"
@@ -759,24 +736,6 @@ pub fn use_it(builder: Builder) {
 
             multi-param generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
-
-            try inner generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
-
-            try output from generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
-
-            alias try inner generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
-
-            alias try output from generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
-
-            explicit wildcard alias try inner generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
-
-            explicit wildcard alias try output from generic result
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User
 
             unconstrained generic return shape
             - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>>
@@ -1262,23 +1221,12 @@ edition = "2024"
 //- /src/lib.rs
 pub struct Attr;
 
-pub struct AttrVec;
-
-impl AttrVec {
-    pub fn push(&mut self, attr: Attr) {}
-}
-
 pub struct Id;
 
 pub struct Factory;
 
 pub struct User;
 pub struct Name;
-
-pub enum Option<T> {
-    Some(T),
-    None,
-}
 
 impl Factory {
     type Id = Id;
@@ -1290,7 +1238,7 @@ impl User {
     pub fn name(&self) -> Name {}
 }
 
-pub fn with_attrs(f: impl FnOnce(&mut AttrVec)) {}
+pub fn with_attrs(f: impl FnOnce(&mut Vec<Attr>)) {}
 pub fn with_user(f: impl FnOnce() -> User) {}
 
 pub fn visit<T, F: FnOnce(T)>(value: T, f: F) {}
@@ -1363,7 +1311,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
         ],
         expect![[r#"
             direct callable closure param
-            - &mut nominal struct analysis_callable_closure_bound_inference[lib]::crate::AttrVec
+            - &mut nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_callable_closure_bound_inference[lib]::crate::Attr, nominal struct alloc[lib]::crate::vec::Global>
 
             direct callable closure method call
             - ()
@@ -1393,7 +1341,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
             - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
 
             nested generic closure return result
-            - nominal enum analysis_callable_closure_bound_inference[lib]::crate::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
+            - nominal enum core[lib]::crate::option::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
 
             conflicting generic closure return result
             - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
@@ -2855,6 +2803,244 @@ pub fn use_it() {
 
             destructured binding
             - nominal struct analysis_late_projection[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn infers_try_output_with_a_residual_default_in_its_supertrait() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_try_supertrait"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+#[lang = "Try"]
+pub trait Extract: FromResidual {
+    type Output;
+    type Residual;
+}
+pub trait FromResidual<R = <Self as Extract>::Residual> {}
+pub struct Fallible<T>(T);
+impl<T> Extract for Fallible<T> {
+    type Output = T;
+    type Residual = ();
+}
+impl<T> FromResidual<()> for Fallible<T> {}
+
+pub fn use_it(input: Fallible<u16>) -> Fallible<()> {
+    let output = input?$output$;
+    Fallible(())
+}
+"#,
+        &[AnalysisQuery::ty(
+            "output through residual supertrait",
+            "output",
+        )],
+        expect![[r#"
+            output through residual supertrait
+            - u16
+        "#]],
+    );
+}
+
+#[test]
+fn infers_try_outputs_from_trait_implementations_and_bounds() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_try_outputs");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_try_outputs"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Error;
+pub struct Packet<E, T>(E, T);
+impl<E, T> core::ops::Try for Packet<E, T> { type Output = T; }
+pub type Alias<T> = Result<T, Error>;
+pub fn result<T>() -> Result<T, Error> { loop {} }
+pub fn option<T>() -> Option<T> { loop {} }
+pub fn alias<T>() -> Alias<T> { loop {} }
+pub fn packet<T>() -> Packet<Error, T> { loop {} }
+
+pub fn use_result() -> Result<(), Error> {
+    let value: u16 = result()$result_operand$?$result_output$;
+    let aliased: u16 = alias()$alias_operand$?$alias_output$;
+    let wildcard: u16 = alias::<_>()$wildcard_alias_operand$?$wildcard_alias_output$;
+    Result::Ok(())
+}
+
+pub fn use_option() -> Option<()> {
+    let value: u16 = option()$option_operand$?$option_output$;
+    Option::Some(())
+}
+
+pub fn use_custom() -> Packet<Error, ()> {
+    let value: u16 = packet()$custom_operand$?$custom_output$;
+    Packet(Error, ())
+}
+
+pub fn generic<T: core::ops::Try<Output = U>, U>(value: T) -> T {
+    let output = value?$generic_output$;
+    loop {}
+}
+"#,
+        &[
+            ty("Result operand", "result_operand"),
+            ty("Result output", "result_output"),
+            ty("Option operand", "option_operand"),
+            ty("Option output", "option_output"),
+            ty("alias operand", "alias_operand"),
+            ty("alias output", "alias_output"),
+            ty("explicit wildcard alias operand", "wildcard_alias_operand"),
+            ty("explicit wildcard alias output", "wildcard_alias_output"),
+            ty("custom operand", "custom_operand"),
+            ty("custom output", "custom_output"),
+            ty("output under generic bound", "generic_output"),
+        ],
+        expect![[r#"
+            Result operand
+            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
+
+            Result output
+            - u16
+
+            Option operand
+            - nominal enum core[lib]::crate::option::Option<u16>
+
+            Option output
+            - u16
+
+            alias operand
+            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
+
+            alias output
+            - u16
+
+            explicit wildcard alias operand
+            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
+
+            explicit wildcard alias output
+            - u16
+
+            custom operand
+            - nominal struct analysis_try_outputs[lib]::crate::Packet<nominal struct analysis_try_outputs[lib]::crate::Error, u16>
+
+            custom output
+            - u16
+
+            output under generic bound
+            - param U
+        "#]],
+    );
+}
+
+#[test]
+fn late_try_operand_evidence_reaches_output_members_and_obligations() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_late_try_operand");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_late_try_operand"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User { pub id: u32 }
+impl User { pub fn id(&self) -> u32 { self.id } }
+pub trait Marker {}
+impl Marker for User {}
+pub trait Source { type Item; }
+pub struct UserSource;
+impl Source for UserSource { type Item = User; }
+pub struct Carrier<S>(S);
+impl<S: Source> core::ops::Try for Carrier<S> { type Output = S::Item; }
+pub fn make<T>() -> T { loop {} }
+pub fn require_source(value: Carrier<UserSource>) {}
+pub fn consume<T: Marker>(value: T) -> T { value }
+
+pub fn use_it() -> Carrier<UserSource> {
+    let source = make();
+    let user = source?$output$;
+    let field = user.id$field$;
+    let method = user.id()$method$;
+    let consumed = consume(user)$consumed$;
+    require_source(source);
+    source$operand$;
+    loop {}
+}
+"#,
+        &[
+            ty("output after later operand evidence", "output"),
+            ty("field on pending output", "field"),
+            ty("method on pending output", "method"),
+            ty("dependent trait obligation", "consumed"),
+            ty("refined operand", "operand"),
+        ],
+        expect![[r#"
+            output after later operand evidence
+            - nominal struct analysis_late_try_operand[lib]::crate::User
+
+            field on pending output
+            - u32
+
+            method on pending output
+            - u32
+
+            dependent trait obligation
+            - nominal struct analysis_late_try_operand[lib]::crate::User
+
+            refined operand
+            - nominal struct analysis_late_try_operand[lib]::crate::Carrier<nominal struct analysis_late_try_operand[lib]::crate::UserSource>
+        "#]],
+    );
+}
+
+#[test]
+fn coerces_try_output_after_later_evidence_reveals_never() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_try_never");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_try_never"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Stop;
+impl core::ops::Try for Stop { type Output = !; }
+pub fn make<T>() -> T { loop {} }
+pub fn require_stop(value: Stop) {}
+
+pub fn use_it() -> Stop {
+    let source = make();
+    let value: u8 = source?$output$;
+    require_stop(source);
+    value$binding$;
+    source$operand$;
+    loop {}
+}
+"#,
+        &[
+            ty("diverging try output", "output"),
+            ty("coerced binding", "binding"),
+            ty("refined operand", "operand"),
+        ],
+        expect![[r#"
+            diverging try output
+            - !
+
+            coerced binding
+            - u8
+
+            refined operand
+            - nominal struct analysis_try_never[lib]::crate::Stop
         "#]],
     );
 }

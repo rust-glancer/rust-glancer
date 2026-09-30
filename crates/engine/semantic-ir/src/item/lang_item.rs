@@ -31,6 +31,7 @@ impl LangItemIndex {
             (lang_item, target),
             (
                 LangItem::Deref
+                    | LangItem::Try
                     | LangItem::Fn
                     | LangItem::FnMut
                     | LangItem::FnOnce

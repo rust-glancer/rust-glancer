@@ -5,15 +5,15 @@ mod call;
 mod member;
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TraitDefRef, TypeDefId};
+use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{
-        AdtTy, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, ProjectionTy, Ty,
-        TyShape,
+        AdtTy, DefId, GenericArgs, InferenceSubstitution, InferenceTable, ProjectionTy,
+        TraitApplication, Ty, TyShape,
     },
 };
 
@@ -75,23 +75,27 @@ where
     /// that its answer is already known. The returned type can settle as later goals are solved.
     pub(crate) fn projection<'s>(
         &self,
-        ty: Ty<'s>,
-        trait_ref: TraitDefRef,
+        application: TraitApplication<'s>,
         name: &str,
         table: &InferenceTable<'s>,
     ) -> Result<Option<Ty<'s>>, PackageStoreError> {
         let Some(associated_ty) = self
             .context
             .item_query()
-            .declared_associated_type_by_name(trait_ref, name)?
+            .declared_associated_type_by_name(application.def, name)?
         else {
             return Ok(None);
         };
         let cx = table.interner();
-        Ok(Some(table.normalize(cx.projection(ProjectionTy {
-            associated_ty,
-            args: List::new(cx, &[ty.into()]),
-        }))))
+        // Keep the requirement and its output connected to the same arguments. Registering the
+        // question is useful before its answer is known; the body's checkpoints fulfill it later.
+        table.commit_if_some(|table| {
+            table.register(application.clause(cx));
+            Ok(Some(table.normalize(cx.projection(ProjectionTy {
+                associated_ty,
+                args: application.args,
+            }))))
+        })
     }
 
     pub(crate) fn field<'s>(

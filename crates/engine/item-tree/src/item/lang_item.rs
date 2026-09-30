@@ -41,6 +41,8 @@ pub enum LangItem {
     FormatArguments,
     /// The `Option` enum, including the result of `option_env!`.
     Option,
+    /// The trait supplying the successful output of `value?`.
+    Try,
 }
 
 impl LangItem {
@@ -48,7 +50,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -63,6 +65,7 @@ impl LangItem {
         Self::Destruct,
         Self::FormatArguments,
         Self::Option,
+        Self::Try,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -89,6 +92,7 @@ impl LangItem {
             "destruct" => Self::Destruct,
             "format_arguments" => Self::FormatArguments,
             "Option" => Self::Option,
+            "Try" => Self::Try,
             _ => return None,
         })
     }

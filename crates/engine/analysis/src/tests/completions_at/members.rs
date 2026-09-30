@@ -521,7 +521,10 @@ pub fn use_it(user: User) {
 
 #[test]
 fn completes_through_references_try_and_await_wrappers() {
-    check_analysis_queries(
+    let complete = |title, marker| {
+        AnalysisQuery::complete(title, marker).in_lib("analysis_wrapper_completion")
+    };
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -530,11 +533,6 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
 pub struct Error;
 
 pub struct User {
@@ -567,11 +565,11 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 }
 "#,
         &[
-            AnalysisQuery::complete("reference completions", "reference"),
-            AnalysisQuery::complete("double reference completions", "double_reference"),
-            AnalysisQuery::complete("try completions", "try"),
-            AnalysisQuery::complete("await completions", "await"),
-            AnalysisQuery::complete("cast completions", "cast"),
+            complete("reference completions", "reference"),
+            complete("double reference completions", "double_reference"),
+            complete("try completions", "try"),
+            complete("await completions", "await"),
+            complete("cast completions", "cast"),
         ],
         expect![[r#"
             reference completions

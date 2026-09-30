@@ -1,6 +1,8 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+};
 
 #[test]
 fn resolves_body_expression_type_definitions() {
@@ -55,7 +57,10 @@ pub fn use_it(account: Account) {
 
 #[test]
 fn resolves_type_definitions_through_references_try_and_await_wrappers() {
-    check_analysis_queries(
+    let goto_type = |title, marker| {
+        AnalysisQuery::goto_type(title, marker).in_lib("analysis_goto_type_wrappers")
+    };
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -64,11 +69,6 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
 pub struct Error;
 pub struct User;
 
@@ -90,23 +90,23 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 }
 "#,
         &[
-            AnalysisQuery::goto_type("goto type from reference wrapper", "goto_ref_type"),
-            AnalysisQuery::goto_type("goto type from double reference", "goto_double_ref_type"),
-            AnalysisQuery::goto_type("goto type from try wrapper", "goto_try_type"),
-            AnalysisQuery::goto_type("goto type from await wrapper", "goto_await_type"),
+            goto_type("goto type from reference wrapper", "goto_ref_type"),
+            goto_type("goto type from double reference", "goto_double_ref_type"),
+            goto_type("goto type from try wrapper", "goto_try_type"),
+            goto_type("goto type from await wrapper", "goto_await_type"),
         ],
         expect![[r#"
             goto type from reference wrapper
-            - struct User @ 7:12-7:16
+            - struct User @ 2:12-2:16
 
             goto type from double reference
-            - struct User @ 7:12-7:16
+            - struct User @ 2:12-2:16
 
             goto type from try wrapper
-            - struct User @ 7:12-7:16
+            - struct User @ 2:12-2:16
 
             goto type from await wrapper
-            - struct User @ 7:12-7:16
+            - struct User @ 2:12-2:16
         "#]],
     );
 }

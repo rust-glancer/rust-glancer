@@ -12,8 +12,7 @@ use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, TraitDefRef};
 use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::ExpectedUnique;
-use rg_ty::solver::{Ty, TyShape};
+use rg_ty::solver::{List, TraitApplication, Ty, TyShape};
 
 use super::{BodyInference, InferenceState};
 use crate::{
@@ -48,9 +47,6 @@ pub(super) enum DeferredKind<'s> {
     IteratorItem {
         iterable: ExprId,
         item: Ty<'s>,
-    },
-    TryOutput {
-        expr: ExprId,
     },
     Operator {
         expr: ExprId,
@@ -143,7 +139,6 @@ where
         !self.deferred.iter().any(|operation| match &operation.kind {
             DeferredKind::Call { call } => self.inference.call_result_is_pending(*call, &ty),
             DeferredKind::Member { expr }
-            | DeferredKind::TryOutput { expr }
             | DeferredKind::Operator { expr }
             | DeferredKind::BranchResult { expr, .. } => {
                 self.inference.root_resolved_expr_ty(*expr) == ty
@@ -294,10 +289,6 @@ where
             },
             DeferredKind::Pattern { expected, .. } => *expected,
             DeferredKind::IteratorItem { iterable, .. } => expr_ty(*iterable),
-            DeferredKind::TryOutput { expr } => match self.body.expr_unchecked(*expr).kind {
-                ExprKind::Wrapper { inner, .. } => inner.map(expr_ty).unwrap_or(self.cx.unknown()),
-                _ => unreachable!("pending try owns a wrapper expression"),
-            },
             DeferredKind::Operator { expr } => match self.body.expr_unchecked(*expr).kind {
                 ExprKind::Unary { expr: inner, .. } => self
                     .cx
@@ -460,7 +451,14 @@ where
                 let Some(projection) = self
                     .context
                     .live()
-                    .projection(ty, trait_ref, "Item", self.inference.table())
+                    .projection(
+                        TraitApplication {
+                            def: trait_ref,
+                            args: List::new(self.cx, &[ty.into()]),
+                        },
+                        "Item",
+                        self.inference.table(),
+                    )
                     .context("project iterator item")?
                 else {
                     return Ok(false);
@@ -468,31 +466,6 @@ where
                 self.inference.constrain_infer_tys(item, &projection);
                 // Fulfillment now owns the equality, including any later changes to the iterable.
                 Ok(true)
-            }
-            DeferredKind::TryOutput { expr } => {
-                let ExprKind::Wrapper {
-                    inner: Some(inner), ..
-                } = self.body.expr_unchecked(*expr).kind
-                else {
-                    return Ok(true);
-                };
-                // Project the first payload of the recognized Result/Option shapes.
-                // TODO: Replace this shallow rule with Try::Output when inference coverage expands.
-                let inner_ty = self.inference.root_resolved_expr_ty(inner);
-                let mut outputs = ExpectedUnique::new();
-                let item_query = self.context.item_query();
-                if let Some(nominal) = inner_ty.as_adt()
-                    && let Some(name) = item_query
-                        .type_def_name(nominal.def)
-                        .context("resolve try operand type")?
-                    && matches!(name, "Result" | "Option")
-                    && let Some(output) = nominal.args.iter().find_map(|arg| arg.as_ty())
-                {
-                    outputs.push(output);
-                }
-                let ty = outputs.into_option().unwrap_or(self.cx.unknown());
-                self.inference.set_expr_ty(*expr, ty);
-                Ok(!matches!((ty).shape(), TyShape::Unknown))
             }
             DeferredKind::Operator { expr, .. } => {
                 match self.body.expr_unchecked(*expr).kind {

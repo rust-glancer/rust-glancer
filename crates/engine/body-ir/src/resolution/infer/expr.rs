@@ -8,9 +8,10 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FieldKey, StmtId, identity::DeclarationRef};
+use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{Ty, TyShape};
+use rg_ty::solver::{List, TraitApplication, Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
 use crate::body::{ExprAssignOp, ExprKind, ExprWrapperKind, StmtKind, facts::BodyResolution};
@@ -490,11 +491,7 @@ where
                 };
                 self.infer_optional(inner, &inner_expected)
                     .context("infer wrapped expression")?;
-                if matches!(kind, ExprWrapperKind::Try) && inner.is_some() {
-                    self.inference.expr_slot(expr);
-                    self.run_or_defer(DeferredKind::TryOutput { expr })
-                        .context("register pending inference")?;
-                } else if let Some(inner) = inner {
+                if let Some(inner) = inner {
                     let inner_ty = self.inference.expr_slot(inner);
                     // Await is shallow: async functions expose their declared result here.
                     // TODO: Model arbitrary Future::Output when inference coverage expands.
@@ -504,7 +501,28 @@ where
                             self.cx.reference(mutability, inner_ty)
                         }
                         ExprWrapperKind::Return => self.cx.never(),
-                        ExprWrapperKind::Try => unreachable!("try operands are deferred above"),
+                        ExprWrapperKind::Try => {
+                            // `value?` yields <Value as Try>::Output. Keep Value's live slot in
+                            // that projection so a later use can refine an unknown operand too.
+                            // TODO: Relate Try::Residual to the enclosing return type through
+                            // FromResidual; output inference alone does not check that conversion.
+                            match self.context.item_lookup_query().lang_trait(LangItem::Try) {
+                                Some(def) => self
+                                    .context
+                                    .live()
+                                    .projection(
+                                        TraitApplication {
+                                            def,
+                                            args: List::new(self.cx, &[inner_ty.into()]),
+                                        },
+                                        "Output",
+                                        self.inference.table(),
+                                    )
+                                    .context("project try output")?
+                                    .unwrap_or(self.cx.unknown()),
+                                None => self.cx.unknown(),
+                            }
+                        }
                     };
                     self.inference.set_expr_ty(expr, ty);
                     if matches!(kind, ExprWrapperKind::Paren) {

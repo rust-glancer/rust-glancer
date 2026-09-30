@@ -146,7 +146,8 @@ pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
 
 #[test]
 fn returns_types_for_references_try_and_await_wrappers() {
-    check_analysis_queries(
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_wrapper_type_at");
+    check_analysis_queries_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -155,11 +156,6 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
 pub struct Error;
 pub struct User;
 
@@ -182,12 +178,12 @@ pub async fn use_it(mut user: User) -> Result<(), Error> {
 }
 "#,
         &[
-            AnalysisQuery::ty("type at reference wrapper", "type_ref"),
-            AnalysisQuery::ty("type at mutable reference wrapper", "type_mut_ref"),
-            AnalysisQuery::ty("type at mutable reference binding", "type_mut_binding"),
-            AnalysisQuery::ty("type at try wrapper", "type_try"),
-            AnalysisQuery::ty("type at borrowed try wrapper", "type_try_borrowed_result"),
-            AnalysisQuery::ty("type at await wrapper", "type_await"),
+            ty("type at reference wrapper", "type_ref"),
+            ty("type at mutable reference wrapper", "type_mut_ref"),
+            ty("type at mutable reference binding", "type_mut_binding"),
+            ty("type at try wrapper", "type_try"),
+            ty("type at borrowed try wrapper", "type_try_borrowed_result"),
+            ty("type at await wrapper", "type_await"),
         ],
         expect![[r#"
             type at reference wrapper

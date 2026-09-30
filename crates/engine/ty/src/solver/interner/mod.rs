@@ -645,7 +645,21 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         self,
         id: DefId,
     ) -> ir::EarlyBinder<Self, impl IntoIterator<Item = Clause<'s>>> {
-        self.predicates_of(id)
+        // Associated-type normalization already checks the enclosing trait through impl
+        // selection. Rechecking its predicates here can loop: Try's FromResidual supertrait
+        // has a default argument that asks us to normalize Try::Residual again.
+        // Parent parameters keep the same indices in the child, so inherited clauses can be
+        // compared directly. Repeated requirements written on both owners are redundant too.
+        let inherited = self
+            .metadata(id)
+            .parent
+            .map(|parent| self.predicates(parent))
+            .unwrap_or_default();
+        ir::EarlyBinder::bind(
+            self.predicates(id)
+                .into_iter()
+                .filter(move |clause| !inherited.contains(clause)),
+        )
     }
 
     fn explicit_super_predicates_of(
