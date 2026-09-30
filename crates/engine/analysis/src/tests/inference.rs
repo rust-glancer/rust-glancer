@@ -589,6 +589,110 @@ pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
 }
 
 #[test]
+fn coerces_index_arguments_without_changing_their_source_types() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_coercions");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_index_coercions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::ops::{Deref, Index};
+pub struct TextStore;
+impl Index<&str> for TextStore { type Output = u32; }
+pub struct SliceStore<T>(T);
+impl<T> Index<&[T]> for SliceStore<T> { type Output = T; }
+pub struct MutableStore;
+impl Index<&mut [u8]> for MutableStore { type Output = u16; }
+pub struct Preferred;
+impl Index<&String> for Preferred { type Output = u8; }
+impl Index<&str> for Preferred { type Output = u32; }
+pub fn make<T>() -> T { loop {} }
+
+pub fn use_it(text: TextStore, mut string: String, preferred: Preferred, mutable: MutableStore) {
+    let key = &string;
+    let from_string = text[key$string_key$]$string_output$;
+    let from_mutable = text[&mut string]$mutable_string_output$;
+    let preferred = preferred[&string]$preferred_output$;
+    let key = &[1_u8, 2];
+    let from_array = SliceStore(1_u8)[key$array_key$]$array_output$;
+    let from_mutable_array = mutable[&mut [1_u8, 2]]$mutable_array_output$;
+}
+pub fn from_bound<P: Deref<Target = str>>(text: TextStore, pointer: P) {
+    let value = text[&pointer]$bound_output$;
+}
+pub fn later_output() {
+    let store = make::<SliceStore<_>>()$store$;
+    let key = (&[make(), make()])$key$;
+    let value: u8 = store[key]$inferred_output$;
+}
+pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> {
+    let value = text[key?$pending_key$]$pending_output$;
+    Result::Ok(())
+}
+"#,
+        &[
+            ty("string index", "string_output"),
+            ty("original string reference", "string_key"),
+            ty("mutable string reborrow", "mutable_string_output"),
+            ty("exact argument before coercion", "preferred_output"),
+            ty("array index", "array_output"),
+            ty("original array reference", "array_key"),
+            ty("mutable array unsizing", "mutable_array_output"),
+            ty("generic Deref argument", "bound_output"),
+            ty("receiver refined by output", "store"),
+            ty("array elements refined by output", "key"),
+            ty("output expectation", "inferred_output"),
+            ty("argument supplied by a pending projection", "pending_key"),
+            ty("indexing after the argument projection", "pending_output"),
+        ],
+        expect![[r#"
+            string index
+            - u32
+
+            original string reference
+            - &nominal struct alloc[lib]::crate::string::String
+
+            mutable string reborrow
+            - u32
+
+            exact argument before coercion
+            - u8
+
+            array index
+            - u8
+
+            original array reference
+            - &[u8; 2]
+
+            mutable array unsizing
+            - u16
+
+            generic Deref argument
+            - u32
+
+            receiver refined by output
+            - nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8>
+
+            array elements refined by output
+            - &[u8; 2]
+
+            output expectation
+            - u8
+
+            argument supplied by a pending projection
+            - &nominal struct alloc[lib]::crate::string::String
+
+            indexing after the argument projection
+            - u32
+        "#]],
+    );
+}
+
+#[test]
 fn indexes_arrays_through_slice_impls_of_the_identified_trait() {
     // Only the slice implements the operator here, so this exercises the unsizing alternative
     // independently of core's blanket array impl. The renamed trait checks language identity.
