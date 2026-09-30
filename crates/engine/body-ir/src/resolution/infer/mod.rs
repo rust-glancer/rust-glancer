@@ -82,6 +82,7 @@ where
                     cx,
                     deferred: VecDeque::new(),
                     method_calls: Vec::new(),
+                    break_targets: Vec::new(),
                     return_ty: cx.unknown(),
                     inference_exhausted: false,
                     depth: 0,
@@ -102,6 +103,7 @@ struct BodyInference<'s, 'query, D, I> {
     deferred: VecDeque<Deferred<'s>>,
     // Navigation candidates are collected after receiver types have had the whole body to settle.
     method_calls: Vec<ExprId>,
+    break_targets: Vec<expr::BreakTarget<'s, 'query>>,
     return_ty: Ty<'s>,
     inference_exhausted: bool,
     depth: usize,

@@ -13,7 +13,19 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_ty::solver::{Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
-use crate::body::{ExprAssignOp, ExprKind, ExprWrapperKind, StmtKind, facts::BodyResolution};
+use crate::body::{
+    ExprAssignOp, ExprBlockKind, ExprKind, ExprWrapperKind, LabelData, StmtKind,
+    facts::BodyResolution,
+};
+
+// These targets live only while walking a body. A break searches from the innermost target;
+// labels can name blocks or loops, while an unlabeled break belongs to a loop.
+pub(crate) struct BreakTarget<'s, 'query> {
+    label: Option<&'query LabelData>,
+    is_loop: bool,
+    expected: Ty<'s>,
+    values: Vec<Ty<'s>>,
+}
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
@@ -35,7 +47,24 @@ where
         }
         self.depth += 1;
         crate::profile::metric::EXPRESSION_VISITS.inc();
+        // A closure or separately executed block cannot jump back into its surrounding body.
+        // Its own loops and labeled blocks start a fresh set of break targets.
+        let outer_targets = matches!(
+            self.body.expr_unchecked(expr).kind,
+            ExprKind::Closure { .. }
+                | ExprKind::Block {
+                    kind: ExprBlockKind::Const
+                        | ExprBlockKind::Async { .. }
+                        | ExprBlockKind::Gen { .. }
+                        | ExprBlockKind::AsyncGen { .. },
+                    ..
+                }
+        )
+        .then(|| std::mem::take(&mut self.break_targets));
         let result = self.infer_expr_inner(expr, expected);
+        if let Some(outer_targets) = outer_targets {
+            self.break_targets = outer_targets;
+        }
         self.depth -= 1;
         result
     }
@@ -45,10 +74,19 @@ where
         let body = self.body;
         match body.expr_unchecked(expr).kind {
             ExprKind::Block {
+                ref label,
                 ref statements,
                 tail,
                 ..
             } => {
+                if label.is_some() {
+                    self.break_targets.push(BreakTarget {
+                        label: label.as_ref(),
+                        is_loop: false,
+                        expected: *expected,
+                        values: Vec::new(),
+                    });
+                }
                 for statement in statements {
                     self.infer_statement(*statement)
                         .context("infer block statement")?;
@@ -58,42 +96,30 @@ where
                 // Statements and the tail can refine locals used by earlier pending operations.
                 // Let those operations use the new evidence before reading the block's result.
                 self.fulfill_pending().context("complete block inference")?;
-                if let Some(tail) = tail {
-                    let ty = self.inference.expr_slot(tail);
-                    self.inference.set_expr_ty(expr, ty);
-                } else {
-                    // A tailless block is normally unit, but its final statement can make it
-                    // diverge. Recognize the direct diverging forms as well as an inferred `!`.
-                    let diverges = statements.last().is_some_and(|statement| {
-                        let StmtKind::Expr { expr, .. } = body.statement_unchecked(*statement).kind
-                        else {
-                            return false;
-                        };
-                        match body.expr_unchecked(expr).kind {
-                            ExprKind::Break { value: Some(_), .. } => false,
-                            ExprKind::Wrapper {
-                                kind: ExprWrapperKind::Return,
-                                ..
-                            }
-                            | ExprKind::Break { value: None, .. }
-                            | ExprKind::Continue { .. }
-                            | ExprKind::Yeet { .. }
-                            | ExprKind::Become { .. } => true,
-                            _ => matches!(
-                                (self.inference.root_resolved_expr_ty(expr)).shape(),
-                                TyShape::Never
-                            ),
-                        }
-                    });
-                    self.inference.set_expr_ty(
-                        expr,
-                        if diverges {
-                            self.cx.never()
-                        } else {
-                            self.cx.unit()
+                // `break 'done value;` has type `!`, so it contributes no ordinary fallthrough
+                // value. Its payload belongs to the named target, even through nested blocks.
+                let statements = statements
+                    .iter()
+                    .filter_map(
+                        |statement| match body.statement_unchecked(*statement).kind {
+                            StmtKind::Expr { expr, .. } => Some(expr),
+                            StmtKind::Let { initializer, .. } => initializer,
+                            StmtKind::Item { .. } | StmtKind::ItemIgnored => None,
                         },
-                    );
-                }
+                    )
+                    .map(|expr| self.inference.expr_slot(expr))
+                    .collect();
+                let tail = tail
+                    .map(|tail| self.inference.expr_slot(tail))
+                    .unwrap_or(self.cx.unit());
+                let breaks = label.as_ref().map(|_| {
+                    self.break_targets
+                        .pop()
+                        .expect("labeled block retains its target")
+                        .values
+                });
+                self.infer_block_result(expr, statements, tail, breaks)
+                    .context("infer block result")?;
             }
             ExprKind::Call { callee, ref args } => {
                 self.infer_optional(callee, &self.cx.unknown())
@@ -387,20 +413,49 @@ where
                 self.infer_closure(expr, scope, params, ret_ty.as_ref(), body)
                     .context("infer closure")?;
             }
-            ExprKind::Loop { body, .. } => {
+            ExprKind::Loop { ref label, body } => {
+                self.break_targets.push(BreakTarget {
+                    label: label.as_ref(),
+                    is_loop: true,
+                    expected: *expected,
+                    values: Vec::new(),
+                });
                 self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
+                let branches = self
+                    .break_targets
+                    .pop()
+                    .expect("loop retains its target")
+                    .values;
+                // Only breaks aimed at this loop let it finish. A break to an outer labeled
+                // block still diverges here, even though it supplies a value to that block.
+                // Missing or truncated syntax cannot establish that the loop has no exit.
+                if body.is_some() && branches.is_empty() && !self.inference_exhausted {
+                    self.inference.set_expr_ty(expr, self.cx.never());
+                }
+                // TODO: Infer loop results from their own break payloads. The target is needed
+                // here to distinguish a loop exit from an exit to an enclosing labeled block.
             }
             ExprKind::While {
-                condition, body, ..
+                ref label,
+                condition,
+                body,
             } => {
+                self.break_targets.push(BreakTarget {
+                    label: label.as_ref(),
+                    is_loop: true,
+                    expected: self.cx.unit(),
+                    values: Vec::new(),
+                });
                 self.infer_optional(condition, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
+                self.break_targets.pop().expect("while retains its target");
                 self.inference.set_expr_ty(expr, self.cx.unit());
             }
             ExprKind::For {
+                ref label,
                 pat,
                 iterable,
                 body,
@@ -417,14 +472,36 @@ where
                     self.infer_pattern(pat, &item)
                         .context("infer iterator pattern")?;
                 }
+                self.break_targets.push(BreakTarget {
+                    label: label.as_ref(),
+                    is_loop: true,
+                    expected: self.cx.unit(),
+                    values: Vec::new(),
+                });
                 self.infer_optional(body, &self.cx.unknown())
                     .context("infer optional expression")?;
+                self.break_targets.pop().expect("for retains its target");
                 self.inference.set_expr_ty(expr, self.cx.unit());
             }
-            ExprKind::Break { value, .. }
-            | ExprKind::Yield { value }
-            | ExprKind::Yeet { value }
-            | ExprKind::Become { value } => {
+            ExprKind::Break { ref label, value } => {
+                let target = self.break_targets.iter().rposition(|target| match label {
+                    Some(label) => target.label.is_some_and(|target| target.name == label.name),
+                    None => target.is_loop,
+                });
+                let expected = target
+                    .map(|target| self.break_targets[target].expected)
+                    .unwrap_or(self.cx.unknown());
+                self.infer_optional(value, &expected)
+                    .context("infer break value")?;
+                if let Some(target) = target {
+                    let value = value
+                        .map(|value| self.inference.expr_slot(value))
+                        .unwrap_or(self.cx.unit());
+                    self.break_targets[target].values.push(value);
+                }
+                self.inference.set_expr_ty(expr, self.cx.never());
+            }
+            ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
                 self.infer_optional(value, &self.cx.unknown())
                     .context("infer optional expression")?;
                 if !matches!(self.body.expr_unchecked(expr).kind, ExprKind::Yield { .. }) {

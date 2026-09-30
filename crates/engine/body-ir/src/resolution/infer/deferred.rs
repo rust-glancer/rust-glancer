@@ -63,6 +63,11 @@ pub(super) enum DeferredKind<'s> {
         expr: ExprId,
         branches: Vec<Ty<'s>>,
     },
+    BlockTail {
+        result: Ty<'s>,
+        statements: Vec<Ty<'s>>,
+        tail: Ty<'s>,
+    },
 }
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
@@ -85,13 +90,77 @@ where
         }
     }
 
+    /// A block can finish through its tail or a break aimed at its label. Keep those routes
+    /// separate: a statement that later resolves to `!` removes only the ordinary tail route.
+    pub(super) fn infer_block_result(
+        &mut self,
+        expr: ExprId,
+        statements: Vec<Ty<'s>>,
+        tail: Ty<'s>,
+        breaks: Option<Vec<Ty<'s>>>,
+    ) -> anyhow::Result<()> {
+        let fallthrough = match self.block_fallthrough(&statements, tail) {
+            Some(ty) => ty,
+            None => {
+                let result = self.inference.table_mut().new_type_var();
+                self.defer(
+                    DeferredKind::BlockTail {
+                        result,
+                        statements,
+                        tail,
+                    },
+                    None,
+                );
+                result
+            }
+        };
+        if let Some(mut branches) = breaks {
+            branches.push(fallthrough);
+            self.run_or_defer(DeferredKind::BranchResult { expr, branches })
+                .context("merge labeled block results")?;
+        } else {
+            self.inference.set_expr_ty(expr, fallthrough);
+        }
+        Ok(())
+    }
+
+    fn block_fallthrough(&self, statements: &[Ty<'s>], tail: Ty<'s>) -> Option<Ty<'s>> {
+        // Any diverging statement prevents reaching the tail, including a `let` initializer.
+        // Check known divergence first; an earlier unresolved call cannot restore fallthrough.
+        if statements
+            .iter()
+            .any(|ty| self.inference.root_resolved_ty(ty).is_never())
+        {
+            Some(self.cx.never())
+        } else if statements.iter().all(|ty| self.can_coerce_ty(ty)) {
+            Some(tail)
+        } else {
+            None
+        }
+    }
+
     /// Publish useful expectations even when a producer could not be resolved. For example,
     /// `let size = number.try_into().ok()?; Some(size)` can learn `size` from the return type
     /// despite incomplete conversion lookup. Only do this after semantic work has stopped:
     /// until then, a pending producer may still turn out to return `!`.
     /// Consume the context so these fallback equalities cannot feed another lookup attempt.
     pub(super) fn finish_coercions(mut self) -> InferenceState<'s> {
-        for operation in self.deferred {
+        let deferred = std::mem::take(&mut self.deferred);
+        // Unresolved statement producers cannot prove divergence. Give their blocks the tail
+        // fallback before merging branch results, so a synthetic slot is never mistaken for a
+        // value branch merely because the block's control flow was still pending.
+        for operation in &deferred {
+            if let DeferredKind::BlockTail {
+                result,
+                statements,
+                tail,
+            } = &operation.kind
+            {
+                let tail = self.block_fallthrough(statements, *tail).unwrap_or(*tail);
+                self.inference.constrain_infer_tys(result, &tail);
+            }
+        }
+        for operation in deferred {
             match operation.kind {
                 DeferredKind::Coerce { expr, expected } => {
                     self.inference.constrain_expr_ty(expr, &expected);
@@ -149,6 +218,7 @@ where
                 self.inference.root_resolved_expr_ty(*expr) == ty
             }
             DeferredKind::IteratorItem { item, .. } => self.inference.root_resolved_ty(item) == ty,
+            DeferredKind::BlockTail { result, .. } => self.inference.root_resolved_ty(result) == ty,
             DeferredKind::Pattern { pat, .. } => {
                 // A binding can be read before its tuple/record pattern has a shape to project.
                 // Its eventual field type must remain free to become `!` as well.
@@ -244,6 +314,9 @@ where
                     DeferredKind::BranchResult { branches, .. } => {
                         branches.iter().all(|ty| self.can_coerce_ty(ty))
                     }
+                    DeferredKind::BlockTail {
+                        statements, tail, ..
+                    } => self.block_fallthrough(statements, *tail).is_some(),
                     _ => false,
                 };
                 if operation.input.as_ref() == Some(&input) && !coercion_ready {
@@ -317,6 +390,17 @@ where
                     .chain([expr_ty(*expr)])
                     .collect::<Vec<_>>(),
             ),
+            DeferredKind::BlockTail {
+                result,
+                statements,
+                tail,
+            } => self.cx.tuple(
+                statements
+                    .iter()
+                    .copied()
+                    .chain([*tail, *result])
+                    .collect::<Vec<_>>(),
+            ),
         };
         self.inference.table().canonicalize(&input)
     }
@@ -327,6 +411,17 @@ where
     fn try_deferred(&mut self, kind: &DeferredKind<'s>) -> anyhow::Result<bool> {
         match kind {
             DeferredKind::Coerce { expr, expected } => Ok(self.try_coerce_expr_ty(*expr, expected)),
+            DeferredKind::BlockTail {
+                result,
+                statements,
+                tail,
+            } => {
+                let Some(tail) = self.block_fallthrough(statements, *tail) else {
+                    return Ok(false);
+                };
+                self.inference.constrain_infer_tys(result, &tail);
+                Ok(true)
+            }
             DeferredKind::BranchResult { expr, branches } => {
                 if branches.is_empty() {
                     // This is missing syntax, such as a match with no arms. An actual empty block

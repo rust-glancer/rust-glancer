@@ -241,7 +241,7 @@ pub fn walk(input: Maybe, items: Items) {
                               initializer
                                 expr e0 path input -> local v0 => nominal enum body_control_flow_fixture[lib]::crate::Maybe @ 11:39-11:44
                           body
-                            expr e5 block s4 => () @ 11:45-14:10
+                            expr e5 block s4 => ! @ 11:45-14:10
                               stmt s0 expr; @ 12:13-12:18
                                 expr e2 path item -> local v2 => nominal struct body_control_flow_fixture[lib]::crate::UserId @ 12:13-12:17
                               stmt s1 expr; @ 13:13-13:31
@@ -545,9 +545,9 @@ pub fn choose(value: UserId) -> UserId {
             bindings
             - v0 param value `value`: UserId => nominal struct body_labeled_block_fixture[lib]::crate::UserId @ 3:15-3:20
             body
-            expr e3 block s1 => () @ 3:40-7:2
+            expr e3 block s1 => nominal struct body_labeled_block_fixture[lib]::crate::UserId @ 3:40-7:2
               tail
-                expr e2 block 'break s2 => () @ 4:5-6:6
+                expr e2 block 'break s2 => nominal struct body_labeled_block_fixture[lib]::crate::UserId @ 4:5-6:6
                   stmt s0 expr; @ 5:9-5:30
                     expr e1 break 'break => ! @ 5:9-5:29
                       value

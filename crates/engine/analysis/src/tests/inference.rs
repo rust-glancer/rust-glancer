@@ -3177,3 +3177,253 @@ pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
         "#]],
     );
 }
+
+#[test]
+fn infers_labeled_block_exit_values() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_labeled_block_exits"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool) {
+    let semicolon = 'done: { break 'done 1u64; }$type_semicolon$;
+    let tail = 'done: { break 'done 2u64 }$type_tail$;
+    let nested = 'done: { { break 'done 3u64; } }$type_nested$;
+    let initializer = 'done: { let _ = break 'done 3u64; }$type_initializer$;
+    let branches = 'done: {
+        if flag { break 'done 4u64; } else { break 'done 5u64; }
+    }$type_branches$;
+    let fallthrough = 'done: {
+        if flag { break 'done 6u64; }
+        7u64
+    }$type_fallthrough$;
+    let return_branch = 'done: {
+        if flag { return; }
+        break 'done 8u64;
+    }$type_return_branch$;
+    let unit_break = 'done: { break 'done; }$type_unit_break$;
+    let unit_fallthrough = 'done: { if flag { break 'done; } }$type_unit_fallthrough$;
+    let empty = 'done: {}$type_empty$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("break statement", "type_semicolon"),
+            AnalysisQuery::ty("break tail", "type_tail"),
+            AnalysisQuery::ty("break through ordinary block", "type_nested"),
+            AnalysisQuery::ty("break in let initializer", "type_initializer"),
+            AnalysisQuery::ty("both branches break", "type_branches"),
+            AnalysisQuery::ty("break and normal tail", "type_fallthrough"),
+            AnalysisQuery::ty("return and break", "type_return_branch"),
+            AnalysisQuery::ty("unit break", "type_unit_break"),
+            AnalysisQuery::ty("unit fallthrough", "type_unit_fallthrough"),
+            AnalysisQuery::ty("empty labeled block", "type_empty"),
+        ],
+        expect![[r#"
+            break statement
+            - u64
+
+            break tail
+            - u64
+
+            break through ordinary block
+            - u64
+
+            break in let initializer
+            - u64
+
+            both branches break
+            - u64
+
+            break and normal tail
+            - u64
+
+            return and break
+            - u64
+
+            unit break
+            - ()
+
+            unit fallthrough
+            - ()
+
+            empty labeled block
+            - ()
+        "#]],
+    );
+}
+
+#[test]
+fn routes_labeled_block_breaks_to_their_lexical_targets() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_labeled_block_targets"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool) {
+    let outer = 'done: {
+        let inner = 'done: { break 'done true; }$type_shadowed_block$;
+        let inner_loop = 'done: loop { break 'done 1u8; };
+        let loop_value = loop { break 2u16; };
+        while flag { break; }
+        break 'done 3u64;
+    }$type_outer$;
+    let from_loop = 'done: { loop { break 'done 4u64; } }$type_from_loop$;
+    let from_nested_label = 'outer: {
+        'inner: { break 'outer 5u64; }
+    }$type_from_nested_label$;
+    let closure = 'done: {
+        let f = || 'done: { break 'done true; }$type_closure_block$;
+        break 'done 6u64;
+    }$type_closure_outer$;
+    let asynchronous = 'done: {
+        let f = async { 'done: { break 'done true; }$type_async_block$ };
+        break 'done 7u64;
+    }$type_async_outer$;
+    let raw = 'r#break: { break 'r#break 8u64; }$type_raw$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("shadowed block label", "type_shadowed_block"),
+            AnalysisQuery::ty("outer block result", "type_outer"),
+            AnalysisQuery::ty("block exit through loop", "type_from_loop"),
+            AnalysisQuery::ty("block exit through another label", "type_from_nested_label"),
+            AnalysisQuery::ty("closure block result", "type_closure_block"),
+            AnalysisQuery::ty("block containing closure", "type_closure_outer"),
+            AnalysisQuery::ty("async inner block result", "type_async_block"),
+            AnalysisQuery::ty("block containing async block", "type_async_outer"),
+            AnalysisQuery::ty("raw label", "type_raw"),
+        ],
+        expect![[r#"
+            shadowed block label
+            - bool
+
+            outer block result
+            - u64
+
+            block exit through loop
+            - u64
+
+            block exit through another label
+            - u64
+
+            closure block result
+            - bool
+
+            block containing closure
+            - u64
+
+            async inner block result
+            - bool
+
+            block containing async block
+            - u64
+
+            raw label
+            - u64
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_labeled_block_expectations_and_deferred_results() {
+    let ty =
+        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_labeled_block_inference");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_labeled_block_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+impl User {
+    pub fn abort(self) -> ! { loop {} }
+    pub fn value(self) -> u64 { 1 }
+}
+pub fn apply<R, F: FnOnce(User) -> R>(f: F) -> R { f(User) }
+pub fn consume(value: u64) {}
+pub fn make<T>() -> T { loop {} }
+
+pub fn use_it(flag: bool) {
+    let annotated: u64 = 'done: { break 'done 1$type_annotated_literal$; }$type_annotated_block$;
+    let later = 'done: { break 'done make()$type_generic_payload$; }$type_later_block$;
+    consume(later);
+    let payload = apply((|user| 'done: {
+        break 'done user.value()$type_deferred_payload$;
+    }))$type_payload_result$;
+    let diverging_payload = apply((|user| 'done: {
+        if flag { break 'done user.abort()$type_diverging_payload$; }
+        break 'done 2u64;
+    }))$type_diverging_result$;
+    let diverging_statement = apply((|user| 'done: {
+        if flag { break 'done 3u64; }
+        user.abort()$type_diverging_statement$;
+    }))$type_statement_result$;
+    let ordinary_statement = apply((|user| 'done: {
+        user.value();
+        4u64
+    }))$type_fallthrough_result$;
+}
+"#,
+        &[
+            ty("expected break literal", "type_annotated_literal"),
+            ty("annotated block", "type_annotated_block"),
+            ty("generic break payload", "type_generic_payload"),
+            ty("block constrained by later use", "type_later_block"),
+            ty("deferred break payload", "type_deferred_payload"),
+            ty("deferred payload result", "type_payload_result"),
+            ty("diverging break payload", "type_diverging_payload"),
+            ty("surviving break result", "type_diverging_result"),
+            ty("diverging final statement", "type_diverging_statement"),
+            ty("deferred statement result", "type_statement_result"),
+            ty(
+                "deferred statement with normal tail",
+                "type_fallthrough_result",
+            ),
+        ],
+        expect![[r#"
+            expected break literal
+            - u64
+
+            annotated block
+            - u64
+
+            generic break payload
+            - u64
+
+            block constrained by later use
+            - u64
+
+            deferred break payload
+            - u64
+
+            deferred payload result
+            - u64
+
+            diverging break payload
+            - !
+
+            surviving break result
+            - u64
+
+            diverging final statement
+            - !
+
+            deferred statement result
+            - u64
+
+            deferred statement with normal tail
+            - u64
+        "#]],
+    );
+}
