@@ -32,7 +32,7 @@ mod expr;
 mod pat;
 mod state;
 
-use self::{deferred::Deferred, state::InferenceState};
+use self::{deferred::Deferred, expr::BreakTarget, state::InferenceState};
 
 pub(crate) struct InferenceContext<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -103,7 +103,7 @@ struct BodyInference<'s, 'query, D, I> {
     deferred: VecDeque<Deferred<'s>>,
     // Navigation candidates are collected after receiver types have had the whole body to settle.
     method_calls: Vec<ExprId>,
-    break_targets: Vec<expr::BreakTarget<'s, 'query>>,
+    break_targets: Vec<BreakTarget<'s, 'query>>,
     return_ty: Ty<'s>,
     inference_exhausted: bool,
     depth: usize,
