@@ -11,10 +11,12 @@ use rg_ir_model::{ExprId, FieldKey, StmtId, identity::DeclarationRef};
 use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{List, TraitApplication, Ty, TyShape};
+use rg_ty::solver::{AdtTy, List, TraitApplication, Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
-use crate::body::{ExprAssignOp, ExprKind, ExprWrapperKind, StmtKind, facts::BodyResolution};
+use crate::body::{
+    ExprAssignOp, ExprKind, ExprRangeKind, ExprWrapperKind, StmtKind, facts::BodyResolution,
+};
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
@@ -253,11 +255,46 @@ where
                         .context("register pending inference")?;
                 }
             }
-            ExprKind::Range { start, end, .. } => {
-                self.infer_optional(start, &self.cx.unknown())
-                    .context("infer optional expression")?;
-                self.infer_optional(end, &self.cx.unknown())
-                    .context("infer optional expression")?;
+            ExprKind::Range { start, end, kind } => {
+                // Syntax chooses the compiler-known declaration, regardless of imports or a
+                // local type named Range. TODO: Support the experimental range families.
+                let lang_item = match (start, end, kind) {
+                    (Some(_), Some(_), Some(ExprRangeKind::Exclusive)) => Some(LangItem::Range),
+                    (Some(_), None, Some(ExprRangeKind::Exclusive)) => Some(LangItem::RangeFrom),
+                    (None, Some(_), Some(ExprRangeKind::Exclusive)) => Some(LangItem::RangeTo),
+                    (Some(_), Some(_), Some(ExprRangeKind::Inclusive)) => {
+                        Some(LangItem::RangeInclusive)
+                    }
+                    (None, Some(_), Some(ExprRangeKind::Inclusive)) => {
+                        Some(LangItem::RangeToInclusive)
+                    }
+                    (None, None, Some(ExprRangeKind::Exclusive)) => Some(LangItem::RangeFull),
+                    _ => None,
+                };
+                let endpoint_ty = if let Some(def) =
+                    lang_item.and_then(|item| self.context.item_lookup_query().lang_type(item))
+                {
+                    // Both endpoints and the range's type argument share this destination.
+                    // For `let bounds = 1..; take_range(bounds)`, a later RangeFrom<usize>
+                    // parameter can still refine the literal before numeric fallback.
+                    let (endpoint_ty, args) = if start.is_some() || end.is_some() {
+                        let endpoint_ty = self.inference.table().new_type_var();
+                        (endpoint_ty, List::new(self.cx, &[endpoint_ty.into()]))
+                    } else {
+                        (self.cx.unknown(), List::default())
+                    };
+                    self.inference
+                        .set_expr_ty(expr, self.cx.adt(AdtTy { def, args }));
+                    self.inference.constrain_expr_ty(expr, expected);
+                    endpoint_ty
+                } else {
+                    // Even incomplete syntax or missing declarations must visit the endpoints.
+                    self.cx.unknown()
+                };
+                self.infer_optional(start, &endpoint_ty)
+                    .context("infer range start")?;
+                self.infer_optional(end, &endpoint_ty)
+                    .context("infer range end")?;
             }
             ExprKind::Cast {
                 expr: inner,

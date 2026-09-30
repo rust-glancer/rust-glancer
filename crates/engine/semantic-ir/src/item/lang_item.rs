@@ -46,7 +46,16 @@ impl LangItemIndex {
                     LangItem::DerefTarget | LangItem::FnOnceOutput,
                     ItemId::TypeAlias(_)
                 )
-                | (LangItem::FormatArguments, ItemId::Struct(_))
+                | (
+                    LangItem::FormatArguments
+                        | LangItem::Range
+                        | LangItem::RangeFrom
+                        | LangItem::RangeTo
+                        | LangItem::RangeInclusive
+                        | LangItem::RangeToInclusive
+                        | LangItem::RangeFull,
+                    ItemId::Struct(_)
+                )
                 | (LangItem::Option, ItemId::Enum(_))
         );
         if target_matches {

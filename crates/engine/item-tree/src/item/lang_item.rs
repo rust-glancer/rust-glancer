@@ -43,6 +43,13 @@ pub enum LangItem {
     Option,
     /// The trait supplying the successful output of `value?`.
     Try,
+    /// The nominal types constructed by ordinary range expressions.
+    Range,
+    RangeFrom,
+    RangeTo,
+    RangeInclusive,
+    RangeToInclusive,
+    RangeFull,
 }
 
 impl LangItem {
@@ -50,7 +57,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 21] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -66,6 +73,12 @@ impl LangItem {
         Self::FormatArguments,
         Self::Option,
         Self::Try,
+        Self::Range,
+        Self::RangeFrom,
+        Self::RangeTo,
+        Self::RangeInclusive,
+        Self::RangeToInclusive,
+        Self::RangeFull,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -93,6 +106,12 @@ impl LangItem {
             "format_arguments" => Self::FormatArguments,
             "Option" => Self::Option,
             "Try" => Self::Try,
+            "Range" => Self::Range,
+            "RangeFrom" => Self::RangeFrom,
+            "RangeTo" => Self::RangeTo,
+            "RangeInclusive" => Self::RangeInclusive,
+            "RangeToInclusive" => Self::RangeToInclusive,
+            "RangeFull" => Self::RangeFull,
             _ => return None,
         })
     }

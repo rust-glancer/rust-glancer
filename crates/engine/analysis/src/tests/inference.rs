@@ -213,6 +213,202 @@ pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
 }
 
 #[test]
+fn infers_standard_range_forms_and_shared_endpoints() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_ranges");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_ranges"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(end: u16) {
+    let exclusive = (1$start$..end)$exclusive$;
+    let from = (2u32..)$from$;
+    let to = (..3)$to$;
+    let inclusive = ('a'..='z')$inclusive$;
+    let to_inclusive = (..=4u64)$to_inclusive$;
+    let full = (..)$full$;
+    let reversed = (end..5$end$)$reversed$;
+}
+"#,
+        &[
+            ty("exclusive range", "exclusive"),
+            ty("range from", "from"),
+            ty("range to with numeric fallback", "to"),
+            ty("inclusive character range", "inclusive"),
+            ty("inclusive range to", "to_inclusive"),
+            ty("full range", "full"),
+            ty("start refined by end", "start"),
+            ty("end refined by start", "end"),
+            ty("range with typed start", "reversed"),
+        ],
+        expect![[r#"
+            exclusive range
+            - nominal struct core[lib]::crate::ops::Range<u16>
+
+            range from
+            - nominal struct core[lib]::crate::ops::RangeFrom<u32>
+
+            range to with numeric fallback
+            - nominal struct core[lib]::crate::ops::RangeTo<i32>
+
+            inclusive character range
+            - nominal struct core[lib]::crate::ops::RangeInclusive<char>
+
+            inclusive range to
+            - nominal struct core[lib]::crate::ops::RangeToInclusive<u64>
+
+            full range
+            - nominal struct core[lib]::crate::ops::RangeFull
+
+            start refined by end
+            - u16
+
+            end refined by start
+            - u16
+
+            range with typed start
+            - nominal struct core[lib]::crate::ops::Range<u16>
+        "#]],
+    );
+}
+
+#[test]
+fn range_expectations_and_later_uses_refine_endpoints() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_range_evidence");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_range_evidence"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::ops::{Range, RangeFrom, RangeInclusive};
+pub type Inclusive = RangeInclusive<u8>;
+pub fn make<T>() -> T { loop {} }
+pub fn take_from(value: RangeFrom<usize>) {}
+pub fn take_inclusive(value: RangeInclusive<u64>) {}
+pub fn stop() -> ! { loop {} }
+
+pub fn use_it() {
+    let expected: Range<u32> = (make()$expected_start$..make()$expected_end$)$expected$;
+    let aliased: Inclusive = (make()$alias_start$..=1)$alias$;
+
+    let endpoint = 1$number$;
+    let bounds$refined_binding$ = (endpoint$local_endpoint$..)$local_range$;
+    take_from(bounds);
+
+    let start = make();
+    let end = make();
+    let generic = (start..=end)$generic_range$;
+    take_inclusive(generic);
+    start$generic_start$;
+    end$generic_end$;
+
+    let diverging: Range<u8> = (stop()$never_endpoint$..1)$never_range$;
+}
+"#,
+        &[
+            ty("annotated range", "expected"),
+            ty("expected start", "expected_start"),
+            ty("expected end", "expected_end"),
+            ty("alias expectation", "alias"),
+            ty("endpoint under alias expectation", "alias_start"),
+            ty("literal refined through range local", "number"),
+            ty("endpoint local", "local_endpoint"),
+            ty("range before later use", "local_range"),
+            ty("refined range binding", "refined_binding"),
+            ty("generic range before later use", "generic_range"),
+            ty("generic start after later use", "generic_start"),
+            ty("generic end after later use", "generic_end"),
+            ty("diverging endpoint", "never_endpoint"),
+            ty("range with diverging endpoint", "never_range"),
+        ],
+        expect![[r#"
+            annotated range
+            - nominal struct core[lib]::crate::ops::Range<u32>
+
+            expected start
+            - u32
+
+            expected end
+            - u32
+
+            alias expectation
+            - nominal struct core[lib]::crate::ops::RangeInclusive<u8>
+
+            endpoint under alias expectation
+            - u8
+
+            literal refined through range local
+            - usize
+
+            endpoint local
+            - usize
+
+            range before later use
+            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
+
+            refined range binding
+            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
+
+            generic range before later use
+            - nominal struct core[lib]::crate::ops::RangeInclusive<u64>
+
+            generic start after later use
+            - u64
+
+            generic end after later use
+            - u64
+
+            diverging endpoint
+            - !
+
+            range with diverging endpoint
+            - nominal struct core[lib]::crate::ops::Range<u8>
+        "#]],
+    );
+}
+
+#[test]
+fn identifies_range_by_language_item_instead_of_name() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_range_identity"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[lang = "Range"]
+pub struct Interval<T> { pub start: T, pub end: T }
+
+pub fn use_it() {
+    let interval = (1u8..2)$range$;
+    interval.end$field$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("renamed range declaration", "range"),
+            AnalysisQuery::ty("field on renamed range", "field"),
+        ],
+        expect![[r#"
+            renamed range declaration
+            - nominal struct analysis_range_identity[lib]::crate::Interval<u8>
+
+            field on renamed range
+            - u8
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_let_annotation_expected_types_through_tuple_expressions() {
     check_analysis_queries(
         r#"
