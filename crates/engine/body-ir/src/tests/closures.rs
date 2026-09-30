@@ -343,7 +343,7 @@ pub fn use_it() {
             body
             expr e2 block s1 => nominal struct body_solver_callable_fixture[lib]::crate::Adapter<param F> @ 19:43-21:2
               tail
-                expr e1 loop => nominal struct body_solver_callable_fixture[lib]::crate::Adapter<param F> @ 20:5-20:12
+                expr e1 loop => ! @ 20:5-20:12
                   body
                     expr e0 block s2 => () @ 20:10-20:12
 
@@ -358,7 +358,7 @@ pub fn use_it() {
             body
             expr e2 block s1 => projection type trait body_solver_callable_fixture[lib]::crate::Produces::Output<param F> @ 23:52-25:2
               tail
-                expr e1 loop => projection type trait body_solver_callable_fixture[lib]::crate::Produces::Output<param F> @ 24:5-24:12
+                expr e1 loop => ! @ 24:5-24:12
                   body
                     expr e0 block s2 => () @ 24:10-24:12
 
@@ -373,7 +373,7 @@ pub fn use_it() {
             body
             expr e2 block s1 => nominal struct body_solver_callable_fixture[lib]::crate::Name @ 30:1-32:2
               tail
-                expr e1 loop => nominal struct body_solver_callable_fixture[lib]::crate::Name @ 31:5-31:12
+                expr e1 loop => ! @ 31:5-31:12
                   body
                     expr e0 block s2 => () @ 31:10-31:12
 
@@ -490,7 +490,7 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
             body
             expr e2 block s1 => param R @ 6:1-8:2
               tail
-                expr e1 loop => param R @ 7:5-7:12
+                expr e1 loop => ! @ 7:5-7:12
                   body
                     expr e0 block s2 => () @ 7:10-7:12
 
@@ -610,7 +610,7 @@ pub fn use_it() -> User {
             body
             expr e2 block s1 => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<nominal struct body_never_closure_callable_fixture[lib]::crate::User, nominal struct body_never_closure_callable_fixture[lib]::crate::Error> @ 36:41-38:2
               tail
-                expr e1 loop => nominal enum body_never_closure_callable_fixture[lib]::crate::Outcome<nominal struct body_never_closure_callable_fixture[lib]::crate::User, nominal struct body_never_closure_callable_fixture[lib]::crate::Error> @ 37:5-37:12
+                expr e1 loop => ! @ 37:5-37:12
                   body
                     expr e0 block s2 => () @ 37:10-37:12
 
@@ -684,7 +684,7 @@ pub fn use_it() -> User {
             body
             expr e2 block s1 => param U @ 15:27-17:6
               tail
-                expr e1 loop => param U @ 16:9-16:16
+                expr e1 loop => ! @ 16:9-16:16
                   body
                     expr e0 block s2 => () @ 16:14-16:16
 
@@ -700,7 +700,7 @@ pub fn use_it() -> User {
             body
             expr e2 block s1 => param T @ 31:5-33:6
               tail
-                expr e1 loop => param T @ 32:9-32:16
+                expr e1 loop => ! @ 32:9-32:16
                   body
                     expr e0 block s2 => () @ 32:14-32:16
 
