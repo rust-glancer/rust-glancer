@@ -167,7 +167,7 @@ pub fn use_it(builder: Builder) {
 
 #[test]
 fn infers_structural_tuple_array_and_slice_types() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -190,6 +190,11 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_structural_type_fixture
 
             body_structural_type_fixture [lib]
@@ -256,20 +261,36 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
                     base
                       expr e14 path array -> local v1 => [u8; 3] @ 9:19-9:24
                     index
-                      expr e15 literal int `0` => i32 @ 9:25-9:26
+                      expr e15 literal int `0` => usize @ 9:25-9:26
               stmt s8 let v12, v13 @ 10:5-10:36
                 initializer
                   expr e17 path tuple_expr -> local v7 => (u8, bool) @ 10:25-10:35
               stmt s9 let v14 @ 11:5-11:34
                 initializer
                   expr e18 path array_expr -> local v8 => [u8; 2] @ 11:23-11:33
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
 
 #[test]
 fn infers_indexing_through_references() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -285,6 +306,11 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_ref_index_fixture
 
             body_ref_index_fixture [lib]
@@ -307,21 +333,37 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
                     base
                       expr e0 path slice -> local v0 => &[u8] @ 2:22-2:27
                     index
-                      expr e1 literal int `0` => i32 @ 2:28-2:29
+                      expr e1 literal int `0` => usize @ 2:28-2:29
               stmt s1 let v4 @ 3:5-3:35
                 initializer
                   expr e5 index => bool @ 3:22-3:34
                     base
                       expr e3 path array_ref -> local v1 => &[bool; 3] @ 3:22-3:31
                     index
-                      expr e4 literal int `0` => i32 @ 3:32-3:33
+                      expr e4 literal int `0` => usize @ 3:32-3:33
               stmt s2 let v5 @ 4:5-4:39
                 initializer
                   expr e8 index => u16 @ 4:23-4:38
                     base
                       expr e6 path nested_slice -> local v2 => &&[u16] @ 4:23-4:35
                     index
-                      expr e7 literal int `0` => i32 @ 4:36-4:37
+                      expr e7 literal int `0` => usize @ 4:36-4:37
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
@@ -876,7 +918,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn lowers_common_expression_forms() {
-    check_project_body_ir(
+    check_project_body_ir_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -914,6 +956,11 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
 }
 "#,
         expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
             package body_common_expr_fixture
 
             body_common_expr_fixture [lib]
@@ -944,9 +991,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - v5 let array `array` => [u8; 3] @ 11:9-11:14
             - v6 let repeat `repeat` => [u8; 3] @ 12:9-12:15
             - v7 let indexed `indexed` => u8 @ 13:9-13:16
-            - v8 let exclusive `exclusive` => <unknown> @ 14:9-14:18
-            - v9 let inclusive `inclusive` => <unknown> @ 15:9-15:18
-            - v10 let full `full` => <unknown> @ 16:9-16:13
+            - v8 let exclusive `exclusive` => nominal struct core[lib]::crate::ops::Range<u8> @ 14:9-14:18
+            - v9 let inclusive `inclusive` => nominal struct core[lib]::crate::ops::RangeInclusive<u8> @ 15:9-15:18
+            - v10 let full `full` => nominal struct core[lib]::crate::ops::RangeFull @ 16:9-16:13
             - v11 let casted `casted` => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:9-17:15
             - v12 let field_after_cast `field_after_cast` => u8 @ 18:9-18:25
             - v13 let unary `unary` => (bool, i32, u8) @ 19:9-19:14
@@ -985,24 +1032,24 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     base
                       expr e11 path slots -> local v1 => [u8; 3] @ 13:19-13:24
                     index
-                      expr e12 literal int `0` => i32 @ 13:25-13:26
+                      expr e12 literal int `0` => usize @ 13:25-13:26
               stmt s4 let v8 @ 14:5-14:30
                 initializer
-                  expr e16 range .. => <unknown> @ 14:21-14:29
+                  expr e16 range .. => nominal struct core[lib]::crate::ops::Range<u8> @ 14:21-14:29
                     start
-                      expr e14 literal int `1` => i32 @ 14:21-14:22
+                      expr e14 literal int `1` => u8 @ 14:21-14:22
                     end
                       expr e15 path value -> local v2 => u8 @ 14:24-14:29
               stmt s5 let v9 @ 15:5-15:35
                 initializer
-                  expr e19 range ..= => <unknown> @ 15:21-15:34
+                  expr e19 range ..= => nominal struct core[lib]::crate::ops::RangeInclusive<u8> @ 15:21-15:34
                     start
                       expr e17 path value -> local v2 => u8 @ 15:21-15:26
                     end
                       expr e18 path value -> local v2 => u8 @ 15:29-15:34
               stmt s6 let v10 @ 16:5-16:19
                 initializer
-                  expr e20 range .. => <unknown> @ 16:16-16:18
+                  expr e20 range .. => nominal struct core[lib]::crate::ops::RangeFull @ 16:16-16:18
               stmt s7 let v11 @ 17:5-17:31
                 initializer
                   expr e22 cast as User => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:18-17:30
@@ -1078,7 +1125,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                       base
                         expr e53 path slots -> local v1 => [u8; 3] @ 22:5-22:10
                       index
-                        expr e54 literal int `0` => i32 @ 22:11-22:12
+                        expr e54 literal int `0` => usize @ 22:11-22:12
                   value
                     expr e56 path value -> local v2 => u8 @ 22:17-22:22
               stmt s13 let v15 @ 23:5-23:18
@@ -1098,6 +1145,22 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     expr e64 call => ! @ 26:12-26:19
                       callee
                         expr e63 path never -> fn body_common_expr_fixture[lib]::crate::never => function item fn body_common_expr_fixture[lib]::crate::never @ 26:12-26:17
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package proc_macro
+
+            proc_macro [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }

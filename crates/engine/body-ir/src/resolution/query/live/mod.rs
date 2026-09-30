@@ -2,6 +2,7 @@
 //! layer; substitutions and projections keep the caller's inference variables throughout.
 
 mod call;
+mod index;
 mod member;
 
 use rg_def_map::DefMapSource;

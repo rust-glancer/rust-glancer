@@ -36,7 +36,10 @@ pub(super) enum DeferredKind<'s> {
     Call {
         call: ExprId,
     },
-    Member {
+    Field {
+        expr: ExprId,
+    },
+    Index {
         expr: ExprId,
     },
     Pattern {
@@ -138,7 +141,8 @@ where
 
         !self.deferred.iter().any(|operation| match &operation.kind {
             DeferredKind::Call { call } => self.inference.call_result_is_pending(*call, &ty),
-            DeferredKind::Member { expr }
+            DeferredKind::Field { expr }
+            | DeferredKind::Index { expr }
             | DeferredKind::Operator { expr }
             | DeferredKind::BranchResult { expr, .. } => {
                 self.inference.root_resolved_expr_ty(*expr) == ty
@@ -281,11 +285,16 @@ where
                 // lookup. Selected calls' predicates and projections are retried by the solver.
                 receiver.map(expr_ty).unwrap_or(self.cx.unknown())
             }
-            DeferredKind::Member { expr } => match self.body.expr_unchecked(*expr).kind {
-                ExprKind::Field { base, .. } | ExprKind::Index { base, .. } => {
-                    base.map(expr_ty).unwrap_or(self.cx.unknown())
-                }
-                _ => unreachable!("pending member owns a field or index expression"),
+            DeferredKind::Field { expr } => match self.body.expr_unchecked(*expr).kind {
+                ExprKind::Field { base, .. } => base.map(expr_ty).unwrap_or(self.cx.unknown()),
+                _ => unreachable!("pending field owns a field expression"),
+            },
+            DeferredKind::Index { expr } => match self.body.expr_unchecked(*expr).kind {
+                ExprKind::Index { base, index } => self.cx.tuple([
+                    base.map(expr_ty).unwrap_or(self.cx.unknown()),
+                    index.map(expr_ty).unwrap_or(self.cx.unknown()),
+                ]),
+                _ => unreachable!("pending index owns an index expression"),
             },
             DeferredKind::Pattern { expected, .. } => *expected,
             DeferredKind::IteratorItem { iterable, .. } => expr_ty(*iterable),
@@ -375,55 +384,59 @@ where
             } => self
                 .try_infer_pat(*pat, expected, *default_ref)
                 .context("project pending pattern"),
-            DeferredKind::Member { expr } => {
-                let base = match self.body.expr_unchecked(*expr).kind {
-                    ExprKind::Field {
-                        base: Some(base), ..
-                    }
-                    | ExprKind::Index {
-                        base: Some(base), ..
-                    } => base,
-                    _ => return Ok(true),
+            DeferredKind::Field { expr } => {
+                let ExprKind::Field {
+                    base: Some(base),
+                    field: Some(ref field),
+                    ..
+                } = self.body.expr_unchecked(*expr).kind
+                else {
+                    return Ok(true);
                 };
                 crate::profile::metric::PROJECTION_ATTEMPTS.inc();
                 let base_ty = self
                     .inference
                     .table()
                     .canonicalize(&self.inference.expr_ty(base));
-                let ty = match &self.body.expr_unchecked(*expr).kind {
-                    ExprKind::Field {
-                        field: Some(field), ..
-                    } => {
-                        let target = self
-                            .context
-                            .live()
-                            .field(base_ty, field, self.inference.table())
-                            .context("project field")?;
-                        target.map(|(resolution, ty)| {
-                            self.inference.set_expr_resolution(*expr, resolution);
-                            ty
-                        })
-                    }
-                    ExprKind::Index { .. } => {
-                        let mut ty = base_ty;
-                        while let TyShape::Reference { inner, .. } = ty.shape() {
-                            ty = inner;
-                        }
-                        match ty.shape() {
-                            TyShape::Array { inner, .. } | TyShape::Slice(inner) => Some(inner),
-                            _ => None,
-                        }
-                    }
-                    _ => return Ok(true),
-                };
-                if let Some(ty) = ty {
+                let target = self
+                    .context
+                    .live()
+                    .field(base_ty, field, self.inference.table())
+                    .context("project field")?;
+                if let Some((resolution, ty)) = target {
                     // A projected `?T` is already useful: linking it to the destination carries
                     // future evidence without another lookup. Unknowns and associated types can
                     // still need another projection after the base type changes.
-                    self.inference.set_expr_ty(*expr, ty);
+                    self.inference.set_expr_facts(*expr, resolution, ty);
                     return Ok(!ty.has_unknown() && !ty.has_projection());
                 }
                 Ok(false)
+            }
+            DeferredKind::Index { expr } => {
+                let ExprKind::Index {
+                    base: Some(base),
+                    index: Some(index),
+                } = self.body.expr_unchecked(*expr).kind
+                else {
+                    return Ok(true);
+                };
+                crate::profile::metric::PROJECTION_ATTEMPTS.inc();
+                let base = self.inference.expr_slot(base);
+                let index = self.inference.expr_slot(index);
+                let Some(target) = self
+                    .context
+                    .live()
+                    .index(base, index, self.inference.table())
+                    .context("select indexing receiver")?
+                else {
+                    return Ok(false);
+                };
+                self.inference.table.adopt(target.table);
+                self.inference.set_expr_ty(*expr, target.output);
+                // The receiver is established. Fulfillment owns the projection from here,
+                // including later changes to the index and output's generic arguments.
+                // TODO: Validate mutable places with IndexMut when that pass is available.
+                Ok(true)
             }
             DeferredKind::IteratorItem { iterable, item } => {
                 // The lang item identifies `IntoIterator::into_iter`. Its trait owner supplies

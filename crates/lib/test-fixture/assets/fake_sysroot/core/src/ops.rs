@@ -41,3 +41,9 @@ pub struct RangeToInclusive<Idx> {
 
 #[lang = "RangeFull"]
 pub struct RangeFull;
+
+#[lang = "index"]
+pub trait Index<Idx: ?crate::marker::Sized> {
+    type Output: ?crate::marker::Sized;
+    fn index(&self, index: Idx) -> &Self::Output;
+}

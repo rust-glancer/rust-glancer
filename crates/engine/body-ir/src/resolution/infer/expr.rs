@@ -241,8 +241,8 @@ where
                 self.infer_optional(index, &self.cx.unknown())
                     .context("infer optional expression")?;
                 self.inference.expr_slot(expr);
-                if base.is_some() {
-                    self.run_or_defer(DeferredKind::Member { expr })
+                if base.is_some() && index.is_some() {
+                    self.run_or_defer(DeferredKind::Index { expr })
                         .context("register pending inference")?;
                 }
             }
@@ -251,7 +251,7 @@ where
                     .context("infer optional expression")?;
                 self.inference.expr_slot(expr);
                 if base.is_some() {
-                    self.run_or_defer(DeferredKind::Member { expr })
+                    self.run_or_defer(DeferredKind::Field { expr })
                         .context("register pending inference")?;
                 }
             }

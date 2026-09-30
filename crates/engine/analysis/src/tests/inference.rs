@@ -409,6 +409,365 @@ pub fn use_it() {
 }
 
 #[test]
+fn infers_standard_index_outputs_from_the_index_type() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_outputs");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_index_outputs"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const LENGTH: usize = 4;
+pub fn symbolic_lengths<const N: usize>() {
+    let named = [1_u8; LENGTH][0$named_length_index$]$named_length_output$;
+    let generic = [1_u16; N][0$generic_length_index$]$generic_length_output$;
+}
+
+pub fn use_it(mut bytes: [u8; 4], slice: &[u16], text: &str) {
+    let index = 1$scalar_index$;
+    let element = (&bytes[index])$element$;
+    let array_ranges = (
+        &bytes[1..3], &bytes[1..], &bytes[..3],
+        &bytes[1..=2], &bytes[..=2], &bytes[..],
+    )$array_ranges$;
+    let slice_ranges = (
+        &slice[1..3], &slice[1..], &slice[..3],
+        &slice[1..=2], &slice[..=2], &slice[..],
+    )$slice_ranges$;
+    let string_ranges = (
+        &text[1..3], &text[1..], &text[..3],
+        &text[1..=2], &text[..=2], &text[..],
+    )$string_ranges$;
+    let mutable = (&mut bytes[1..])$mutable$;
+    let start = 1$endpoint$;
+    let bounds = (start..)$bounds$;
+    let indirect = (&slice[bounds])$indirect$;
+}
+"#,
+        &[
+            ty("scalar index", "scalar_index"),
+            ty("element reference", "element"),
+            ty("all array range forms", "array_ranges"),
+            ty("all slice range forms", "slice_ranges"),
+            ty("all string range forms", "string_ranges"),
+            ty("mutable slice reference", "mutable"),
+            ty("endpoint inferred from indexing", "endpoint"),
+            ty("stored range", "bounds"),
+            ty("indexing with stored range", "indirect"),
+            ty("named array length output", "named_length_output"),
+            ty("named array length index", "named_length_index"),
+            ty("generic array length output", "generic_length_output"),
+            ty("generic array length index", "generic_length_index"),
+        ],
+        expect![[r#"
+            scalar index
+            - usize
+
+            element reference
+            - &u8
+
+            all array range forms
+            - (&[u8], &[u8], &[u8], &[u8], &[u8], &[u8])
+
+            all slice range forms
+            - (&[u16], &[u16], &[u16], &[u16], &[u16], &[u16])
+
+            all string range forms
+            - (&str, &str, &str, &str, &str, &str)
+
+            mutable slice reference
+            - &mut [u8]
+
+            endpoint inferred from indexing
+            - usize
+
+            stored range
+            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
+
+            indexing with stored range
+            - &[u16]
+
+            named array length output
+            - u8
+
+            named array length index
+            - usize
+
+            generic array length output
+            - u16
+
+            generic array length index
+            - usize
+        "#]],
+    );
+}
+
+#[test]
+fn selects_index_receivers_with_isolated_live_evidence() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_receivers");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_index_receivers"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::ops::{Deref, Index};
+pub struct Key;
+pub struct Store<T>(T);
+impl<T> Index<Key> for Store<T> {
+    type Output = T;
+    fn index(&self, _: Key) -> &T { &self.0 }
+}
+pub struct Wrapper<T>(Store<T>);
+impl<T> Deref for Wrapper<T> { type Target = Store<T>; }
+pub struct Preferred<T>(Store<T>);
+impl<T> Deref for Preferred<T> { type Target = Store<T>; }
+impl<T> Index<Key> for Preferred<T> { type Output = u32; }
+
+pub trait Marker {}
+impl Marker for u32 {}
+pub struct Bytes;
+impl Index<u16> for Bytes { type Output = u8; }
+pub struct Conditional<T>(T);
+impl<T: Marker> Index<T> for Conditional<T> { type Output = u32; }
+impl<T> Deref for Conditional<T> { type Target = Bytes; }
+pub fn make<T>() -> T { loop {} }
+
+pub fn use_it(store: Store<u8>, wrapper: Wrapper<u8>, preferred: Preferred<u8>, conditional: Conditional<u8>) {
+    let direct = store[Key]$direct$;
+    let dereferenced = wrapper[Key]$deref$;
+    let preferred = preferred[Key]$preferred$;
+    let index = make();
+    let fallback = conditional[index]$fallback$;
+    index$index$;
+}
+pub fn generic<C: Index<I, Output = T>, I, T>(container: C, index: I) -> T {
+    container[index]$generic$
+}
+pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
+    pointer[Key]$deref_bound$;
+}
+"#,
+        &[
+            ty("custom index type", "direct"),
+            ty("index through Deref", "deref"),
+            ty("direct Index before Deref", "preferred"),
+            ty("Deref after rejected Index bound", "fallback"),
+            ty("index unaffected by rejected receiver", "index"),
+            ty("generic Index bound", "generic"),
+            ty("generic Deref bound", "deref_bound"),
+        ],
+        expect![[r#"
+            custom index type
+            - u8
+
+            index through Deref
+            - u8
+
+            direct Index before Deref
+            - u32
+
+            Deref after rejected Index bound
+            - u8
+
+            index unaffected by rejected receiver
+            - u16
+
+            generic Index bound
+            - param T
+
+            generic Deref bound
+            - u8
+        "#]],
+    );
+}
+
+#[test]
+fn indexes_arrays_through_slice_impls_of_the_identified_trait() {
+    // Only the slice implements the operator here, so this exercises the unsizing alternative
+    // independently of core's blanket array impl. The renamed trait checks language identity.
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_index_unsizing"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[lang = "index"]
+pub trait Project<I> { type Output; }
+impl<T> Project<usize> for [T] { type Output = T; }
+pub fn use_it(array: [u8; 3]) {
+    let value = array[0$index$]$output$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("array through slice implementation", "output"),
+            AnalysisQuery::ty("index argument", "index"),
+        ],
+        expect![[r#"
+            array through slice implementation
+            - u8
+
+            index argument
+            - usize
+        "#]],
+    );
+}
+
+#[test]
+fn refines_indexing_from_later_operand_and_output_evidence() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_evidence");
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_index_evidence"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::ops::Index;
+pub struct User { pub id: u32 }
+impl User { pub fn id(&self) -> u32 { self.id } }
+pub trait Marker {}
+impl Marker for User {}
+impl Marker for u8 {}
+pub struct Bag<T>(T);
+impl<T: Marker> Index<usize> for Bag<T> {
+    type Output = T;
+    fn index(&self, _: usize) -> &T { &self.0 }
+}
+pub fn consume<T: Marker>(value: &T) -> u32 { 0 }
+pub struct Store;
+impl Index<bool> for Store { type Output = User; }
+impl Index<usize> for Store { type Output = u8; }
+pub struct Stop;
+impl Index<usize> for Stop { type Output = !; }
+pub fn make<T>() -> T { loop {} }
+pub fn require_index(index: bool) {}
+pub fn require_base(base: &Store) {}
+pub fn require_stop(base: &Stop) {}
+
+pub fn later_index(store: Store) {
+    let index = make();
+    let user = &store[index]$index_output$;
+    let field = user.id$field$;
+    let method = user.id()$method$;
+    let consumed = consume(user)$obligation$;
+    require_index(index);
+    index$index$;
+}
+pub fn later_base() {
+    let base = make()$base$;
+    let user = &base[true]$base_output$;
+    require_base(&base);
+}
+pub fn later_output(user: User) {
+    let mut array = [Vec::new()]$array_initializer$;
+    array[0]$array_output$.push(user);
+    array$array$;
+}
+pub fn later_never() {
+    let base = make();
+    let value$value$: u8 = base[0]$never$;
+    require_stop(&base);
+}
+pub fn output_drives_bound() {
+    let bag$bag$ = Bag(make());
+    let value: u8 = bag[0$bound_index$]$bound_output$;
+    let via_method$method_bag$ = Bag(make());
+    let value: &u8 = via_method.index(0)$method_output$;
+}
+"#,
+        &[
+            ty("output after later index evidence", "index_output"),
+            ty("dependent field", "field"),
+            ty("dependent method", "method"),
+            ty("dependent trait obligation", "obligation"),
+            ty("refined index", "index"),
+            ty("refined base", "base"),
+            ty("output after later base evidence", "base_output"),
+            ty(
+                "array initializer refined by output use",
+                "array_initializer",
+            ),
+            ty(
+                "indexed collection refined by method argument",
+                "array_output",
+            ),
+            ty("refined array binding", "array"),
+            ty("diverging output", "never"),
+            ty("coerced binding", "value"),
+            ty("receiver refined through pending bound", "bag"),
+            ty("index refined through pending bound", "bound_index"),
+            ty("output refining pending bound", "bound_output"),
+            ty("equivalent method receiver", "method_bag"),
+            ty("equivalent method output", "method_output"),
+        ],
+        expect![[r#"
+            output after later index evidence
+            - nominal struct analysis_index_evidence[lib]::crate::User
+
+            dependent field
+            - u32
+
+            dependent method
+            - u32
+
+            dependent trait obligation
+            - u32
+
+            refined index
+            - bool
+
+            refined base
+            - nominal struct analysis_index_evidence[lib]::crate::Store
+
+            output after later base evidence
+            - nominal struct analysis_index_evidence[lib]::crate::User
+
+            array initializer refined by output use
+            - [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1]
+
+            indexed collection refined by method argument
+            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
+
+            refined array binding
+            - [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1]
+
+            diverging output
+            - !
+
+            coerced binding
+            - u8
+
+            receiver refined through pending bound
+            - nominal struct analysis_index_evidence[lib]::crate::Bag<u8>
+
+            index refined through pending bound
+            - usize
+
+            output refining pending bound
+            - u8
+
+            equivalent method receiver
+            - nominal struct analysis_index_evidence[lib]::crate::Bag<u8>
+
+            equivalent method output
+            - &u8
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_let_annotation_expected_types_through_tuple_expressions() {
     check_analysis_queries(
         r#"
@@ -2453,12 +2812,6 @@ pub fn tuple_field(user: User) {
     pair.0$type_pair_field$.push(user);
     pair$type_pair_read$;
 }
-
-pub fn array_index(user: User) {
-    let array = [Vec::new()]$type_array_initializer$;
-    array[0]$type_array_index$.push(user);
-    array$type_array_read$;
-}
 "#,
         &[
             AnalysisQuery::ty("declared field owner initializer", "type_boxed_initializer"),
@@ -2473,9 +2826,6 @@ pub fn array_index(user: User) {
             AnalysisQuery::ty("tuple owner initializer", "type_pair_initializer"),
             AnalysisQuery::ty("tuple field projection", "type_pair_field"),
             AnalysisQuery::ty("tuple owner read", "type_pair_read"),
-            AnalysisQuery::ty("array owner initializer", "type_array_initializer"),
-            AnalysisQuery::ty("array index projection", "type_array_index"),
-            AnalysisQuery::ty("array owner read", "type_array_read"),
         ],
         expect![[r#"
             declared field owner initializer
@@ -2504,15 +2854,6 @@ pub fn array_index(user: User) {
 
             tuple owner read
             - (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,)
-
-            array owner initializer
-            - [nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>; 1]
-
-            array index projection
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            array owner read
-            - [nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>; 1]
         "#]],
     );
 }

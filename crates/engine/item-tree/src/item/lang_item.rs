@@ -50,6 +50,8 @@ pub enum LangItem {
     RangeInclusive,
     RangeToInclusive,
     RangeFull,
+    /// The trait supplying the place type of `base[index]`.
+    Index,
 }
 
 impl LangItem {
@@ -57,7 +59,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -79,6 +81,7 @@ impl LangItem {
         Self::RangeInclusive,
         Self::RangeToInclusive,
         Self::RangeFull,
+        Self::Index,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -112,6 +115,7 @@ impl LangItem {
             "RangeInclusive" => Self::RangeInclusive,
             "RangeToInclusive" => Self::RangeToInclusive,
             "RangeFull" => Self::RangeFull,
+            "index" => Self::Index,
             _ => return None,
         })
     }
