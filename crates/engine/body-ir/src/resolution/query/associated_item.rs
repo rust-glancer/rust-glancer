@@ -441,7 +441,7 @@ where
         Ok(items)
     }
 
-    /// Adapt matched functions into static associated-call candidates.
+    /// Adapt matched functions into associated-function candidates.
     fn associated_function_candidates_for_matches(
         &self,
         receiver: &BodyReceiverImplMatches,
@@ -457,7 +457,7 @@ where
         )
     }
 
-    /// Adapt function declarations from a matched impl universe into static callables.
+    /// Adapt function declarations from a matched impl universe into callables.
     fn associated_function_candidates(
         &self,
         receiver_ty: &Ty,
@@ -469,12 +469,13 @@ where
         let impl_query = self.context.impl_query();
         let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
+        // A method with `self` can also be named as `Type::method`, including when the path
+        // is stored without calling it. Its receiver parameter does not restrict path lookup.
         for function in impl_query.function_candidates_for_matches(matches, Some(name))? {
             let Some(function_data) = item_query.function_data(function.function())? else {
                 continue;
             };
             if function_data.name != name
-                || function_data.has_self_receiver()
                 || body_receiver.is_some_and(|receiver| {
                     receiver.saved_inherent_function_is_shadowed(&function, &function_data.name)
                 })
@@ -495,7 +496,7 @@ where
         Ok(functions)
     }
 
-    /// Find static functions from the trait impls selected by `<Self as Trait>::item`.
+    /// Find functions from the trait impls selected by `<Self as Trait>::item`.
     fn qualified_trait_function_candidates(
         &self,
         selection: &BodyQualifiedTraitSelection,

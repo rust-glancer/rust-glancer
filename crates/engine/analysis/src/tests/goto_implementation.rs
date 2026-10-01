@@ -397,6 +397,8 @@ pub fn override_call<T: Overridden>(value: T) { value.ma$dot_override$ke(); }
             AnalysisQuery::goto_impl("explicit override from inherited default call", "override"),
             AnalysisQuery::goto_impl("explicit override from generic call", "dot_override"),
             AnalysisQuery::goto("definition of inherited default", "qualified_default"),
+            // The empty implementation result must come from a resolved default method.
+            AnalysisQuery::goto("definition of standalone default", "default_path"),
         ],
         expect![[r#"
             default-only declaration
@@ -418,6 +420,9 @@ pub fn override_call<T: Overridden>(value: T) { value.ma$dot_override$ke(); }
             - fn make @ 9:34-9:38
 
             definition of inherited default
+            - fn make @ 3:28-3:32
+
+            definition of standalone default
             - fn make @ 3:28-3:32
         "#]],
     );
