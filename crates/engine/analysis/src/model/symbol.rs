@@ -1,8 +1,8 @@
 use rg_ir_model::{
-    FieldKey, ModuleRef, Path, Span,
+    BodyRef, DefMapRef, FieldKey, ModuleRef, Path, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
-use rg_ir_view::source::IndexedTypePath;
+use rg_ir_view::source::{IndexedTypePath, IndexedTypePathScope};
 
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,4 +40,28 @@ pub enum SymbolAt {
         path: Path,
         span: Span,
     },
+}
+
+impl SymbolAt {
+    /// Keep the source body's identity even when the symbol resolves to a crate-level item.
+    /// Signature paths on body-local items get that identity from their declaring module.
+    pub(crate) fn body_ref(&self) -> Option<BodyRef> {
+        let origin = match self {
+            Self::FunctionBody { body } => DefMapRef::Body(body.body_ir()),
+            Self::Declaration { declaration, .. } => declaration.origin(),
+            Self::Expr { expr } => DefMapRef::Body(expr.body_ir()),
+            Self::TypePath { type_path, .. } => match type_path.scope() {
+                IndexedTypePathScope::Body(scope) => DefMapRef::Body(scope.body_ir()),
+                IndexedTypePathScope::Signature(scope) => scope.context().module.origin,
+            },
+            Self::ValuePath { scope, .. } | Self::RecordField { scope, .. } => {
+                DefMapRef::Body(scope.body_ir())
+            }
+            Self::UsePath { module, .. } => module.origin,
+        };
+        match origin {
+            DefMapRef::Body(body) => Some(body),
+            DefMapRef::Crate(_) => None,
+        }
+    }
 }

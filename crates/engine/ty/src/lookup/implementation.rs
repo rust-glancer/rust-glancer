@@ -5,9 +5,7 @@
 //! shape that UI-facing analysis expects.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{
-    AssocItemId, FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef,
-};
+use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, OperationError, UniqueVec};
 
@@ -170,118 +168,83 @@ where
         Ok(impls)
     }
 
-    /// Returns impl blocks that resolve to the requested trait.
+    /// Return all impls of a trait in the use-site crate and its supplied body scope.
+    ///
+    /// Trait-name navigation and method navigation must see the same declarations. The body
+    /// resolver owns local-store discovery, including enclosing body-local modules; this query
+    /// only merges those candidates with the saved crate indexes.
     pub fn impls_for_trait(
         &self,
         trait_ref: TraitDefRef,
+        scope: Option<&impl SolverScope<Error = D::Error>>,
     ) -> Result<UniqueVec<ImplRef>, OperationError<D::Error>> {
         let mut impls = UniqueVec::new();
         for candidate in self.context.item_lookup().impls_for_trait(trait_ref) {
             rg_std::check_cancel!(self.context, "implementation candidates");
             impls.push(candidate);
         }
+        if let Some(scope) = scope {
+            for candidate in scope
+                .local_trait_impls(trait_ref)
+                .map_err(OperationError::Source)?
+            {
+                rg_std::check_cancel!(self.context, "implementation candidates");
+                impls.push(candidate.impl_ref);
+            }
+        }
         rg_std::check_cancel!(self.context, "implementation candidates");
         Ok(impls)
     }
 
-    /// Returns concrete functions that implement or correspond to the selected function.
+    /// Return the explicit implementations of a function in the supplied lookup scope.
     ///
-    /// Trait methods expand to matching impl methods. Impl methods are already concrete
-    /// implementations and are returned as-is. Free functions do not have implementations.
+    /// Both `Named::name` and `name` inside `impl Named for User` identify the same trait
+    /// member. Once that identity is known, every impl can contribute its written method,
+    /// regardless of the receiver or generic arguments used to resolve the original call.
+    /// An inherent method already is its implementation; a free function has no impls.
     pub fn function_implementations(
         &self,
         function: FunctionRef,
-        receiver_ty: Option<&Ty>,
+        scope: Option<&impl SolverScope<Error = D::Error>>,
     ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        let Some(data) = self
-            .context
-            .item_paths()
-            .items()
+        let items = self.context.item_paths().items();
+        let Some(data) = items
             .function_data(function)
             .map_err(OperationError::Source)?
         else {
             return Ok(UniqueVec::new());
         };
 
-        match data.owner {
-            ItemOwner::Trait(trait_id) => self.impl_methods_for_trait_method(
-                TraitDefRef {
-                    origin: function.origin,
-                    id: trait_id,
-                },
-                data.name.as_str(),
-                receiver_ty,
-            ),
-            ItemOwner::Impl(_) => Ok([function].into_iter().collect()),
-            ItemOwner::Module(_) => Ok(UniqueVec::new()),
-        }
-    }
-
-    /// Returns impl methods matching a trait method, optionally narrowed to one receiver type.
-    pub fn impl_methods_for_trait_method(
-        &self,
-        trait_ref: TraitDefRef,
-        method_name: &str,
-        receiver_ty: Option<&Ty>,
-    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        match receiver_ty {
-            Some(receiver_ty) => {
-                self.impl_methods_for_trait_method_receiver(trait_ref, method_name, receiver_ty)
-            }
-            None => self.impl_methods_for_trait_method_any_receiver(trait_ref, method_name),
-        }
-    }
-
-    fn impl_methods_for_trait_method_receiver(
-        &self,
-        trait_ref: TraitDefRef,
-        method_name: &str,
-        receiver_ty: &Ty,
-    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        let declarations = SemanticDeclarations::new(&self.context, self.context.item_paths());
-        declarations
-            .with_table(|table, params| {
-                let receiver = table.interner().lower_ty(receiver_ty, params);
-                let mut functions = UniqueVec::new();
-                for receiver in table.method_receivers(receiver) {
-                    rg_std::check_cancel!(self.context, "implementation candidates");
-                    let Some(ty) = receiver.as_adt() else {
-                        continue;
-                    };
-                    for trait_impl in self.context.item_lookup().trait_impls_for_type(ty.def)? {
-                        rg_std::check_cancel!(self.context, "implementation candidates");
-                        if trait_impl.trait_ref != trait_ref
-                            || table
-                                .select_impl(trait_impl.impl_ref, receiver, None)
-                                .is_none()
-                        {
-                            continue;
-                        }
-                        for function in
-                            self.matching_impl_methods(trait_impl.impl_ref, method_name)?
-                        {
-                            functions.push(function);
-                        }
-                    }
+        let trait_ref = match data.owner {
+            ItemOwner::Trait(id) => TraitDefRef {
+                origin: function.origin,
+                id,
+            },
+            ItemOwner::Impl(id) => {
+                let Some(implementation) = items
+                    .impl_data(ImplRef {
+                        origin: function.origin,
+                        id,
+                    })
+                    .map_err(OperationError::Source)?
+                else {
+                    return Ok(UniqueVec::new());
+                };
+                if implementation.trait_ref.is_none() {
+                    return Ok([function].into_iter().collect());
                 }
-                rg_std::check_cancel!(self.context, "implementation candidates");
-                Ok(functions)
-            })
-            .map_err(OperationError::Source)?
-    }
-
-    fn impl_methods_for_trait_method_any_receiver(
-        &self,
-        trait_ref: TraitDefRef,
-        method_name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, OperationError<D::Error>> {
-        let mut functions = UniqueVec::new();
-        for impl_ref in self.impls_for_trait(trait_ref)? {
-            rg_std::check_cancel!(self.context, "implementation candidates");
-            for function in self.matching_impl_methods(impl_ref, method_name)? {
-                rg_std::check_cancel!(self.context, "implementation candidates");
-                functions.push(function);
+                let Some(trait_ref) = implementation.resolved_trait_ref.as_option() else {
+                    return Ok(UniqueVec::new());
+                };
+                *trait_ref
             }
+            ItemOwner::Module(_) => return Ok(UniqueVec::new()),
+        };
+
+        let mut functions = UniqueVec::new();
+        for impl_ref in self.impls_for_trait(trait_ref, scope)? {
+            rg_std::check_cancel!(self.context, "implementation candidates");
+            functions.extend(self.matching_impl_methods(impl_ref, data.name.as_str())?);
         }
         rg_std::check_cancel!(self.context, "implementation candidates");
         Ok(functions)
@@ -303,15 +266,8 @@ where
         };
 
         let mut functions = UniqueVec::new();
-        for item in &data.items {
+        for function in data.functions() {
             rg_std::check_cancel!(self.context, "implementation candidates");
-            let &AssocItemId::Function(id) = item else {
-                continue;
-            };
-            let function = FunctionRef {
-                origin: impl_ref.origin,
-                id,
-            };
             let Some(function_data) = self
                 .context
                 .item_paths()

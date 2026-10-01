@@ -1,7 +1,7 @@
 //! Goto-implementation query flow.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId};
+use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
 use rg_ir_view::implementation::ImplementationView;
 use rg_std::UniqueVec;
 
@@ -32,29 +32,35 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
 
         let implementations = ImplementationView::new(self.0.view_db());
         let source_symbols = SourceSymbolResolver::new(self.0.view_db());
-        // A dot call supplies a receiver that can narrow the possible implementations. Keep
-        // all matching methods here; unlike definition navigation, this query need not prove
-        // one complete trait application. Associated calls continue through their declarations.
-        if let Some(call) = source_symbols
+        // Keep the use site's body even when the selected trait lives at module level.
+        // Its local impls also matter for a trait path in an impl header or a standalone method
+        // path, so obtaining this context must not depend on finding an enclosing call.
+        let body_ref = symbol.body_ref();
+
+        // Final call facts identify the trait chosen by inference. Use that identity, but not
+        // its Self or generic arguments: all impls of this trait can implement the method.
+        // Declarations and standalone method paths join the same expansion below.
+        let call = source_symbols
             .call_for_symbol(&symbol)
-            .context("resolve implementation call context")?
-            && let Some(declarations) = implementations
-                .method_call_implementations(&call)
-                .context("find method call implementations")?
-        {
-            return NavigationTargetProjection::new(self.0.view_db())
-                .targets_for_declarations(declarations);
-        }
-
+            .context("resolve implementation call context")?;
+        let selected = match call.as_ref().and_then(|call| call.facts()) {
+            Some(facts) => vec![DeclarationRef::from(facts.function())],
+            None => source_symbols.declarations_for_symbol(symbol.clone())?,
+        };
         let mut declarations = UniqueVec::new();
-        for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
-            declarations
-                .extend(implementations.implementations_for_declaration(crate_ref, declaration)?);
+        let mut handled = false;
+        for declaration in selected {
+            if let Some(targets) =
+                implementations.implementations_for_declaration(crate_ref, body_ref, declaration)?
+            {
+                handled = true;
+                declarations.extend(targets);
+            }
         }
 
-        if declarations.is_empty()
-            && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
-        {
+        // An empty method answer is complete. Only symbols without declaration-based
+        // implementation navigation may fall back to impls of their inferred type.
+        if !handled && let Some(ty) = source_symbols.ty_for_symbol(symbol)? {
             declarations.extend(implementations.implementations_for_ty(crate_ref, &ty)?);
         }
 

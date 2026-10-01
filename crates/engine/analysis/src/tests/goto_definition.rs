@@ -786,7 +786,7 @@ pub fn use_it(source: Source) {
             AnalysisQuery::goto("associated conversion", "associated"),
             AnalysisQuery::goto("borrowed conversion", "borrowed"),
             AnalysisQuery::resolve("resolve selected call symbol", "wide"),
-            AnalysisQuery::goto_impl("conversion implementations for receiver", "wide"),
+            AnalysisQuery::goto_impl("all implementations of the conversion method", "wide"),
         ],
         expect![[r#"
             wide conversion
@@ -807,7 +807,7 @@ pub fn use_it(source: Source) {
             resolve selected call symbol
             - fn convert @ 8:8-8:15
 
-            conversion implementations for receiver
+            all implementations of the conversion method
             - fn convert @ 8:8-8:15
             - fn convert @ 12:8-12:15
         "#]],

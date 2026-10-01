@@ -1,8 +1,7 @@
 //! Crate-scoped item lookup.
 
 use rg_def_map::{DefMapQuery, DefMapSource};
-use rg_ir_model::{CrateRef, DefMapRef, ImplRef, TraitDefRef};
-use rg_std::UniqueVec;
+use rg_ir_model::CrateRef;
 
 use super::{ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
 use crate::{ItemLookupIndex, ItemStore};
@@ -66,32 +65,5 @@ where
             .map_err(rg_std::OperationError::Source)?;
         self.items
             .indexes_for_crates(crates.as_slice(), cancellation)
-    }
-
-    /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.
-    pub fn impls_for_trait(&self, trait_ref: TraitDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
-        let mut impls = UniqueVec::new();
-        for store in self.impl_stores_for_origin(trait_ref.origin)? {
-            for (impl_ref, data) in store.impls_with_refs() {
-                if data.resolved_trait_ref.is(&trait_ref) {
-                    impls.push(impl_ref);
-                }
-            }
-        }
-        Ok(impls)
-    }
-
-    /// Crate-origin impl lookup sees the use-site crate's visible semantic stores; body-local refs
-    /// stay scoped to their owning body store.
-    fn impl_stores_for_origin(&self, origin: DefMapRef) -> Result<Vec<&'item ItemStore>, I::Error> {
-        if origin.as_crate_ref().is_some() {
-            return self.visible_stores();
-        }
-
-        Ok(self
-            .items
-            .item_store_for_origin(origin)?
-            .into_iter()
-            .collect::<Vec<_>>())
     }
 }

@@ -1,13 +1,13 @@
 //! Implementation lookup over indexed views.
 //!
 //! Definition navigation can select one impl from a call's facts; goto-implementation can collect
-//! several possible impls. Both need crate item indexes and body expression facts, so this view
-//! keeps those storage-shaped queries out of analysis.
+//! all explicit impl methods of a trait. Both need crate item indexes and body expression facts,
+//! so this view keeps those storage-shaped queries out of analysis.
 
 use anyhow::Context as _;
 use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, FunctionRef, ItemOwner, SemanticItemRef, TraitDefRef, TypeDefRef,
+    BodyRef, CrateRef, DefMapRef, FunctionRef, ItemOwner, SemanticItemRef, TypeDefRef,
     identity::DeclarationRef,
 };
 use rg_semantic_ir::ItemStoreQuery;
@@ -57,149 +57,113 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         // An impl may be declared inside this body or require a bound from the enclosing
         // function. Give impl selection that context along with the saved crate declarations.
         let body_ref = call.expr.body_ir();
-        let lookup = self
-            .db
-            .item_lookup_query(body_ref.crate_ref)
+        let context = self
+            .type_context(body_ref.crate_ref)
             .context("assemble call impl lookup")?;
         let scope = BodyResolutionContext::new(
             self.db,
             self.db,
             body_ref,
             call.body.structure(),
-            &lookup,
+            context.item_lookup(),
             self.db.cancellation().clone(),
         );
-        let query = ImplementationQuery::new(TyContext::new(
-            self.db,
-            self.db,
-            lookup,
-            body_ref.crate_ref,
-            self.db.cancellation().clone(),
-        ));
-        query
+        ImplementationQuery::new(context)
             .selected_call_implementation(facts.function(), facts.generic_args(), &scope)
             .context("select call implementation")
     }
 
-    /// Find possible impl methods using the receiver written before the dot in `user.name()`.
+    /// Return implementations for a declaration, retaining a completed empty answer.
     ///
-    /// This can return several candidates, even when the full trait application is not known.
-    /// Associated calls have no dot receiver and use declaration-based implementation lookup.
-    pub fn method_call_implementations(
-        &self,
-        call: &BodyCallView<'_>,
-    ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
-        let Some(receiver) = call.receiver else {
-            return Ok(None);
-        };
-        let receiver_ty = call.body.expr_ty(receiver);
-        // Prefer the function selected for the call. If substitutions were not recorded, its
-        // expression may still name declarations that we can search using the receiver alone.
-        let declarations = match call.facts() {
-            Some(facts) => vec![DeclarationRef::from(facts.function())],
-            None => ResolutionView::new(self.db)
-                .declarations_for_expr(call.expr)
-                .context("read method call declarations")?,
-        };
-        if declarations.is_empty() {
-            return Ok(None);
-        }
-
-        let implementation_query = self
-            .implementation_query(call.expr.body_ir().crate_ref)
-            .context("assemble method implementation lookup")?;
-        let mut implementations = UniqueVec::new();
-        for declaration in declarations {
-            let Some(function) = self
-                .function_ref_for_declaration(declaration)
-                .context("read implementation function declaration")?
-            else {
-                continue;
-            };
-            for implementation in implementation_query
-                .function_implementations(function, receiver_ty)
-                .context("find method call implementations")?
-            {
-                implementations.push(DeclarationRef::from(implementation));
-            }
-        }
-        Ok(Some(implementations))
-    }
-
-    /// Return implementations related to a declaration.
+    /// `Some(empty)` means that the declaration supports this query but has no targets. For
+    /// example, a default-only trait method must not fall through to impls of its return type.
+    /// `None` lets the caller ask a type-based question for other symbols, such as a field.
     pub fn implementations_for_declaration(
         &self,
         use_site: CrateRef,
+        body_ref: Option<BodyRef>,
         declaration: DeclarationRef,
-    ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
+    ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
+        let declaration = ResolutionView::new(self.db).canonical_declaration(declaration)?;
+        let context = self.type_context(use_site)?;
+
         let mut implementations = UniqueVec::new();
-        let implementation_query = self.implementation_query(use_site)?;
 
         match declaration {
-            DeclarationRef::Item(item) => match item {
-                SemanticItemRef::TypeDef(ty) => {
-                    if let DefMapRef::Body(body_ref) = ty.origin {
-                        self.push_body_local_impls_for_type_def(
-                            &mut implementations,
-                            body_ref,
-                            ty,
-                        )?;
-                    }
-                    for implementation in implementation_query.impls_for_type_def(ty)? {
-                        rg_std::check_cancel!(self.db, "implementation lookup");
-                        implementations.push(DeclarationRef::from(implementation));
-                    }
+            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => {
+                if let DefMapRef::Body(body_ref) = ty.origin {
+                    self.push_body_local_impls_for_type_def(&mut implementations, body_ref, ty)?;
                 }
-                SemanticItemRef::Trait(trait_ref) => {
-                    self.push_body_local_impls_for_trait(&mut implementations, trait_ref)?;
-                    for implementation in implementation_query.impls_for_trait(trait_ref)? {
-                        rg_std::check_cancel!(self.db, "implementation lookup");
-                        implementations.push(DeclarationRef::from(implementation));
-                    }
-                }
-                SemanticItemRef::Function(function) => {
-                    for implementation in
-                        implementation_query.function_implementations(function, None)?
-                    {
-                        implementations.push(DeclarationRef::from(implementation));
-                    }
-                }
-                SemanticItemRef::Impl(_)
-                | SemanticItemRef::TypeAlias(_)
-                | SemanticItemRef::Const(_)
-                | SemanticItemRef::Static(_) => {}
-            },
-            DeclarationRef::LocalDef(local_def) => {
-                let Some(function) =
-                    self.function_ref_for_declaration(DeclarationRef::local_def(local_def))?
-                else {
-                    return Ok(implementations);
-                };
-                for implementation in
-                    implementation_query.function_implementations(function, None)?
-                {
+                for implementation in ImplementationQuery::new(context).impls_for_type_def(ty)? {
+                    rg_std::check_cancel!(self.db, "implementation lookup");
                     implementations.push(DeclarationRef::from(implementation));
+                }
+            }
+            DeclarationRef::Item(
+                item @ (SemanticItemRef::Trait(_) | SemanticItemRef::Function(_)),
+            ) => {
+                // A call uses its surrounding body; a local declaration can also supply its
+                // owning body. Only trait and function lookup need this scope to discover
+                // local impls, including those in the owning modules of nested functions.
+                let body_ref = body_ref.or_else(|| match declaration.origin() {
+                    DefMapRef::Body(body) => Some(body),
+                    DefMapRef::Crate(_) => None,
+                });
+                let body = body_ref
+                    .map(|body| self.db.body_ir.body(body))
+                    .transpose()?
+                    .flatten();
+                let scope = body_ref.zip(body).map(|(body_ref, body)| {
+                    BodyResolutionContext::new(
+                        self.db,
+                        self.db,
+                        body_ref,
+                        body.structure(),
+                        context.item_lookup(),
+                        self.db.cancellation().clone(),
+                    )
+                });
+                let implementation_query = ImplementationQuery::new(context);
+                match item {
+                    SemanticItemRef::Trait(trait_ref) => {
+                        for implementation in
+                            implementation_query.impls_for_trait(trait_ref, scope.as_ref())?
+                        {
+                            rg_std::check_cancel!(self.db, "implementation lookup");
+                            implementations.push(DeclarationRef::from(implementation));
+                        }
+                    }
+                    SemanticItemRef::Function(function) => {
+                        for implementation in implementation_query
+                            .function_implementations(function, scope.as_ref())?
+                        {
+                            implementations.push(DeclarationRef::from(implementation));
+                        }
+                    }
+                    _ => unreachable!("body scope is only used for traits and functions"),
                 }
             }
             DeclarationRef::BodyBinding(binding) => {
                 let Some(body) = self.db.body_ir.body(binding.body)? else {
-                    return Ok(implementations);
+                    return Ok(Some(implementations));
                 };
                 let Some(binding_ty) = body.binding_ty(binding.binding) else {
-                    return Ok(implementations);
+                    return Ok(Some(implementations));
                 };
                 self.push_body_local_impls_for_ty(&mut implementations, binding.body, binding_ty)?;
-                for implementation in implementation_query.impls_for_ty(binding_ty)? {
+                for implementation in ImplementationQuery::new(context).impls_for_ty(binding_ty)? {
                     rg_std::check_cancel!(self.db, "implementation lookup");
                     implementations.push(DeclarationRef::from(implementation));
                 }
             }
             DeclarationRef::Module(_)
+            | DeclarationRef::LocalDef(_)
+            | DeclarationRef::Item(_)
             | DeclarationRef::Field(_)
-            | DeclarationRef::EnumVariant(_) => {}
+            | DeclarationRef::EnumVariant(_) => return Ok(None),
         }
 
-        Ok(implementations)
+        Ok(Some(implementations))
     }
 
     /// Return impl blocks that apply to a type.
@@ -209,7 +173,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &IndexedType,
     ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let mut implementations = UniqueVec::new();
-        let implementation_query = self.implementation_query(use_site)?;
+        let implementation_query = ImplementationQuery::new(self.type_context(use_site)?);
         for implementation in implementation_query.impls_for_ty(ty.raw())? {
             rg_std::check_cancel!(self.db, "implementation lookup");
             implementations.push(DeclarationRef::from(implementation));
@@ -255,62 +219,18 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(())
     }
 
-    /// Add impls declared next to a body-local trait.
-    fn push_body_local_impls_for_trait(
-        &self,
-        implementations: &mut UniqueVec<DeclarationRef>,
-        trait_ref: TraitDefRef,
-    ) -> anyhow::Result<()> {
-        let DefMapRef::Body(body_ref) = trait_ref.origin else {
-            return Ok(());
-        };
-        let Some(store) = self.db.body_ir.body_item_store(body_ref)? else {
-            return Ok(());
-        };
-
-        for (impl_ref, impl_data) in store.impls_with_refs() {
-            rg_std::check_cancel!(self.db, "implementation lookup");
-            if impl_data.resolved_trait_ref.is(&trait_ref) {
-                implementations.push(DeclarationRef::from(impl_ref));
-            }
-        }
-        Ok(())
-    }
-
-    /// Build the lower implementation query for one crate.
-    fn implementation_query(
+    /// Build one crate lookup context for implementation discovery or selection.
+    fn type_context(
         &self,
         use_site: CrateRef,
-    ) -> anyhow::Result<ImplementationQuery<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>> {
+    ) -> anyhow::Result<TyContext<'_, &IndexedViewDb<'_>, &IndexedViewDb<'_>>> {
         let item_lookup_query = self.db.item_lookup_query(use_site)?;
-        Ok(ImplementationQuery::new(TyContext::new(
+        Ok(TyContext::new(
             self.db,
             self.db,
             item_lookup_query,
             use_site,
             self.db.cancellation().clone(),
-        )))
-    }
-
-    /// Extract a function ref from a declaration when it denotes a function.
-    #[rg_std::cancelable("implementation lookup", token = self.db)]
-    fn function_ref_for_declaration(
-        &self,
-        declaration: DeclarationRef,
-    ) -> anyhow::Result<Option<FunctionRef>> {
-        match declaration {
-            DeclarationRef::LocalDef(local_def) => Ok(ItemStoreQuery::new(self.db)
-                .semantic_item_for_local_def(local_def)?
-                .and_then(|item| match item {
-                    SemanticItemRef::Function(function) => Some(function),
-                    _ => None,
-                })),
-            DeclarationRef::Item(SemanticItemRef::Function(function)) => Ok(Some(function)),
-            DeclarationRef::Module(_)
-            | DeclarationRef::Item(_)
-            | DeclarationRef::Field(_)
-            | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => Ok(None),
-        }
+        ))
     }
 }

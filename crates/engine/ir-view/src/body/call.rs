@@ -10,13 +10,12 @@ use crate::IndexedViewDb;
 ///
 /// In `user.name()`, the method name selects the call itself. In `User::name(&user)`, the
 /// selected path is a separate expression from the call. Keep that distinction here so callers
-/// can read the selected function, generic arguments, and receiver without rediscovering the
-/// expression layout. A call can still have declaration or receiver facts without `CallFacts`.
+/// can read the selected function and generic arguments without rediscovering the expression
+/// layout. A call can still have declaration facts without `CallFacts`.
 pub struct BodyCallView<'a> {
     pub(crate) expr: ExprRef,
     pub(crate) body: BodyView<'a>,
     call: ExprId,
-    pub(crate) receiver: Option<ExprId>,
 }
 
 impl<'a> BodyCallView<'a> {
@@ -31,8 +30,8 @@ impl<'a> BodyCallView<'a> {
         // An associated path gets its final substitutions from the enclosing call: the
         // arguments in `Convert::convert(&source)` can determine Self and the trait arguments.
         // Only follow direct callees. A path stored in a local variable has no such call context.
-        let (call, receiver) = match &data.kind {
-            ExprKind::MethodCall { receiver, .. } => (expr.expr_id(), *receiver),
+        let call = match &data.kind {
+            ExprKind::MethodCall { .. } => expr.expr_id(),
             ExprKind::Path { path } if path.split_associated_item_prefix_name().is_some() => {
                 let Some(call) = body.exprs().iter().position(|candidate| {
                     matches!(candidate.kind, ExprKind::Call { callee: Some(callee), .. }
@@ -40,17 +39,12 @@ impl<'a> BodyCallView<'a> {
                 }) else {
                     return Ok(None);
                 };
-                (ExprId(call), None)
+                ExprId(call)
             }
             _ => return Ok(None),
         };
 
-        Ok(Some(Self {
-            expr,
-            body,
-            call,
-            receiver,
-        }))
+        Ok(Some(Self { expr, body, call }))
     }
 
     pub fn facts(&self) -> Option<&'a CallFacts> {
