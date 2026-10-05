@@ -49,11 +49,17 @@ Minimal required configuration in settings (you need to disable rust-analyzer, w
 
 ## nvim
 
-There exists a [nvim-lspconfig configuration](https://github.com/neovim/nvim-lspconfig/pull/4512) contributed by
+There exists a [nvim-lspconfig configuration](https://github.com/neovim/nvim-lspconfig/blob/3e8d598d3b5f8338a41699c436e5fa11d2666cf0/lsp/rust_glancer.lua) contributed by
 [@h-michael](https://github.com/h-michael).
 
-At the time of writing, it does not support automatic fetching of binaries, so you can either
-[get a prebuilt binary from the releases page](https://github.com/rust-glancer/rust-glancer/releases) or build it yourself.
+It's also present in [mason registry](https://github.com/mason-org/mason-registry/blob/main/packages/rust-glancer/package.yaml), contributed by [@macroexpansion](https://github.com/macroexpansion).
+
+Currently I'm not maintaining these, so the pinned version might be outdated. I don't plan any client changes anytime soon, however, so feel free to grab the prebuilt version from the link below and configure Rust Glancer to use it.
+
+## Installing the server
+
+- You can fetch prebuilt binaries on the [releases page](https://github.com/rust-glancer/rust-glancer/releases).
+- For windows, there is [Scoop support](https://github.com/ScoopInstaller/Main/pull/8628) (at the time of writing, 0.3.0).
 
 ## Other editors
 
