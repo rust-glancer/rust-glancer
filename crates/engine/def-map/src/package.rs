@@ -20,6 +20,8 @@ use crate::map::DefMap;
 pub struct CrateData {
     cargo_target: CargoTargetId,
     target_kind: TargetKind,
+    // Const arithmetic must use the compilation target even when it differs from the host.
+    target_pointer_width: Option<u32>,
     name: String,
     root_module: Option<ModuleId>,
     // Crate-wide extern roots from Cargo dependencies and root `extern crate` declarations.
@@ -34,6 +36,7 @@ impl CrateData {
     pub fn new(
         cargo_target: CargoTargetId,
         target_kind: TargetKind,
+        target_pointer_width: Option<u32>,
         name: String,
         root_module: Option<ModuleId>,
         extern_prelude: HashMap<Name, ModuleRef>,
@@ -43,6 +46,7 @@ impl CrateData {
         Self {
             cargo_target,
             target_kind,
+            target_pointer_width,
             name,
             root_module,
             extern_prelude,
@@ -59,6 +63,10 @@ impl CrateData {
     /// Returns the Cargo target role whose language rules apply to this semantic crate.
     pub fn target_kind(&self) -> &TargetKind {
         &self.target_kind
+    }
+
+    pub fn target_pointer_width(&self) -> Option<u32> {
+        self.target_pointer_width
     }
 
     /// Whether this crate exposes proc-macro identities across its crate boundary.
@@ -118,10 +126,12 @@ impl CrateData {
 /// A source file can belong to more than one Cargo target, such as a library also compiled through
 /// an example target. This entry records every file mentioned by the crate's module origins so a
 /// query can choose all matching [`CrateRef`]s without reading their scopes. It also carries the
-/// proc-macro boundary and dependency identities needed by cross-crate item lookup.
+/// proc-macro boundary, target width for const arithmetic, and dependency identities needed by
+/// cross-crate item lookup.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateDefMapManifest {
     cargo_target: CargoTargetId,
+    target_pointer_width: Option<u32>,
     files: UniqueVec<FileId>,
     is_proc_macro: bool,
     item_lookup_dependencies: UniqueVec<CrateRef>,
@@ -130,6 +140,10 @@ pub struct CrateDefMapManifest {
 impl CrateDefMapManifest {
     pub fn cargo_target(&self) -> CargoTargetId {
         self.cargo_target
+    }
+
+    pub fn target_pointer_width(&self) -> Option<u32> {
+        self.target_pointer_width
     }
 
     pub fn files(&self) -> &[FileId] {
@@ -202,8 +216,9 @@ impl PackageDefMaps {
 
     /// Extracts the routing directory stored in front of the crate-granular DefMap payloads.
     ///
-    /// Only facts needed before an exact crate is known are copied here. Module scopes remain in
-    /// their crate payload so a package with many targets does not make every query pay for them.
+    /// Facts needed without reading module scopes are copied here, including target width for
+    /// literal arithmetic. Module scopes remain in their crate payload so a package with many
+    /// targets does not make every query pay for them.
     pub fn manifest(&self) -> PackageDefMapsManifest {
         let crates = self
             .crates
@@ -222,6 +237,7 @@ impl PackageDefMaps {
                 let files = files.into_iter().collect::<UniqueVec<_>>();
                 CrateDefMapManifest {
                     cargo_target: crate_data.cargo_target(),
+                    target_pointer_width: crate_data.target_pointer_width(),
                     files,
                     is_proc_macro: crate_data.is_proc_macro(),
                     item_lookup_dependencies: crate_data.item_lookup_dependencies(),

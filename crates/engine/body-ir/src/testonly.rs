@@ -151,6 +151,14 @@ impl DefMapSource for BodyIrFixture {
             .is_some_and(rg_def_map::CrateData::is_proc_macro))
     }
 
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
+        Ok(self
+            .def_map_db()
+            .resident_package(crate_ref.package)
+            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .and_then(rg_def_map::CrateData::target_pointer_width))
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,

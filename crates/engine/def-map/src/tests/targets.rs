@@ -1,8 +1,51 @@
 use expect_test::expect;
-use rg_workspace::TargetKind;
+use rg_cfg_eval::CfgOptions;
+use rg_workspace::{TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
+use test_fixture::fixture_crate;
 
 use super::utils;
-use crate::testonly::DefMapFixture;
+use crate::{DefMapLoader, DefMapSource, testonly::DefMapFixture};
+
+#[test]
+fn retains_compilation_target_width_without_loading_offloaded_scopes() {
+    let source = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "target_width"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {}
+"#,
+    );
+    let workspace = WorkspaceMetadata::lower(
+        source.metadata(),
+        CfgOptions::from_rustc_cfg_output("target_pointer_width=\"32\""),
+        WorkspaceLoweringConfig::default(),
+    )
+    .expect("fixture target metadata should lower");
+    let fixture = DefMapFixture::build_from_crate(source, workspace);
+    let crate_ref = fixture.crate_ref("target_width", TargetKind::Lib);
+    let mut db = fixture.def_map_db().clone();
+
+    for offload in [false, true] {
+        if offload {
+            db.offload_package(crate_ref.package)
+                .expect("fixture package should exist");
+        }
+        let read = db.read_txn(DefMapLoader::resident_only(
+            "target width needs no crate payload",
+        ));
+        assert_eq!(
+            read.target_pointer_width(crate_ref)
+                .expect("target width should be available"),
+            Some(32),
+            "compilation target width survives offloading: {offload}",
+        );
+    }
+}
 
 #[test]
 fn semantic_crates_retain_their_originating_cargo_targets() {

@@ -7,7 +7,10 @@ use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
-use crate::solver::{InferenceTable, OpaqueTy, Region, Ty};
+use crate::{
+    PrimitiveTy, UnsignedIntTy,
+    solver::{InferenceTable, OpaqueTy, Region, Ty},
+};
 
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
@@ -105,7 +108,11 @@ where
             )?)),
             TypeRef::Array { inner, len } => Ok(self.cx.array(
                 self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?,
-                self.lower_const(len.as_ref().map(ConstExpr::as_str))?,
+                self.lower_const(
+                    len.as_ref().map(ConstExpr::as_str),
+                    self.cx
+                        .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::Usize)),
+                )?,
             )),
             TypeRef::FnPointer { params, ret } => Ok(self.cx.fn_pointer(
                 &params

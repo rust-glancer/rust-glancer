@@ -259,6 +259,15 @@ impl DefMapSource for DefMapReadTxn<'_> {
             .is_some_and(CrateData::is_proc_macro))
     }
 
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, PackageStoreError> {
+        if let Some(manifest) = self.crate_manifest(crate_ref)? {
+            return Ok(manifest.target_pointer_width());
+        }
+        Ok(self
+            .crate_data(crate_ref)?
+            .and_then(CrateData::target_pointer_width))
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,

@@ -117,6 +117,10 @@ impl DefMapSource for TraitSelectionFixture {
         Ok(false)
     }
 
+    fn target_pointer_width(&self, _crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
+        Ok(Some(64))
+    }
+
     fn extern_root(
         &self,
         _target: CrateRef,
@@ -1869,7 +1873,9 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
             return match ty {
                 ParsedBracketTy::Slice(inner) => cx.slice(self.parse_infer_ty(inner)),
                 ParsedBracketTy::Array { inner, len } => {
-                    cx.array(self.parse_infer_ty(inner), cx.lower_const(len.into(), &[]))
+                    let len =
+                        crate::ConstValue::from_syntax(len.as_deref().unwrap_or(""), Some(64));
+                    cx.array(self.parse_infer_ty(inner), cx.lower_const(len, &[]))
                 }
             };
         }

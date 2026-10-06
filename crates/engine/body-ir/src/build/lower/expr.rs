@@ -1,7 +1,7 @@
 //! Expression lowering for syntax that Body IR models directly.
 
-use rg_ir_model::{ExprId, FieldKey, Mutability, ScopeId, Span};
-use rg_item_tree::{FromAst as _, GenericArg};
+use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, ScopeId, Span};
+use rg_item_tree::{FromAst as _, GenericArg, MaybeFromAst as _};
 use rg_syntax::{
     AstNode as _,
     ast::{
@@ -136,8 +136,8 @@ impl BodyLowering<'_> {
             } => {
                 let initializer =
                     initializer.map(|initializer| self.lower_expr(initializer, scope));
-                // Preserve the written const expression for display and shallow type equality. This
-                // deliberately does not evaluate the expression; it only mirrors array type syntax.
+                // Keep the complete length expression for the same literal-arithmetic evaluator
+                // used by array types. Unsupported syntax must leave the length unknown.
                 let len_text = repeat.as_ref().map(normalized_syntax_text);
                 let repeat = repeat.map(|repeat| self.lower_expr(repeat, scope));
                 self.alloc_expr(
@@ -224,7 +224,7 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::Binary {
                 lhs,
-                op: op.and_then(Self::binary_op_from_ast),
+                op: op.and_then(|op| ExprBinaryOp::maybe_from_ast(&op, ())),
                 rhs,
             },
         )

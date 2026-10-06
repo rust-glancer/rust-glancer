@@ -3,6 +3,34 @@ use expect_test::expect;
 use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fake_sysroot};
 
 #[test]
+fn shows_array_lengths_from_const_expressions() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_arithmetic_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+const SIZE: usize = 2;
+pub fn use_it() {
+    let arithmetic = [0u8; 2 + 2];
+    let named = [0u8; 2 + SIZE];
+    let masked = [0u8; (0b1010 | 0b0101) & !(1 << 3) ^ (8 >> 1)];
+}
+"#,
+        InlayHintsQuery::new("const expression hints", "/src/lib.rs"),
+        expect![[r#"
+            const expression hints
+            - `: [u8; 4]` @ 3:9-3:19
+            - `: [u8; _]` @ 4:9-4:14
+            - `: [u8; 3]` @ 5:9-5:15
+        "#]],
+    );
+}
+
+#[test]
 fn shows_inferred_local_binding_types() {
     check_inlay_hints(
         r#"
