@@ -242,6 +242,13 @@ where
                     .context("infer array length")?;
                 if let Some(initializer) = initializer {
                     let ty = self.inference.expr_slot(initializer);
+                    let pointer_width = self
+                        .context
+                        .def_map_source()
+                        .target_pointer_width(
+                            self.body.owner().generic_def().origin().origin_crate(),
+                        )
+                        .context("read array length target width")?;
                     self.inference.set_expr_ty(
                         expr,
                         self.cx.array(
@@ -249,7 +256,7 @@ where
                             self.cx.lower_const(
                                 len_text
                                     .as_deref()
-                                    .map(rg_ty::ConstValue::from_syntax)
+                                    .map(|text| rg_ty::ConstValue::from_syntax(text, pointer_width))
                                     .unwrap_or(rg_ty::ConstValue::Unknown),
                                 self.inference
                                     .table()

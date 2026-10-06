@@ -9,7 +9,7 @@ use rustc_type_ir::{self as ir, inherent::IntoKind};
 
 use super::{ImplTraitMode, TypeLoweringAnchor, TypeLoweringSession, TypePathResolver};
 use crate::{
-    ConstValue,
+    ConstValue, PrimitiveTy, UnsignedIntTy,
     solver::{
         Const, GenericArgs, InferenceSubstitution as Substitution, InferenceTable, List, Region, Ty,
     },
@@ -86,6 +86,15 @@ where
             }
 
             let syntax = positional.get(syntax_index).copied();
+            // Unsuffixed literals take their type from this parameter, even when the argument
+            // is written in another crate. Resolve the declared type in its own namespace.
+            let const_ty = match param.source() {
+                GenericParamSource::Const(source) => match &source.ty {
+                    Some(ty) => self.lower_default_type(generics.owner(), ty, &resolved)?,
+                    None => self.cx.unknown(),
+                },
+                _ => self.cx.unknown(),
+            };
             let arg = match (param.param(), syntax) {
                 (GenericParamRef::Lifetime(_), Some(ItemGenericArg::Lifetime(name))) => {
                     syntax_index += 1;
@@ -114,7 +123,7 @@ where
                 }
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Const(value))) => {
                     syntax_index += 1;
-                    self.lower_const(Some(value.as_str()))?.into()
+                    self.lower_const(Some(value.as_str()), const_ty)?.into()
                 }
                 (GenericParamRef::Const(_), Some(ItemGenericArg::Type(ty)))
                     if ty.type_param_name().is_some() && !ty.has_generic_args() =>
@@ -127,7 +136,7 @@ where
                         .type_param_name()
                         .expect("guard requires a plain single-segment path");
                     syntax_index += 1;
-                    self.lower_const(Some(name.as_str()))?.into()
+                    self.lower_const(Some(name.as_str()), const_ty)?.into()
                 }
 
                 // Function calls infer omitted type parameters from their arguments and result.
@@ -176,6 +185,7 @@ where
                             .as_ref()
                             .expect("guard requires a const default")
                             .as_str(),
+                        const_ty,
                         &resolved,
                     )?
                     .into()
@@ -218,6 +228,7 @@ where
         &mut self,
         owner: GenericDefRef,
         text: &str,
+        ty: Ty<'s>,
         subst: &Substitution<'s>,
     ) -> Result<Const<'s>, D::Error> {
         let Some(context) = self
@@ -232,7 +243,7 @@ where
         let previous_subst = std::mem::replace(&mut self.subst, subst.clone());
         self.owner = owner;
         self.anchor = TypeLoweringAnchor::Context(context);
-        let result = self.lower_const(Some(text));
+        let result = self.lower_const(Some(text), ty);
         self.owner = previous_owner;
         self.anchor = previous_anchor;
         self.subst = previous_subst;
@@ -259,7 +270,11 @@ where
             .unwrap_or(Region(ir::ReErased)))
     }
 
-    pub(crate) fn lower_const(&self, text: Option<&str>) -> Result<Const<'s>, D::Error> {
+    pub(crate) fn lower_const(
+        &self,
+        text: Option<&str>,
+        ty: Ty<'s>,
+    ) -> Result<Const<'s>, D::Error> {
         let Some(text) = text else {
             return Ok(self.cx.lower_const(ConstValue::Unknown, &[]));
         };
@@ -274,8 +289,22 @@ where
                 return Ok(Const::new(self.cx, ir::ConstKind::Param(param)));
             }
         }
-        // Const evaluation is intentionally limited to the same scalar syntax supported by
-        // saved types. Name resolution above preserves const parameters without evaluating them.
-        Ok(self.cx.lower_const(ConstValue::from_syntax(text), &[]))
+        // TODO: Represent typed scalar consts before evaluating other integer types. In
+        // particular, computing u8 arithmetic with usize bounds would miss intermediate overflow.
+        if ty
+            != self
+                .cx
+                .primitive(PrimitiveTy::UnsignedInt(UnsignedIntTy::Usize))
+        {
+            return Ok(self.cx.lower_const(ConstValue::Unknown, &[]));
+        }
+        // Literal arithmetic uses the declaration's compilation target. Parameter identity above
+        // is independent of evaluation; all other names still remain unknown.
+        let pointer_width = self
+            .item_paths
+            .target_pointer_width(self.owner.origin().origin_crate())?;
+        Ok(self
+            .cx
+            .lower_const(ConstValue::from_syntax(text, pointer_width), &[]))
     }
 }

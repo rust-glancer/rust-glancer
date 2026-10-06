@@ -12,6 +12,7 @@
 //! receiver adjustment, and trait proof; `trait_selection` freezes results for
 //! editor queries.
 
+mod const_eval;
 mod context;
 mod generic_arg;
 pub mod lookup;
@@ -27,9 +28,10 @@ mod ty;
 pub use rg_ir_model::{FloatTy, Mutability, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
 pub use self::{
+    const_eval::ConstValue,
     context::TyContext,
     generic_arg::{
-        AssocTypeBinding, Clause, ConstValue, GenericArg, GenericArgs, Lifetime, TraitApplication,
+        AssocTypeBinding, Clause, GenericArg, GenericArgs, Lifetime, TraitApplication,
         TraitRefLowering,
     },
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},

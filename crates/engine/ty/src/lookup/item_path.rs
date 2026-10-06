@@ -1,7 +1,7 @@
 //! Definition path queries over semantic item stores.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ModuleRef, Path, SemanticItemRef};
+use rg_ir_model::{CrateRef, ModuleRef, Path, SemanticItemRef};
 use rg_semantic_ir::{
     GenericsQuery, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
     TypePathResolution,
@@ -33,6 +33,10 @@ where
 
     pub fn generics(&self) -> &GenericsQuery<'a, I> {
         &self.generics
+    }
+
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, D::Error> {
+        self.definitions.target_pointer_width(crate_ref)
     }
 
     pub fn resolve_type_path(

@@ -1,10 +1,9 @@
 //! Context-free syntax classification used while lowering one body.
 //!
-//! These conversions live with Body IR because the target enums are body-owned. Keeping them on
-//! the lowering context also avoids teaching item-tree about body vocabulary merely to host trait
-//! implementations.
+//! These conversions are only needed while lowering bodies. Keeping them on the lowering context
+//! also avoids teaching item-tree about body vocabulary merely to host trait implementations.
 
-use rg_ir_model::{ExprBinaryOp, ExprUnaryOp};
+use rg_ir_model::ExprUnaryOp;
 use rg_syntax::ast;
 
 use super::body::BodyLowering;
@@ -36,42 +35,6 @@ impl BodyLowering<'_> {
             ast::UnaryOp::Not => ExprUnaryOp::Not,
             ast::UnaryOp::Neg => ExprUnaryOp::Neg,
         }
-    }
-
-    pub(super) fn binary_op_from_ast(op: ast::BinaryOp) -> Option<ExprBinaryOp> {
-        Some(match op {
-            ast::BinaryOp::LogicOp(ast::LogicOp::Or) => ExprBinaryOp::LogicOr,
-            ast::BinaryOp::LogicOp(ast::LogicOp::And) => ExprBinaryOp::LogicAnd,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Eq { negated: false }) => ExprBinaryOp::Eq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Eq { negated: true }) => ExprBinaryOp::NotEq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Less,
-                strict: true,
-            }) => ExprBinaryOp::Less,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Less,
-                strict: false,
-            }) => ExprBinaryOp::LessEq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Greater,
-                strict: true,
-            }) => ExprBinaryOp::Greater,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Greater,
-                strict: false,
-            }) => ExprBinaryOp::GreaterEq,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Add) => ExprBinaryOp::Add,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Mul) => ExprBinaryOp::Mul,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Sub) => ExprBinaryOp::Sub,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Div) => ExprBinaryOp::Div,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Rem) => ExprBinaryOp::Rem,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Shl) => ExprBinaryOp::Shl,
-            ast::BinaryOp::ArithOp(ast::ArithOp::Shr) => ExprBinaryOp::Shr,
-            ast::BinaryOp::ArithOp(ast::ArithOp::BitXor) => ExprBinaryOp::BitXor,
-            ast::BinaryOp::ArithOp(ast::ArithOp::BitOr) => ExprBinaryOp::BitOr,
-            ast::BinaryOp::ArithOp(ast::ArithOp::BitAnd) => ExprBinaryOp::BitAnd,
-            ast::BinaryOp::Assignment { .. } => return None,
-        })
     }
 
     pub(super) fn assignment_op_from_ast(op: ast::BinaryOp) -> Option<ExprAssignOp> {

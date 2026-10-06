@@ -6,6 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::{
     attrs::UserFacingAttrs,
+    const_expr::ConstExprData,
     decl::{
         ConstItem, ConstParamData, EnumItem, EnumVariantItem, ExternBlockItem, FieldItem,
         FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, LifetimeParamData,
@@ -35,6 +36,7 @@ pub use self::{
 };
 
 mod attrs;
+mod const_expr;
 mod decl;
 mod derive;
 mod docs;

@@ -1090,11 +1090,21 @@ pub(super) fn freeze_package(
         let (def_map, crate_generated_items) = state.def_map_builder.into_parts();
         generated_items.insert(crate_ref, crate_generated_items);
 
+        // Const arithmetic also needs the compilation target's usize width after parsed package
+        // data is offloaded. Missing target information must not fall back to the host width.
+        let target_pointer_width = state
+            .cfg_options
+            .key_values()
+            .iter()
+            .find(|value| value.key() == "target_pointer_width")
+            .and_then(|value| value.value().parse().ok());
+
         // Persist both Cargo-provided roots and explicit crate-root aliases. Queries read this as a
         // prelude rather than pretending any of these names are child modules of the crate root.
         crates.push(CrateData::new(
             state.cargo_target,
             state.target_kind,
+            target_pointer_width,
             state.crate_name,
             Some(state.root_module),
             state.extern_prelude.freeze(),
