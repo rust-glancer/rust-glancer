@@ -62,7 +62,7 @@ pub(crate) async fn completion(
                 new_position = ?rebased_position,
                 "rebased completion for a newer target document revision"
             );
-            ctx.replace_document(recaptured);
+            ctx.document.replace_document(recaptured);
             position = rebased_position;
             continue;
         }
@@ -106,7 +106,7 @@ pub(crate) async fn completion(
                         "completion request was replaced by a newer request point",
                     ));
                 }
-                match ctx.finish_attempt(result) {
+                match ctx.document.finish_attempt(result) {
                     Ok(completions) => {
                         tracing::trace!(
                             result_count = completions.len(),
@@ -141,6 +141,3 @@ fn complete_response(items: Vec<CompletionItem>) -> CompletionResponse {
         ..Default::default()
     })
 }
-
-#[cfg(test)]
-mod tests;

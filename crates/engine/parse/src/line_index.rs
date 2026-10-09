@@ -181,6 +181,35 @@ impl LineIndex {
         line.start.checked_add(byte_column)
     }
 
+    /// A display range can outlive edits that shorten its document or change its characters.
+    /// Clamp missing lines to EOF, long columns to line end, and split surrogate pairs to their
+    /// character's start before converting to a source offset.
+    pub fn offset_from_utf16_position_clamped(&self, position: Position) -> u32 {
+        let lines = self.lines.as_slice();
+        let Some(line) = lines.get(position.line as usize) else {
+            let last = lines
+                .last()
+                .expect("a line index always contains its final line");
+            return last.start + last.byte_len;
+        };
+        let byte_column = if let Some(metrics) = self.utf16_metrics(position.line as usize) {
+            let ranges = self.non_ascii_ranges_for(metrics);
+            let mut column = position.column.min(metrics.utf16_len);
+            if let Some(range) = ranges
+                .iter()
+                .find(|range| range.utf16_start < column && column < range.utf16_end)
+            {
+                column = range.utf16_start;
+            }
+            metrics
+                .byte_column_for_utf16(ranges, column)
+                .expect("clamped column is a UTF-16 boundary within the line")
+        } else {
+            position.column.min(line.byte_len)
+        };
+        line.start + byte_column
+    }
+
     fn line_for_offset(&self, offset: usize) -> usize {
         let offset = u32::try_from(offset).unwrap_or(u32::MAX);
         match self

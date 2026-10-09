@@ -1,6 +1,6 @@
-//! Completion behavior that depends on the LSP transport, ordered ingress, and engine scheduling.
+//! Editor query behavior that depends on the LSP transport, ordered ingress, and engine scheduling.
 //!
-//! The scenarios come first. `CompletionLspFixture` below keeps their protocol setup and timing
+//! The scenarios come first. `EditorLspFixture` below keeps their protocol setup and timing
 //! control out of the test logic.
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -29,20 +29,22 @@ use tower_lsp_server::{
         CompletionItem, CompletionItemKind, CompletionItemTextEdit, CompletionParams,
         CompletionResponse, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
         DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InitializeParams, InitializeResult,
-        InitializedParams, InlayHint, Location, Position, Range, TextEdit, Uri, WorkspaceEdit,
-        WorkspaceSymbol,
+        InitializedParams, InlayHint, InlayHintParams, Location, Position, Range, TextEdit, Uri,
+        WorkspaceEdit, WorkspaceSymbol,
     },
     jsonrpc::Result as LspResult,
 };
 
-use super::completion;
 use crate::{
     completion_scheduler::CompletionScheduler,
     engine_client::EngineClient,
     engine_registry::OpenDocumentRoute,
     ingress::{self, EditorIngress, EditorStateHandle, LifecycleEvent},
     inlay_refresher::InlayRefresher,
-    methods::{CompletionMethodContext, DocumentMethodContext},
+    methods::{
+        CompletionMethodContext, DocumentMethodContext,
+        text_document::{completion::completion, inlay_hint::inlay_hint},
+    },
     recent_editor_saves::RecentEditorSaves,
     tests::synthetic_test_path,
 };
@@ -50,8 +52,85 @@ use crate::{
 const TEST_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[tokio::test(flavor = "current_thread")]
+async fn overtaken_inlay_result_retries_the_same_request_with_the_original_coverage() {
+    let mut lsp = EditorLspFixture::open("|let first = 0u32;\nlet value = 1u32;\n").await;
+    let range = Range::new(Position::new(1, 0), Position::new(2, 0));
+    let request = lsp.request_inlay_hints(range).await;
+    let first = lsp
+        .expect_inlay_attempt("|let first = 0u32;\nlet value = 1u32;\n", range)
+        .await;
+
+    // Match the publication race from typing: analysis succeeds, but its captured text has been
+    // overtaken. The insertion moves `first` into the requested line and `value` out of it.
+    // The client still expects line 1, even though a different binding now occupies that line.
+    lsp.type_at_cursor("// 😀\n").await;
+    first.complete(vec![EditorLspFixture::inlay_hint(1)]);
+    let retry = lsp
+        .expect_inlay_attempt("// 😀\n|let first = 0u32;\nlet value = 1u32;\n", range)
+        .await;
+    let hints = vec![EditorLspFixture::inlay_hint(1)];
+    retry.complete(hints.clone());
+    assert_eq!(lsp.expect_inlay_hints(request).await, hints);
+
+    // A genuinely empty answer is published too. Keeping the request alive must not introduce
+    // a display cache that would retain the preceding labels after a successful empty response.
+    lsp.type_at_cursor(" ").await;
+    let request = lsp.request_inlay_hints(range).await;
+    lsp.expect_inlay_attempt("// 😀\n |let first = 0u32;\nlet value = 1u32;\n", range)
+        .await
+        .complete(Vec::new());
+    assert!(lsp.expect_inlay_hints(request).await.is_empty());
+    lsp.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn inlay_retries_preserve_original_coverage_across_full_replacements() {
+    let original = "// |\nlet value = 1u32;\n// tail\n";
+    let mut lsp = EditorLspFixture::open(original).await;
+    let range = Range::new(Position::new(1, 0), Position::new(3, 0));
+    let request = lsp.request_inlay_hints(range).await;
+    let first = lsp.expect_inlay_attempt(original, range).await;
+
+    // Full replacements have no cursor mapping, but this request only needs the newest text.
+    // Shorten past its original end, then grow again while the same request remains pending.
+    lsp.replace_document("// |\nlet value = 1u32;").await;
+    first.complete(vec![EditorLspFixture::inlay_hint(1)]);
+    let shorter = lsp
+        .expect_inlay_attempt("// |\nlet value = 1u32;", range)
+        .await;
+    lsp.replace_document(original).await;
+    shorter.complete(vec![EditorLspFixture::inlay_hint(1)]);
+    let latest = lsp.expect_inlay_attempt(original, range).await;
+    let hints = vec![EditorLspFixture::inlay_hint(1)];
+    latest.complete(hints.clone());
+    assert_eq!(lsp.expect_inlay_hints(request).await, hints);
+    lsp.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn client_cancellation_stops_an_inlay_retry() {
+    let mut lsp = EditorLspFixture::open("// |\nlet value = 1u32;\n").await;
+    let range = Range::new(Position::new(1, 0), Position::new(2, 0));
+    let request = lsp.request_inlay_hints(range).await;
+    let first = lsp
+        .expect_inlay_attempt("// |\nlet value = 1u32;\n", range)
+        .await;
+    lsp.type_at_cursor("a").await;
+    first.complete(vec![EditorLspFixture::inlay_hint(1)]);
+    let mut retry = lsp
+        .expect_inlay_attempt("// a|\nlet value = 1u32;\n", range)
+        .await;
+
+    lsp.cancel(request).await;
+    lsp.expect_cancelled_response(request).await;
+    retry.expect_cancelled().await;
+    lsp.type_at_cursor("b").await;
+    lsp.shutdown().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn did_change_retries_completion_at_rebased_position() {
-    let mut lsp = CompletionLspFixture::open("impl RwLo|").await;
+    let mut lsp = EditorLspFixture::open("impl RwLo|").await;
     let request = lsp.request_completion().await;
 
     let mut first_attempt = lsp.expect_attempt("impl RwLo|").await;
@@ -59,7 +138,7 @@ async fn did_change_retries_completion_at_rebased_position() {
     first_attempt.expect_cancelled().await;
 
     let second_attempt = lsp.expect_attempt("impl RwLock|").await;
-    second_attempt.complete();
+    second_attempt.complete(());
 
     let response = lsp.expect_completion(request).await;
     let CompletionResponse::CompletionList(response) = response else {
@@ -99,7 +178,7 @@ async fn did_change_retries_completion_at_rebased_position() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cancelled_completion_does_not_restart_after_did_change() {
-    let mut lsp = CompletionLspFixture::open("impl RwLock|").await;
+    let mut lsp = EditorLspFixture::open("impl RwLock|").await;
     let request = lsp.request_completion().await;
     let mut attempt = lsp.expect_attempt("impl RwLock|").await;
 
@@ -114,14 +193,14 @@ async fn cancelled_completion_does_not_restart_after_did_change() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn sibling_change_does_not_cancel_or_invalidate_completion() {
-    let mut lsp = CompletionLspFixture::open("impl RwLock|").await;
+    let mut lsp = EditorLspFixture::open("impl RwLock|").await;
     let sibling = lsp.open_sibling("pub struct Before;").await;
     let request = lsp.request_completion().await;
     let attempt = lsp.expect_attempt("impl RwLock|").await;
 
     lsp.change_sibling(&sibling, "pub struct After;").await;
     attempt.expect_running();
-    attempt.complete();
+    attempt.complete(());
 
     let response = lsp.expect_completion(request).await;
     let CompletionResponse::CompletionList(response) = response else {
@@ -132,17 +211,18 @@ async fn sibling_change_does_not_cancel_or_invalidate_completion() {
     lsp.shutdown().await;
 }
 
-/// A real LSP transport around the completion handler and a controllable engine RPC.
+/// A real LSP transport around the editor query handlers and a controllable engine RPC.
 ///
 /// Test scenarios use source text with `|` at the cursor. The fixture handles JSON-RPC framing,
 /// document versions, timeouts, and server shutdown so each test can show only the order of editor
 /// messages and semantic attempts that matters to it.
-struct CompletionLspFixture {
+struct EditorLspFixture {
     client_input: DuplexStream,
     client_output: BufReader<DuplexStream>,
     server: JoinHandle<()>,
     engine_server: JoinHandle<()>,
     attempts: mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
+    inlay_attempts: mpsc::UnboundedReceiver<ObservedInlayAttempt>,
     opened: Arc<Notify>,
     changed: Arc<Notify>,
     workspace: PathBuf,
@@ -152,10 +232,10 @@ struct CompletionLspFixture {
     next_request_id: i64,
 }
 
-impl CompletionLspFixture {
+impl EditorLspFixture {
     async fn open(marked_text: &str) -> Self {
         let (text, cursor) = Self::text_and_cursor(marked_text);
-        let (engine_client, attempts, engine_server) = GatedCompletionEngine::spawn();
+        let (engine_client, attempts, inlay_attempts, engine_server) = GatedEditorEngine::spawn();
         let editor = EditorStateHandle::default();
         let scheduler = CompletionScheduler::default();
         let opened = Arc::new(Notify::new());
@@ -164,7 +244,7 @@ impl CompletionLspFixture {
             let engine_client = engine_client.clone();
             let opened = Arc::clone(&opened);
             let changed = Arc::clone(&changed);
-            move |_| RawCompletionBackend {
+            move |_| RawEditorBackend {
                 engine_client,
                 opened,
                 changed,
@@ -192,6 +272,7 @@ impl CompletionLspFixture {
             server,
             engine_server,
             attempts,
+            inlay_attempts,
             opened,
             changed,
             workspace,
@@ -260,6 +341,59 @@ impl CompletionLspFixture {
         id
     }
 
+    async fn request_inlay_hints(&mut self, range: Range) -> i64 {
+        let id = self.next_id();
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/inlayHint",
+            "params": {
+                "textDocument": { "uri": self.uri.as_str() },
+                "range": range
+            }
+        }))
+        .await;
+        id
+    }
+
+    async fn expect_inlay_attempt(
+        &mut self,
+        marked_text: &str,
+        range: Range,
+    ) -> PendingAttempt<Vec<InlayHint>> {
+        let (text, _) = Self::text_and_cursor(marked_text);
+        let observed = tokio::time::timeout(TEST_TIMEOUT, self.inlay_attempts.recv())
+            .await
+            .expect("inlay attempt should start")
+            .expect("test engine should report its inlay attempt");
+        assert_eq!(observed.input.document().text(), text);
+        assert_eq!(observed.input.range(), range);
+        PendingAttempt {
+            release: observed.release,
+        }
+    }
+
+    async fn expect_inlay_hints(&mut self, id: i64) -> Vec<InlayHint> {
+        let response = self.receive().await;
+        assert_eq!(response["id"], id);
+        assert!(response.get("error").is_none(), "{response}");
+        serde_json::from_value(response["result"].clone())
+            .expect("LSP response should contain inlay hints")
+    }
+
+    fn inlay_hint(line: u32) -> InlayHint {
+        InlayHint {
+            position: Position::new(line, 9),
+            label: tower_lsp_server::gen_lsp_types::Label::String(": u32".to_string()),
+            kind: Some(tower_lsp_server::gen_lsp_types::InlayHintKind::Type),
+            text_edits: None,
+            tooltip: None,
+            padding_left: None,
+            padding_right: None,
+            data: None,
+        }
+    }
+
     async fn open_sibling(&mut self, text: &str) -> Uri {
         let path = self.workspace.join("src/sibling.rs");
         let uri = rg_lsp_proto::path_to_file_uri(path).expect("sibling path should convert to URI");
@@ -318,7 +452,25 @@ impl CompletionLspFixture {
         Self::advance_position(&mut self.cursor, text);
     }
 
-    async fn expect_attempt(&mut self, marked_text: &str) -> PendingCompletionAttempt {
+    async fn replace_document(&mut self, marked_text: &str) {
+        let (text, cursor) = Self::text_and_cursor(marked_text);
+        self.version += 1;
+        self.send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "method": "textDocument/didChange",
+            "params": {
+                "textDocument": { "uri": self.uri.as_str(), "version": self.version },
+                "contentChanges": [{ "text": text }]
+            }
+        }))
+        .await;
+        tokio::time::timeout(TEST_TIMEOUT, self.changed.notified())
+            .await
+            .expect("full replacement should reach its handler");
+        self.cursor = cursor;
+    }
+
+    async fn expect_attempt(&mut self, marked_text: &str) -> PendingAttempt<()> {
         let (expected_text, expected_position) = Self::text_and_cursor(marked_text);
         let observed = tokio::time::timeout(TEST_TIMEOUT, self.attempts.recv())
             .await
@@ -326,7 +478,7 @@ impl CompletionLspFixture {
             .expect("test engine should report its completion attempt");
         assert_eq!(observed.input.position(), expected_position);
         assert_eq!(observed.input.document().text(), expected_text);
-        PendingCompletionAttempt {
+        PendingAttempt {
             release: observed.release,
         }
     }
@@ -353,7 +505,7 @@ impl CompletionLspFixture {
         assert_eq!(response["id"], id);
         assert!(
             response.get("error").is_some(),
-            "cancelled request must not publish a completion value"
+            "cancelled request must not publish a query value"
         );
     }
 
@@ -391,6 +543,10 @@ impl CompletionLspFixture {
         assert!(
             self.attempts.recv().await.is_none(),
             "no unobserved completion attempt should remain after shutdown"
+        );
+        assert!(
+            self.inlay_attempts.recv().await.is_none(),
+            "no unobserved inlay attempt should remain after shutdown"
         );
     }
 
@@ -453,10 +609,10 @@ impl CompletionLspFixture {
     fn text_and_cursor(marked_text: &str) -> (String, Position) {
         let marker = marked_text
             .find('|')
-            .expect("completion fixture text should contain a cursor marker");
+            .expect("editor fixture text should contain a cursor marker");
         assert!(
             !marked_text[marker + 1..].contains('|'),
-            "completion fixture text should contain exactly one cursor marker"
+            "editor fixture text should contain exactly one cursor marker"
         );
         let before = &marked_text[..marker];
         let line = u32::try_from(before.matches('\n').count())
@@ -487,21 +643,22 @@ impl CompletionLspFixture {
     }
 }
 
-struct PendingCompletionAttempt {
-    release: oneshot::Sender<()>,
+struct PendingAttempt<T> {
+    release: oneshot::Sender<T>,
 }
 
-impl PendingCompletionAttempt {
-    fn complete(self) {
-        self.release
-            .send(())
-            .expect("completion attempt should still be running");
+impl<T> PendingAttempt<T> {
+    fn complete(self, value: T) {
+        assert!(
+            self.release.send(value).is_ok(),
+            "semantic attempt should still be running"
+        );
     }
 
     async fn expect_cancelled(&mut self) {
         tokio::time::timeout(TEST_TIMEOUT, self.release.closed())
             .await
-            .expect("completion attempt should be cancelled");
+            .expect("semantic attempt should be cancelled");
     }
 
     fn expect_running(&self) {
@@ -513,13 +670,13 @@ impl PendingCompletionAttempt {
 }
 
 #[derive(Clone)]
-struct RawCompletionBackend {
+struct RawEditorBackend {
     engine_client: EngineClient,
     opened: Arc<Notify>,
     changed: Arc<Notify>,
 }
 
-impl LanguageServer for RawCompletionBackend {
+impl LanguageServer for RawEditorBackend {
     async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
         Ok(crate::methods::initialize())
     }
@@ -564,21 +721,35 @@ impl LanguageServer for RawCompletionBackend {
         );
         completion(context, params).await
     }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        let captured = ingress::document_request()
+            .expect("raw inlay request should run inside ordered ingress")
+            .map_err(|unavailable| crate::methods::temporarily_unavailable(unavailable.reason()))?;
+        let context = DocumentMethodContext::new(self.engine_client.clone(), captured);
+        inlay_hint(context, params).await
+    }
 }
 
 #[derive(Clone)]
-struct GatedCompletionEngine {
+struct GatedEditorEngine {
     attempts: mpsc::UnboundedSender<ObservedCompletionAttempt>,
+    inlay_attempts: mpsc::UnboundedSender<ObservedInlayAttempt>,
 }
 
-impl GatedCompletionEngine {
+impl GatedEditorEngine {
     fn spawn() -> (
         EngineClient,
         mpsc::UnboundedReceiver<ObservedCompletionAttempt>,
+        mpsc::UnboundedReceiver<ObservedInlayAttempt>,
         JoinHandle<()>,
     ) {
         let (attempts, attempt_rx) = mpsc::unbounded_channel();
-        let engine = Self { attempts };
+        let (inlay_attempts, inlay_rx) = mpsc::unbounded_channel();
+        let engine = Self {
+            attempts,
+            inlay_attempts,
+        };
         let (client_transport, server_transport) = tarpc::transport::channel::unbounded();
         let server = BaseChannel::with_defaults(server_transport);
         let engine_server = tokio::spawn(
@@ -588,11 +759,16 @@ impl GatedCompletionEngine {
         );
         let client =
             EngineServiceClient::new(TarpcClientConfig::default(), client_transport).spawn();
-        (EngineClient::new(client), attempt_rx, engine_server)
+        (
+            EngineClient::new(client),
+            attempt_rx,
+            inlay_rx,
+            engine_server,
+        )
     }
 }
 
-impl EngineService for GatedCompletionEngine {
+impl EngineService for GatedEditorEngine {
     async fn completion(
         self,
         _: context::Context,
@@ -628,18 +804,18 @@ impl EngineService for GatedCompletionEngine {
     }
 
     // This deliberately narrow test engine implements the remaining RPC surface only so the
-    // generated tarpc client is real. Calling any method other than completion is a test bug.
+    // generated tarpc client is real. Calling any unsupported method is a test bug.
     async fn initialize(
         self,
         _: context::Context,
         _: PathBuf,
         _: EngineConfig,
     ) -> EngineResult<rg_lsp_proto::ProjectInitialization> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn initialized(self, _: context::Context) -> EngineResult<()> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn set_deferred_indexing_priority(
@@ -653,7 +829,7 @@ impl EngineService for GatedCompletionEngine {
     }
 
     async fn did_save(self, _: context::Context, _: SaveProposal) -> EngineResult<u64> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn external_project_changes(
@@ -661,7 +837,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: SavedProjectChanges,
     ) -> EngineResult<()> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn goto_definition(
@@ -669,7 +845,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn goto_type_definition(
@@ -677,7 +853,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn goto_implementation(
@@ -685,7 +861,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn references(
@@ -694,7 +870,7 @@ impl EngineService for GatedCompletionEngine {
         _: GlobalPositionSnapshot,
         _: bool,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn prepare_rename(
@@ -703,7 +879,7 @@ impl EngineService for GatedCompletionEngine {
         _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<tower_lsp_server::gen_lsp_types::PrepareRenameResult>>, QueryError>
     {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn rename(
@@ -712,7 +888,7 @@ impl EngineService for GatedCompletionEngine {
         _: GlobalPositionSnapshot,
         _: String,
     ) -> Result<QueryValue<Option<WorkspaceEdit>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn document_highlight(
@@ -720,7 +896,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Vec<DocumentHighlight>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn hover(
@@ -728,7 +904,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: GlobalPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn code_action(
@@ -737,7 +913,7 @@ impl EngineService for GatedCompletionEngine {
         _: DocumentRangeSnapshot,
         _: CodeActionRequestContext,
     ) -> Result<QueryValue<Vec<tower_lsp_server::gen_lsp_types::CodeAction>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn formatting(
@@ -745,7 +921,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: EditorDocumentSnapshot,
     ) -> Result<QueryValue<Option<Vec<TextEdit>>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn document_symbol(
@@ -753,7 +929,7 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: EditorDocumentSnapshot,
     ) -> Result<QueryValue<Vec<DocumentSymbol>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn folding_range(
@@ -762,7 +938,7 @@ impl EngineService for GatedCompletionEngine {
         _: EditorDocumentSnapshot,
         _: FoldingClientCapabilities,
     ) -> Result<QueryValue<Vec<FoldingRange>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn semantic_tokens(
@@ -771,15 +947,23 @@ impl EngineService for GatedCompletionEngine {
         _: EditorDocumentSnapshot,
         _: Option<tower_lsp_server::gen_lsp_types::Range>,
     ) -> Result<QueryValue<tower_lsp_server::gen_lsp_types::SemanticTokens>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn inlay_hint(
         self,
         _: context::Context,
-        _: DocumentRangeSnapshot,
+        input: DocumentRangeSnapshot,
     ) -> Result<QueryValue<Vec<InlayHint>>, QueryError> {
-        panic!("test engine only supports completion")
+        let (release, released) = oneshot::channel();
+        let scope = QueryScope::TargetDocument(input.document().target().clone());
+        self.inlay_attempts
+            .send(ObservedInlayAttempt { input, release })
+            .expect("test should observe every inlay RPC");
+        let hints = released
+            .await
+            .expect("test should finish the inlay attempt");
+        Ok(QueryValue::new(hints, scope))
     }
 
     async fn workspace_symbol(
@@ -787,19 +971,24 @@ impl EngineService for GatedCompletionEngine {
         _: context::Context,
         _: String,
     ) -> Result<QueryValue<Vec<WorkspaceSymbol>>, QueryError> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn reindex_workspace(self, _: context::Context) -> EngineResult<()> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 
     async fn shutdown(self, _: context::Context) -> EngineResult<()> {
-        panic!("test engine only supports completion")
+        panic!("test engine only supports editor query scenarios")
     }
 }
 
 struct ObservedCompletionAttempt {
     input: DocumentPositionSnapshot,
     release: oneshot::Sender<()>,
+}
+
+struct ObservedInlayAttempt {
+    input: DocumentRangeSnapshot,
+    release: oneshot::Sender<Vec<InlayHint>>,
 }

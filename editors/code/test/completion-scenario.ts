@@ -89,10 +89,10 @@ export async function completeInEditor(document: vscode.TextDocument): Promise<v
       }
     }
   } finally {
-    renderer?.dispose();
     // Discard the unsaved scratch text. Every cleanup is attempted, and cleanup errors must not
     // hide the original test failure. No source file needs to be written to disk for this test.
     const cleanup = [
+      () => renderer?.dispose(),
       () => vscode.commands.executeCommand("workbench.action.files.revert", document.uri),
       ...previousSettings.map(
         ([key, value]) =>
@@ -103,7 +103,7 @@ export async function completeInEditor(document: vscode.TextDocument): Promise<v
     const errors: unknown[] = [];
     for (const restore of cleanup) {
       try {
-        await withTimeout(restore(), "restore completion fixture");
+        await withTimeout(Promise.resolve().then(restore), "restore completion fixture");
       } catch (error) {
         errors.push(error);
       }
