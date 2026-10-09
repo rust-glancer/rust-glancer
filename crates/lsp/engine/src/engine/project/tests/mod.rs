@@ -35,7 +35,7 @@ impl ProjectMemoryHooks for SourceMutations {
 
         let Ok(previous) =
             self.remaining
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
                     remaining.checked_sub(1)
                 })
         else {

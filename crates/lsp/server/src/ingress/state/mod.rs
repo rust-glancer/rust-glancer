@@ -16,10 +16,11 @@
 //! documents, because their saved source ranges are safe only while those documents still match
 //! the saved project.
 //!
-//! Completion can follow edits made after its first capture and move the cursor into the new text.
-//! For example, typing `ck` after `RwLo|` moves the captured cursor to `RwLock|`. The history keeps
-//! only the edits needed for that move, not old copies of the full document, and disappears when no
-//! request needs it.
+//! Completion and inlay queries can follow edits made after their first capture. Completion moves
+//! its cursor into the new text: typing `ck` after `RwLo|` moves the captured cursor to `RwLock|`.
+//! The history keeps only the edits needed for that move, not old copies of the full document,
+//! and disappears when no request needs it. Inlay queries keep the client's requested coordinates
+//! and only need a newer document snapshot.
 //!
 //! The `lifecycle` child module runs the async parts of open/save/close. It reports when an engine
 //! route has been resolved or a close has finished, but it never stores document text, sessions,
@@ -50,8 +51,8 @@ use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
 ///
 /// The target, other open documents, and their engine routes all come from the same locked read of
 /// `EditorState`. `target_document` builds input for an ordinary document read. `global_position`
-/// also includes open documents routed to the same engine. This value is immutable; completion may
-/// replace it with a newer capture, but a capture never refreshes itself in place.
+/// also includes open documents routed to the same engine. This value is immutable; completion and
+/// inlay queries may replace it with a newer capture, but a capture never refreshes itself in place.
 #[derive(Clone, Debug)]
 pub(crate) struct CapturedDocument {
     document: Arc<EditorDocumentSnapshot>,
@@ -227,6 +228,32 @@ impl CapturedDocument {
             .recapture_position(self, position)?;
         recaptured.0.editor = Arc::downgrade(&editor);
         Ok(recaptured)
+    }
+
+    /// Take the newest snapshot for the same open session.
+    ///
+    /// Closing and reopening the path ends the old request's session; it must not follow the
+    /// new document just because the path is the same.
+    pub(crate) fn recapture(&self) -> Result<Self, DocumentUnavailable> {
+        let path = self.document.path();
+        let editor = self.editor.upgrade().ok_or_else(|| {
+            DocumentUnavailable::new(
+                Some(path.to_path_buf()),
+                "the editor state no longer exists",
+            )
+        })?;
+        let mut captured = editor
+            .lock()
+            .expect("editor state mutex should not be poisoned")
+            .document(Some(path.to_path_buf()))?;
+        if captured.document.session() != self.document.session() {
+            return Err(DocumentUnavailable::new(
+                Some(path.to_path_buf()),
+                "the captured document session has ended",
+            ));
+        }
+        captured.editor = Arc::downgrade(&editor);
+        Ok(captured)
     }
 
     fn is_rust_path(path: &Path) -> bool {

@@ -732,7 +732,7 @@ impl<'a> QueryRunner<'a> {
                     .context("compute current body inlay hints")?,
             );
         }
-        let lsp_hints = hints
+        let mut lsp_hints = hints
             .into_iter()
             .enumerate()
             .map(|(index, hint)| {
@@ -746,6 +746,10 @@ impl<'a> QueryRunner<'a> {
             })
             .collect::<anyhow::Result<Vec<_>>>()
             .context("convert inlay hints")?;
+
+        // Clamping a start beyond the document back to EOF can select text before the requested
+        // coverage. The response still belongs to the client's original numeric range.
+        lsp_hints.retain(|hint| range.start <= hint.position && hint.position <= range.end);
         tracing::trace!(
             path = %path.display(),
             result_count = lsp_hints.len(),
@@ -810,6 +814,7 @@ struct DocumentTarget {
 /// Editor coordinates used to choose the current bodies needed by one query.
 enum DocumentSelection {
     Position(gen_lsp_types::Position),
+    /// Inlay coverage may extend past the text after an edit; intersect it with the document.
     Range(gen_lsp_types::Range),
 }
 
@@ -823,12 +828,12 @@ impl DocumentSelection {
                 .offset_from_utf16_position(crate::proto::position::parse_position(*position))
                 .map(CurrentSourceSelection::AtOffset),
             Self::Range(range) => {
-                let start = line_index.offset_from_utf16_position(
+                let start = line_index.offset_from_utf16_position_clamped(
                     crate::proto::position::parse_position(range.start),
-                )?;
-                let end = line_index.offset_from_utf16_position(
+                );
+                let end = line_index.offset_from_utf16_position_clamped(
                     crate::proto::position::parse_position(range.end),
-                )?;
+                );
                 Some(CurrentSourceSelection::IntersectingRange(Span {
                     start,
                     end,
@@ -891,6 +896,44 @@ impl DocumentAnalysis<'_> {
             CurrentSourceSelection::AtOffset(_) => {
                 unreachable!("range query should retain a range selection")
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gen_lsp_types::{Position, Range};
+    use rg_ir_model::Span;
+    use rg_parse::LineIndex;
+    use rg_project::CurrentSourceSelection;
+
+    use super::DocumentSelection;
+
+    #[test]
+    fn inlay_ranges_use_valid_source_bounds_after_edits() {
+        let cases = [
+            ("same coordinates", "a\nbc\n", (1, 1), (2, 0), (3, 5)),
+            ("shorter line", "a\nbc\n", (1, 1), (1, 9), (3, 4)),
+            ("shorter document", "a\nbc", (0, 0), (3, 0), (0, 4)),
+            ("vanished range", "a", (1, 0), (3, 0), (1, 1)),
+            ("empty document", "", (0, 0), (3, 0), (0, 0)),
+            ("UTF-16 columns", "a\n😀b", (1, 2), (3, 0), (6, 7)),
+            ("surrogate boundary", "é😀b", (0, 2), (0, 4), (2, 7)),
+            ("CRLF columns", "a\r\n😀b\r\n", (1, 2), (1, 9), (7, 8)),
+            ("trailing empty line", "a\n", (0, 0), (3, 0), (0, 2)),
+        ];
+        let position = |(line, character)| Position::new(line, character);
+        for (name, text, start, end, expected) in cases {
+            let selection = DocumentSelection::Range(Range::new(position(start), position(end)))
+                .to_current_source_selection(&LineIndex::new(text));
+            assert_eq!(
+                selection,
+                Some(CurrentSourceSelection::IntersectingRange(Span {
+                    start: expected.0,
+                    end: expected.1,
+                })),
+                "{name}",
+            );
         }
     }
 }

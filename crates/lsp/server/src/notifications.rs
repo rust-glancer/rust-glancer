@@ -43,9 +43,7 @@ impl NotificationsPublisher {
     }
 
     async fn publish_service_notification(
-        lsp_client: &LspClient,
-        client_status: &ClientStatusPublisher,
-        editor: &EditorStateHandle,
+        &self,
         notification: ServiceNotification,
     ) -> anyhow::Result<()> {
         match notification {
@@ -67,7 +65,9 @@ impl NotificationsPublisher {
                         return Ok(());
                     }
                 };
-                let publications = editor.diagnostics_publications(&path, saved_text.as_deref());
+                let publications = self
+                    .editor
+                    .diagnostics_publications(&path, saved_text.as_deref());
                 if publications.is_empty() {
                     tracing::debug!(
                         path = %path.display(),
@@ -84,7 +84,7 @@ impl NotificationsPublisher {
                         );
                         continue;
                     };
-                    lsp_client
+                    self.lsp_client
                         .publish_diagnostics(uri, diagnostics.clone(), publication.version())
                         .await;
                 }
@@ -94,13 +94,14 @@ impl NotificationsPublisher {
                 title,
                 message,
             } => {
-                work_done_progress::begin_engine_progress(lsp_client, token, title, message).await;
+                work_done_progress::begin_engine_progress(&self.lsp_client, token, title, message)
+                    .await;
             }
             ServiceNotification::EndWorkDoneProgress { token, message } => {
-                work_done_progress::end_engine_progress(lsp_client, token, message).await;
+                work_done_progress::end_engine_progress(&self.lsp_client, token, message).await;
             }
             ServiceNotification::InlayHintRefresh => {
-                if let Err(error) = lsp_client.inlay_hint_refresh().await {
+                if let Err(error) = self.lsp_client.inlay_hint_refresh().await {
                     tracing::debug!(
                         error = %error,
                         "failed to request inlay hint refresh after service notification"
@@ -108,7 +109,7 @@ impl NotificationsPublisher {
                 }
             }
             ServiceNotification::DeferredIndexingStarted { root, generation } => {
-                client_status
+                self.client_status
                     .deferred_indexing_started(&root, generation)
                     .await;
             }
@@ -117,7 +118,7 @@ impl NotificationsPublisher {
                 generation,
                 progress,
             } => {
-                client_status
+                self.client_status
                     .deferred_indexing_progress(&root, generation, progress)
                     .await;
             }
@@ -126,12 +127,12 @@ impl NotificationsPublisher {
                 generation,
                 outcome,
             } => {
-                client_status
+                self.client_status
                     .deferred_indexing_finished(&root, generation, outcome)
                     .await;
             }
             ServiceNotification::LogMessage { level, message } => {
-                lsp_client
+                self.lsp_client
                     .log_message(Self::message_type(level), message)
                     .await;
             }
@@ -156,13 +157,8 @@ impl NotificationsService for NotificationsPublisher {
         _: context::Context,
         notification: ServiceNotification,
     ) -> EngineResult<()> {
-        Self::publish_service_notification(
-            &self.lsp_client,
-            &self.client_status,
-            &self.editor,
-            notification,
-        )
-        .await
-        .map_err(EngineError::from)
+        self.publish_service_notification(notification)
+            .await
+            .map_err(EngineError::from)
     }
 }

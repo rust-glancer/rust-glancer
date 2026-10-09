@@ -4,9 +4,9 @@
 //! runs. Ordinary document reads send the target text to the engine. Cross-file operations also
 //! send the other open documents needed to check saved source ranges.
 //!
-//! Completion has a second context because it may move its cursor through a later edit and submit
-//! another engine attempt. Keeping that state out of `DocumentMethodContext` makes the one-shot
-//! flow easier to see.
+//! Completion has a second context for its scheduler's logical request and client capabilities.
+//! The document context still describes one attempt. Completion and inlay queries can replace
+//! that capture before retrying after an edit.
 
 use rg_lsp_proto::{
     CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRangeSnapshot,
@@ -40,6 +40,11 @@ impl DocumentMethodContext {
 
     pub(crate) fn captured_document(&self) -> &CapturedDocument {
         &self.captured
+    }
+
+    /// Replace the snapshot used by the next engine attempt.
+    pub(crate) fn replace_document(&mut self, captured: CapturedDocument) {
+        self.captured = captured;
     }
 
     /// Build engine input containing only the captured target document.
@@ -97,15 +102,26 @@ impl DocumentMethodContext {
         &self,
         result: Result<QueryValue<T>, QueryError>,
     ) -> Result<T, Error> {
-        query_response::validate_target_document(result, &self.captured).map_err(into_lsp_error)
+        self.finish_attempt(result).map_err(into_lsp_error)
+    }
+
+    /// Check one completed engine attempt without deciding whether the LSP request should end.
+    ///
+    /// `EditorChanged` goes back to the handler's retry loop, which can take a newer snapshot and
+    /// try again. Other query failures and mismatched response scopes are returned to the caller.
+    pub(crate) fn finish_attempt<T>(
+        &self,
+        result: Result<QueryValue<T>, QueryError>,
+    ) -> Result<T, QueryError> {
+        query_response::validate_target_document(result, &self.captured)
     }
 }
 
 /// Document context plus the state used only by the completion retry loop.
 ///
-/// Unlike an ordinary document method, completion may replace its captured snapshot after an edit
-/// and submit another engine query through the same logical request. This type makes that extra
-/// state mandatory for completion without exposing it to every other handler.
+/// Completion submits its engine queries through one logical request owned by the scheduler and
+/// passes the client's completion capabilities to the engine. This type makes that extra state
+/// mandatory for completion without exposing it to every other handler.
 #[derive(Clone, Debug)]
 pub(crate) struct CompletionMethodContext {
     pub(crate) document: DocumentMethodContext,
@@ -126,24 +142,8 @@ impl CompletionMethodContext {
         }
     }
 
-    /// Replace the old snapshot after moving the completion cursor through accepted edits.
-    pub(crate) fn replace_document(&mut self, captured: CapturedDocument) {
-        self.document.captured = captured;
-    }
-
     /// Build completion input from the target document only.
     pub(crate) fn input(&self, position: Position) -> Result<DocumentPositionSnapshot, Error> {
         self.document.target_position(position)
-    }
-
-    /// Check one completed engine attempt without deciding whether the LSP request should end.
-    ///
-    /// `EditorChanged` goes back to the completion loop, which can take a newer snapshot and try
-    /// again. Other query failures and mismatched response scopes are returned to the caller.
-    pub(crate) fn finish_attempt<T>(
-        &self,
-        result: Result<QueryValue<T>, QueryError>,
-    ) -> Result<T, QueryError> {
-        query_response::validate_target_document(result, self.document.captured_document())
     }
 }

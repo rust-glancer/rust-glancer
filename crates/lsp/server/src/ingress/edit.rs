@@ -55,7 +55,7 @@ impl AppliedDocumentChanges {
                     "an incremental range followed an unavailable document without a full replacement",
                 ));
             };
-            if !PositionEdit::ordered(range.start, range.end) {
+            if range.start > range.end {
                 return Err(DocumentChangeError::new(
                     change_index,
                     "the incremental range ends before it starts",
@@ -202,13 +202,13 @@ impl PositionEdit {
     }
 
     fn rebase(&self, position: Position) -> Option<Position> {
-        if !Self::ordered(self.range.start, position) {
+        if position < self.range.start {
             return Some(position);
         }
 
         // Positions inside a replacement move to the end of the inserted text. For an empty
         // range this gives typing right affinity: inserting `ck` at `RwLo|` yields `RwLock|`.
-        if Self::ordered(position, self.range.end) {
+        if position <= self.range.end {
             return Some(self.inserted_end);
         }
 
@@ -227,10 +227,6 @@ impl PositionEdit {
                 position.character,
             ))
         }
-    }
-
-    fn ordered(left: Position, right: Position) -> bool {
-        (left.line, left.character) <= (right.line, right.character)
     }
 }
 

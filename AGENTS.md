@@ -3,6 +3,8 @@
 - We always use `mod.rs` syntax for multi-file modules.
 - Always run the VS Code extension tests outside the sandbox. Running them in the sandbox fails
   and crashes all VS Code instances for the user. Other test commands normally work in the sandbox.
+- Always run `cargo dylint` and `just lint` outside the sandbox. Dylint can fail to read build
+  metadata inside the sandbox.
 - For routine analysis, LSP, comparison, memory, and hang debugging, load the repo-local
   `$rust-glancer-debugging` skill and use `just agent-debug`. It owns temporary artifacts,
   deadlines, measurement, and process-tree cleanup; use ad-hoc `ps`/`kill` or shell wrappers only

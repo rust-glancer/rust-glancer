@@ -134,7 +134,10 @@ pub(crate) fn internal_error(error: anyhow::Error) -> Error {
     }
 }
 
-/// Ask the editor to retry a request whose captured input can no longer be used.
+/// Report that a request's captured input can no longer be used.
+///
+/// ContentModified does not guarantee a client retry. A handler that follows edits must handle
+/// EditorChanged before this conversion, keeping its logical request pending while it tries again.
 pub(crate) fn temporarily_unavailable(reason: &str) -> Error {
     let mut error = Error::content_modified();
     error.message = Cow::Owned(reason.to_string());
