@@ -4,7 +4,7 @@
 //! but definition lowering and impl-header resolution do not need to depend on the type engine.
 
 use rg_def_map::{DefMapQuery, DefMapSource, NamespaceSet};
-use rg_ir_model::{DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef};
+use rg_ir_model::{CrateRef, DefId, ModuleRef, Path, SemanticItemRef, TraitDefRef, TypeDefRef};
 use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::{ItemStoreQuery, ItemStoreSource};
@@ -31,6 +31,10 @@ where
 
     pub fn items(&self) -> &ItemStoreQuery<'a, I> {
         &self.items
+    }
+
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, D::Error> {
+        self.def_maps.target_pointer_width(crate_ref)
     }
 
     /// Resolves a type-position path into semantic type or trait identities.

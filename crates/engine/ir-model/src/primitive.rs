@@ -87,6 +87,21 @@ impl PrimitiveTy {
         matches!(self, Self::SignedInt(_) | Self::UnsignedInt(_))
     }
 
+    /// Integer widths are fixed except for usize and isize, which use the compilation target.
+    pub fn integer_bit_width(self, pointer_width: u32) -> Option<u32> {
+        Some(match self {
+            Self::SignedInt(SignedIntTy::I8) | Self::UnsignedInt(UnsignedIntTy::U8) => 8,
+            Self::SignedInt(SignedIntTy::I16) | Self::UnsignedInt(UnsignedIntTy::U16) => 16,
+            Self::SignedInt(SignedIntTy::I32) | Self::UnsignedInt(UnsignedIntTy::U32) => 32,
+            Self::SignedInt(SignedIntTy::I64) | Self::UnsignedInt(UnsignedIntTy::U64) => 64,
+            Self::SignedInt(SignedIntTy::I128) | Self::UnsignedInt(UnsignedIntTy::U128) => 128,
+            Self::SignedInt(SignedIntTy::Isize) | Self::UnsignedInt(UnsignedIntTy::Usize) => {
+                pointer_width
+            }
+            _ => return None,
+        })
+    }
+
     pub fn is_float(self) -> bool {
         matches!(self, Self::Float(_))
     }

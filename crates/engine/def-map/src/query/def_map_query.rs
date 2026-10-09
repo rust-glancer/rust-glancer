@@ -34,6 +34,9 @@ pub trait DefMapSource {
     /// Whether `crate_ref` is a host-side proc-macro implementation crate.
     fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error>;
 
+    /// Compilation target width for usize arithmetic, without assuming the host architecture.
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error>;
+
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         Ok(self
             .def_map_for_origin(module_ref.origin)?
@@ -142,6 +145,10 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
         (**self).crate_is_proc_macro(crate_ref)
     }
 
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
+        (**self).target_pointer_width(crate_ref)
+    }
+
     fn extern_root(
         &self,
         crate_ref: CrateRef,
@@ -182,6 +189,10 @@ where
 {
     pub fn new(source: S) -> Self {
         Self { source }
+    }
+
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, S::Error> {
+        self.source.target_pointer_width(crate_ref)
     }
 
     /// Construct a scope resolver over this routed DefMap source.

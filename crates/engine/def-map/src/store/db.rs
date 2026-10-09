@@ -375,6 +375,7 @@ mod tests {
             vec![CrateData::new(
                 CargoTargetId(0),
                 rg_workspace::TargetKind::Lib,
+                Some(64),
                 format!("{name}_lib"),
                 None,
                 Default::default(),

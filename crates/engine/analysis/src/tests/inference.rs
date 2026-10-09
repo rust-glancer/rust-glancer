@@ -11,6 +11,124 @@ use super::utils::{
 };
 
 #[test]
+fn infers_types_from_const_expressions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_arithmetic"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const SIZE: usize = 2;
+pub struct Holder;
+impl Holder { pub const SIZE: usize = 2; }
+pub const fn size() -> usize { 2 }
+pub struct Buffer<const N: usize = { 12 / 3 }>;
+pub struct Small<const N: u8 = { 2 + 2 }>;
+
+pub fn use_it(annotated: [u16; 2 + 2], argument: Buffer<{ 2 + 2 }>, defaulted: Buffer, small: Small) {
+    let rep$repeat_hover$eated = [0u8; 2 + 2]$repeat$;
+    let precedence = [0u8; (2 + 3) * 4]$precedence$;
+    let bases = [0u8; 0x10 + 0o10 + 0b10]$bases$;
+    let shifted = [0u8; 1 << (2 + 2)]$shifted$;
+    let masked = [0u8; (0b1010 | 0b0101) & !(1 << 3) ^ (8 >> 1)]$masked$;
+    let declaration = annotated$annotation$;
+    let generic_arg = argument$generic_arg$;
+    let generic_default = defaulted$generic_default$;
+    let other_integer = small$other_integer$;
+    let named = [0u8; SIZE]$named$;
+    let named_operand = [0u8; 2 + SIZE]$named_operand$;
+    let associated = [0u8; 2 + Holder::SIZE]$associated$;
+    let called = [0u8; 2 + size()]$called$;
+    let statements = [0u8; { let n = 2; n + 2 }]$statements$;
+}
+
+pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>) {
+    annotated$bit_annotation$;
+    argument$bit_generic_arg$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("array repeat", "repeat"),
+            AnalysisQuery::hover("hover array repeat", "repeat_hover"),
+            AnalysisQuery::ty("parenthesized arithmetic", "precedence"),
+            AnalysisQuery::ty("integer bases", "bases"),
+            AnalysisQuery::ty("shifted array length", "shifted"),
+            AnalysisQuery::ty("bitwise array length", "masked"),
+            AnalysisQuery::ty("bitwise array type annotation", "bit_annotation"),
+            AnalysisQuery::ty("shifted const generic argument", "bit_generic_arg"),
+            AnalysisQuery::ty("array type annotation", "annotation"),
+            AnalysisQuery::ty("const generic argument", "generic_arg"),
+            AnalysisQuery::ty("const generic default", "generic_default"),
+            AnalysisQuery::ty("u8 const generic default", "other_integer"),
+            AnalysisQuery::ty("named const", "named"),
+            AnalysisQuery::ty("named operand", "named_operand"),
+            AnalysisQuery::ty("associated const", "associated"),
+            AnalysisQuery::ty("const function", "called"),
+            AnalysisQuery::ty("block with statements", "statements"),
+        ],
+        expect![[r#"
+            array repeat
+            - [u8; 4]
+
+            hover array repeat
+            - range: 9:9-9:17
+            - block:
+              kind: variable
+              signature:
+                let repeated: [u8; 4]
+
+            parenthesized arithmetic
+            - [u8; 20]
+
+            integer bases
+            - [u8; 26]
+
+            shifted array length
+            - [u8; 16]
+
+            bitwise array length
+            - [u8; 3]
+
+            bitwise array type annotation
+            - [u16; 9]
+
+            shifted const generic argument
+            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
+
+            array type annotation
+            - [u16; 4]
+
+            const generic argument
+            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
+
+            const generic default
+            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
+
+            u8 const generic default
+            - nominal struct analysis_const_arithmetic[lib]::crate::Small<_>
+
+            named const
+            - [u8; _]
+
+            named operand
+            - [u8; _]
+
+            associated const
+            - [u8; _]
+
+            const function
+            - [u8; _]
+
+            block with statements
+            - [u8; _]
+        "#]],
+    );
+}
+
+#[test]
 fn infers_default_calls_alongside_unresolved_impl_receivers() {
     check_analysis_queries(
         r#"

@@ -6,11 +6,11 @@
 
 use std::fmt;
 
-use rg_ir_model::{ConstParamRef, LifetimeParamRef, TraitDefRef};
+use rg_ir_model::{LifetimeParamRef, TraitDefRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ProjectionTy, Ty};
+use crate::{ConstValue, ProjectionTy, Ty};
 
 /// Lifetime argument retained by the semantic type model.
 ///
@@ -30,51 +30,6 @@ impl fmt::Display for Lifetime {
         match self {
             Self::Static => f.write_str("'static"),
             Self::Param(_) | Self::Erased => f.write_str("'_"),
-        }
-    }
-}
-
-/// Const argument retained by the semantic type model.
-///
-/// Literal integers are enough for the array/generic identities rust-glancer already models.
-/// Paths and expressions remain explicitly unknown until const evaluation is in scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-#[shrink(leaf)]
-pub enum ConstValue {
-    Scalar(u128),
-    Param(ConstParamRef),
-    Unknown,
-}
-
-impl ConstValue {
-    pub fn from_syntax(text: &str) -> Self {
-        let normalized = text.replace('_', "");
-        let digits = normalized
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>();
-        if digits.is_empty() {
-            return Self::Unknown;
-        }
-
-        digits.parse().map(Self::Scalar).unwrap_or(Self::Unknown)
-    }
-}
-
-impl From<Option<String>> for ConstValue {
-    fn from(value: Option<String>) -> Self {
-        value
-            .as_deref()
-            .map(Self::from_syntax)
-            .unwrap_or(Self::Unknown)
-    }
-}
-
-impl fmt::Display for ConstValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Scalar(value) => value.fmt(f),
-            Self::Param(_) | Self::Unknown => f.write_str("_"),
         }
     }
 }
