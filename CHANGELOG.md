@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.1](https://github.com/rust-glancer/rust-glancer/compare/v0.3.0...v0.3.1) (2026-10-09)
+
+
+### Features
+
+* Basic const evaluation ([#244](https://github.com/rust-glancer/rust-glancer/issues/244)) ([e7ea5be](https://github.com/rust-glancer/rust-glancer/commit/e7ea5be36f2941f30ae507bf7d10f29b0f485025))
+
+
+### Bug Fixes
+
+* Fix inlay hints flickering ([#246](https://github.com/rust-glancer/rust-glancer/issues/246)) ([4877fcb](https://github.com/rust-glancer/rust-glancer/commit/4877fcb8c5d14bcc2046c94c98e3b6f40833201c))
+
 ## [0.3.0](https://github.com/rust-glancer/rust-glancer/compare/v0.2.0...v0.3.0) (2026-10-01)
 
 
