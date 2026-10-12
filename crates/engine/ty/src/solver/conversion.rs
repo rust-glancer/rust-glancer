@@ -281,11 +281,11 @@ impl<'s> SolverInterner<'s> {
                 self.raise_const(c),
             ),
             ir::Slice(t) => Stored::slice(self.raise_ty(t).unwrap_or(Stored::Unknown)),
-            ir::Ref(r, t, m) => Stored::Reference {
-                lifetime: Self::raise_region(r),
-                mutability: Self::raise_mutability(m),
-                inner: Box::new(self.raise_ty(t).unwrap_or(Stored::Unknown)),
-            },
+            ir::Ref(r, t, m) => Stored::reference_with_lifetime(
+                Self::raise_region(r),
+                Self::raise_mutability(m),
+                self.raise_ty(t).unwrap_or(Stored::Unknown),
+            ),
             ir::RawPtr(t, m) => Stored::raw_pointer(
                 Self::raise_mutability(m),
                 self.raise_ty(t).unwrap_or(Stored::Unknown),

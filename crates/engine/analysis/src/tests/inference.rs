@@ -11,6 +11,204 @@ use super::utils::{
 };
 
 #[test]
+fn infers_references_to_trait_objects() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_object_references"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Opaque {}
+pub type Borrowed<'a, T: ?Sized> = &'a T;
+pub fn make<T: 'static>() -> &'static T { loop {} }
+
+impl dyn Opaque {
+    pub fn inspect(&self) { self$self_shared$; }
+    pub fn inspect_mut(&mut self) { self$self_mutable$; }
+}
+
+pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: &&mut dyn Opaque) {
+    shared$shared$;
+    mutable$mutable$;
+    nested$nested$;
+    let copied = shared;
+    copied$copied$;
+    let borrowed = &shared;
+    borrowed$borrowed$;
+    let annotated: &dyn Opaque = shared;
+    annotated$annotated$;
+    let alias: Borrowed<'a, dyn Opaque> = shared;
+    alias$alias$;
+    let returned = make();
+    returned$returned$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("shared referent", "shared"),
+            AnalysisQuery::ty("mutable referent", "mutable"),
+            AnalysisQuery::ty("nested referent", "nested"),
+            AnalysisQuery::ty("copied reference", "copied"),
+            AnalysisQuery::ty("borrowed reference", "borrowed"),
+            AnalysisQuery::ty("annotated reference", "annotated"),
+            AnalysisQuery::ty("alias reference", "alias"),
+            AnalysisQuery::ty("finalized generic reference", "returned"),
+            AnalysisQuery::ty("shared self", "self_shared"),
+            AnalysisQuery::ty("mutable self", "self_mutable"),
+        ],
+        expect![[r#"
+            shared referent
+            - &'_ <unknown>
+
+            mutable referent
+            - &mut <unknown>
+
+            nested referent
+            - &&mut <unknown>
+
+            copied reference
+            - &'_ <unknown>
+
+            borrowed reference
+            - &&'_ <unknown>
+
+            annotated reference
+            - &<unknown>
+
+            alias reference
+            - &'_ <unknown>
+
+            finalized generic reference
+            - &'static <unknown>
+
+            shared self
+            - &<unknown>
+
+            mutable self
+            - &mut <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn infers_bindings_from_reference_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_reference_patterns"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Opaque {}
+pub struct Holder { pub value: dyn Opaque }
+
+pub fn peeled(&value: &u8) { value$peeled$; }
+pub fn borrowed(ref value: u8) { value$borrowed$; }
+pub fn borrowed_mut(ref mut value: u8) { value$borrowed_mut$; }
+pub fn peeled_trait_object(&value: &&dyn Opaque) { value$peeled_trait_object$; }
+pub fn borrowed_trait_object(ref value: &dyn Opaque) { value$borrowed_trait_object$; }
+pub fn tuple((value,): (&dyn Opaque,)) { value$tuple$; }
+pub fn record(Holder { value }: &Holder) { value$record$; }
+pub fn record_mut(Holder { value }: &mut Holder) { value$record_mut$; }
+
+pub fn fields(holder: &mut Holder) {
+    let Holder { value: implicit } = &*holder;
+    implicit$implicit$;
+    let Holder { value: ref explicit } = *holder;
+    explicit$explicit$;
+    let Holder { value: ref mut mutable } = *holder;
+    mutable$mutable$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("peeled parameter", "peeled"),
+            AnalysisQuery::ty("borrowed parameter", "borrowed"),
+            AnalysisQuery::ty("mutably borrowed parameter", "borrowed_mut"),
+            AnalysisQuery::ty("peeled trait object parameter", "peeled_trait_object"),
+            AnalysisQuery::ty("borrowed trait object parameter", "borrowed_trait_object"),
+            AnalysisQuery::ty("tuple parameter", "tuple"),
+            AnalysisQuery::ty("record parameter", "record"),
+            AnalysisQuery::ty("mutable record parameter", "record_mut"),
+            AnalysisQuery::ty("implicitly borrowed field", "implicit"),
+            AnalysisQuery::ty("explicitly borrowed field", "explicit"),
+            AnalysisQuery::ty("mutably borrowed field", "mutable"),
+        ],
+        expect![[r#"
+            peeled parameter
+            - u8
+
+            borrowed parameter
+            - &u8
+
+            mutably borrowed parameter
+            - &mut u8
+
+            peeled trait object parameter
+            - &<unknown>
+
+            borrowed trait object parameter
+            - &&<unknown>
+
+            tuple parameter
+            - &<unknown>
+
+            record parameter
+            - &<unknown>
+
+            mutable record parameter
+            - &mut <unknown>
+
+            implicitly borrowed field
+            - &<unknown>
+
+            explicitly borrowed field
+            - &<unknown>
+
+            mutably borrowed field
+            - &mut <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn selects_trait_methods_for_reference_receivers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_reference_method"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Opaque {}
+pub trait Kind {
+    type Output;
+    fn kind(self) -> Self::Output;
+}
+impl<T: ?Sized> Kind for &T {
+    type Output = u16;
+    fn kind(self) -> u16 { 0 }
+}
+impl Kind for u8 {
+    type Output = u32;
+    fn kind(self) -> u32 { 0 }
+}
+pub fn inspect(value: &dyn Opaque) {
+    let result = value.kind();
+    result$result$;
+}
+"#,
+        &[AnalysisQuery::ty("reference method result", "result")],
+        expect![[r#"
+            reference method result
+            - u16
+        "#]],
+    );
+}
+
+#[test]
 fn infers_types_from_const_expressions() {
     check_analysis_queries(
         r#"

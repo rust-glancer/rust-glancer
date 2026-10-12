@@ -88,14 +88,11 @@ where
                     .transpose()?
                     .unwrap_or(Region(ir::ReErased));
                 let inner = self.lower_type_ref_with_mode(inner, impl_trait_mode, inference)?;
-                // An unresolved source reference supplies no type evidence. A written `&_`
-                // is different: its inner type is a real variable and keeps the reference shape.
-                Ok(if inner.is_unknown() {
-                    inner
-                } else {
-                    self.cx
-                        .reference_with_lifetime(lifetime, *mutability, inner)
-                })
+                // The borrow is known even when its referent is not. Keep `&Missing` distinct
+                // from `Missing`; only a written `_` creates an inference variable here.
+                Ok(self
+                    .cx
+                    .reference_with_lifetime(lifetime, *mutability, inner))
             }
             TypeRef::RawPointer { mutability, inner } => Ok(self.cx.raw_pointer(
                 *mutability,

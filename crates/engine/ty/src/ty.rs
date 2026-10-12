@@ -56,6 +56,8 @@ pub struct ClosureTy {
 /// Inference variables live only in `solver::Ty`. A body exports its learned assignments into
 /// these types at completion; an unanswered variable becomes `Unknown`. Declaration parameters
 /// and projections can remain, because their identities do not depend on an inference table.
+/// Known structure surrounds unknown components: `&Missing` keeps its reference, with `Unknown`
+/// only in the referent. Mutability and lifetimes still carry useful information in that case.
 ///
 /// Every identity-carrying variant is self-contained: syntax text is not an equality key, generic
 /// parameters carry their owner, and inherent `Self` is the same `Adt` as its concrete spelling.
@@ -127,10 +129,6 @@ impl Ty {
         mutability: Mutability,
         inner: Self,
     ) -> Self {
-        if matches!(inner, Self::Unknown) {
-            return Self::Unknown;
-        }
-
         Self::Reference {
             lifetime,
             mutability,

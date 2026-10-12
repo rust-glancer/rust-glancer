@@ -18,10 +18,10 @@ use rg_ir_model::{
     BindingId, DefId, DefMapRef, ExprId, FieldKey, ModuleId, ModuleRef, Path, ScopeId,
     SemanticItemRef, TypeDefId, identity::DeclarationRef,
 };
-use rg_item_tree::{FieldList, SelfParamKind, TypeRef};
+use rg_item_tree::{FieldList, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
-use rg_ty::{ExpectedAdtTyExt, Ty, signature::CallableSignature};
+use rg_ty::{Ty, signature::CallableSignature};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
 use crate::{
@@ -583,7 +583,6 @@ where
                 self.signature.get().and_then(Option::as_ref)
             }
             && let Some(param_ty) = signature.params.get(param_index)
-            && !matches!(param_ty, Ty::Unknown)
         {
             return Ok(param_ty.clone());
         }
@@ -593,22 +592,6 @@ where
                 .context
                 .type_refs(binding_data.scope)
                 .resolve(annotation);
-        }
-
-        if let BindingKind::SelfParam(kind) = binding_data.kind
-            && binding_data.name.as_deref() == Some("self")
-            && let Some(function) = self.body.body().owner().function()
-        {
-            let ty = self
-                .context
-                .functions()
-                .self_adt_ty(function)?
-                .into_adt_ty();
-            return Ok(match kind {
-                SelfParamKind::Value => ty,
-                SelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                SelfParamKind::Explicit => Ty::Unknown,
-            });
         }
 
         Ok(Ty::Unknown)

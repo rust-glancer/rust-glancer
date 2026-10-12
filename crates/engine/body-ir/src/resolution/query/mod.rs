@@ -9,7 +9,6 @@ mod associated_item;
 mod body_items;
 mod callable;
 mod field;
-mod function;
 mod generics;
 mod impls;
 mod live;
@@ -24,7 +23,6 @@ pub(crate) use self::{
     associated_item::BodyAssociatedItemQuery,
     body_items::BodyLocalItemQuery,
     callable::BodyCallableCandidate,
-    function::BodyFunctionQuery,
     generics::BodyGenericsQuery,
     impls::{BodyImplQuery, BodyReceiverImplMatches},
     live::LiveBodyQuery,

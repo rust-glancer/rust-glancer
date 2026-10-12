@@ -3,6 +3,35 @@ use expect_test::expect;
 use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fake_sysroot};
 
 #[test]
+fn shows_shared_mutable_and_nested_reference_hints() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_reference_hints"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Opaque {}
+pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: &&mut dyn Opaque) {
+    let copied = shared;
+    let copied_mut = mutable;
+    let copied_nested = nested;
+    let borrowed = &missing();
+}
+"#,
+        InlayHintsQuery::new("reference hints", "/src/lib.rs"),
+        expect![[r#"
+            reference hints
+            - `: &'_ _` @ 3:9-3:15
+            - `: &mut _` @ 4:9-4:19
+            - `: &&mut _` @ 5:9-5:22
+            - `: &_` @ 6:9-6:17
+        "#]],
+    );
+}
+
+#[test]
 fn shows_array_lengths_from_const_expressions() {
     check_inlay_hints(
         r#"

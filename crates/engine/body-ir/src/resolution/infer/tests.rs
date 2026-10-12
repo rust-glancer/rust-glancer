@@ -1,8 +1,8 @@
 use std::cell::Cell;
 
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, CrateId, CrateRef, DefMapRef, ExprId, PackageSlot, StructId,
-    TypeDefId, TypeDefRef,
+    BindingId, BodyId, BodyRef, CrateId, CrateRef, DefMapRef, ExprId, Mutability, PackageSlot,
+    StructId, TypeDefId, TypeDefRef,
 };
 use rg_std::CancellationToken;
 use rg_ty::{AdtTy, ClosureTyId, GenericArg, PrimitiveTy, Ty};
@@ -174,17 +174,48 @@ fn expected_type_seeds_an_expression_without_producer_evidence() {
 
 #[test]
 fn repeated_nested_unknown_instantiation_reuses_expression_slots() {
-    with_state(1, 0, |mut context| {
-        let cx = context.table.interner();
-        let live = |ty: &Ty| cx.lower_ty(ty, &[]);
-        let return_ty = live(&vec_ty(Ty::Unknown));
+    for (partial, complete, message) in [
+        (vec_ty(Ty::Unknown), vec_ty(user_ty()), "nominal argument"),
+        (
+            Ty::reference(Mutability::Shared, Ty::Unknown),
+            Ty::reference(Mutability::Shared, user_ty()),
+            "shared referent",
+        ),
+        (
+            Ty::reference(Mutability::Mutable, Ty::Unknown),
+            Ty::reference(Mutability::Mutable, user_ty()),
+            "mutable referent",
+        ),
+        (
+            Ty::reference(
+                Mutability::Shared,
+                Ty::reference(Mutability::Mutable, Ty::Unknown),
+            ),
+            Ty::reference(
+                Mutability::Shared,
+                Ty::reference(Mutability::Mutable, user_ty()),
+            ),
+            "nested referent",
+        ),
+    ] {
+        with_state(2, 1, |mut context| {
+            let cx = context.table.interner();
+            let return_ty = cx.lower_ty(&partial, &[]);
+            context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
+            context.set_binding_ty(BindingId(0), context.expr_ty(ExprId(0)));
+            context.set_expr_from_binding(ExprId(1), BindingId(0));
 
-        context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
-        let first_inference_ty = context.expr_ty(ExprId(0));
-
-        context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
-        assert_eq!(context.expr_ty(ExprId(0)), first_inference_ty);
-    });
+            // Revisiting the producer must preserve the link to a read created before that visit.
+            context.instantiate_expr_nested_unknown_ty(ExprId(0), &return_ty);
+            context.constrain_expr_ty(ExprId(1), &cx.lower_ty(&complete, &[]));
+            assert_eq!(context.finalize_expr_ty(ExprId(0)), complete, "{message}");
+            assert_eq!(
+                context.finalize_binding_ty(BindingId(0)),
+                complete,
+                "{message}"
+            );
+        });
+    }
 }
 
 #[test]

@@ -99,11 +99,11 @@ impl Substitution {
                 lifetime,
                 mutability,
                 inner,
-            } => Ty::Reference {
-                lifetime: self.apply_lifetime(*lifetime),
-                mutability: *mutability,
-                inner: Box::new(self.apply(inner)),
-            },
+            } => Ty::reference_with_lifetime(
+                self.apply_lifetime(*lifetime),
+                *mutability,
+                self.apply(inner),
+            ),
             Ty::RawPointer { mutability, inner } => Ty::RawPointer {
                 mutability: *mutability,
                 inner: Box::new(self.apply(inner)),
@@ -223,11 +223,54 @@ impl Substitution {
 mod tests {
     use rg_ir_model::{
         CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, GenericDefRef, ImplId, ImplRef,
-        LocalTypeOrConstParamId, PackageSlot, PrimitiveTy, TypeParamRef,
+        LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, Mutability, PackageSlot,
+        PrimitiveTy, TypeParamRef,
     };
 
     use super::Substitution;
-    use crate::{GenericArg, Ty};
+    use crate::{GenericArg, Lifetime, Ty};
+
+    #[test]
+    fn unknown_substitution_preserves_reference_layers_and_lifetimes() {
+        let owner = GenericDefRef::Function(FunctionRef {
+            origin: DefMapRef::Crate(CrateRef {
+                package: PackageSlot(0),
+                crate_id: CrateId(0),
+            }),
+            id: FunctionId(0),
+        });
+        let param = TypeParamRef {
+            owner,
+            local_id: LocalTypeOrConstParamId(0),
+        };
+        let mut subst = Substitution::new();
+        subst.push(param.into(), GenericArg::Type(Box::new(Ty::Unknown)));
+
+        for lifetime in [
+            Lifetime::Erased,
+            Lifetime::Static,
+            Lifetime::Param(LifetimeParamRef {
+                owner,
+                local_id: LocalLifetimeParamId(0),
+            }),
+        ] {
+            let template = Ty::reference_with_lifetime(
+                lifetime,
+                Mutability::Shared,
+                Ty::reference(Mutability::Mutable, Ty::Param(param)),
+            );
+            let expected = Ty::Reference {
+                lifetime,
+                mutability: Mutability::Shared,
+                inner: Box::new(Ty::Reference {
+                    lifetime: Lifetime::Erased,
+                    mutability: Mutability::Mutable,
+                    inner: Box::new(Ty::Unknown),
+                }),
+            };
+            assert_eq!(subst.apply(&template), expected, "{lifetime:?}");
+        }
+    }
 
     #[test]
     fn same_local_id_from_parent_and_child_keeps_distinct_bindings() {

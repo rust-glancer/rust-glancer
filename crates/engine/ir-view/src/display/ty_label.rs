@@ -99,20 +99,21 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 lifetime,
                 mutability,
                 inner,
-            } => Ok(self
-                .render_ty_with_trait_impl(inner, application)?
-                .map(|inner| {
-                    let lifetime = match lifetime {
-                        rg_ty::Lifetime::Erased => String::new(),
-                        lifetime => format!("{lifetime} "),
-                    };
-                    let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                        "mut "
-                    } else {
-                        ""
-                    };
-                    format!("&{lifetime}{qualifier}{inner}")
-                })),
+            } => {
+                let inner = self
+                    .render_ty_with_trait_impl(inner, application)?
+                    .unwrap_or_else(|| "_".to_string());
+                let lifetime = match lifetime {
+                    rg_ty::Lifetime::Erased => String::new(),
+                    lifetime => format!("{lifetime} "),
+                };
+                let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                    "mut "
+                } else {
+                    ""
+                };
+                Ok(Some(format!("&{lifetime}{qualifier}{inner}")))
+            }
             Ty::RawPointer { mutability, inner } => Ok(self
                 .render_ty_with_trait_impl(inner, application)?
                 .map(|inner| {

@@ -93,11 +93,7 @@ where
                 None => match param.kind {
                     ParamKind::SelfParam(SelfParamKind::Value) => implicit_self_ty,
                     ParamKind::SelfParam(SelfParamKind::Reference { mutability }) => {
-                        if implicit_self_ty.is_unknown() {
-                            implicit_self_ty
-                        } else {
-                            cx.reference(mutability, implicit_self_ty)
-                        }
+                        cx.reference(mutability, implicit_self_ty)
                     }
                     ParamKind::SelfParam(SelfParamKind::Explicit) | ParamKind::Normal => {
                         cx.unknown()

@@ -21,8 +21,8 @@ use super::cache::{BodyLocalItemCache, BodyResolutionCaches, BodyTraitLookupCach
 use crate::{
     BodyData,
     resolution::query::{
-        BodyAssociatedItemQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-        BodyImplQuery, BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeContextQuery,
+        BodyAssociatedItemQuery, BodyFieldQuery, BodyGenericsQuery, BodyImplQuery,
+        BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeContextQuery,
         BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery,
     },
 };
@@ -205,10 +205,6 @@ where
 
     pub fn fields(&self) -> BodyFieldQuery<'a, D, I> {
         BodyFieldQuery::new(self.clone())
-    }
-
-    pub(crate) fn functions(&self) -> BodyFunctionQuery<'a, D, I> {
-        BodyFunctionQuery::new(self.clone())
     }
 
     pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'_, 'a, D, I> {

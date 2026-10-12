@@ -698,9 +698,8 @@ where
     }
 
     fn impls(&self, trait_id: TraitDefRef, filter: TraitImplFilter) -> Option<Vec<ImplRef>> {
-        // Keep the source index's outer-shape rejection before lowering impl headers. For
-        // example, an unsupported `&dyn Trait` header can lower to Unknown, but its reference
-        // syntax still tells us it cannot implement a trait for Vec<T>.
+        // Reject unrelated outer shapes before lowering impl headers. For example, a reference
+        // impl cannot apply to Vec<T>, so there is no need to read its referent or predicates.
         let (context, scope) = self.solving?;
         let impls = filter.candidates(context, trait_id);
         match impls {

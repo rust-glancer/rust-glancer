@@ -7,24 +7,20 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldKey, Mutability, PatId};
-use rg_item_tree::SelfParamKind;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::{
-    ExpectedAdtTyExt,
-    solver::{Ty, TyShape},
-};
+use rg_ty::solver::{Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
-use crate::body::{BindingKind, BodyPath, PatKind, RecordPatField};
+use crate::body::{BodyPath, PatKind, RecordPatField};
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    /// Seed bindings from the function signature before any body expression can read them.
-    /// Destructured parameters then project that signature type into their individual bindings.
+    /// Pass each signature type through its parameter pattern before the body reads its bindings.
+    /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.
     pub(super) fn infer_parameters(&mut self) -> anyhow::Result<()> {
         let signature = self
             .body
@@ -46,50 +42,11 @@ where
                 .unwrap_or(self.cx.unknown());
         }
         for (index, param) in self.body.function_params().iter().enumerate() {
+            rg_std::check_cancel!(self.context, "infer parameter binding");
             let parameter_ty = signature
                 .as_ref()
                 .and_then(|signature| signature.params.get(index))
                 .copied();
-            // `self` and incomplete ordinary parameters can have bindings without a pattern.
-            // Seed them here, using the position already known from this declaration walk.
-            for binding in &param.bindings {
-                rg_std::check_cancel!(self.context, "infer parameter binding");
-                let data = self.body.binding_unchecked(*binding);
-                let ty = if param.bindings.len() == 1
-                    && let Some(ty) = parameter_ty
-                        .as_ref()
-                        .filter(|ty| !matches!((ty).shape(), TyShape::Unknown))
-                {
-                    *ty
-                } else if let Some(annotation) = &data.annotation {
-                    self.context
-                        .live()
-                        .type_ref(data.scope, annotation, self.inference.table())
-                        .context("resolve parameter binding annotation")?
-                } else if let BindingKind::SelfParam(kind) = data.kind
-                    && data.name.as_deref() == Some("self")
-                    && let Some(function) = self.body.owner().function()
-                {
-                    let ty = self
-                        .context
-                        .functions()
-                        .self_adt_ty(function)
-                        .context("resolve self parameter")?
-                        .into_adt_ty();
-                    let ty = self.lower(&ty);
-                    match kind {
-                        SelfParamKind::Value => ty,
-                        SelfParamKind::Reference { mutability } => {
-                            self.cx.reference(mutability, ty)
-                        }
-                        SelfParamKind::Explicit => self.cx.unknown(),
-                    }
-                } else {
-                    self.cx.unknown()
-                };
-                self.inference.set_binding_ty(*binding, ty);
-            }
-            let Some(pat) = param.pat else { continue };
             let ty = match parameter_ty {
                 Some(ty) => ty,
                 None => match &param.annotation {
@@ -101,8 +58,16 @@ where
                     None => self.cx.unknown(),
                 },
             };
-            self.infer_pattern(pat, &ty)
-                .context("infer parameter pattern")?;
+            if let Some(pat) = param.pat {
+                self.infer_pattern(pat, &ty)
+                    .context("infer parameter pattern")?;
+            } else {
+                // `self` and incomplete ordinary parameters can have bindings without a pattern.
+                // Their signature already includes any borrow written on the parameter.
+                for binding in &param.bindings {
+                    self.inference.set_binding_ty(*binding, ty);
+                }
+            }
         }
         Ok(())
     }
@@ -167,11 +132,6 @@ where
     ) -> Result<bool, PackageStoreError> {
         crate::profile::metric::PATTERN_VISITS.inc();
         let mut expected_ty = self.inference.root_resolved_ty(expected_ty);
-        if matches!((expected_ty).shape(), TyShape::Unknown) {
-            // A raw unknown has no link to future evidence, so retrying it cannot reveal a shape.
-            return Ok(true);
-        }
-
         let body = self.body;
         let Some(data) = body.pat(pat) else {
             return Ok(true);
@@ -220,6 +180,7 @@ where
             } => {
                 if let Some(binding) = binding {
                     // Written binding modifiers take precedence over the inherited borrow mode.
+                    // They still supply a reference when the matched field's type is unknown.
                     let by_ref = if mode.by_ref {
                         Some(Mutability::from_mut_token(mode.mutable))
                     } else if mode.mutable {
