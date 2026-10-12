@@ -30,6 +30,11 @@
   it just bloats public API, and better solution is to add `baz` to `new` directly. This approach _can_
   be used, but only if it genuinely helps the ergonomics of the production code. Consumers in tests do not
   count as justification.
+- `context` must be added to error propagation only if it meaningfully helps identifying the problem
+  if it ever fires. If we have two different operations that can fail with the same symptom and it's important
+  to know which one failed, `context` is justified. If we're just propagating cache-related errors that are
+  just "something is wrong with cache/filesystem", we don't care about context in most cases: we don't have
+  a goal of recreating a callstack with `context`. Avoid just stamp slapping it everywhere just because we can.
 
 ## Helpers
 
