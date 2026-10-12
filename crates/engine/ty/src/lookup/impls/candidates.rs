@@ -17,7 +17,8 @@ pub(crate) enum TraitImplFilter {
     All,
     /// Include this concrete family and the blanket/unresolved-header fallbacks.
     Head(TraitImplSelfHead),
-    /// A closure or function item cannot be named by a concrete source impl.
+    /// The index has no separate keys for closures, function items, or trait objects.
+    /// Search its fallback list, which includes blanket impls such as `impl<T> Trait for T`.
     Fallbacks,
     /// An unknown owned type supplies no evidence; do not guess its type from visible impls.
     NoEvidence,
@@ -64,7 +65,7 @@ impl From<&Ty> for TraitImplFilter {
                 Err(_) => return Self::Fallbacks,
             },
             Ty::Adt(ty) => TraitImplSelfHead::Adt(ty.def),
-            Ty::Closure(_) | Ty::FnDef(_) => return Self::Fallbacks,
+            Ty::Closure(_) | Ty::FnDef(_) | Ty::Dyn(_) => return Self::Fallbacks,
         };
         Self::Head(head)
     }
@@ -92,7 +93,7 @@ impl From<solver::Ty<'_>> for TraitImplFilter {
                 Err(_) => return Self::Fallbacks,
             },
             TyShape::Adt(adt) => TraitImplSelfHead::Adt(adt.def),
-            TyShape::Closure(_) | TyShape::FnDef(_) => return Self::Fallbacks,
+            TyShape::Closure(_) | TyShape::FnDef(_) | TyShape::Dyn(_) => return Self::Fallbacks,
             TyShape::Param(_) | TyShape::Alias(_) | TyShape::InferVar { .. } | TyShape::Unknown => {
                 return Self::All;
             }

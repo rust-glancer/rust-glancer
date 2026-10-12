@@ -2,14 +2,14 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
-use rg_item_tree::{ConstExpr, TypeRef};
+use rg_item_tree::{ConstExpr, TypeBound, TypeRef};
 use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
 use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
 use crate::{
     PrimitiveTy, UnsignedIntTy,
-    solver::{InferenceTable, OpaqueTy, Region, Ty},
+    solver::{DynAssocTypeBinding, InferenceTable, List, OpaqueTy, Region, Ty},
 };
 
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
@@ -65,7 +65,53 @@ where
         inference: Option<&InferenceTable<'s>>,
     ) -> Result<Ty<'s>, D::Error> {
         match ty {
-            TypeRef::Unknown(_) | TypeRef::DynTrait(_) => Ok(self.cx.unknown()),
+            TypeRef::Unknown(_) => Ok(self.cx.unknown()),
+            TypeRef::DynTrait(bounds) => {
+                let mut traits = bounds.iter().filter_map(TypeBound::required_trait_ty);
+                let Some(trait_ty) = traits.next() else {
+                    return Ok(self.cx.unknown());
+                };
+                // TODO: Support extra auto-trait bounds, such as `Send` in `dyn Reader + Send`.
+                if traits.next().is_some() {
+                    return Ok(self.cx.unknown());
+                }
+                // Bound lowering expects arguments like [Self, Request]. Use Unknown for Self
+                // so we can reuse its trait and associated-type lookup for dyn Service<Request>.
+                let Some(bound) = self.lower_trait_ref_with_mode(
+                    trait_ty,
+                    self.cx.unknown(),
+                    impl_trait_mode,
+                    inference,
+                )?
+                else {
+                    return Ok(self.cx.unknown());
+                };
+                let lifetime = bounds
+                    .iter()
+                    .find_map(|bound| match bound {
+                        TypeBound::Lifetime(lifetime) => Some(lifetime),
+                        _ => None,
+                    })
+                    .map(|lifetime| self.lower_lifetime(lifetime))
+                    .transpose()?
+                    .unwrap_or(Region(ir::ReErased));
+
+                // Self was only needed by bound lowering. Drop that first argument from both
+                // the trait and its associated bindings: [Unknown, Request] becomes [Request].
+                Ok(self.cx.dyn_ty(
+                    bound.application.def,
+                    List::new(self.cx, &bound.application.args[1..]),
+                    bound
+                        .associated_types
+                        .iter()
+                        .map(|binding| DynAssocTypeBinding {
+                            associated_ty: binding.projection.associated_ty,
+                            args: List::new(self.cx, &binding.projection.args[1..]),
+                            ty: binding.ty,
+                        }),
+                    lifetime,
+                ))
+            }
             TypeRef::Infer => Ok(inference
                 .map(|table| table.new_type_var())
                 .unwrap_or(self.cx.unknown())),

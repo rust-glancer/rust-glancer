@@ -316,11 +316,17 @@ where
             };
             // Lookup has already substituted any supertrait arguments. A bound on `Derived<T>`
             // can constrain `<Self as Base<Vec<T>>>::Item`, so keep the projection it returned.
-            bindings.push(AssocTypeBinding {
-                projection: alias,
-                ty: self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)?,
-            });
+            bindings.push((
+                name.clone(),
+                AssocTypeBinding {
+                    projection: alias,
+                    ty: self.lower_type_ref_with_mode(ty, impl_trait_mode, inference)?,
+                },
+            ));
         }
-        Ok(bindings)
+        // The order of `Item = ...` bindings does not change the type. Sort them by name so
+        // `dyn Pair<Left = u8, Right = u16>` matches the same type with the bindings reversed.
+        bindings.sort_by(|(a, _), (b, _)| a.cmp(b));
+        Ok(bindings.into_iter().map(|(_, binding)| binding).collect())
     }
 }

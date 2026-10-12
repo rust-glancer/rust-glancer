@@ -5,12 +5,12 @@
 //! such as `<Worker as Service<u8>>::Output`, becomes the source-valid `Self::Output`. Unrelated
 //! projections remain unknown instead of being shortened to the wrong trait.
 
-use rg_ir_model::{GenericParamRef, ItemOwner, TraitDefRef};
+use rg_ir_model::{GenericParamRef, ItemOwner, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
-    signature::SemanticSignatureQuery,
+    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, ProjectionTy, TraitApplication,
+    TraitRefLowering, Ty, signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -100,9 +100,14 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 mutability,
                 inner,
             } => {
-                let inner = self
+                // A lifetime bound needs parentheses here: `&(dyn Service + 'a)`.
+                let parenthesize = matches!(inner.as_ref(), Ty::Dyn(object) if object.lifetime != Lifetime::Erased);
+                let mut inner = self
                     .render_ty_with_trait_impl(inner, application)?
                     .unwrap_or_else(|| "_".to_string());
+                if parenthesize {
+                    inner = format!("({inner})");
+                }
                 let lifetime = match lifetime {
                     rg_ty::Lifetime::Erased => String::new(),
                     lifetime => format!("{lifetime} "),
@@ -114,16 +119,23 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 };
                 Ok(Some(format!("&{lifetime}{qualifier}{inner}")))
             }
-            Ty::RawPointer { mutability, inner } => Ok(self
-                .render_ty_with_trait_impl(inner, application)?
-                .map(|inner| {
-                    let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
-                        "mut"
-                    } else {
-                        "const"
-                    };
-                    format!("*{qualifier} {inner}")
-                })),
+            Ty::RawPointer { mutability, inner } => {
+                // Keep the object's lifetime bound inside the pointer: `*const (dyn Service + 'a)`.
+                let parenthesize = matches!(inner.as_ref(), Ty::Dyn(object) if object.lifetime != Lifetime::Erased);
+                Ok(self
+                    .render_ty_with_trait_impl(inner, application)?
+                    .map(|mut inner| {
+                        if parenthesize {
+                            inner = format!("({inner})");
+                        }
+                        let qualifier = if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                            "mut"
+                        } else {
+                            "const"
+                        };
+                        format!("*{qualifier} {inner}")
+                    }))
+            }
             Ty::FnPointer { params, ret } => {
                 let params = params
                     .iter()
@@ -142,6 +154,22 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 .function_path(function.def)?
                 .map(|path| format!("{{fn {path}}}"))),
             Ty::Adt(ty) => self.render_nominal(ty, application),
+            Ty::Dyn(object) => {
+                let bound = self.render_trait_bound(
+                    object.def,
+                    &object.args,
+                    object
+                        .associated_types
+                        .iter()
+                        .map(|binding| (binding.associated_ty, &binding.ty)),
+                    application,
+                )?;
+                let lifetime = match object.lifetime {
+                    Lifetime::Erased => String::new(),
+                    lifetime => format!(" + {lifetime}"),
+                };
+                Ok(Some(format!("dyn {bound}{lifetime}")))
+            }
             Ty::Param(param) => self.render_type_param(*param),
             Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
             Ty::Alias(AliasTy::Projection(projection)) => match application {
@@ -248,30 +276,49 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         }))
     }
 
-    /// Render one declaration predicate attached to an opaque type.
+    /// Render one of the trait bounds in an `impl Trait` type.
     fn render_opaque_bound(&self, bound: &TraitRefLowering) -> anyhow::Result<String> {
-        if let Some(callable) = self.render_callable_bound(bound)? {
+        self.render_trait_bound(
+            bound.application.def,
+            &bound.application.args[1..],
+            bound
+                .associated_types
+                .iter()
+                .map(|binding| (binding.projection.associated_ty, &binding.ty)),
+            None,
+        )
+    }
+
+    /// Render `Service<Request, Output = Reply>` for either an `impl` or a `dyn` type.
+    /// `args` contains `[Request]`; associated bindings are supplied separately.
+    fn render_trait_bound<'ty>(
+        &self,
+        def: TraitDefRef,
+        args: &[GenericArg],
+        bindings: impl Iterator<Item = (TypeAliasRef, &'ty Ty)> + Clone,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<String> {
+        if let Some(callable) =
+            self.render_callable_bound(def, args, bindings.clone(), application)?
+        {
             return Ok(callable);
         }
 
         let trait_path = PathView::new(self.db, self.syntax.edition())
-            .trait_path(bound.application.def)?
+            .trait_path(def)?
             .unwrap_or_else(|| "<trait>".to_string());
-        let mut args = bound
-            .application
-            .args
+        let mut args = args
             .iter()
-            .skip(1)
-            .map(|arg| self.render_generic_arg(arg, None))
+            .map(|arg| self.render_generic_arg(arg, application))
             .collect::<anyhow::Result<Vec<_>>>()?;
         let items = ItemStoreQuery::new(self.db);
-        for binding in &bound.associated_types {
+        for (associated_ty, ty) in bindings {
             let name = items
-                .type_alias_data(binding.projection.associated_ty)?
+                .type_alias_data(associated_ty)?
                 .map(|data| self.syntax.identifier(&data.name).to_string())
                 .unwrap_or_else(|| "_".to_string());
             let ty = self
-                .render_ty(&binding.ty)?
+                .render_ty_with_trait_impl(ty, application)?
                 .unwrap_or_else(|| "_".to_string());
             args.push(format!("{name} = {ty}"));
         }
@@ -282,17 +329,23 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         })
     }
 
-    /// Preserve Rust's parenthesized presentation for the language callable traits.
-    fn render_callable_bound(&self, bound: &TraitRefLowering) -> anyhow::Result<Option<String>> {
+    /// Keep callable bounds in the familiar `Fn(u8) -> u16` form.
+    fn render_callable_bound<'ty>(
+        &self,
+        def: TraitDefRef,
+        args: &[GenericArg],
+        bindings: impl Iterator<Item = (TypeAliasRef, &'ty Ty)>,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<Option<String>> {
         let items = ItemStoreQuery::new(self.db);
-        let Some(trait_data) = items.trait_data(bound.application.def)? else {
+        let Some(trait_data) = items.trait_data(def)? else {
             return Ok(None);
         };
         if !matches!(trait_data.name.as_str(), "Fn" | "FnMut" | "FnOnce") {
             return Ok(None);
         }
 
-        let mut positional = bound.application.args.iter().skip(1);
+        let mut positional = args.iter();
         let Some(GenericArg::Type(input)) = positional.next() else {
             return Ok(None);
         };
@@ -305,17 +358,17 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let params = params
             .iter()
             .map(|param| {
-                self.render_ty(param)
+                self.render_ty_with_trait_impl(param, application)
                     .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
         let mut output = None;
-        for binding in &bound.associated_types {
+        for (associated_ty, ty) in bindings {
             if items
-                .type_alias_data(binding.projection.associated_ty)?
+                .type_alias_data(associated_ty)?
                 .is_some_and(|data| data.name.as_str() == "Output")
             {
-                output = Some(&binding.ty);
+                output = Some(ty);
                 break;
             }
         }
@@ -327,7 +380,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         } else {
             format!(
                 " -> {}",
-                self.render_ty(output)?.unwrap_or_else(|| "_".to_string())
+                self.render_ty_with_trait_impl(output, application)?
+                    .unwrap_or_else(|| "_".to_string())
             )
         };
 

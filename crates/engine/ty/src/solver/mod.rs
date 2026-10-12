@@ -39,7 +39,10 @@ pub use self::{
         AssocTypeBinding, CallableSignature, ImplHeader, ImplSelection, TraitApplication,
         TraitRefLowering,
     },
-    shape::{AdtTy, AliasTy, ClosureTy, FnDefTy, InferVarKind, OpaqueTy, ProjectionTy, TyShape},
+    shape::{
+        AdtTy, AliasTy, ClosureTy, DynAssocTypeBinding, DynTy, FnDefTy, InferVarKind, OpaqueTy,
+        ProjectionTy, TyShape,
+    },
     types::{
         Clause, Const, DefId, GenericArg, GenericArgs, List, Param, ParamEnv, Predicate, Region,
         Term, Ty,

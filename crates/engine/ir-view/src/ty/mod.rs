@@ -129,6 +129,11 @@ impl IndexedType {
                 Self::collect_nominal_type_defs(&closure.ret, type_defs);
             }
             Ty::FnDef(function) => Self::collect_nominal_type_args(&function.args, type_defs),
+            Ty::Dyn(object) => {
+                for ty in object.types() {
+                    Self::collect_nominal_type_defs(ty, type_defs);
+                }
+            }
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => {}
         }
     }

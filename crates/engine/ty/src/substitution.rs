@@ -8,8 +8,9 @@ use rg_ir_model::{GenericParamRef, TypeParamRef};
 use rg_semantic_ir::Generics;
 
 use crate::{
-    AdtTy, AliasTy, AssocTypeBinding, ClosureTy, ConstValue, FnDefTy, GenericArg, GenericArgs,
-    Lifetime, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering, Ty,
+    AdtTy, AliasTy, AssocTypeBinding, ClosureTy, ConstValue, DynAssocTypeBinding, DynTy, FnDefTy,
+    GenericArg, GenericArgs, Lifetime, OpaqueTy, ProjectionTy, TraitApplication, TraitRefLowering,
+    Ty,
 };
 
 /// Semantic substitution keyed by owner-scoped parameter identity.
@@ -116,6 +117,20 @@ impl Substitution {
                 def: ty.def,
                 args: ty.args.iter().map(|arg| self.apply_arg(arg)).collect(),
             }),
+            Ty::Dyn(ty) => Ty::Dyn(Box::new(DynTy {
+                def: ty.def,
+                args: self.apply_args(&ty.args),
+                associated_types: ty
+                    .associated_types
+                    .iter()
+                    .map(|binding| DynAssocTypeBinding {
+                        associated_ty: binding.associated_ty,
+                        args: self.apply_args(&binding.args),
+                        ty: self.apply(&binding.ty),
+                    })
+                    .collect(),
+                lifetime: self.apply_lifetime(ty.lifetime),
+            })),
             Ty::Alias(alias) => Ty::Alias(match alias {
                 AliasTy::Projection(alias) => AliasTy::Projection(self.apply_projection(alias)),
                 AliasTy::Opaque(alias) => AliasTy::Opaque(OpaqueTy {

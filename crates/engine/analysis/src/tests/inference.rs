@@ -59,34 +59,99 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
         ],
         expect![[r#"
             shared referent
-            - &'_ <unknown>
+            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             mutable referent
-            - &mut <unknown>
+            - &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             nested referent
-            - &&mut <unknown>
+            - &&mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             copied reference
-            - &'_ <unknown>
+            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             borrowed reference
-            - &&'_ <unknown>
+            - &&'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             annotated reference
-            - &<unknown>
+            - &dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             alias reference
-            - &'_ <unknown>
+            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             finalized generic reference
             - &'static <unknown>
 
             shared self
-            - &<unknown>
+            - &dyn trait analysis_trait_object_references[lib]::crate::Opaque
 
             mutable self
-            - &mut <unknown>
+            - &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_trait_object_arguments_through_inference() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_object_arguments"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Service<Request> { type Response; type Error; }
+pub struct Holder<T: ?Sized> { pub value: T }
+pub type ServiceObject<T> = dyn Service<T, Response = u32, Error = u16>;
+pub fn make() -> &'static ServiceObject<u8> { loop {} }
+pub fn infer<T, U>(value: &dyn Service<T, Error = u16, Response = U>) -> (T, U) { loop {} }
+pub fn inspect(value: &ServiceObject<u8>, holder: &Holder<ServiceObject<u8>>, wrapped: Holder<&ServiceObject<u8>>) {
+    let copied = value;
+    copied$copied$;
+    let field = &holder.value;
+    field$field$;
+    let returned = make();
+    returned$returned$;
+    let inferred = infer(value);
+    inferred$inferred$;
+    wrapped$wrapped$;
+    let inner = wrapped.value;
+    inner$inner$;
+    let explicit: &dyn Service<_, Response = _, Error = u16> = value;
+    explicit$explicit$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("copied object", "copied"),
+            AnalysisQuery::ty("object field", "field"),
+            AnalysisQuery::ty("returned object", "returned"),
+            AnalysisQuery::ty("inferred trait argument and binding", "inferred"),
+            AnalysisQuery::ty("wrapped object", "wrapped"),
+            AnalysisQuery::ty("unwrapped object", "inner"),
+            AnalysisQuery::ty("inferred object annotation", "explicit"),
+        ],
+        expect![[r#"
+            copied object
+            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
+
+            object field
+            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
+
+            returned object
+            - &'static dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
+
+            inferred trait argument and binding
+            - (u8, u32)
+
+            wrapped object
+            - nominal struct analysis_object_arguments[lib]::crate::Holder<&dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>>
+
+            unwrapped object
+            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
+
+            inferred object annotation
+            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
         "#]],
     );
 }
@@ -146,28 +211,28 @@ pub fn fields(holder: &mut Holder) {
             - &mut u8
 
             peeled trait object parameter
-            - &<unknown>
+            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             borrowed trait object parameter
-            - &&<unknown>
+            - &&dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             tuple parameter
-            - &<unknown>
+            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             record parameter
-            - &<unknown>
+            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             mutable record parameter
-            - &mut <unknown>
+            - &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             implicitly borrowed field
-            - &<unknown>
+            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             explicitly borrowed field
-            - &<unknown>
+            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
 
             mutably borrowed field
-            - &mut <unknown>
+            - &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque
         "#]],
     );
 }

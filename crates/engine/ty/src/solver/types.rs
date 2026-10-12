@@ -585,6 +585,8 @@ impl<'s> ir::inherent::BoundExistentialPredicates<Interner<'s>>
     }
 }
 
+// Relation errors are defined by the compiler integration contract.
+#[allow(clippy::result_large_err)]
 impl<'s> Relate<Interner<'s>>
     for List<'s, ir::Binder<Interner<'s>, ir::ExistentialPredicate<Interner<'s>>>>
 {
@@ -597,10 +599,31 @@ impl<'s> Relate<Interner<'s>>
             return Ok(a);
         }
 
-        // Dynamic types are not produced by the source lowerer yet. Record the limitation so
-        // an enclosing query cannot turn this conservative mismatch into negative evidence.
-        r.cx().unavailable("dynamic type relation");
-        Err(ir::error::TypeError::Mismatch)
+        if a.len() != b.len() {
+            return Err(ir::error::TypeError::Mismatch);
+        }
+        // Bindings are sorted by name, so the entries to compare appear in the same order.
+        // Let inference compare the types inside each entry too: comparing
+        // `dyn Iterator<Item = ?T>` with `dyn Iterator<Item = u8>` should learn `?T = u8`.
+        let cx = r.cx();
+        let predicates =
+            a.iter()
+                .zip(b.iter())
+                .map(|(a, b)| match (a.skip_binder(), b.skip_binder()) {
+                    (ir::ExistentialPredicate::Trait(at), ir::ExistentialPredicate::Trait(bt)) => r
+                        .relate(a.rebind(at), b.rebind(bt))
+                        .map(|predicate| predicate.map_bound(ir::ExistentialPredicate::Trait)),
+                    (
+                        ir::ExistentialPredicate::Projection(ap),
+                        ir::ExistentialPredicate::Projection(bp),
+                    ) => r
+                        .relate(a.rebind(ap), b.rebind(bp))
+                        .map(|predicate| predicate.map_bound(ir::ExistentialPredicate::Projection)),
+                    _ => Err(ir::error::TypeError::Mismatch),
+                });
+        ir::CollectAndApply::collect_and_apply(predicates, |predicates: &[_]| {
+            Self::new(cx, predicates)
+        })
     }
 }
 

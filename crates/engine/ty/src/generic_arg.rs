@@ -40,6 +40,9 @@ impl fmt::Display for Lifetime {
 /// `trait Lookup<T, const N: usize>`, the application `Table: Lookup<User, 4>` stores
 /// `[Table, User, 4]`: implicit `Self` followed by the two written inputs. Consumers can therefore
 /// zip arguments with parameters without reconstructing missing slots.
+///
+/// For `dyn Lookup<User, 4>`, the implementing type is hidden, so the list is `[User, 4]`.
+/// There is no `Self` entry in that case.
 #[derive(
     Debug, Clone, Default, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]

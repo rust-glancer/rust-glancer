@@ -1097,6 +1097,32 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             Ty::Adt(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
+            Ty::Dyn(object) => {
+                let mut args = object
+                    .args
+                    .iter()
+                    .map(|arg| self.render_generic_arg(arg))
+                    .collect::<Vec<_>>();
+                for binding in &object.associated_types {
+                    let name = self
+                        .project
+                        .resident_item_store(binding.associated_ty.origin)
+                        .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                        .map(|data| data.name.to_string())
+                        .unwrap_or_else(|| "<missing>".to_string());
+                    args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
+                }
+                let args = if args.is_empty() {
+                    String::new()
+                } else {
+                    format!("<{}>", args.join(", "))
+                };
+                let lifetime = match object.lifetime {
+                    Lifetime::Erased => String::new(),
+                    lifetime => format!(" + {lifetime}"),
+                };
+                format!("dyn {}{args}{lifetime}", self.render_trait_ref(object.def))
+            }
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

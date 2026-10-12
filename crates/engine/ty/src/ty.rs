@@ -7,7 +7,7 @@
 use std::fmt;
 
 use rg_ir_model::{
-    BodyRef, ExprId, FunctionRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+    BodyRef, ExprId, FunctionRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef, TypeParamRef,
 };
 use rg_semantic_ir::TypePathResolution;
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -59,8 +59,8 @@ pub struct ClosureTy {
 /// Known structure surrounds unknown components: `&Missing` keeps its reference, with `Unknown`
 /// only in the referent. Mutability and lifetimes still carry useful information in that case.
 ///
-/// Every identity-carrying variant is self-contained: syntax text is not an equality key, generic
-/// parameters carry their owner, and inherent `Self` is the same `Adt` as its concrete spelling.
+/// Names are resolved before a type is stored here. A generic parameter remembers where it was
+/// declared, and `Self` inside `impl dyn Service` is stored as `dyn Service`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum Ty {
     Unit,
@@ -91,6 +91,7 @@ pub enum Ty {
         ret: Box<Ty>,
     },
     Adt(AdtTy),
+    Dyn(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<DynTy>>")] Box<DynTy>),
     Param(TypeParamRef),
     Alias(AliasTy),
     Closure(ClosureTy),
@@ -226,6 +227,7 @@ impl Ty {
                 params.iter().any(Self::has_unknown) || ret.has_unknown()
             }
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_unknown),
+            Self::Dyn(ty) => ty.types().any(Self::has_unknown),
             Self::Alias(alias) => alias.has_unknown(),
             Self::Closure(closure) => {
                 closure.params.iter().any(Self::has_unknown) || closure.ret.has_unknown()
@@ -249,6 +251,7 @@ impl Ty {
                 params.iter().any(Self::has_projection) || ret.has_projection()
             }
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_projection),
+            Self::Dyn(ty) => ty.types().any(Self::has_projection),
             Self::Alias(AliasTy::Opaque(alias)) => {
                 alias.args.iter().any(GenericArg::has_projection)
             }
@@ -273,6 +276,7 @@ impl Ty {
                 params.iter().any(Self::has_closure) || ret.has_closure()
             }
             Self::Adt(ty) => ty.args.iter().any(GenericArg::has_closure),
+            Self::Dyn(ty) => ty.types().any(Self::has_closure),
             Self::Alias(alias) => alias.args().iter().any(GenericArg::has_closure),
             Self::FnDef(function) => function.args.iter().any(GenericArg::has_closure),
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Param(_) | Self::Unknown => false,
@@ -293,6 +297,7 @@ impl Shrink for Ty {
                 Shrink::shrink_to_fit(ret);
             }
             Self::Adt(ty) => Shrink::shrink_to_fit(ty),
+            Self::Dyn(ty) => Shrink::shrink_to_fit(ty),
             Self::Alias(alias) => Shrink::shrink_to_fit(alias),
             Self::Closure(closure) => Shrink::shrink_to_fit(closure),
             Self::FnDef(function) => Shrink::shrink_to_fit(function),
@@ -315,6 +320,54 @@ impl AdtTy {
             args: GenericArgs::empty(),
         }
     }
+}
+
+/// A trait object type that can be kept after inference finishes.
+///
+/// For `dyn Service<Request, Output = Reply>`, `def` identifies `Service`, `args` contains
+/// `[Request]`, and `associated_types` contains the `Output = Reply` binding.
+///
+/// In `Worker: Service<Request>`, `Worker` fills the trait's `Self` argument. A `dyn` type
+/// does not name the type implementing the trait, so we leave `Self` out of its arguments.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct DynTy {
+    pub def: TraitDefRef,
+    pub args: GenericArgs,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<DynAssocTypeBinding>>")]
+    pub associated_types: Vec<DynAssocTypeBinding>,
+    pub lifetime: Lifetime,
+}
+
+impl DynTy {
+    /// Return the child types for recursive checks, such as looking for an unknown type.
+    /// For `dyn Service<Request, Output = Reply>`, this includes `Request` and `Reply`.
+    /// Bindings inherited from another trait can have their own arguments; include those too.
+    pub fn types(&self) -> impl Iterator<Item = &Ty> {
+        self.args
+            .iter()
+            .filter_map(GenericArg::as_ty)
+            .chain(self.associated_types.iter().flat_map(|binding| {
+                binding
+                    .args
+                    .iter()
+                    .filter_map(GenericArg::as_ty)
+                    .chain([&binding.ty])
+            }))
+    }
+}
+
+/// The `Item = u8` part of a type like `dyn Iterator<Item = u8>`.
+///
+/// `associated_ty` points to `Iterator::Item`, and `ty` holds `u8`. `args` holds the generic
+/// arguments of the trait that declares `Item`, with no entry for the hidden `Self` type.
+///
+/// These arguments can differ from the ones next to `dyn`: if `Derived<T>: Base<Vec<T>>`
+/// and `Base` declares `Item`, then `dyn Derived<T, Item = u8>` needs `[Vec<T>]` here.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct DynAssocTypeBinding {
+    pub associated_ty: TypeAliasRef,
+    pub args: GenericArgs,
+    pub ty: Ty,
 }
 
 /// Instantiated type of one function definition.

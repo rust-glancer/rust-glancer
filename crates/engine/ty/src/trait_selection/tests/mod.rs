@@ -1197,6 +1197,93 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
 }
 
 #[test]
+fn object_bindings_survive_substitution_and_storage() {
+    use rg_ir_model::{FunctionId, FunctionRef};
+
+    use crate::{PrimitiveTy, Substitution, signature::SemanticSignatureQuery, solver};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Base<T>
+              trait#1 Derived<T>: Base<Vec<T>>
+            structs
+              struct#0 Vec<T>
+            functions
+              fn#0 object<T> -> *const dyn Derived<T, Item = T>
+            type aliases
+              type#0 trait#0::Item
+        "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    let function = FunctionRef {
+        origin: origin(),
+        id: FunctionId(0),
+    };
+    let signature = SemanticSignatureQuery::new(&fixture, &fixture)
+        .function(function)
+        .expect("signature loads")
+        .expect("object function");
+    let param = context
+        .item_paths()
+        .generics()
+        .generics(function.into())
+        .expect("object generics")
+        .param_by_name("T")
+        .expect("object T");
+    let boolean = Ty::Primitive(PrimitiveTy::Bool);
+    let mut substitution = Substitution::new();
+    substitution.push(param, GenericArg::Type(Box::new(boolean.clone())));
+    let substituted = substitution.apply(&signature.ret);
+    let Ty::RawPointer { inner, .. } = &substituted else {
+        panic!("signature retains the pointer");
+    };
+    let Ty::Dyn(object) = inner.as_ref() else {
+        panic!("signature retains the object");
+    };
+    assert_eq!(
+        object.args.as_slice(),
+        &[GenericArg::Type(Box::new(boolean.clone()))]
+    );
+    let binding = &object.associated_types[0];
+    assert_eq!(binding.ty, boolean);
+    // Item is declared by Base<Vec<T>>. Replacing T with bool must reach those arguments too,
+    // so the binding should retain Vec<bool>.
+    let vector = Ty::adt(AdtTy {
+        def: fixture.type_ref_by_name("Vec").expect("Vec"),
+        args: vec![GenericArg::Type(Box::new(boolean))].into(),
+    });
+    assert_eq!(
+        binding.args.as_slice(),
+        &[GenericArg::Type(Box::new(vector))]
+    );
+    assert_eq!(
+        binding.associated_ty,
+        fixture
+            .associated_ty_by_name(trait_ref(0), "Item")
+            .expect("Base::Item")
+    );
+
+    let bytes = wincode::serialize(&substituted).expect("object serializes");
+    let restored: Ty = wincode::deserialize(&bytes).expect("object deserializes");
+    assert_eq!(restored, substituted);
+    // Read the saved type into a new solver. It must retain everything needed to reconstruct
+    // the same object, without relying on the solver that lowered the signature.
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let cx = solver.interner();
+            assert_eq!(cx.raise_ty(cx.lower_ty(&restored, &[])), Some(substituted));
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
 fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
     use rg_ir_model::{FunctionId, FunctionRef, Path, TraitApplicability};
 

@@ -4,12 +4,12 @@
 //! table, and inspecting a shape does not normalize it or choose fallback types.
 
 use rg_ir_model::{
-    FunctionRef, GenericParamRef, OpaqueTyRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+    FunctionRef, GenericParamRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef, TypeParamRef,
 };
 use rustc_abi::ExternAbi;
 use rustc_type_ir::{
     self as ir, TypeVisitableExt,
-    inherent::{GenericArgs as _, IntoKind, Ty as _},
+    inherent::{BoundExistentialPredicates as _, GenericArgs as _, IntoKind, Term as _, Ty as _},
 };
 
 use super::{
@@ -29,6 +29,57 @@ pub enum InferVarKind {
 pub struct AdtTy<'s> {
     pub def: TypeDefRef,
     pub args: GenericArgs<'s>,
+}
+
+/// Read the trait and associated-type bindings of a `dyn` type during inference.
+///
+/// The compiler stores them together: `dyn Iterator<Item = u8>` has a list entry for
+/// `Iterator` and another for `Item = u8`. We borrow that list so inspecting an object
+/// does not allocate another type tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynTy<'s> {
+    pub(crate) predicates:
+        List<'s, ir::Binder<SolverInterner<'s>, ir::ExistentialPredicate<SolverInterner<'s>>>>,
+    pub lifetime: Region<'s>,
+}
+
+impl<'s> DynTy<'s> {
+    /// For `dyn Service<Request, Output = Reply>`, return `Service` and `[Request]`.
+    pub fn principal(self) -> Option<(TraitDefRef, GenericArgs<'s>)> {
+        let principal = self.predicates.principal()?.skip_binder();
+        let DefId::Trait(def) = principal.def_id else {
+            return None;
+        };
+        Some((def, principal.args))
+    }
+
+    pub fn associated_types(self) -> impl Iterator<Item = DynAssocTypeBinding<'s>> {
+        self.predicates.iter().filter_map(|bound| {
+            let ir::ExistentialPredicate::Projection(projection) = bound.skip_binder() else {
+                return None;
+            };
+            let DefId::TypeAlias(associated_ty) = projection.def_id else {
+                return None;
+            };
+            Some(DynAssocTypeBinding {
+                associated_ty,
+                args: projection.args,
+                ty: projection.term.as_type()?,
+            })
+        })
+    }
+}
+
+/// One binding such as `Item = u8` in `dyn Iterator<Item = u8>`, using the solver's types.
+///
+/// `args` contains the arguments of the trait declaring `Item`. It has no `Self` entry,
+/// because `dyn` does not name the type implementing the trait. The types here can still
+/// contain inference variables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DynAssocTypeBinding<'s> {
+    pub associated_ty: TypeAliasRef,
+    pub args: GenericArgs<'s>,
+    pub ty: Ty<'s>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +143,7 @@ pub enum TyShape<'s> {
         ret: Ty<'s>,
     },
     Adt(AdtTy<'s>),
+    Dyn(DynTy<'s>),
     Param(TypeParamRef),
     Alias(AliasTy<'s>),
     Closure(ClosureTy<'s>),
@@ -134,6 +186,10 @@ impl<'s> Ty<'s> {
                 DefId::Adt(def) => S::Adt(AdtTy { def, args }),
                 _ => S::Unknown,
             },
+            ir::Dynamic(predicates, lifetime) => S::Dyn(DynTy {
+                predicates,
+                lifetime,
+            }),
             ir::FnDef(DefId::Function(def), args) => S::FnDef(FnDefTy { def, args }),
             ir::FnPtr(sig, _) => S::FnPointer {
                 params: sig.skip_binder().inputs(),
@@ -259,6 +315,36 @@ impl<'s> SolverInterner<'s> {
     pub fn adt(self, adt: AdtTy<'s>) -> Ty<'s> {
         use ir::Interner;
         Ty::new_adt(self, self.adt_def(DefId::Adt(adt.def)), adt.args)
+    }
+
+    /// Build the compiler's object type from a trait and its associated bindings.
+    ///
+    /// For `dyn Iterator<Item = u8>`, the compiler needs separate entries for `Iterator`
+    /// and `Item = u8`. The argument lists supplied here already leave out `Self`.
+    pub fn dyn_ty(
+        self,
+        def: TraitDefRef,
+        args: GenericArgs<'s>,
+        associated_types: impl IntoIterator<Item = DynAssocTypeBinding<'s>>,
+        lifetime: Region<'s>,
+    ) -> Ty<'s> {
+        let trait_bound = ir::Binder::dummy(ir::ExistentialPredicate::Trait(
+            ir::ExistentialTraitRef::new_from_args(self, DefId::Trait(def), args),
+        ));
+        let bindings = associated_types.into_iter().map(|binding| {
+            ir::Binder::dummy(ir::ExistentialPredicate::Projection(
+                ir::ExistentialProjection::new_from_args(
+                    self,
+                    DefId::TypeAlias(binding.associated_ty),
+                    binding.args,
+                    binding.ty.into(),
+                ),
+            ))
+        });
+        ir::CollectAndApply::collect_and_apply(
+            std::iter::once(trait_bound).chain(bindings),
+            |predicates: &[_]| Ty::new_dynamic(self, List::new(self, predicates), lifetime),
+        )
     }
 
     pub fn projection(self, projection: ProjectionTy<'s>) -> Ty<'s> {

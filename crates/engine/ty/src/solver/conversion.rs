@@ -12,8 +12,8 @@ use rustc_type_ir::{
 };
 
 use super::{
-    AssocTypeBinding, Clause, Const, DefId, GenericArgs, List, Param, ProjectionTy, Region,
-    SolverInterner, Ty,
+    AssocTypeBinding, Clause, Const, DefId, DynAssocTypeBinding, DynTy, GenericArgs, List, Param,
+    ProjectionTy, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
 
@@ -67,6 +67,21 @@ impl<'s> SolverInterner<'s> {
                 self.adt_def(DefId::Adt(adt.def)),
                 self.lower_args(&adt.args, params),
             ),
+            Stored::Dyn(object) => {
+                return self.dyn_ty(
+                    object.def,
+                    self.lower_args(&object.args, params),
+                    object
+                        .associated_types
+                        .iter()
+                        .map(|binding| DynAssocTypeBinding {
+                            associated_ty: binding.associated_ty,
+                            args: self.lower_args(&binding.args, params),
+                            ty: self.lower_ty(&binding.ty, params),
+                        }),
+                    self.lower_region(object.lifetime, params),
+                );
+            }
             Stored::Param(p) => match self.param(GenericParamRef::Type(*p), params) {
                 Some(p) => ir::Param(p),
                 None => ir::Error(ErrorGuaranteed),
@@ -298,6 +313,26 @@ impl<'s> SolverInterner<'s> {
                     def,
                     args: self.raise_args(args),
                 })
+            }
+            ir::Dynamic(predicates, lifetime) => {
+                let object = DynTy {
+                    predicates,
+                    lifetime,
+                };
+                let (def, args) = object.principal()?;
+                Stored::Dyn(Box::new(crate::DynTy {
+                    def,
+                    args: self.raise_args(args),
+                    associated_types: object
+                        .associated_types()
+                        .map(|binding| crate::DynAssocTypeBinding {
+                            associated_ty: binding.associated_ty,
+                            args: self.raise_args(binding.args),
+                            ty: self.raise_ty(binding.ty).unwrap_or(Stored::Unknown),
+                        })
+                        .collect(),
+                    lifetime: Self::raise_region(lifetime),
+                }))
             }
             ir::Param(Param {
                 source: GenericParamRef::Type(p),

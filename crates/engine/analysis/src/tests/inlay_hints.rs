@@ -23,10 +23,41 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
         InlayHintsQuery::new("reference hints", "/src/lib.rs"),
         expect![[r#"
             reference hints
-            - `: &'_ _` @ 3:9-3:15
-            - `: &mut _` @ 4:9-4:19
-            - `: &&mut _` @ 5:9-5:22
+            - `: &'_ dyn analysis_reference_hints::Opaque` @ 3:9-3:15
+            - `: &mut dyn analysis_reference_hints::Opaque` @ 4:9-4:19
+            - `: &&mut dyn analysis_reference_hints::Opaque` @ 5:9-5:22
             - `: &_` @ 6:9-6:17
+        "#]],
+    );
+}
+
+#[test]
+fn shows_trait_object_arguments_bindings_and_lifetimes() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_object_hints"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub trait Service<T> { type Reply; }
+pub struct Holder<T: ?Sized> { pub value: T }
+pub type Borrowed<'a> = &'a (dyn Service<u8, Reply = u16> + 'a);
+pub fn inspect<'a>(borrowed: Borrowed<'a>, owned: &Holder<dyn Service<u8, Reply = u16>>, pointer: *const (dyn Service<u8, Reply = u16> + 'static), permanent: Borrowed<'static>) {
+    let shared = borrowed;
+    let wrapper = owned;
+    let raw = pointer;
+    let static_alias = permanent;
+}
+"#,
+        InlayHintsQuery::new("object hints", "/src/lib.rs"),
+        expect![[r#"
+            object hints
+            - `: &'_ (dyn analysis_object_hints::Service<u8, Reply = u16> + '_)` @ 5:9-5:15
+            - `: &Holder<dyn analysis_object_hints::Service<u8, Reply = u16>>` @ 6:9-6:16
+            - `: *const (dyn analysis_object_hints::Service<u8, Reply = u16> + 'static)` @ 7:9-7:12
+            - `: &'static (dyn analysis_object_hints::Service<u8, Reply = u16> + 'static)` @ 8:9-8:21
         "#]],
     );
 }
