@@ -13,7 +13,7 @@ use rustc_type_ir::{
 };
 
 use super::{
-    Const, DefId, GenericArg, GenericArgs, List, Param, Region, SolverInterner, Ty,
+    Clause, Const, DefId, GenericArg, GenericArgs, List, Param, Region, SolverInterner, Ty,
     types::{ErrorGuaranteed, Safety, ValueConst},
 };
 use crate::{ClosureTyId, Mutability, PrimitiveTy};
@@ -44,6 +44,15 @@ pub struct DynTy<'s> {
 }
 
 impl<'s> DynTy<'s> {
+    /// For `dyn Iterator<Item = u8>`, use the object itself as `Self` in the bounds.
+    /// This gives us `dyn Iterator<Item = u8>: Iterator` and its `Item = u8` equality.
+    pub fn clauses(self, cx: SolverInterner<'s>) -> impl Iterator<Item = Clause<'s>> {
+        let self_ty = Ty::new_dynamic(cx, self.predicates, self.lifetime);
+        self.predicates
+            .iter()
+            .map(move |bound| bound.with_self_ty(cx, self_ty))
+    }
+
     /// For `dyn Service<Request, Output = Reply>`, return `Service` and `[Request]`.
     pub fn principal(self) -> Option<(TraitDefRef, GenericArgs<'s>)> {
         let principal = self.predicates.principal()?.skip_binder();

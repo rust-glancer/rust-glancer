@@ -34,7 +34,7 @@ impl<'s> Iterator for Autoderef<'_, 's> {
             match ty.shape() {
                 _ if self.seen.len() >= MAX_AUTODEREF_TYPES => return None,
                 TyShape::Reference { inner, .. } => inner,
-                TyShape::Adt(_) | TyShape::Param(_) | TyShape::Alias(_) => {
+                TyShape::Adt(_) | TyShape::Param(_) | TyShape::Alias(_) | TyShape::Dyn(_) => {
                     let callbacks = cx.track_callbacks();
                     let DefId::Trait(deref) = cx.lang_item(LangItem::Deref)? else {
                         return None;

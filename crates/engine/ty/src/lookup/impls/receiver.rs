@@ -6,7 +6,7 @@
 //! the evidence needed to instantiate an item selected from the matching impl.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
+use rg_ir_model::{ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
 
@@ -69,39 +69,6 @@ impl ReceiverImplMatches {
     }
 }
 
-/// One function declaration together with the impl evidence that exposed it.
-#[derive(Debug, PartialEq, Eq)]
-pub struct ReceiverFunctionCandidate {
-    function: FunctionRef,
-    source: ReceiverFunctionSource,
-}
-
-impl ReceiverFunctionCandidate {
-    pub fn function(&self) -> FunctionRef {
-        self.function
-    }
-
-    pub fn inherent_match(&self) -> Option<&InherentImplMatch> {
-        match &self.source {
-            ReceiverFunctionSource::Inherent { impl_match } => Some(impl_match),
-            ReceiverFunctionSource::Trait { .. } => None,
-        }
-    }
-
-    pub fn into_trait_selection(self) -> Option<TraitSelection> {
-        match self.source {
-            ReceiverFunctionSource::Trait { selection } => Some(selection),
-            ReceiverFunctionSource::Inherent { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum ReceiverFunctionSource {
-    Inherent { impl_match: InherentImplMatch },
-    Trait { selection: TraitSelection },
-}
-
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
@@ -120,10 +87,6 @@ where
     }
 
     /// Match only impls of already-discovered traits for one receiver.
-    ///
-    /// Named method calls use this after the inherent lane produced no applicable method. Broad
-    /// completion still uses [`Self::matches_for_receiver_with_traits`] so it can expose both
-    /// declaration families at once.
     pub fn trait_matches_for_receiver(
         &self,
         receiver_ty: &Ty,
@@ -161,7 +124,7 @@ where
         let mut matches =
             self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
 
-        // Concrete builtin-shaped receivers have no `TypeDefRef` index key. Keep this routing rule
+        // Builtin types and trait objects have no `TypeDefRef` index key. Keep this routing rule
         // beside the structural index it selects: being "unkeyed" is a property of the lookup
         // strategy, not a general property that the type model needs to expose.
         let has_structural_self_head = matches!(
@@ -177,6 +140,7 @@ where
                 | Ty::FnPointer { .. }
                 | Ty::Closure(_)
                 | Ty::FnDef(_)
+                | Ty::Dyn(_)
         );
         if has_structural_self_head {
             let Ok(candidates) = self.context.item_lookup().structural_inherent_impls() else {
@@ -292,110 +256,5 @@ where
         }
 
         Ok(matches)
-    }
-
-    /// Expand matched impls into functions without deciding method-vs-associated-call syntax.
-    pub fn function_candidates_for_matches(
-        &self,
-        matches: &ReceiverImplMatches,
-        function_name: Option<&str>,
-    ) -> Result<Vec<ReceiverFunctionCandidate>, D::Error> {
-        let item_query = self.context.item_paths().items();
-        let mut functions = Vec::new();
-
-        for impl_match in matches.inherent() {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
-            let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
-                continue;
-            };
-            for function in impl_data.functions() {
-                if self.context.cancellation().is_cancelled() {
-                    return Ok(Default::default());
-                }
-                if let Some(name) = function_name {
-                    let Some(function_data) = item_query.function_data(function)? else {
-                        continue;
-                    };
-                    if function_data.name != name {
-                        continue;
-                    }
-                }
-                functions.push(ReceiverFunctionCandidate {
-                    function,
-                    source: ReceiverFunctionSource::Inherent {
-                        impl_match: impl_match.clone(),
-                    },
-                });
-            }
-        }
-
-        for selection in matches.traits() {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
-            let trait_ref = selection.trait_impl.trait_ref;
-            let named = match function_name {
-                Some(name) => self
-                    .context
-                    .item_lookup()
-                    .trait_functions_by_name(trait_ref, name),
-                None => Ok(None),
-            };
-            let Ok(named) = named else {
-                return Ok(Vec::new());
-            };
-            let indexed = match named {
-                Some(functions) => Some(functions),
-                None => {
-                    let Ok(functions) = self.context.item_lookup().trait_functions(trait_ref)
-                    else {
-                        return Ok(Vec::new());
-                    };
-                    functions
-                }
-            };
-            let trait_functions = if let Some(functions) = indexed {
-                functions
-            } else {
-                // Saved-project traits are guaranteed to be present in the semantic lookup query.
-                // A current-body trait deliberately is not: its declaration lives alongside the
-                // local impl selected by the body overlay.
-                if !matches!(trait_ref.origin, DefMapRef::Body(_)) {
-                    continue;
-                }
-                item_query
-                    .trait_data(trait_ref)?
-                    .map(|trait_data| trait_data.functions().collect())
-                    .unwrap_or_default()
-            };
-
-            for function in trait_functions {
-                if self.context.cancellation().is_cancelled() {
-                    return Ok(Default::default());
-                }
-                if let Some(name) = function_name {
-                    let Some(function_data) = item_query.function_data(function)? else {
-                        continue;
-                    };
-                    if function_data.name != name {
-                        continue;
-                    }
-                }
-
-                // Keep the selected impl with the function. Two overlapping impls can expose the
-                // same declaration but carry different proof evidence; collapsing them by
-                // function identity would make an ambiguous call look uniquely selected.
-                functions.push(ReceiverFunctionCandidate {
-                    function,
-                    source: ReceiverFunctionSource::Trait {
-                        selection: selection.clone(),
-                    },
-                });
-            }
-        }
-
-        Ok(functions)
     }
 }

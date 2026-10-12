@@ -1197,6 +1197,92 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
 }
 
 #[test]
+fn object_bounds_prove_traits_and_normalize_associated_types() {
+    use rg_ir_model::{FunctionId, FunctionRef};
+
+    use crate::solver::{self, InferenceTable, List, Outcome, ProjectionTy, TraitApplication};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 Marker
+              trait#1 Base<T>
+              trait#2 Derived<T>: Base<Vec<T>>
+            structs
+              struct#0 Vec<T>
+              struct#1 User
+              struct#2 Reply
+            impls
+              impl#0 impl Marker for Reply
+            functions
+              fn#0 object -> dyn Derived<User, Item = Reply>
+            type aliases
+              type#0 trait#1::Item: Marker
+        "#,
+    );
+    let context = TyContext::new(
+        &fixture,
+        &fixture,
+        fixture.lookup_query(),
+        fixture.target,
+        rg_std::CancellationToken::new(),
+    );
+    solver::SemanticDeclarations::new(&context, context.item_paths())
+        .with_solver(|solver| {
+            let cx = solver.interner();
+            let table = InferenceTable::new(solver, Default::default());
+            let object = cx
+                .function_signature(FunctionRef {
+                    origin: origin(),
+                    id: FunctionId(0),
+                })
+                .expect("object signature")
+                .ret;
+            let user = cx.adt(solver::AdtTy {
+                def: type_def(1),
+                args: List::default(),
+            });
+            let vector = cx.adt(solver::AdtTy {
+                def: type_def(0),
+                args: List::new(cx, &[user.into()]),
+            });
+            let direct = TraitApplication {
+                def: trait_ref(2),
+                args: List::new(cx, &[object.into(), user.into()]),
+            };
+            let inherited = TraitApplication {
+                def: trait_ref(1),
+                args: List::new(cx, &[object.into(), vector.into()]),
+            };
+            assert_eq!(table.prove([direct.clause(cx)]), Outcome::Proven);
+            assert_eq!(table.prove([inherited.clause(cx)]), Outcome::Proven);
+
+            let associated_ty = fixture
+                .associated_ty_by_name(trait_ref(1), "Item")
+                .expect("Base::Item");
+            let (item, outcome) = table
+                .normalize_assoc_type(
+                    inherited,
+                    &[],
+                    ProjectionTy {
+                        associated_ty,
+                        args: inherited.args,
+                    },
+                )
+                .expect("object binding normalizes");
+            assert_eq!(outcome, Outcome::Proven);
+            assert_eq!(
+                table.finalize(item),
+                Ty::adt(AdtTy {
+                    def: type_def(2),
+                    args: Default::default()
+                })
+            );
+        })
+        .expect("fixture declarations load");
+}
+
+#[test]
 fn object_bindings_survive_substitution_and_storage() {
     use rg_ir_model::{FunctionId, FunctionRef};
 

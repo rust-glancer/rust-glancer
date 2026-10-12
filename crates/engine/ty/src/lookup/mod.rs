@@ -10,7 +10,7 @@ pub(crate) use self::impls::TraitImplFilter;
 pub use self::{
     associated_item::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
     implementation::ImplementationQuery,
-    impls::{ImplQuery, InherentImplMatch, ReceiverFunctionCandidate, ReceiverImplMatches},
+    impls::{ImplQuery, InherentImplMatch, ReceiverImplMatches},
     item_path::ItemPathQuery,
     member::{MemberMethodCandidateRef, MemberMethodOrigin},
 };

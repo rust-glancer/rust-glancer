@@ -177,7 +177,7 @@ where
         }
 
         // A trait declaration is enough to discover a method. Applicability can come from a
-        // caller bound or an opaque type's bounds, even when there are no concrete impls at all.
+        // caller bound, a trait object, or an opaque type, even when there are no concrete impls at all.
         let traits = match qualification {
             Some(application) => [application.def].into_iter().collect(),
             None => {

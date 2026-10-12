@@ -1,22 +1,19 @@
 //! Current-body and saved-project impl matching for one receiver.
 //!
-//! Associated-item queries describe the declarations they need: a named function, a named const,
-//! or all associated items. Lexical trait discovery narrows the search, then this query merges
-//! current-body and saved impls of those traits. Inherent impls remain receiver-first.
+//! Associated-item queries ask for a named const or all associated items. Lexical trait discovery
+//! narrows the search, then this query merges current-body and saved impls of those traits.
+//! Inherent impls remain receiver-first.
 //!
-//! These queries expose concrete impls to associated-path lookup. Calls and dot completion can
-//! also use methods supplied by a caller bound, so they discover declarations and prove their
-//! applicability in a live inference table instead of requiring a concrete impl here.
+//! These queries expose concrete impls to associated-path lookup. Function references, calls,
+//! and dot completion also use methods supplied by bounds, so they discover declarations and
+//! prove their applicability in a live inference table instead of requiring a concrete impl here.
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
 use rg_std::UniqueVec;
-use rg_ty::{
-    Ty,
-    lookup::{ReceiverFunctionCandidate, ReceiverImplMatches},
-};
+use rg_ty::{Ty, lookup::ReceiverImplMatches};
 
 use crate::resolution::{
     BodyResolutionContext,
@@ -42,16 +39,6 @@ impl BodyReceiverImplMatches {
 
     pub(crate) fn matches(&self) -> &ReceiverImplMatches {
         &self.matches
-    }
-
-    /// Return whether a current-body inherent function replaces this saved declaration by name.
-    pub(crate) fn saved_inherent_function_is_shadowed(
-        &self,
-        candidate: &ReceiverFunctionCandidate,
-        name: &rg_text::Name,
-    ) -> bool {
-        candidate.inherent_match().is_some()
-            && self.saved_function_name_is_shadowed(candidate.function().origin, name.as_str())
     }
 
     /// Associated-item collection can also check a function before building its candidate.
@@ -107,20 +94,6 @@ where
             .context
             .traits()
             .refs_for_surface(scope, BodyTraitSurface::AssociatedItems)?;
-        self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
-    }
-
-    /// Match current-body overlays and traits declaring one named function.
-    pub(crate) fn matches_for_receiver_with_function_name(
-        &self,
-        scope: ScopeId,
-        receiver_ty: &Ty,
-        name: &str,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
-        let trait_refs = self
-            .context
-            .traits()
-            .refs_for_surface(scope, BodyTraitSurface::FunctionNamed(name))?;
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 

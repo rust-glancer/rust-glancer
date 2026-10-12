@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, ItemOwner, Path, PrimitiveTy, ScopeId,
-    TraitApplicability, TypeDefId, identity::DeclarationRef,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ItemOwner, Path, PrimitiveTy,
+    ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
@@ -11,14 +11,13 @@ use rg_semantic_ir::ItemStoreSource;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     AdtTy, ExpectedTyExt, Substitution, TraitApplication, Ty,
-    lookup::{
-        AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef, ReceiverImplMatches,
-    },
+    lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
+    solver::{self, SemanticDeclarations},
     trait_selection::TraitSelection,
 };
 
-use super::{BodyCallableCandidate, BodyReceiverImplMatches, traits::BodyQualifiedTraitSelection};
+use super::{BodyReceiverImplMatches, live::FunctionLookup, traits::BodyQualifiedTraitSelection};
 use crate::{
     BodyAssociatedPathPrefix, BodyPath, body::facts::BodyResolution,
     resolution::BodyResolutionContext,
@@ -239,8 +238,16 @@ where
                     return Ok(Some(Self::const_resolution(consts)));
                 }
 
-                let functions =
-                    self.qualified_trait_function_candidates(&selection, last_segment)?;
+                let application = selection.application();
+                let Some(receiver) = application.self_ty() else {
+                    return Ok(None);
+                };
+                let functions = self.associated_function_candidates(
+                    scope,
+                    receiver,
+                    Some(application),
+                    last_segment,
+                )?;
                 Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
             }
         }
@@ -296,16 +303,11 @@ where
             return Ok(Some(Self::const_resolution(trait_consts)));
         }
 
-        // Inherent associated functions are exact candidates. Trait-associated functions retain
-        // tentative matches when incomplete generic information cannot prove or reject the impl.
-        let function_receiver = self
-            .context
-            .impls()
-            .matches_for_receiver_with_function_name(scope, prefix_ty, last_segment)?;
-        let functions = self.associated_function_candidates_for_matches(
-            &function_receiver,
-            last_segment,
+        let functions = self.associated_function_candidates(
+            scope,
+            const_receiver.receiver_ty(),
             None,
+            last_segment,
         )?;
 
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
@@ -354,15 +356,7 @@ where
     }
 
     /// Collect function declarations; call projection owns their result type.
-    fn function_resolution(
-        candidates: impl IntoIterator<Item = BodyCallableCandidate>,
-    ) -> (BodyResolution, Ty) {
-        let mut functions = UniqueVec::new();
-
-        for function in candidates {
-            functions.push(function.function());
-        }
-
+    fn function_resolution(functions: UniqueVec<FunctionRef>) -> (BodyResolution, Ty) {
         (
             BodyResolution::Declarations(functions.into_iter().map(DeclarationRef::from).collect()),
             Ty::Unknown,
@@ -441,85 +435,43 @@ where
         Ok(items)
     }
 
-    /// Adapt matched functions into associated-function candidates.
-    fn associated_function_candidates_for_matches(
-        &self,
-        receiver: &BodyReceiverImplMatches,
-        name: &str,
-        extra_subst: Option<&Substitution>,
-    ) -> Result<UniqueVec<BodyCallableCandidate>, PackageStoreError> {
-        self.associated_function_candidates(
-            receiver.receiver_ty(),
-            receiver.matches(),
-            Some(receiver),
-            name,
-            extra_subst,
-        )
-    }
-
-    /// Adapt function declarations from a matched impl universe into callables.
+    /// Resolve function references through the same declarations and bounds as method calls.
+    /// For `<dyn Service as Service>::read`, the trait declaration is the navigation target;
+    /// there is no concrete impl to select. Only declaration identities leave this query.
     fn associated_function_candidates(
         &self,
-        receiver_ty: &Ty,
-        matches: &ReceiverImplMatches,
-        body_receiver: Option<&BodyReceiverImplMatches>,
+        scope: ScopeId,
+        receiver: &Ty,
+        qualification: Option<&TraitApplication>,
         name: &str,
-        extra_subst: Option<&Substitution>,
-    ) -> Result<UniqueVec<BodyCallableCandidate>, PackageStoreError> {
-        let impl_query = self.context.impl_query();
-        let mut functions = UniqueVec::new();
-        let item_query = self.context.item_query();
-        // A method with `self` can also be named as `Type::method`, including when the path
-        // is stored without calling it. Its receiver parameter does not restrict path lookup.
-        for function in impl_query.function_candidates_for_matches(matches, Some(name))? {
-            let Some(function_data) = item_query.function_data(function.function())? else {
-                continue;
-            };
-            if function_data.name != name
-                || body_receiver.is_some_and(|receiver| {
-                    receiver.saved_inherent_function_is_shadowed(&function, &function_data.name)
-                })
-            {
-                continue;
-            }
-            let Some(candidate) = BodyCallableCandidate::from_receiver_function(
-                &self.context,
-                receiver_ty,
-                function,
-                extra_subst,
-            )?
-            else {
-                continue;
-            };
-            functions.push(candidate);
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
+        if matches!(receiver, Ty::Unknown) && qualification.is_none() {
+            return Ok(UniqueVec::new());
         }
-        Ok(functions)
-    }
-
-    /// Find functions from the trait impls selected by `<Self as Trait>::item`.
-    fn qualified_trait_function_candidates(
-        &self,
-        selection: &BodyQualifiedTraitSelection,
-        name: &str,
-    ) -> Result<UniqueVec<BodyCallableCandidate>, PackageStoreError> {
-        let impl_query = self.context.impl_query();
-        let mut functions = UniqueVec::new();
-        for receiver in selection.receivers() {
-            let receiver_ty = Ty::adt(receiver.receiver_ty().clone());
-            let matches = impl_query.matches_for_receiver_from_impls(
-                &receiver_ty,
-                UniqueVec::new(),
-                receiver.impls().clone(),
-            )?;
-            functions.extend(self.associated_function_candidates(
-                &receiver_ty,
-                &matches,
-                None,
-                name,
-                Some(selection.subst()),
-            )?);
-        }
-        Ok(functions)
+        let context = self.context.ty_context();
+        SemanticDeclarations::new(&context, &self.context).with_table(|table, params| {
+            let cx = table.interner();
+            let receiver = table.instantiate_nested_unknowns(cx.lower_ty(receiver, params));
+            let qualification = qualification.map(|application| solver::TraitApplication {
+                def: application.def,
+                args: cx.lower_args(&application.args, params),
+            });
+            Ok(self
+                .context
+                .live()
+                .function_candidates(
+                    scope,
+                    receiver,
+                    FunctionLookup::Associated {
+                        name,
+                        qualification,
+                    },
+                    &table,
+                )?
+                .into_iter()
+                .map(|candidate| candidate.function)
+                .collect())
+        })?
     }
 
     /// Find consts from the trait impls selected by `<Self as Trait>::item`.

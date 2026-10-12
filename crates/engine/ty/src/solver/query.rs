@@ -175,7 +175,8 @@ pub struct ImplSelection<'s> {
 impl<'s> InferenceTable<'s> {
     /// Traits supplied by bounds on this receiver are method candidates even when the trait is
     /// named only in a bound, such as `fn draw<T: api::Render>(value: T)`. The environment already
-    /// includes supertraits. Opaque and associated types also carry bounds on their declarations.
+    /// includes supertraits. Objects carry bounds in their type; opaque and associated types
+    /// carry bounds on their declarations.
     pub fn bound_traits(&self, receiver: Ty<'s>) -> UniqueVec<TraitDefRef> {
         let cx = self.interner();
         let receiver = self.resolve_root_var(receiver);
@@ -190,6 +191,11 @@ impl<'s> InferenceTable<'s> {
         };
         for clause in self.environment().clauses {
             collect(clause);
+        }
+        if let TyShape::Dyn(object) = receiver.shape() {
+            for clause in ir::elaborate::elaborate(cx, object.clauses(cx)) {
+                collect(clause);
+            }
         }
         let alias = match receiver.shape() {
             TyShape::Alias(AliasTy::Opaque(alias)) => {
@@ -262,6 +268,12 @@ impl<'s> InferenceTable<'s> {
         // Include those reads in this scope; the next candidate gets its own starting count.
         let callbacks = cx.track_callbacks();
         let header = cx.impl_header(impl_ref)?;
+        // An unreadable inherent impl header gives us no receiver to match. Treating it as
+        // a wildcard would offer all its methods on every type. Partly known headers such as
+        // `Container<Unknown>` still have a useful outer type and continue through matching.
+        if header.trait_ref.is_none() && header.self_ty.is_unknown() {
+            return None;
+        }
         // Instantiate the impl in a separate trial. Its generic parameters must be free to learn
         // from the receiver without changing the caller's table if this candidate is rejected.
         let table = self.probe();

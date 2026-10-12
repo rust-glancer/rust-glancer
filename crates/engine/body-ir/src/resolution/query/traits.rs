@@ -188,7 +188,7 @@ where
         Ok(())
     }
 
-    /// Resolve `<Self as Trait<Args>>` into receiver-specific trait impls.
+    /// Resolve `<Self as Trait<Args>>` and find any concrete impls for associated const lookup.
     pub(crate) fn qualified_selection(
         &self,
         scope: ScopeId,
@@ -214,12 +214,13 @@ where
             }
         }
 
-        Ok(
-            (!receivers.is_empty()).then_some(BodyQualifiedTraitSelection {
-                subst: trait_prefix.subst,
-                receivers,
-            }),
-        )
+        // Methods can come from an object or a caller bound without a concrete source impl.
+        // Keep the written application even when the impl list is empty.
+        Ok(Some(BodyQualifiedTraitSelection {
+            application: trait_prefix.application,
+            subst: trait_prefix.subst,
+            receivers,
+        }))
     }
 
     /// Resolve a type syntax where the qualified path is written.
@@ -343,18 +344,23 @@ where
     }
 }
 
-/// A written `<Self as Trait<Args>>` prefix after matching it to concrete receiver impls.
+/// A written `<Self as Trait<Args>>` prefix and any concrete impls found for it.
 ///
 /// For `<Vec<u8> as Convert<u16>>::Output`, `subst` retains the written trait arguments and each
 /// receiver entry retains the completed `Vec<u8>` plus impls whose trait application agrees with
 /// `Convert<u16>`. Consumers can then resolve the associated item without repeating prefix lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BodyQualifiedTraitSelection {
+    application: TraitApplication,
     subst: Substitution,
     receivers: Vec<BodyQualifiedTraitReceiverSelection>,
 }
 
 impl BodyQualifiedTraitSelection {
+    pub(crate) fn application(&self) -> &TraitApplication {
+        &self.application
+    }
+
     /// Return substitutions from the written trait prefix, such as `T = User`.
     pub(crate) fn subst(&self) -> &Substitution {
         &self.subst

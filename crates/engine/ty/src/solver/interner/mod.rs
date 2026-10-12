@@ -598,6 +598,7 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn generics_require_sized_self(self, _: DefId) -> bool {
+        // TODO: Recognize associated types with a `where Self: Sized` restriction.
         false
     }
 
@@ -925,8 +926,9 @@ impl<'s> ir::Interner for SolverInterner<'s> {
     }
 
     fn trait_is_dyn_compatible(self, _: DefId) -> bool {
-        self.unavailable("dyn compatibility");
-        false
+        // Trust written object types so ordinary trait and projection queries can use them.
+        // We do not validate whether every item in the trait can be called through `dyn`.
+        true
     }
 
     fn trait_is_fundamental(self, _: DefId) -> bool {
