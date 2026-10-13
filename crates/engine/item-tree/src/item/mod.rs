@@ -92,7 +92,7 @@ pub struct ItemNode {
     pub visibility: VisibilityLevel,
     /// Target-dependent cfg gates attached to the item.
     pub cfg: CfgExpr,
-    /// Compiler identity lowered from `#[lang = "..."]`, when analysis understands that identity.
+    /// Recognized compiler identity from a language-item or diagnostic-item attribute.
     pub lang_item: Option<LangItem>,
     /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
     pub docs: Option<Documentation>,

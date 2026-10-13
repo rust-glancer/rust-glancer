@@ -1,8 +1,8 @@
-//! Extraction of compiler language identities from item syntax.
+//! Extraction of compiler identities from item syntax.
 //!
-//! Item-tree lowering sees `#[lang = "..."]` before semantic item ids exist. It records the small
-//! supported identity on `ItemNode`; semantic lowering can then attach it to the typed item id
-//! without rediscovering the item from its name or path.
+//! Item-tree lowering reads `#[lang = "..."]` and `#[rustc_diagnostic_item = "..."]` before
+//! semantic item ids exist. It records the supported identity on `ItemNode`; semantic lowering
+//! can then attach it to the typed item id without rediscovering the item from its name or path.
 
 use rg_syntax::{AstNode as _, ast};
 
@@ -24,7 +24,9 @@ impl MaybeFromAst for LangItem {
                 // pretending every conditional attribute is active.
                 return None;
             };
-            if meta.path()?.syntax().text() != "lang" {
+            let path = meta.path()?;
+            let attribute = path.syntax().text();
+            if attribute != "lang" && attribute != "rustc_diagnostic_item" {
                 return None;
             }
             let ast::Expr::Literal(literal) = meta.expr()? else {
@@ -33,7 +35,7 @@ impl MaybeFromAst for LangItem {
             let ast::LiteralKind::String(value) = literal.kind() else {
                 return None;
             };
-            LangItem::from_attr_value(&value.value().ok()?)
+            LangItem::from_attr_value(&attribute.to_string(), &value.value().ok()?)
         })
     }
 }

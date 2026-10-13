@@ -12,7 +12,7 @@ use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, TraitDefRef};
 use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{List, TraitApplication, Ty, TyShape};
+use rg_ty::solver::{DynTy, List, TraitApplication, Ty, TyShape};
 
 use super::{BodyInference, InferenceState};
 use crate::{
@@ -74,9 +74,8 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    /// Apply an expression expectation without equating a possible `!` to the expected type.
-    /// Other supported cases use ordinary unification, but an unfinished producer needs to
-    /// determine its result before we can choose between these two cases.
+    /// Apply an expression expectation, allowing divergence and trait-object conversion.
+    /// An unfinished producer needs to supply its type before we can choose the relation.
     pub(super) fn coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) {
         if !self.try_coerce_expr_ty(expr, expected) {
             self.defer(
@@ -180,14 +179,85 @@ where
     }
 
     fn try_coerce_expr_ty(&mut self, expr: ExprId, expected: &Ty<'s>) -> bool {
-        if matches!((expected).shape(), TyShape::Unknown) {
+        let expected = self.inference.root_resolved_ty(expected);
+        if matches!(expected.shape(), TyShape::Unknown) {
             return true;
         }
         if !self.can_coerce_ty(&self.inference.expr_ty(expr)) {
             return false;
         }
-        self.inference.constrain_expr_ty(expr, expected);
+        let source = self.inference.root_resolved_expr_ty(expr);
+
+        if let Some(object) = self.trait_object_pointee(expected) {
+            // In `let object: Box<dyn Trait> = id(Box::new(value))`, id's result starts as
+            // ?T. Wait for its argument to supply Box<Concrete> before applying conversion.
+            if matches!(source.shape(), TyShape::InferVar { .. }) {
+                return false;
+            }
+            let source_inner = match (source.shape(), expected.shape()) {
+                (
+                    TyShape::Reference {
+                        inner, mutability, ..
+                    },
+                    TyShape::Reference {
+                        mutability: target_mutability,
+                        ..
+                    },
+                ) if mutability == target_mutability || target_mutability == Mutability::Shared => {
+                    Some(inner)
+                }
+                (TyShape::Adt(source), TyShape::Adt(target)) if source.def == target.def => {
+                    source.args.first().and_then(|arg| arg.as_ty())
+                }
+                _ => None,
+            };
+            if let Some(source_inner) = source_inner
+                && !matches!(
+                    self.inference.root_resolved_ty(&source_inner).shape(),
+                    TyShape::Dyn(_)
+                )
+            {
+                // &Iter<?T> -> &dyn Iterator<Item = u8> keeps Iter's identity. The ordinary
+                // trait and associated-type goals can still learn ?T = u8, including after
+                // an unfinished call supplies more information about the concrete iterator.
+                for clause in object.clauses(self.cx, source_inner) {
+                    self.inference.table().register(clause);
+                }
+                self.inference.set_coerced_expr_ty(expr, expected);
+                return true;
+            }
+        }
+        self.inference.constrain_expr_ty(expr, &expected);
         true
+    }
+
+    /// Find the trait object inside a conversion target such as `&dyn Trait` or `Arc<dyn Trait>`.
+    ///
+    /// We recognize references, Box, Arc, and Rc directly so these common conversions don't need
+    /// general Unsize/CoerceUnsized solving. This shortcut keeps inference simpler while covering
+    /// everyday uses of trait objects. The object's bounds still constrain the concrete pointee.
+    /// Compiler identities keep renamed imports working without treating arbitrary containers
+    /// as pointers that support this conversion.
+    ///
+    /// TODO: Follow coercion implementations when a user needs wrappers outside this short list.
+    fn trait_object_pointee(&self, ty: Ty<'s>) -> Option<DynTy<'s>> {
+        let inner = match self.inference.root_resolved_ty(&ty).shape() {
+            TyShape::Reference { inner, .. } => inner,
+            TyShape::Adt(adt)
+                if [LangItem::OwnedBox, LangItem::Arc, LangItem::Rc]
+                    .into_iter()
+                    .any(|item| {
+                        self.context.item_lookup_query().lang_type(item) == Some(adt.def)
+                    }) =>
+            {
+                adt.args.first()?.as_ty()?
+            }
+            _ => return None,
+        };
+        match self.inference.root_resolved_ty(&inner).shape() {
+            TyShape::Dyn(object) => Some(object),
+            _ => None,
+        }
     }
 
     /// Ordinary generic variables can learn from an expectation. Slots awaiting a lookup or
@@ -307,8 +377,10 @@ where
                 // Selecting a generic producer can make coercion safe without making its result
                 // concrete. In that case the type key stays unchanged, but the wait is over.
                 let coercion_ready = match &operation.kind {
-                    DeferredKind::Coerce { expr, .. } => {
-                        self.can_coerce_ty(&self.inference.expr_ty(*expr))
+                    DeferredKind::Coerce { expr, expected } => {
+                        let source = self.inference.root_resolved_expr_ty(*expr);
+                        self.can_coerce_ty(&source)
+                            && !(source.is_var() && self.trait_object_pointee(*expected).is_some())
                     }
                     DeferredKind::BranchResult { branches, .. } => {
                         branches.iter().all(|ty| self.can_coerce_ty(ty))

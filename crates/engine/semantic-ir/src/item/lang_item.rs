@@ -1,7 +1,7 @@
-//! Compiler language identities at crate-local and use-site visibility layers.
+//! Compiler identities at crate-local and use-site visibility layers.
 //!
-//! Semantic lowering first records `#[lang = "..."]` beside the typed item id in its owning
-//! `ItemStore`. `ItemLookupQuery` later merges those sparse declarations across the stores visible
+//! Semantic lowering first records recognized compiler attributes beside the typed item id in
+//! its owning `ItemStore`. `ItemLookupQuery` merges those declarations across the stores visible
 //! from one crate. Consumers therefore ask for the real declaration identity without relying on a
 //! crate name, module path, or re-export spelling.
 
@@ -49,6 +49,9 @@ impl LangItemIndex {
                 )
                 | (
                     LangItem::FormatArguments
+                        | LangItem::OwnedBox
+                        | LangItem::Arc
+                        | LangItem::Rc
                         | LangItem::Range
                         | LangItem::RangeFrom
                         | LangItem::RangeTo

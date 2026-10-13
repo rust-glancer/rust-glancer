@@ -597,6 +597,8 @@ where
             }
             ExprKind::Wrapper { kind, inner } => {
                 let resolved_expected = self.inference.root_resolved_ty(expected);
+                // In `let object: &dyn Trait = &make()`, make still produces a concrete type.
+                // Apply the object's requirements at the borrow, without passing dyn into make.
                 let inner_expected = match (&kind, resolved_expected.shape()) {
                     (ExprWrapperKind::Paren | ExprWrapperKind::Await, _) => *expected,
                     (
@@ -606,7 +608,14 @@ where
                             inner,
                             ..
                         },
-                    ) if *mutability == expected_mutability => inner,
+                    ) if *mutability == expected_mutability
+                        && !matches!(
+                            self.inference.root_resolved_ty(&inner).shape(),
+                            TyShape::Dyn(_)
+                        ) =>
+                    {
+                        inner
+                    }
                     (ExprWrapperKind::Return, _) => self.return_ty,
                     _ => self.cx.unknown(),
                 };

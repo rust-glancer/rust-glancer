@@ -44,10 +44,14 @@ pub struct DynTy<'s> {
 }
 
 impl<'s> DynTy<'s> {
-    /// For `dyn Iterator<Item = u8>`, use the object itself as `Self` in the bounds.
-    /// This gives us `dyn Iterator<Item = u8>: Iterator` and its `Item = u8` equality.
-    pub fn clauses(self, cx: SolverInterner<'s>) -> impl Iterator<Item = Clause<'s>> {
-        let self_ty = Ty::new_dynamic(cx, self.predicates, self.lifetime);
+    /// Apply the object's bounds to a type. For `dyn Iterator<Item = u8>` and `Iter<T>`,
+    /// this asks for `Iter<T>: Iterator` and `<Iter<T> as Iterator>::Item = u8`.
+    /// Passing the object itself exposes the bounds available to its methods.
+    pub fn clauses(
+        self,
+        cx: SolverInterner<'s>,
+        self_ty: Ty<'s>,
+    ) -> impl Iterator<Item = Clause<'s>> {
         self.predicates
             .iter()
             .map(move |bound| bound.with_self_ty(cx, self_ty))

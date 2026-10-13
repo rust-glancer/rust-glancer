@@ -1,3 +1,4 @@
+#[rustc_diagnostic_item = "Arc"]
 pub struct Arc<T: ?core::marker::Sized>;
 
 impl<T> Arc<T> {

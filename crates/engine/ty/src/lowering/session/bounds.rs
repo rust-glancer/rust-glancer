@@ -163,7 +163,7 @@ where
         // A prefix like `Object::` can name an alias for `dyn Service`. Its methods come
         // from the object's trait even when the enclosing function has no written bounds.
         if let TyShape::Dyn(object) = ty.shape() {
-            clauses.extend(object.clauses(self.cx));
+            clauses.extend(object.clauses(self.cx, ty));
         }
         for clause in clauses {
             let ClauseKind::Trait(bound) = clause.kind().skip_binder() else {

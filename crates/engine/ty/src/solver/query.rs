@@ -193,7 +193,7 @@ impl<'s> InferenceTable<'s> {
             collect(clause);
         }
         if let TyShape::Dyn(object) = receiver.shape() {
-            for clause in ir::elaborate::elaborate(cx, object.clauses(cx)) {
+            for clause in ir::elaborate::elaborate(cx, object.clauses(cx, receiver)) {
                 collect(clause);
             }
         }

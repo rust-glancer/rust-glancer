@@ -184,8 +184,8 @@ impl<'s> InferenceState<'s> {
         self.set_expr_ty(expr, *expected);
     }
 
-    /// A block may coerce its diverging tail to a value type. Keep this adjustment on the block;
-    /// changing the tail's shared variable would incorrectly make the diverging call return it.
+    /// Record a conversion on this expression without changing its producer's shared type.
+    /// Reading `value` as `&dyn Trait`, for example, must leave the binding's `&Concrete` intact.
     pub(crate) fn set_coerced_expr_ty(&mut self, expr: ExprId, ty: Ty<'s>) {
         self.exprs[expr].ty = ty;
     }
