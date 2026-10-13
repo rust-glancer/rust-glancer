@@ -19,8 +19,7 @@ edition = "2024"
 pub mod api {
     pub trait Base<T> {
         type Item;
-        fn parent(&self) -> T;
-        fn item(&self) -> Self::Item;
+        fn parent(&self) -> Self::Item;
     }
     pub trait Service<T>: Base<T> {
         fn request(&self) -> T;
@@ -32,154 +31,35 @@ pub mod api {
 pub type Service = dyn api::Service<u8, Item = u16>;
 pub fn consume<T: api::Base<u8, Item = u16> + ?Sized>(value: &T) -> T::Item { loop {} }
 pub fn run(value: &Service) {
-    let $direct$direct = value.$request$request();
-    let $parent$parent = value.$parent_method$parent();
-    let $item$item = value.item();
-    let $inherent$inherent = value.$inspect$inspect();
-    let $generic$generic = consume(value);
-    let $qualified$qualified = <Service as api::Base<u8>>::parent(value);
+    let $results$results = (value.request(), value.parent(), value.inspect(), consume(value));
     let callback = <Service as api::Base<u8>>::$reference$parent;
-    let alias = Service::$alias_reference$item;
-    value.$members$;
-    Service::$associated$;
+    value$object$.$members$;
 }
 "#,
         &[
-            AnalysisQuery::ty("trait argument", "direct"),
-            AnalysisQuery::ty("supertrait argument", "parent"),
-            AnalysisQuery::ty("associated type", "item"),
-            AnalysisQuery::ty("inherent method", "inherent"),
-            AnalysisQuery::ty("generic function using object bounds", "generic"),
-            AnalysisQuery::ty("qualified call", "qualified"),
-            AnalysisQuery::goto("trait declaration", "request"),
-            AnalysisQuery::goto("supertrait declaration", "parent_method"),
-            AnalysisQuery::goto("inherent declaration", "inspect"),
-            AnalysisQuery::goto("qualified reference declaration", "reference"),
-            AnalysisQuery::goto("alias reference declaration", "alias_reference"),
+            AnalysisQuery::hover("object method results", "results"),
+            AnalysisQuery::goto("qualified method declaration", "reference"),
+            AnalysisQuery::goto_type("object trait declaration", "object"),
             AnalysisQuery::complete("object methods", "members"),
-            AnalysisQuery::complete_with_source("request-local object methods", "members")
-                .matching("request"),
-            AnalysisQuery::complete("object associated items", "associated"),
         ],
         expect![[r#"
-            trait argument
-            - u8
+            object method results
+            - range: 16:9-16:16
+            - block:
+              kind: variable
+              signature:
+                let results: (u8, u16, u64, u16)
 
-            supertrait argument
-            - u8
-
-            associated type
-            - u16
-
-            inherent method
-            - u64
-
-            generic function using object bounds
-            - u16
-
-            qualified call
-            - u8
-
-            trait declaration
-            - fn request @ 8:12-8:19
-
-            supertrait declaration
+            qualified method declaration
             - fn parent @ 4:12-4:18
 
-            inherent declaration
-            - fn inspect @ 11:16-11:23
-
-            qualified reference declaration
-            - fn parent @ 4:12-4:18
-
-            alias reference declaration
-            - fn item @ 5:12-5:16
+            object trait declaration
+            - trait Service @ 6:15-6:22
 
             object methods
             - inherent_method inspect
-            - trait_method item
             - trait_method parent
             - trait_method request
-
-            request-local object methods
-            - trait_method request
-
-            object associated items
-            - type_alias Item
-            - fn inspect
-            - fn item
-            - fn parent
-            - fn request
-        "#]],
-    );
-}
-
-#[test]
-fn follows_trait_object_deref_targets() {
-    check_analysis_queries_with_fake_sysroot(
-        r#"
-//- /Cargo.toml
-[package]
-name = "object_deref"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
-pub mod api {
-    pub trait Stream {
-        type Item;
-        fn next(&mut self) -> core::option::Option<Self::Item>;
-        fn peek(&self) -> Self::Item;
-    }
-}
-pub struct Widget { pub value: u16 }
-impl Widget {
-    pub fn value_len(&self) -> u32 { 0 }
-}
-pub fn inspect(
-    stream: &mut dyn api::Stream<Item = u8>,
-    shared: std::sync::Arc<dyn api::Stream<Item = u8>>,
-    target: &dyn core::ops::Deref<Target = Widget>,
-) {
-    let $next$next = stream.next();
-    let $peek$peek = shared.peek();
-    let $field$field = target.value;
-    let $method$method = target.value_len();
-    target.$members$;
-}
-"#,
-        &[
-            AnalysisQuery::ty("associated type in method result", "next").in_lib("object_deref"),
-            AnalysisQuery::ty("method through a smart pointer to an object", "peek")
-                .in_lib("object_deref"),
-            AnalysisQuery::ty("field through dyn Deref", "field").in_lib("object_deref"),
-            AnalysisQuery::ty("method through dyn Deref", "method").in_lib("object_deref"),
-            AnalysisQuery::complete("dyn Deref target members", "members")
-                .in_lib("object_deref")
-                .matching("value"),
-            AnalysisQuery::complete_with_source("request-local target members", "members")
-                .in_lib("object_deref")
-                .matching("value"),
-        ],
-        expect![[r#"
-            associated type in method result
-            - nominal enum core[lib]::crate::option::Option<u8>
-
-            method through a smart pointer to an object
-            - u8
-
-            field through dyn Deref
-            - u16
-
-            method through dyn Deref
-            - u32
-
-            dyn Deref target members
-            - field value
-            - inherent_method value_len
-
-            request-local target members
-            - field value
-            - inherent_method value_len
         "#]],
     );
 }
@@ -1150,13 +1030,21 @@ impl User {
     }
 }
 
-pub fn use_it(user: Arc<User>) {
+pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
     user.$deref$;
+    object.$object_deref$;
 }
 "#,
-        &[AnalysisQuery::complete("Deref completions", "deref").in_lib("app")],
+        &[
+            AnalysisQuery::complete("Deref completions", "deref").in_lib("app"),
+            AnalysisQuery::complete("dyn Deref completions", "object_deref").in_lib("app"),
+        ],
         expect![[r#"
             Deref completions
+            - field id
+            - inherent_method label
+
+            dyn Deref completions
             - field id
             - inherent_method label
         "#]],

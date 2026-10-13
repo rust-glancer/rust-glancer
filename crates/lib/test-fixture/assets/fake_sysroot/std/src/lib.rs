@@ -18,6 +18,7 @@ pub use core::cmp::{PartialEq, Eq, PartialOrd, Ord};
 pub use core::fmt::macros::Debug;
 pub use core::hash::macros::Hash;
 pub use core::ops;
+pub use alloc_crate::{boxed, rc};
 pub use alloc_crate::string;
 pub use alloc_crate::string::String;
 pub use alloc_crate::vec;

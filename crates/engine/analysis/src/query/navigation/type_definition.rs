@@ -1,6 +1,6 @@
 //! Goto-type-definition query flow.
 
-use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId};
 
 use super::target::NavigationTargetProjection;
 use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolver};
@@ -8,7 +8,7 @@ use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolv
 /// Implements goto-type-definition through the shared type query.
 ///
 /// This resolver asks `type_at` for the best-effort type at the cursor and then navigates to
-/// the nominal declarations represented by that type.
+/// the declarations represented by that type, such as `Service` in `&dyn Service`.
 pub(crate) struct TypeDefinitionResolver<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
@@ -29,11 +29,7 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         let Some(ty) = SourceSymbolResolver::new(self.0.view_db()).ty_for_symbol(symbol)? else {
             return Ok(Vec::new());
         };
-        let declarations = ty
-            .contained_nominal_type_defs()
-            .into_iter()
-            .map(DeclarationRef::from);
-
-        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0.view_db())
+            .targets_for_declarations(ty.contained_type_declarations())
     }
 }

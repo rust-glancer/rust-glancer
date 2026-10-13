@@ -1,6 +1,8 @@
 extern crate self as alloc;
 extern crate core;
 
+pub mod boxed;
+pub mod rc;
 pub mod string;
 pub mod sync;
 pub mod vec;

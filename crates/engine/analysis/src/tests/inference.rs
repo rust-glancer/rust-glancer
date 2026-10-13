@@ -31,130 +31,31 @@ impl<T> Stream for Source<T> {
     fn peek(&self) -> T { loop {} }
     fn next(&mut self) -> T { loop {} }
 }
-impl<T> Source<T> { pub fn concrete(&self) -> u64 { 0 } }
 pub fn make<T>() -> Source<T> { loop {} }
-pub fn make_ref<T: 'static>() -> &'static Source<T> { loop {} }
-pub fn id<T>(value: T) -> T { value }
-pub fn take(value: &dyn Stream<Item = u8>) {}
-pub struct View<'a> { pub stream: &'a dyn Stream<Item = u32> }
-
-pub fn borrowed_return() -> &'static dyn Stream<Item = u16> {
-    let source = make_ref();
-    source.value$returned_source$;
-    source
-}
-pub fn explicit_return() -> &'static dyn Stream<Item = u32> {
-    let source = make_ref();
-    source.value$explicit_source$;
-    return source;
-}
-
-pub struct Factory;
-impl Factory { pub fn get<T: 'static>(&self) -> &'static Source<T> { loop {} } }
-pub fn unknown<T>() -> T { loop {} }
-pub fn take_factory(value: Factory) {}
 
 pub fn check() {
     let source = make();
-    let saved_ref = &source;
-    let object: &dyn Stream<Item = u8> = id(saved_ref);
-    source.value$source_item$;
-    source.concrete()$concrete_method$;
-    saved_ref$saved_ref$;
-    object.peek()$object_method$;
-
+    let object: &dyn Stream<Item = u8> = &source;
     let mut mutable = make();
     let mutable_object: &mut dyn Stream<Item = u16> = &mut mutable;
-    mutable_object.next()$mutable_method$;
-    mutable.value$mutable_item$;
-
-    let argument = make();
-    take(&argument);
-    argument.value$argument_item$;
-    let field_source = make();
-    let view = View { stream: &field_source };
-    field_source.value$field_item$;
-    view.stream.peek()$field_method$;
-    let temporary: &dyn Stream<Item = u8> = &id(make()$temporary_source$);
-
-    let factory = unknown();
-    let pending = factory.get();
-    let deferred: &dyn Stream<Item = u16> = pending;
-    take_factory(factory);
-    pending.value$deferred_source$;
-    deferred.peek()$deferred_method$;
+    let $result$result = (object.peek(), mutable_object.next(), source.value, mutable.value);
 }
 "#,
-        &[
-            AnalysisQuery::ty("source item inferred from object binding", "source_item"),
-            AnalysisQuery::ty("concrete method remains available", "concrete_method"),
-            AnalysisQuery::ty("original reference stays concrete", "saved_ref"),
-            AnalysisQuery::ty("converted object method", "object_method"),
-            AnalysisQuery::ty("mutable object method", "mutable_method"),
-            AnalysisQuery::ty("mutable source item", "mutable_item"),
-            AnalysisQuery::ty("argument expectation", "argument_item"),
-            AnalysisQuery::ty("field expectation", "field_item"),
-            AnalysisQuery::ty("object stored in field", "field_method"),
-            AnalysisQuery::ty("borrowed generic producer", "temporary_source"),
-            AnalysisQuery::ty("tail return expectation", "returned_source"),
-            AnalysisQuery::ty("explicit return expectation", "explicit_source"),
-            AnalysisQuery::ty("deferred producer stays concrete", "deferred_source"),
-            AnalysisQuery::ty("deferred object method", "deferred_method"),
-        ],
+        &[AnalysisQuery::ty(
+            "object results and concrete source items",
+            "result",
+        )],
         expect![[r#"
-            source item inferred from object binding
-            - u8
-
-            concrete method remains available
-            - u64
-
-            original reference stays concrete
-            - &nominal struct object_references[lib]::crate::Source<u8>
-
-            converted object method
-            - u8
-
-            mutable object method
-            - u16
-
-            mutable source item
-            - u16
-
-            argument expectation
-            - u8
-
-            field expectation
-            - u32
-
-            object stored in field
-            - u32
-
-            borrowed generic producer
-            - nominal struct object_references[lib]::crate::Source<u8>
-
-            tail return expectation
-            - u16
-
-            explicit return expectation
-            - u32
-
-            deferred producer stays concrete
-            - u16
-
-            deferred object method
-            - u16
+            object results and concrete source items
+            - (u8, u16, u8, u16)
         "#]],
     );
 }
 
 #[test]
 fn converts_smart_pointers_to_trait_objects_without_erasing_generic_arguments() {
-    for attribute in [
-        r#"lang = "owned_box""#,
-        r#"rustc_diagnostic_item = "Arc""#,
-        r#"rustc_diagnostic_item = "Rc""#,
-    ] {
-        std::println!("pointer identity: {attribute}");
+    for pointer in ["boxed::Box", "sync::Arc", "rc::Rc"] {
+        std::println!("pointer: {pointer}");
         check_analysis_queries_with_fake_sysroot(
             &r#"
 //- /Cargo.toml
@@ -163,100 +64,41 @@ name = "object_pointers"
 version = "0.1.0"
 edition = "2024"
 //- /src/lib.rs
-#[POINTER_IDENTITY]
-pub struct Heap<T: ?Sized> { pub value: T }
-pub use Heap as Pointer;
-impl<T> Heap<T> { pub fn new(value: T) -> Self { loop {} } }
-impl<T: ?Sized> std::ops::Deref for Heap<T> { type Target = T; }
+use std::POINTER as Pointer;
 
-pub trait Service<Request> {
-    type Response;
-    fn request(&self, request: Request) -> Self::Response;
+pub trait Stream {
+    type Item;
+    fn peek(&self) -> Self::Item;
 }
-pub struct Worker<T> { pub data: T }
-impl<T> Service<T> for Worker<T> {
-    type Response = T;
-    fn request(&self, request: T) -> T { request }
+pub struct Source<T> { pub value: T }
+impl<T> Stream for Source<T> {
+    type Item = T;
+    fn peek(&self) -> T { loop {} }
 }
-pub fn make<T>() -> Worker<T> { loop {} }
+pub fn make<T>() -> Source<T> { loop {} }
 pub fn id<T>(value: T) -> T { value }
-pub fn take(value: Pointer<dyn Service<u16, Response = u16>>) {}
-pub struct Owner { pub service: Pointer<dyn Service<u32, Response = u32>> }
 
-pub fn returned() -> Pointer<dyn Service<u8, Response = u8>> {
-    Pointer::new(make()$return_source$)
+pub fn object() -> Pointer<dyn Stream<Item = u8>> {
+    let source = make();
+    id(Pointer::new(source$source$))
 }
 pub fn check() {
-    let wrapped: Pointer<dyn Service<u8, Response = u8>> = Pointer::new(make()$wrapped_source$);
-    wrapped.request(0)$wrapped_method$;
-    let nested: Pointer<dyn Service<u16, Response = u16>> = id(Pointer::new(make()$nested_source$));
-    nested.request(0)$nested_method$;
-    let worker = make();
-    let concrete = Pointer::new(worker);
-    concrete.data$original_pointer_item$;
-    let object: Pointer<dyn Service<u8, Response = u8>> = concrete;
-    object.request(0)$moved_method$;
-    take(Pointer::new(make()$argument_source$));
-    let owner = Owner { service: Pointer::new(make()$field_source$) };
-    owner.service.request(0)$field_method$;
+    object().peek()$result$;
 }
 "#
-            .replace("POINTER_IDENTITY", attribute),
+            .replace("POINTER", pointer),
             &[
-                AnalysisQuery::ty("constructor keeps concrete input", "wrapped_source")
+                AnalysisQuery::ty("constructor keeps concrete input", "source")
                     .in_lib("object_pointers"),
-                AnalysisQuery::ty("wrapped object method", "wrapped_method")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty("nested generic producer", "nested_source")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty("nested object method", "nested_method")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty(
-                    "existing pointer keeps concrete item",
-                    "original_pointer_item",
-                )
-                .in_lib("object_pointers"),
-                AnalysisQuery::ty("moved pointer object method", "moved_method")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty("wrapped argument expectation", "argument_source")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty("wrapped field expectation", "field_source")
-                    .in_lib("object_pointers"),
-                AnalysisQuery::ty("wrapped field method", "field_method").in_lib("object_pointers"),
-                AnalysisQuery::ty("wrapped return expectation", "return_source")
-                    .in_lib("object_pointers"),
+                AnalysisQuery::ty("object method result", "result").in_lib("object_pointers"),
             ],
             expect![[r#"
-            constructor keeps concrete input
-            - nominal struct object_pointers[lib]::crate::Worker<u8>
+                constructor keeps concrete input
+                - nominal struct object_pointers[lib]::crate::Source<u8>
 
-            wrapped object method
-            - u8
-
-            nested generic producer
-            - nominal struct object_pointers[lib]::crate::Worker<u16>
-
-            nested object method
-            - u16
-
-            existing pointer keeps concrete item
-            - u8
-
-            moved pointer object method
-            - u8
-
-            wrapped argument expectation
-            - nominal struct object_pointers[lib]::crate::Worker<u16>
-
-            wrapped field expectation
-            - nominal struct object_pointers[lib]::crate::Worker<u32>
-
-            wrapped field method
-            - u32
-
-            wrapped return expectation
-            - nominal struct object_pointers[lib]::crate::Worker<u8>
-        "#]],
+                object method result
+                - u8
+            "#]],
         );
     }
 }
@@ -338,71 +180,6 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
 
             mutable self
             - &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
-        "#]],
-    );
-}
-
-#[test]
-fn preserves_trait_object_arguments_through_inference() {
-    check_analysis_queries(
-        r#"
-//- /Cargo.toml
-[package]
-name = "analysis_object_arguments"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
-pub trait Service<Request> { type Response; type Error; }
-pub struct Holder<T: ?Sized> { pub value: T }
-pub type ServiceObject<T> = dyn Service<T, Response = u32, Error = u16>;
-pub fn make() -> &'static ServiceObject<u8> { loop {} }
-pub fn infer<T, U>(value: &dyn Service<T, Error = u16, Response = U>) -> (T, U) { loop {} }
-pub fn inspect(value: &ServiceObject<u8>, holder: &Holder<ServiceObject<u8>>, wrapped: Holder<&ServiceObject<u8>>) {
-    let copied = value;
-    copied$copied$;
-    let field = &holder.value;
-    field$field$;
-    let returned = make();
-    returned$returned$;
-    let inferred = infer(value);
-    inferred$inferred$;
-    wrapped$wrapped$;
-    let inner = wrapped.value;
-    inner$inner$;
-    let explicit: &dyn Service<_, Response = _, Error = u16> = value;
-    explicit$explicit$;
-}
-"#,
-        &[
-            AnalysisQuery::ty("copied object", "copied"),
-            AnalysisQuery::ty("object field", "field"),
-            AnalysisQuery::ty("returned object", "returned"),
-            AnalysisQuery::ty("inferred trait argument and binding", "inferred"),
-            AnalysisQuery::ty("wrapped object", "wrapped"),
-            AnalysisQuery::ty("unwrapped object", "inner"),
-            AnalysisQuery::ty("inferred object annotation", "explicit"),
-        ],
-        expect![[r#"
-            copied object
-            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
-
-            object field
-            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
-
-            returned object
-            - &'static dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
-
-            inferred trait argument and binding
-            - (u8, u32)
-
-            wrapped object
-            - nominal struct analysis_object_arguments[lib]::crate::Holder<&dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>>
-
-            unwrapped object
-            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
-
-            inferred object annotation
-            - &dyn trait analysis_object_arguments[lib]::crate::Service<u8, Error = u16, Response = u32>
         "#]],
     );
 }

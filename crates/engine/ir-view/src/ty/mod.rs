@@ -13,7 +13,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Ty,
     lookup::ItemPathQuery,
@@ -83,65 +83,69 @@ impl IndexedType {
         result
     }
 
-    /// Return each nominal type contained in this type, including generic arguments.
+    /// Return the declarations named by this type, including its generic arguments.
     ///
-    /// For `Wrapper<User>`, this returns both `Wrapper` and `User`. References and other
-    /// structural wrappers do not hide the types inside them.
-    pub fn contained_nominal_type_defs(&self) -> Vec<TypeDefRef> {
-        let mut type_defs = Vec::new();
-        Self::collect_nominal_type_defs(self.raw(), &mut type_defs);
-        type_defs
+    /// For `Wrapper<User>`, this returns `Wrapper` and `User`. For `&dyn Service<User>`,
+    /// it returns `Service` and `User`. References do not hide the types inside them.
+    pub fn contained_type_declarations(&self) -> UniqueVec<DeclarationRef> {
+        let mut declarations = UniqueVec::new();
+        Self::collect_type_declarations(self.raw(), &mut declarations);
+        declarations
     }
 
-    fn collect_nominal_type_defs(ty: &Ty, type_defs: &mut Vec<TypeDefRef>) {
+    fn collect_type_declarations(ty: &Ty, declarations: &mut UniqueVec<DeclarationRef>) {
         match ty {
             Ty::Adt(adt) => {
-                if !type_defs.contains(&adt.def) {
-                    type_defs.push(adt.def);
-                }
-                Self::collect_nominal_type_args(&adt.args, type_defs);
+                declarations.push(adt.def.into());
+                Self::collect_type_arg_declarations(&adt.args, declarations);
             }
             Ty::Tuple(fields) => {
                 for field in fields {
-                    Self::collect_nominal_type_defs(field, type_defs);
+                    Self::collect_type_declarations(field, declarations);
                 }
             }
             Ty::Array { inner, .. }
             | Ty::Slice(inner)
             | Ty::Reference { inner, .. }
-            | Ty::RawPointer { inner, .. } => Self::collect_nominal_type_defs(inner, type_defs),
+            | Ty::RawPointer { inner, .. } => Self::collect_type_declarations(inner, declarations),
             Ty::FnPointer { params, ret } => {
                 for param in params {
-                    Self::collect_nominal_type_defs(param, type_defs);
+                    Self::collect_type_declarations(param, declarations);
                 }
-                Self::collect_nominal_type_defs(ret, type_defs);
+                Self::collect_type_declarations(ret, declarations);
             }
             Ty::Alias(AliasTy::Projection(alias)) => {
-                Self::collect_nominal_type_args(&alias.args, type_defs)
+                Self::collect_type_arg_declarations(&alias.args, declarations)
             }
             Ty::Alias(AliasTy::Opaque(alias)) => {
-                Self::collect_nominal_type_args(&alias.args, type_defs)
+                Self::collect_type_arg_declarations(&alias.args, declarations)
             }
             Ty::Closure(closure) => {
                 for param in &closure.params {
-                    Self::collect_nominal_type_defs(param, type_defs);
+                    Self::collect_type_declarations(param, declarations);
                 }
-                Self::collect_nominal_type_defs(&closure.ret, type_defs);
+                Self::collect_type_declarations(&closure.ret, declarations);
             }
-            Ty::FnDef(function) => Self::collect_nominal_type_args(&function.args, type_defs),
+            Ty::FnDef(function) => {
+                Self::collect_type_arg_declarations(&function.args, declarations)
+            }
             Ty::Dyn(object) => {
+                declarations.push(object.def.into());
                 for ty in object.types() {
-                    Self::collect_nominal_type_defs(ty, type_defs);
+                    Self::collect_type_declarations(ty, declarations);
                 }
             }
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Param(_) | Ty::Unknown => {}
         }
     }
 
-    fn collect_nominal_type_args(args: &[GenericArg], type_defs: &mut Vec<TypeDefRef>) {
+    fn collect_type_arg_declarations(
+        args: &[GenericArg],
+        declarations: &mut UniqueVec<DeclarationRef>,
+    ) {
         for arg in args {
             if let GenericArg::Type(ty) = arg {
-                Self::collect_nominal_type_defs(ty, type_defs);
+                Self::collect_type_declarations(ty, declarations);
             }
         }
     }

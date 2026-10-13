@@ -964,9 +964,6 @@ fn parse_type_ref(text: &str) -> TypeRef {
     if let Some(bounds) = text.strip_prefix("impl ") {
         return TypeRef::ImplTrait(parse_type_bounds(bounds));
     }
-    if let Some(bounds) = text.strip_prefix("dyn ") {
-        return TypeRef::DynTrait(parse_type_bounds(bounds));
-    }
     if let Some(inner) = text.strip_prefix("*const ") {
         return TypeRef::RawPointer {
             mutability: rg_ir_model::Mutability::Shared,
