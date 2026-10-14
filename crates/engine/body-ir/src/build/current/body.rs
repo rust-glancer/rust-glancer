@@ -22,7 +22,7 @@ use rg_ir_model::{
     ItemOwner, ModuleRef, Span, StaticId, StaticRef, TraitDefRef,
 };
 use rg_parse::{CurrentSource, DeclarationAssociationIndex};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
+use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 
@@ -275,10 +275,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             roots.iter().map(|root| root.body_ref),
         )?;
 
-        let crate_items = CrateItemQuery::new(self.def_map, self.semantic_ir, self.crate_ref);
-        let item_lookup_query =
-            ItemLookupQuery::build_with_cache(&crate_items, &self.item_lookup_cache, &cancellation)
-                .context("build the current body's visible item lookup query")?;
+        let item_lookup_query = ItemLookupQuery::build_with_cache(
+            &ItemStoreQuery::new(self.semantic_ir),
+            self.crate_ref,
+            &self.item_lookup_cache,
+            &cancellation,
+        )
+        .context("build the current body's visible item lookup query")?;
 
         let mut interner = NameInterner::new();
         let task_source = BodyTaskSource::Current {

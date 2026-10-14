@@ -14,6 +14,84 @@ use self::utils::{
 };
 
 #[test]
+fn indexed_lookup_facts_keep_language_items_per_use_site() {
+    let fixture = crate::testonly::SemanticIrFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "dep"]
+resolver = "3"
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+#[lang = "deref"]
+pub trait DependencyDeref {}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /app/src/lib.rs
+#[lang = "deref"]
+pub trait LibraryDeref {}
+
+//- /app/src/main.rs
+#[lang = "deref"]
+trait BinaryDeref {}
+
+fn main() {}
+"#,
+    );
+    let [library, dependency, binary] = [
+        ("app", rg_workspace::TargetKind::Lib),
+        ("dep", rg_workspace::TargetKind::Lib),
+        ("app", rg_workspace::TargetKind::Bin),
+    ]
+    .map(|(package, kind)| fixture.def_map_fixture().crate_ref(package, kind));
+    let items = fixture
+        .semantic_ir_db()
+        .read_txn(crate::SemanticIrLoader::resident_only(
+            "language-item fixture",
+        ));
+    let cache = crate::ItemLookupQueryCache::new();
+    let cancellation = rg_std::CancellationToken::new();
+
+    // Each target's local language item wins over dependencies. Interleaving repeated queries
+    // also checks that sharing the query cache does not mix library and binary choices.
+    for use_site in [library, dependency, binary, binary, dependency, library] {
+        let expected = fixture
+            .resident_crate_ir(use_site)
+            .expect("target store exists")
+            .traits_with_refs()
+            .next()
+            .expect("target declares its language item")
+            .0;
+        let query = crate::ItemLookupQuery::build_with_cache(
+            &crate::ItemStoreQuery::new(&items),
+            use_site,
+            &cache,
+            &cancellation,
+        )
+        .expect("target lookup succeeds");
+        assert_eq!(
+            query.lang_trait(rg_item_tree::LangItem::Deref),
+            Some(expected),
+            "wrong language item for {use_site:?}",
+        );
+    }
+}
+
+#[test]
 fn high_target_fanout_shares_results_by_ordered_dependency_set() {
     let mut retained_entries = Vec::new();
 
@@ -172,7 +250,8 @@ pub struct Library;
             .iter()
             .map(|&use_site| {
                 crate::ItemLookupQuery::build_with_cache(
-                    &crate::CrateItemQuery::new(&def_maps, &items, use_site),
+                    &crate::ItemStoreQuery::new(&items),
+                    use_site,
                     &cache,
                     &rg_std::CancellationToken::new(),
                 )

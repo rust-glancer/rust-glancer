@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_ir_model::{CrateId, ImplRef};
+use rg_ir_model::{CrateId, CrateRef, ImplRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemLookupIndex, ItemStore, TraitImplSelfHead};
+use crate::{ItemLookupFacts, ItemLookupIndex, ItemStore, TraitImplSelfHead};
 
 /// Semantic declarations and their aligned lookup index for one crate.
 ///
@@ -127,14 +127,20 @@ impl SemanticPackage {
             .map(|semantic_crate| &mut semantic_crate.items)
     }
 
-    /// Rebuild aligned crate-local indexes after impl-header resolution changes their lookup keys.
+    /// Rebuild crate-local candidate tables after impl-header resolution changes their lookup keys.
+    /// Attach lookup facts computed from the same saved declarations as these tables.
     pub(crate) fn rebuild_lookup_indexes(
         &mut self,
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        lookup_facts: &HashMap<CrateRef, ItemLookupFacts>,
     ) {
         for semantic_crate in self.crates.iter_mut() {
+            let facts = lookup_facts
+                .get(&semantic_crate.items.crate_ref())
+                .expect("rebuilt crate has indexed lookup facts")
+                .clone();
             semantic_crate.lookup_index =
-                ItemLookupIndex::build_from_store(&semantic_crate.items, self_heads);
+                ItemLookupIndex::build_from_store(&semantic_crate.items, self_heads, facts);
         }
     }
 }

@@ -15,7 +15,7 @@ use std::{
 use rg_arena::Arena;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{BodyId, BodyRef, CrateRef};
-use rg_semantic_ir::{CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::NameInterner;
 
 use super::lower::{BodyTaskSource, LoweredCrateBodies};
@@ -177,9 +177,12 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // in Semantic IR; items declared inside a body remain a separate overlay through
         // `BodyBuildQuerySource`.
         let phase_started = Instant::now();
-        let crate_items = CrateItemQuery::new(def_map, semantic_ir, self.crate_ref);
-        let item_lookup_query =
-            ItemLookupQuery::build_with_cache(&crate_items, item_lookup_cache, &self.cancellation)?;
+        let item_lookup_query = ItemLookupQuery::build_with_cache(
+            &ItemStoreQuery::new(semantic_ir),
+            self.crate_ref,
+            item_lookup_cache,
+            &self.cancellation,
+        )?;
         let elapsed = phase_started.elapsed();
         let item_lookup_query_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {

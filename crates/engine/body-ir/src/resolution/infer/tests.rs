@@ -78,7 +78,8 @@ pub struct Vec<T>(T);
                 "inference fixture",
             ));
     let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
-        &rg_semantic_ir::CrateItemQuery::new(&def_map, &semantic_ir, target),
+        &rg_semantic_ir::ItemStoreQuery::new(&semantic_ir),
+        target,
         &CancellationToken::new(),
     )
     .expect("fixture lookup");
@@ -381,7 +382,8 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
                 "inference fixture",
             ));
     let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
-        &rg_semantic_ir::CrateItemQuery::new(&def_map, &semantic_ir, target),
+        &rg_semantic_ir::ItemStoreQuery::new(&semantic_ir),
+        target,
         &CancellationToken::new(),
     )
     .expect("fixture lookup builds");

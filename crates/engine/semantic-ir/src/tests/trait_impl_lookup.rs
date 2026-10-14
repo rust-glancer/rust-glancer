@@ -71,18 +71,14 @@ impl<T> Marker for T {}
         })
         .expect("fixture should contain the type named like a primitive");
 
-    let def_maps = fixture
-        .def_map_db()
-        .read_txn(rg_def_map::DefMapLoader::resident_only(
-            "resident trait-head fixture",
-        ));
     let items = fixture
         .semantic_ir_db()
         .read_txn(crate::SemanticIrLoader::resident_only(
             "resident trait-head fixture",
         ));
     let lookup = crate::ItemLookupQuery::build_from(
-        &crate::CrateItemQuery::new(&def_maps, &items, crate_ref),
+        &crate::ItemStoreQuery::new(&items),
+        crate_ref,
         &rg_std::CancellationToken::new(),
     )
     .expect("trait-head lookup query should build");

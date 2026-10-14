@@ -9,6 +9,7 @@ mod context;
 mod data;
 mod generics;
 mod lang_item;
+mod lookup_facts;
 mod lookup_index;
 mod query;
 mod signature;
@@ -24,6 +25,7 @@ pub use self::{
         StructData, TraitData, TypeAliasData, UnionData,
     },
     generics::{GenericParamSource, GenericParamView, Generics},
+    lookup_facts::ItemLookupFacts,
     lookup_index::{ItemLookupIndex, TraitImplSelfHead},
     query::{
         CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,

@@ -2,12 +2,13 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{ImplRef, PackageSlot, TraitDefRef, TypeDefRef};
+use rg_ir_model::{CrateRef, ImplRef, PackageSlot, TraitDefRef, TypeDefRef};
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
 use crate::{
-    SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, SemanticPackage, TraitImplSelfHead,
+    ItemLookupFacts, SemanticIrLoader, SemanticIrReadTxn, SemanticIrStats, SemanticPackage,
+    TraitImplSelfHead,
 };
 
 /// Semantic item graph for all analyzed packages and semantic crates.
@@ -164,10 +165,11 @@ impl SemanticIrDbMutator<'_> {
         &mut self,
         packages: &[PackageSlot],
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        lookup_facts: &HashMap<CrateRef, ItemLookupFacts>,
     ) {
         for package in packages {
             if let Some(package) = self.db.packages.make_mut(*package) {
-                package.rebuild_lookup_indexes(self_heads);
+                package.rebuild_lookup_indexes(self_heads, lookup_facts);
             }
         }
     }

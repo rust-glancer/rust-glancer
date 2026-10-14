@@ -75,11 +75,11 @@ where
 
     /// Returns declaration-local lookup indexes for exact crates in the requested visibility order.
     ///
-    /// Missing indexes are skipped without forcing an item-store read. The paired crate identity is
-    /// retained for index entries, such as language items, that store only package-local ids.
+    /// Missing indexes are skipped without forcing an item-store read. Keeping each crate ref
+    /// beside its index gives the query cache the exact dependency set that was loaded.
     pub(super) fn indexes_for_crates(
         &self,
-        crates: &[CrateRef],
+        crates: impl IntoIterator<Item = CrateRef>,
         cancellation: &rg_std::CancellationToken,
     ) -> Result<Vec<(CrateRef, &'a ItemLookupIndex)>, rg_std::OperationError<S::Error>>
     where
@@ -89,15 +89,24 @@ where
         for crate_ref in crates {
             rg_std::check_cancel!(cancellation, "load visible lookup index");
             let Some(index) = self
-                .source
-                .item_lookup_index(*crate_ref)
+                .lookup_index(crate_ref)
                 .map_err(rg_std::OperationError::Source)?
             else {
                 continue;
             };
-            indexes.push((*crate_ref, index));
+            indexes.push((crate_ref, index));
         }
         Ok(indexes)
+    }
+
+    pub(super) fn lookup_index(
+        &self,
+        crate_ref: CrateRef,
+    ) -> Result<Option<&'a ItemLookupIndex>, S::Error>
+    where
+        S: ItemLookupIndexSource<'a>,
+    {
+        self.source.item_lookup_index(crate_ref)
     }
 
     /// Enumerates item views from one routed origin without exposing store iteration to callers.

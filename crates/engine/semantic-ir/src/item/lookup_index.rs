@@ -2,8 +2,10 @@
 //!
 //! Method lookup, trait selection, and compiler desugarings repeatedly ask for candidates with the
 //! same receiver or trait identity. Each `ItemLookupIndex` is serialized beside its owning
-//! `ItemStore`, and contains only declarations from that store. It never copies candidates from
-//! visible dependencies into itself.
+//! `ItemStore`, and its candidate tables contain only declarations from that store. It never copies
+//! candidates from visible dependencies into itself. The visible crate list and selected language
+//! items are saved alongside those tables, so queries do not need to walk the dependency graph or
+//! read dependency declarations to discover them.
 //!
 //! This matters for packages with many Cargo targets: a library's candidates stay in the library
 //! index instead of being repeated in every test or example target. `item::query` composes the local
@@ -12,15 +14,14 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{
-    AssocItemId, CrateRef, DefMapRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy,
-    SemanticItemRef, TraitDefRef, TraitId, TraitImplRef, TypeDefRef,
+    AssocItemId, CrateRef, FunctionRef, ImplId, ImplRef, Mutability, PrimitiveTy, TraitDefRef,
+    TraitId, TraitImplRef, TypeDefRef,
 };
-use rg_item_tree::LangItem;
-use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemStore, item::lang_item::LangItemIndex};
+use crate::{ItemLookupFacts, ItemStore};
 
 /// Outer receiver shape used to narrow saved trait impl declarations before semantic proof.
 ///
@@ -65,18 +66,16 @@ pub enum TraitImplSelfHead {
     Adt(TypeDefRef),
 }
 
-/// Candidate tables and compiler language identities declared by one semantic crate.
+/// A crate's own lookup candidates, plus its saved visibility and language-item choices.
 ///
 /// For example, an index contains `impl Widget { fn draw(...) }` when that impl is declared in the
 /// indexed crate. It does not contain a method declared by a dependency merely because that
 /// dependency is visible; [`crate::ItemLookupQuery`] brings the two crate-local indexes together at
-/// lookup time. Sparse language-item entries live here for the same reason: discovering a compiler
-/// identity should not require loading the crate's complete declaration store.
+/// lookup time. The small visibility and language-item facts are computed during indexing, so
+/// assembling that lookup does not need to reconstruct its context from dependency declarations.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemLookupIndex {
-    // Language items are lookup metadata too. Keeping this sparse index here lets a use-site query
-    // assemble compiler identities without restoring every visible declaration store.
-    lang_items: LangItemIndex,
+    lookup_facts: ItemLookupFacts,
     // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
     // already-resolved `Self` type mentions that receiver.
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
@@ -102,30 +101,27 @@ pub struct ItemLookupIndex {
 impl ItemLookupIndex {
     /// Builds the declaration-local candidate tables for one semantic crate.
     ///
+    /// `lookup_facts` must describe this store's crate and the same saved declarations. They are
+    /// attached as-is; candidate tables are gathered only from `store`.
+    ///
     /// Production lowering supplies the conservative receiver heads resolved by the semantic
     /// header pass. Synthetic stores without a definition resolver can pass an empty map; their
-    /// trait impls then enter the fallback lane. Visibility composition belongs to
-    /// [`crate::ItemLookupQuery`] and is intentionally not performed here.
+    /// trait impls then enter the fallback lane.
     pub fn build_from_store(
         store: &ItemStore,
         self_heads: &HashMap<ImplRef, TraitImplSelfHead>,
+        lookup_facts: ItemLookupFacts,
     ) -> Self {
         let mut index = Self {
-            lang_items: store.lang_items().clone(),
+            lookup_facts,
             ..Self::default()
         };
         index.extend_from_store(store, self_heads);
         index
     }
 
-    /// Projects one crate-local language-item entry into its project-wide semantic identity.
-    pub(crate) fn lang_item(
-        &self,
-        crate_ref: CrateRef,
-        lang_item: LangItem,
-    ) -> ExpectedUnique<SemanticItemRef> {
-        self.lang_items
-            .target(lang_item, DefMapRef::Crate(crate_ref))
+    pub(crate) fn lookup_facts(&self) -> &ItemLookupFacts {
+        &self.lookup_facts
     }
 
     /// Count retained candidate references across every declaration-local lookup table.

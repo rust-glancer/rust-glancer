@@ -20,8 +20,9 @@ use rg_item_tree::{
 };
 use rg_semantic_ir::{
     CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
-    ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery, ItemStore, ItemStoreBuilder,
-    ItemStoreSource, StructData, TraitData, TypeAliasData, TypeAliasSignature,
+    ItemLookupFacts, ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery, ItemStore,
+    ItemStoreBuilder, ItemStoreQuery, ItemStoreSource, StructData, TraitData, TypeAliasData,
+    TypeAliasSignature,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
@@ -62,7 +63,8 @@ impl TraitSelectionFixture {
 
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
         ItemLookupQuery::build_from(
-            &CrateItemQuery::new(self, self, self.target),
+            &ItemStoreQuery::new(self),
+            self.target,
             &rg_std::CancellationToken::new(),
         )
         .expect("fixture lookup query should build")
@@ -836,7 +838,15 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 .trait_refs_by_name
                 .insert(data.name.to_string(), trait_ref);
         }
-        fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
+        // The fixture skips semantic package indexing, so build the saved visibility facts here
+        // before constructing the lookup index used by trait queries.
+        let lookup_facts = ItemLookupFacts::build(
+            &CrateItemQuery::new(&fixture, &fixture, fixture.target),
+            &rg_std::CancellationToken::new(),
+        )
+        .expect("fixture lookup facts should build");
+        fixture.lookup_index =
+            ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new(), lookup_facts);
         fixture
     }
 

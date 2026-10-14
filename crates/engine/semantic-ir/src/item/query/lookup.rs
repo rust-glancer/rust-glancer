@@ -23,9 +23,9 @@
 //! shared dependency result, so one test cannot leak declarations into another. The operation cache
 //! and all memoized unions are dropped after the build or analysis request.
 //!
-//! Language items take a smaller, separate path. There are only a fixed number of them, and the
-//! first visible declaration matters, so each query resolves them eagerly while it still has the
-//! complete ordered index list.
+//! Dependency visibility and compiler language items are already stored in each crate's index.
+//! Queries borrow those facts; only candidate unions that depend on the requested lookup key are
+//! memoized by the operation cache.
 
 use std::{
     collections::HashMap,
@@ -35,7 +35,6 @@ use std::{
     },
 };
 
-use rg_def_map::DefMapSource;
 use rg_ir_model::{
     AssocItemId, CrateRef, FunctionRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef,
     TypeAliasRef, TypeDefRef,
@@ -44,11 +43,8 @@ use rg_item_tree::LangItem;
 use rg_std::{CancellationToken, Cancelled, OperationError, UniqueVec};
 use rg_text::Name;
 
-use super::{CrateItemQuery, ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
-use crate::{
-    ItemLookupIndex, TraitImplSelfHead,
-    item::{TraitItemTraitRefs, lang_item::VisibleLangItems},
-};
+use super::{ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
+use crate::{ItemLookupFacts, ItemLookupIndex, TraitImplSelfHead, item::TraitItemTraitRefs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TraitItemKind {
@@ -71,14 +67,14 @@ impl TraitItemKind {
 
 /// Lookup over the declarations visible from one semantic crate.
 ///
-/// The use-site index remains local to this query. `DependencyLookup` handles the ordered
-/// dependency indexes and can share their memoized results with sibling use sites created from the
-/// same [`ItemLookupQueryCache`].
+/// Saved lookup facts select the visible crates and compiler language items. The use-site index
+/// remains local to this query. `DependencyLookup` handles the ordered dependency indexes and can
+/// share their memoized results with sibling use sites created from the same [`ItemLookupQueryCache`].
 #[derive(Debug, Clone)]
 pub struct ItemLookupQuery<'item> {
     local_index: &'item ItemLookupIndex,
     dependencies: DependencyLookup<'item>,
-    lang_items: VisibleLangItems,
+    lookup_facts: &'item ItemLookupFacts,
 }
 
 impl rg_std::Cancelable for ItemLookupQuery<'_> {
@@ -92,54 +88,47 @@ impl<'item> ItemLookupQuery<'item> {
     ///
     /// This creates a private operation cache. Use [`Self::build_with_cache`] when several sibling
     /// queries should reuse dependency results.
-    pub fn build_from<D, I>(
-        crate_items: &CrateItemQuery<'item, D, I>,
+    pub fn build_from<I>(
+        items: &ItemStoreQuery<'item, I>,
+        use_site: CrateRef,
         cancellation: &rg_std::CancellationToken,
     ) -> Result<Self, rg_std::OperationError<I::Error>>
     where
-        D: DefMapSource<Error = I::Error>,
         I: ItemLookupIndexSource<'item>,
     {
-        Self::build_with_cache(crate_items, &ItemLookupQueryCache::new(), cancellation)
+        Self::build_with_cache(items, use_site, &ItemLookupQueryCache::new(), cancellation)
     }
 
     /// Build one use-site query using an operation cache shared with sibling queries.
-    pub fn build_with_cache<D, I>(
-        crate_items: &CrateItemQuery<'item, D, I>,
+    pub fn build_with_cache<I>(
+        items: &ItemStoreQuery<'item, I>,
+        use_site: CrateRef,
         cache: &ItemLookupQueryCache,
         cancellation: &rg_std::CancellationToken,
     ) -> Result<Self, rg_std::OperationError<I::Error>>
     where
-        D: DefMapSource<Error = I::Error>,
         I: ItemLookupIndexSource<'item>,
     {
-        let mut indexes = crate_items.visible_indexes(cancellation)?;
+        // 1. Read the crate's saved visibility order and language-item choices. The local index
+        // gives us both without walking DefMap or opening dependency declaration stores.
+        rg_std::check_cancel!(cancellation, "load use-site lookup index");
+        let local_index = items
+            .lookup_index(use_site)
+            .map_err(OperationError::Source)?
+            .expect("use-site crate has a saved lookup index");
+        let lookup_facts = local_index.lookup_facts();
 
-        // 1. Resolve the small fixed language-item set while the complete visibility order is
-        // available. The first visible declaration wins, including an ambiguous declaration.
-        let mut lang_items = VisibleLangItems::default();
-        for (crate_ref, index) in &indexes {
-            rg_std::check_cancel!(cancellation, "visible language items");
-            for lang_item in LangItem::ALL {
-                lang_items.merge_prefer_existing(lang_item, index.lang_item(*crate_ref, lang_item));
-            }
-        }
-
-        // 2. Remove the use-site index from the dependency set. It is a cheap local overlay and
-        // must not become part of results shared by sibling integration-test targets.
-        let local_position = indexes
+        // 2. Keep the use-site index separate from the dependencies. Two integration tests may
+        // share their dependencies, but neither test's own declarations should reach the other.
+        let dependency_crates = lookup_facts
+            .visible_crates()
             .iter()
-            .position(|(crate_ref, _)| *crate_ref == crate_items.use_site())
-            .expect("visible indexes should contain the use-site crate");
-        let (_, local_index) = indexes.remove(local_position);
-        let dependency_crates = indexes
-            .iter()
-            .map(|(crate_ref, _)| *crate_ref)
-            .collect::<Vec<_>>();
-        let dependency_indexes = indexes
+            .copied()
+            .filter(|crate_ref| *crate_ref != use_site);
+        let (dependency_crates, dependency_indexes) = items
+            .indexes_for_crates(dependency_crates, cancellation)?
             .into_iter()
-            .map(|(_, index)| index)
-            .collect::<Vec<_>>();
+            .unzip();
 
         // 3. The ordered dependency crate list identifies reusable results. The indexes stay
         // borrowed by this query; only compact candidate identities enter the operation cache.
@@ -149,13 +138,13 @@ impl<'item> ItemLookupQuery<'item> {
         Ok(Self {
             local_index,
             dependencies,
-            lang_items,
+            lookup_facts,
         })
     }
 
     /// Returns the exact visible nominal type carrying one compiler language identity.
     pub fn lang_type(&self, lang_item: LangItem) -> Option<TypeDefRef> {
-        let SemanticItemRef::TypeDef(type_ref) = self.lang_items.target(lang_item)? else {
+        let SemanticItemRef::TypeDef(type_ref) = self.lookup_facts.lang_item(lang_item)? else {
             return None;
         };
         Some(type_ref)
@@ -163,7 +152,7 @@ impl<'item> ItemLookupQuery<'item> {
 
     /// Returns the exact visible trait carrying one compiler language identity.
     pub fn lang_trait(&self, lang_item: LangItem) -> Option<TraitDefRef> {
-        let SemanticItemRef::Trait(trait_ref) = self.lang_items.target(lang_item)? else {
+        let SemanticItemRef::Trait(trait_ref) = self.lookup_facts.lang_item(lang_item)? else {
             return None;
         };
         Some(trait_ref)
@@ -171,7 +160,8 @@ impl<'item> ItemLookupQuery<'item> {
 
     /// Returns the exact visible function carrying one compiler language identity.
     pub fn lang_function(&self, lang_item: LangItem) -> Option<FunctionRef> {
-        let SemanticItemRef::Function(function_ref) = self.lang_items.target(lang_item)? else {
+        let SemanticItemRef::Function(function_ref) = self.lookup_facts.lang_item(lang_item)?
+        else {
             return None;
         };
         Some(function_ref)
@@ -179,7 +169,8 @@ impl<'item> ItemLookupQuery<'item> {
 
     /// Returns the exact visible type alias carrying one compiler language identity.
     pub fn lang_type_alias(&self, lang_item: LangItem) -> Option<TypeAliasRef> {
-        let SemanticItemRef::TypeAlias(type_alias_ref) = self.lang_items.target(lang_item)? else {
+        let SemanticItemRef::TypeAlias(type_alias_ref) = self.lookup_facts.lang_item(lang_item)?
+        else {
             return None;
         };
         Some(type_alias_ref)

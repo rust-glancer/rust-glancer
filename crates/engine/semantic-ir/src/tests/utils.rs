@@ -12,8 +12,8 @@ use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
 
 use crate::{
-    CrateItemQuery, ItemLookupQuery, ItemResolutionQuery, ItemStore, ItemStoreQuery,
-    SemanticIrReadTxn, testonly::SemanticIrFixture,
+    ItemLookupQuery, ItemResolutionQuery, ItemStore, ItemStoreQuery, SemanticIrReadTxn,
+    testonly::SemanticIrFixture,
 };
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
@@ -184,9 +184,9 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 .read_txn(crate::SemanticIrLoader::resident_only(
                     "resident semantic IR fixture",
                 ));
-        let crate_items = CrateItemQuery::new(&def_map_txn, &semantic_ir_txn, crate_ref);
+        let items = ItemStoreQuery::new(&semantic_ir_txn);
         let lookup_query =
-            ItemLookupQuery::build_from(&crate_items, &rg_std::CancellationToken::new())
+            ItemLookupQuery::build_from(&items, crate_ref, &rg_std::CancellationToken::new())
                 .expect("fixture semantic lookup query should build");
         let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
@@ -224,8 +224,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     {
                         trait_functions.extend(functions.iter().copied());
                     }
-                    if let Some(data) = crate_items
-                        .items()
+                    if let Some(data) = items
                         .impl_data(trait_impl.impl_ref)
                         .expect("fixture semantic query should read trait impl")
                     {
@@ -275,7 +274,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     &mut dump,
                     "inherent functions",
                     lookup_query
-                        .inherent_functions_for_type(crate_items.items(), ty)
+                        .inherent_functions_for_type(&items, ty)
                         .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
                         .map(|function_ref| {

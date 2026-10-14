@@ -6,7 +6,7 @@ use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
 use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, Span};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    CrateItemQuery, ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreSource,
+    ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreQuery, ItemStoreSource,
     SemanticIrReadTxn, TypePathContext, TypePathResolution,
 };
 use rg_std::{CancellationToken, UniqueVec};
@@ -139,7 +139,8 @@ impl<'db> IndexedViewDb<'db> {
         use_site: CrateRef,
     ) -> anyhow::Result<ItemLookupQuery<'_>> {
         ItemLookupQuery::build_with_cache(
-            &CrateItemQuery::new(&self.def_map, &self.semantic_ir, use_site),
+            &ItemStoreQuery::new(&self.semantic_ir),
+            use_site,
             &self.item_lookup_cache,
             &self.cancellation,
         )

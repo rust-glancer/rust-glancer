@@ -2892,6 +2892,92 @@ pub struct Root;
 }
 
 #[test]
+fn persisted_lookup_facts_follow_dependency_declarations() {
+    let source = r#"
+//- /Cargo.toml
+[workspace]
+members = ["app", "dep"]
+resolver = "3"
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub trait Existing {}
+#[lang = "deref"]
+pub trait FirstDeref {}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /app/src/lib.rs
+pub struct App;
+"#;
+    for policy in [
+        PackageResidencyPolicy::AllResident,
+        PackageResidencyPolicy::AllOffloadable,
+    ] {
+        let mut fixture = ProjectFixture::build_with_package_residency_policy(source, policy);
+        let app = rg_ir_model::CrateRef {
+            package: fixture.package_slot_by_name("app"),
+            crate_id: rg_ir_model::CrateId(0),
+        };
+        let selected_name = |project: &Project| {
+            let loaders = project.state.query_read_loaders();
+            let items = project.state.semantic_ir.read_txn(loaders.semantic_ir);
+            let query = rg_semantic_ir::ItemLookupQuery::build_from(
+                &rg_semantic_ir::ItemStoreQuery::new(&items),
+                app,
+                &rg_std::CancellationToken::new(),
+            )
+            .expect("saved lookup facts should load");
+            let selected = query
+                .lang_trait(rg_item_tree::LangItem::Deref)
+                .expect("dependency supplies the language item");
+            rg_semantic_ir::ItemStoreQuery::new(&items)
+                .trait_data(selected)
+                .expect("selected trait should load")
+                .expect("selected trait exists")
+                .name
+                .to_string()
+        };
+        assert_eq!(selected_name(fixture.project()), "FirstDeref");
+
+        // Move the language item to another trait id. A dependent's stale saved mapping would
+        // select Existing instead of SecondDeref even if the dependency's own items were refreshed.
+        fixture.apply_saved_fixture(
+            r#"
+//- /dep/src/lib.rs
+#[lang = "deref"]
+pub trait SecondDeref {}
+pub trait Existing {}
+"#,
+        );
+        assert_eq!(selected_name(fixture.project()), "SecondDeref");
+
+        // Reload from the saved artifacts to check that the updated choice survives a new project.
+        let reloaded = fixture
+            .source()
+            .build_project_with_package_residency_policy(policy);
+        assert_eq!(selected_name(&reloaded), "SecondDeref");
+        assert_eq!(
+            reloaded.state.semantic_ir.package_is_offloaded(app.package),
+            policy == PackageResidencyPolicy::AllOffloadable,
+            "query reads should preserve package residency",
+        );
+    }
+}
+
+#[test]
 fn rebuilds_reverse_dependent_packages_after_dependency_changes() {
     let mut fixture = HostFixture::build(
         r#"
