@@ -54,9 +54,14 @@ where
             self.inference
                 .constrain_infer_tys(&signature.ret, &annotation);
         }
-        self.infer_optional(body, &signature.ret)
-            .context("infer closure body")?;
-        Ok(())
+        // Explicit returns belong to this closure, even if the enclosing function expects another
+        // type. Restore the outer expectation even when inferring the closure body fails.
+        let outer_return_ty = std::mem::replace(&mut self.return_ty, signature.ret);
+        let result = self
+            .infer_optional(body, &signature.ret)
+            .context("infer closure body");
+        self.return_ty = outer_return_ty;
+        result
     }
 
     /// Give a closure slots before inferring its body. Call inference can do this early so bounds

@@ -662,6 +662,10 @@ where
                         );
                     }
                 } else if matches!(kind, ExprWrapperKind::Return) {
+                    // A bare return supplies unit to this function or closure; the return
+                    // expression itself still diverges.
+                    self.inference
+                        .constrain_infer_tys(&self.return_ty, &self.cx.unit());
                     self.inference.set_expr_ty(expr, self.cx.never());
                 }
             }

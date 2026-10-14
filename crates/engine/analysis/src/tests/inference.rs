@@ -2273,6 +2273,87 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
 }
 
 #[test]
+fn explicit_closure_returns_use_their_own_output_types() {
+    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("closure_returns");
+
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "closure_returns"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn output<F: FnOnce() -> R, R>(callback: F) -> R { loop {} }
+pub fn make<T>() -> T { loop {} }
+
+pub fn outer(flag: bool) -> u64 {
+    let number = output(|| return 42)$number$;
+    let unit = output(|| return)$unit$;
+    let mixed = output(|| {
+        if flag { return 1$mixed_return$; }
+        2u16
+    })$mixed$;
+    let nested = output(|| {
+        let inner = output(|| return true)$inner$;
+        return 3u8;
+    })$nested$;
+    let annotated = output(|| -> f32 {
+        let value = 1.0;
+        return value$annotated_return$;
+    });
+    let contextual: u16 = output(|| return make()$contextual_return$);
+    let restored = 4;
+    return restored$outer_return$;
+}
+"#,
+        &[
+            ty("inferred closure output", "number"),
+            ty("bare closure return", "unit"),
+            ty("explicit return follows the tail type", "mixed_return"),
+            ty("mixed closure output", "mixed"),
+            ty("nested closure output", "inner"),
+            ty("enclosing closure output", "nested"),
+            ty("annotated closure return", "annotated_return"),
+            ty(
+                "callable bound constrains returned call",
+                "contextual_return",
+            ),
+            ty("enclosing function return", "outer_return"),
+        ],
+        expect![[r#"
+            inferred closure output
+            - i32
+
+            bare closure return
+            - ()
+
+            explicit return follows the tail type
+            - u16
+
+            mixed closure output
+            - u16
+
+            nested closure output
+            - bool
+
+            enclosing closure output
+            - u8
+
+            annotated closure return
+            - f32
+
+            callable bound constrains returned call
+            - u16
+
+            enclosing function return
+            - u64
+        "#]],
+    );
+}
+
+#[test]
 fn infers_closure_params_and_returns_from_callable_bounds() {
     let ty = |title, marker| {
         AnalysisQuery::ty(title, marker).in_lib("analysis_callable_closure_bound_inference")
