@@ -8,6 +8,64 @@ use self::utils::*;
 use crate::{AdtTy, AliasTy, GenericArg, Ty, TyContext, lookup::ImplQuery};
 
 #[test]
+fn infers_auto_traits_and_respects_impl_polarity() {
+    use crate::solver::Outcome::{NoSolution, Proven};
+
+    let fixture = TraitSelectionFixture::new(
+        r#"
+            traits
+              trait#0 auto Send
+              trait#1 auto Sync
+              trait#2 Ordinary
+            structs
+              struct#0 Leaf
+              struct#1 NoSend
+              struct#2 NoSync
+              struct#3 Wrapper<T>
+            impls
+              impl#0 impl !Send for NoSend
+              impl#1 impl !Sync for NoSync
+              impl#2 impl !Ordinary for Leaf
+              impl#3 impl<T: Send> Send for Wrapper<T>
+        "#,
+    );
+    for (goal, expected) in [
+        ("[Leaf; 3]: Send", Proven),
+        ("[NoSend; 3]: Send", NoSolution),
+        ("Leaf: Send", Proven),
+        ("Leaf: Sync", Proven),
+        ("NoSend: Send", NoSolution),
+        ("NoSync: Sync", NoSolution),
+        ("Leaf: Ordinary", NoSolution),
+        ("Wrapper<Leaf>: Send", Proven),
+        ("Wrapper<NoSend>: Send", NoSolution),
+    ] {
+        assert_eq!(prove_fixture_goal(&fixture, goal), expected, "{goal}");
+    }
+}
+
+#[test]
+fn negative_impls_are_not_positive_selection_candidates() {
+    check_trait_selection_queries(
+        r#"
+            traits
+              trait#0 Marker
+            structs
+              struct#0 User
+            impls
+              impl#0 impl !Marker for User
+        "#,
+        vec![TraitSelectionCase::probe("negative impl", "User: Marker")],
+        expect![[r#"
+            negative impl
+              query: selection
+              goal: User: Marker
+              result: empty
+        "#]],
+    );
+}
+
+#[test]
 fn named_trait_discovery_ignores_unrelated_blanket_impls() {
     const UNRELATED_TRAITS: usize = 24;
 

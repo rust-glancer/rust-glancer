@@ -3,6 +3,31 @@ use expect_test::expect;
 use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fake_sysroot};
 
 #[test]
+fn shows_auto_trait_bounds_on_object_hints() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "auto_trait_hints"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub auto trait Send {}
+pub auto trait Sync {}
+pub trait Service<T> { type Reply; }
+pub fn copy<'a>(value: &'a (dyn Service<u8, Reply = u16> + Send + Sync + 'a)) {
+    let copied = value;
+}
+"#,
+        InlayHintsQuery::new("object bounds", "/src/lib.rs"),
+        expect![[r#"
+            object bounds
+            - `: &'_ (dyn auto_trait_hints::Service<u8, Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15
+        "#]],
+    );
+}
+
+#[test]
 fn shows_shared_mutable_and_nested_reference_hints() {
     check_inlay_hints(
         r#"

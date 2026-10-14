@@ -602,7 +602,7 @@ impl<'s> Relate<Interner<'s>>
         if a.len() != b.len() {
             return Err(ir::error::TypeError::Mismatch);
         }
-        // Bindings are sorted by name, so the entries to compare appear in the same order.
+        // Bindings and auto traits are sorted, so matching entries appear in the same order.
         // Let inference compare the types inside each entry too: comparing
         // `dyn Iterator<Item = ?T>` with `dyn Iterator<Item = u8>` should learn `?T = u8`.
         let cx = r.cx();
@@ -619,6 +619,10 @@ impl<'s> Relate<Interner<'s>>
                     ) => r
                         .relate(a.rebind(ap), b.rebind(bp))
                         .map(|predicate| predicate.map_bound(ir::ExistentialPredicate::Projection)),
+                    (
+                        ir::ExistentialPredicate::AutoTrait(at),
+                        ir::ExistentialPredicate::AutoTrait(bt),
+                    ) if at == bt => Ok(a),
                     _ => Err(ir::error::TypeError::Mismatch),
                 });
         ir::CollectAndApply::collect_and_apply(predicates, |predicates: &[_]| {

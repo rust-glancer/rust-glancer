@@ -1,6 +1,6 @@
 pub mod rust_2024 {
     pub use core::clone::Clone;
-    pub use core::marker::Copy;
+    pub use core::marker::{Copy, Send, Sync};
     pub use core::default::Default;
     pub use core::cmp::{PartialEq, Eq, PartialOrd, Ord};
     pub use core::fmt::macros::Debug;

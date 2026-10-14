@@ -67,23 +67,34 @@ where
         match ty {
             TypeRef::Unknown(_) => Ok(self.cx.unknown()),
             TypeRef::DynTrait(bounds) => {
-                let mut traits = bounds.iter().filter_map(TypeBound::required_trait_ty);
-                let Some(trait_ty) = traits.next() else {
-                    return Ok(self.cx.unknown());
-                };
-                // TODO: Support extra auto-trait bounds, such as `Send` in `dyn Reader + Send`.
-                if traits.next().is_some() {
-                    return Ok(self.cx.unknown());
+                // Only the ordinary trait supplies methods and associated types. Auto traits
+                // are separate predicates, so `dyn Send + Reader` has the same shape as
+                // `dyn Reader + Send`.
+                let mut principal = None;
+                let mut auto_traits = Vec::new();
+                for trait_ty in bounds.iter().filter_map(TypeBound::required_trait_ty) {
+                    // Bound lowering needs a Self argument even though the object leaves it hidden.
+                    let Some(bound) = self.lower_trait_ref_with_mode(
+                        trait_ty,
+                        self.cx.unknown(),
+                        impl_trait_mode,
+                        inference,
+                    )?
+                    else {
+                        return Ok(self.cx.unknown());
+                    };
+                    let Some(data) = self.item_paths.items().trait_data(bound.application.def)?
+                    else {
+                        return Ok(self.cx.unknown());
+                    };
+                    if data.is_auto {
+                        auto_traits.push(bound.application.def);
+                    } else if principal.replace(bound).is_some() {
+                        return Ok(self.cx.unknown());
+                    }
                 }
-                // Bound lowering expects arguments like [Self, Request]. Use Unknown for Self
-                // so we can reuse its trait and associated-type lookup for dyn Service<Request>.
-                let Some(bound) = self.lower_trait_ref_with_mode(
-                    trait_ty,
-                    self.cx.unknown(),
-                    impl_trait_mode,
-                    inference,
-                )?
-                else {
+                // TODO: Represent objects with only auto traits, such as `dyn Send`.
+                let Some(bound) = principal else {
                     return Ok(self.cx.unknown());
                 };
                 let lifetime = bounds
@@ -109,6 +120,7 @@ where
                             args: List::new(self.cx, &binding.projection.args[1..]),
                             ty: binding.ty,
                         }),
+                    auto_traits,
                     lifetime,
                 ))
             }

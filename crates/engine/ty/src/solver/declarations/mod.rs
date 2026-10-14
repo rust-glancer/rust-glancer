@@ -15,6 +15,7 @@ use rg_ir_model::{
     AssocItemId, DefMapRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef, ItemOwner,
     TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
+use rg_item_tree::ImplPolarity;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
 use rg_std::Cancelable;
 use rustc_type_ir::{
@@ -55,6 +56,7 @@ pub(crate) enum DeclarationKind {
         associated_types: Vec<DefId>,
     },
     Impl {
+        polarity: ImplPolarity,
         associated_types: Vec<(String, DefId)>,
     },
     Alias {
@@ -288,9 +290,8 @@ where
                 let Some(data) = items.trait_data(id)? else {
                     return Ok(None);
                 };
-                // TODO: Retain `auto` in source declarations before enabling structural impls.
                 result.kind = DeclarationKind::Trait {
-                    is_auto: false,
+                    is_auto: data.is_auto,
                     is_unsafe: data.is_unsafe,
                     associated_types: data
                         .items
@@ -321,8 +322,11 @@ where
                 }
             }
             DefId::Impl(id) => {
+                let Some(data) = items.impl_data(id)? else {
+                    return Ok(None);
+                };
                 let mut associated_types = Vec::new();
-                for item in item.assoc_items().unwrap_or_default() {
+                for item in &data.items {
                     if let AssocItemId::TypeAlias(alias) = item {
                         let alias = TypeAliasRef {
                             origin: id.origin,
@@ -334,7 +338,10 @@ where
                         associated_types.push((data.name.to_string(), DefId::TypeAlias(alias)));
                     }
                 }
-                result.kind = DeclarationKind::Impl { associated_types };
+                result.kind = DeclarationKind::Impl {
+                    polarity: data.polarity,
+                    associated_types,
+                };
             }
             DefId::TypeAlias(id) => {
                 let Some(data) = items.type_alias_data(id)? else {
@@ -685,6 +692,11 @@ where
                 .map(Some)
         })?;
         let fields = List::new(cx, &fields);
+        // Rustc accepts error types during recovery. Report unknown fields before caching
+        // or solving them, so `struct Holder(Missing);` cannot prove `Holder: Send`.
+        if fields.iter().any(Ty::has_unknown) {
+            cx.unavailable("incomplete ADT fields");
+        }
         if self.shared.is_some() && !cx.has_unavailable() {
             let stored = fields
                 .iter()

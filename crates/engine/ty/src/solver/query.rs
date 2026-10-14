@@ -11,7 +11,7 @@
 use rg_ir_model::{FunctionRef, GenericParamRef, ImplRef, TraitDefRef};
 use rg_item_tree::FunctionQualifiers;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rustc_type_ir::{self as ir, Upcast, inherent::IntoKind as _};
+use rustc_type_ir::{self as ir, Interner as _, Upcast, inherent::IntoKind as _};
 
 use super::{
     AliasTy, Clause, DefId, GenericArgs, InferenceSubstitution, InferenceTable, List, Outcome,
@@ -267,6 +267,11 @@ impl<'s> InferenceTable<'s> {
         // and make us return None below, before we have a trial table or goals to fulfill.
         // Include those reads in this scope; the next candidate gets its own starting count.
         let callbacks = cx.track_callbacks();
+        // Negative impls still participate in solver proof, but cannot supply methods or
+        // associated types as if they were an implementation of the trait.
+        if cx.impl_polarity(DefId::Impl(impl_ref)) == ir::ImplPolarity::Negative {
+            return None;
+        }
         let header = cx.impl_header(impl_ref)?;
         // An unreadable inherent impl header gives us no receiver to match. Treating it as
         // a wildcard would offer all its methods on every type. Partly known headers such as

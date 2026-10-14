@@ -100,8 +100,12 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 mutability,
                 inner,
             } => {
-                // A lifetime bound needs parentheses here: `&(dyn Service + 'a)`.
-                let parenthesize = matches!(inner.as_ref(), Ty::Dyn(object) if object.lifetime != Lifetime::Erased);
+                // Keep extra bounds inside the reference: `&(dyn Service + Send + 'a)`.
+                let parenthesize = matches!(
+                    inner.as_ref(),
+                    Ty::Dyn(object)
+                        if object.lifetime != Lifetime::Erased || !object.auto_traits.is_empty()
+                );
                 let mut inner = self
                     .render_ty_with_trait_impl(inner, application)?
                     .unwrap_or_else(|| "_".to_string());
@@ -120,8 +124,12 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 Ok(Some(format!("&{lifetime}{qualifier}{inner}")))
             }
             Ty::RawPointer { mutability, inner } => {
-                // Keep the object's lifetime bound inside the pointer: `*const (dyn Service + 'a)`.
-                let parenthesize = matches!(inner.as_ref(), Ty::Dyn(object) if object.lifetime != Lifetime::Erased);
+                // Keep extra bounds inside the pointer: `*const (dyn Service + Send)`.
+                let parenthesize = matches!(
+                    inner.as_ref(),
+                    Ty::Dyn(object)
+                        if object.lifetime != Lifetime::Erased || !object.auto_traits.is_empty()
+                );
                 Ok(self
                     .render_ty_with_trait_impl(inner, application)?
                     .map(|mut inner| {
@@ -155,7 +163,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 .map(|path| format!("{{fn {path}}}"))),
             Ty::Adt(ty) => self.render_nominal(ty, application),
             Ty::Dyn(object) => {
-                let bound = self.render_trait_bound(
+                let mut bound = self.render_trait_bound(
                     object.def,
                     &object.args,
                     object
@@ -164,6 +172,13 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                         .map(|binding| (binding.associated_ty, &binding.ty)),
                     application,
                 )?;
+                for auto_trait in &object.auto_traits {
+                    let name = PathView::new(self.db, self.syntax.edition())
+                        .trait_path(*auto_trait)?
+                        .unwrap_or_else(|| "_".to_string());
+                    bound.push_str(" + ");
+                    bound.push_str(&name);
+                }
                 let lifetime = match object.lifetime {
                     Lifetime::Erased => String::new(),
                     lifetime => format!(" + {lifetime}"),

@@ -345,7 +345,9 @@ pub fn use_it() {
             - trait PartialEq
             - trait PartialOrd
             - enum Result
+            - trait Send
             - struct String
+            - trait Sync
             - struct Vec
             - module alloc
             - module core

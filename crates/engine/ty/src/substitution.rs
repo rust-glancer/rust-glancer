@@ -129,6 +129,7 @@ impl Substitution {
                         ty: self.apply(&binding.ty),
                     })
                     .collect(),
+                auto_traits: ty.auto_traits.clone(),
                 lifetime: self.apply_lifetime(ty.lifetime),
             })),
             Ty::Alias(alias) => Ty::Alias(match alias {

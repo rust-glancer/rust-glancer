@@ -1121,7 +1121,15 @@ impl CrateBodyIrSnapshot<'_> {
                     Lifetime::Erased => String::new(),
                     lifetime => format!(" + {lifetime}"),
                 };
-                format!("dyn {}{args}{lifetime}", self.render_trait_ref(object.def))
+                let auto_traits = object
+                    .auto_traits
+                    .iter()
+                    .map(|def| format!(" + {}", self.render_trait_ref(*def)))
+                    .collect::<String>();
+                format!(
+                    "dyn {}{args}{auto_traits}{lifetime}",
+                    self.render_trait_ref(object.def)
+                )
             }
             Ty::Unknown => "<unknown>".to_string(),
         }

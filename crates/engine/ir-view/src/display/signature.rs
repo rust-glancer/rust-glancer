@@ -90,13 +90,14 @@ impl SignatureRenderer {
     /// Render a trait signature.
     pub fn trait_signature(&self, data: &TraitData) -> String {
         let unsafe_prefix = if data.is_unsafe { "unsafe " } else { "" };
+        let auto_prefix = if data.is_auto { "auto " } else { "" };
         let super_traits = if data.super_traits.is_empty() {
             String::new()
         } else {
             format!(": {}", self.syntax.type_bounds(&data.super_traits))
         };
         format!(
-            "{}{unsafe_prefix}trait {}{}{}{}",
+            "{}{unsafe_prefix}{auto_prefix}trait {}{}{}{}",
             Self::visibility_prefix(&data.visibility),
             self.syntax.identifier(&data.name),
             self.generic_params(&data.generics),

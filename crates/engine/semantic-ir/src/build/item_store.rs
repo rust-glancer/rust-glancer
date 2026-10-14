@@ -220,6 +220,7 @@ where
             super_traits: trait_item.super_traits.clone(),
             items: Vec::new(),
             is_unsafe: trait_item.is_unsafe,
+            is_auto: trait_item.is_auto,
         });
         let assoc_items =
             self.lower_assoc_items(source, &trait_item.items, ItemOwner::Trait(trait_id));
@@ -247,6 +248,7 @@ where
             resolved_trait_ref: ExpectedUnique::new(),
             items: Vec::new(),
             is_unsafe: impl_item.is_unsafe,
+            polarity: impl_item.polarity,
         });
         let assoc_items =
             self.lower_assoc_items(source, &impl_item.items, ItemOwner::Impl(impl_id));

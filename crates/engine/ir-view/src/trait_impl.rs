@@ -29,7 +29,7 @@ use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, FunctionRef, GenericDefRef, ImplRef, TraitDefRef,
     TypeAliasRef,
 };
-use rg_item_tree::Documentation;
+use rg_item_tree::{Documentation, ImplPolarity};
 use rg_semantic_ir::{GenericsQuery, ItemStoreQuery};
 use rg_ty::{Substitution, TraitApplication, signature::SemanticSignatureQuery};
 
@@ -202,6 +202,10 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
+        // A negative impl denies the trait; there are no members to implement in its body.
+        if impl_data.polarity == ImplPolarity::Negative {
+            return Ok(Vec::new());
+        }
         let Some(trait_data) = items
             .trait_data(trait_ref)
             .context("read implemented trait members")?

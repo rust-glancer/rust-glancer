@@ -326,6 +326,7 @@ impl AdtTy {
 ///
 /// For `dyn Service<Request, Output = Reply>`, `def` identifies `Service`, `args` contains
 /// `[Request]`, and `associated_types` contains the `Output = Reply` binding.
+/// Extra bounds such as `Send + Sync` are kept separately in `auto_traits`.
 ///
 /// In `Worker: Service<Request>`, `Worker` fills the trait's `Self` argument. A `dyn` type
 /// does not name the type implementing the trait, so we leave `Self` out of its arguments.
@@ -335,6 +336,7 @@ pub struct DynTy {
     pub args: GenericArgs,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<DynAssocTypeBinding>>")]
     pub associated_types: Vec<DynAssocTypeBinding>,
+    pub auto_traits: Vec<TraitDefRef>,
     pub lifetime: Lifetime,
 }
 

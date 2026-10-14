@@ -10,7 +10,7 @@ use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list
 use crate::item::{
     ConstExpr, ConstItem, ConstParamData, DeriveAttrs, Documentation, EnumItem, EnumVariantItem,
     ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
-    GenericParams, ImplItem, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
+    GenericParams, ImplItem, ImplPolarity, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
     ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
     TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
 };
@@ -318,6 +318,7 @@ impl FromAst for TraitItem {
             ),
             items: ctx.items,
             is_unsafe: item.unsafe_token().is_some(),
+            is_auto: item.auto_token().is_some(),
         }
     }
 }
@@ -335,6 +336,11 @@ impl FromAst for ImplItem {
             self_ty,
             items: ctx.items,
             is_unsafe: item.unsafe_token().is_some(),
+            polarity: if item.excl_token().is_some() {
+                ImplPolarity::Negative
+            } else {
+                ImplPolarity::Positive
+            },
         }
     }
 }

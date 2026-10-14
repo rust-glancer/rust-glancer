@@ -377,6 +377,15 @@ pub struct TraitItem {
     pub super_traits: Vec<TypeBound>,
     pub items: Vec<ItemTreeId>,
     pub is_unsafe: bool,
+    pub is_auto: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[memsize(leaf)]
+#[shrink(leaf)]
+pub enum ImplPolarity {
+    Positive,
+    Negative,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -386,6 +395,7 @@ pub struct ImplItem {
     pub self_ty: TypeRef,
     pub items: Vec<ItemTreeId>,
     pub is_unsafe: bool,
+    pub polarity: ImplPolarity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

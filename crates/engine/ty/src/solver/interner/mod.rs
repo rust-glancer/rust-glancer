@@ -11,9 +11,11 @@ mod lists;
 use std::{cell::RefCell, fmt};
 
 use rg_ir_model::ImplRef;
+use rg_item_tree::ImplPolarity;
 use rustc_type_ir::{
     self as ir, TypeFoldable, TypeVisitableExt, VisitorResult,
     data_structures::HashMap,
+    fast_reject::DeepRejectCtxt,
     inherent::{GenericArgs as _, IntoKind as _, Ty as _},
     lang_items::{SolverAdtLangItem, SolverProjectionLangItem, SolverTraitLangItem},
 };
@@ -827,6 +829,13 @@ impl<'s> ir::Interner for SolverInterner<'s> {
             if !self.impl_has_resolved_self_constructor(id) {
                 continue;
             }
+            // The index includes conservative fallbacks and body-local impls. Auto-trait
+            // synthesis treats any returned impl as overriding the default, so discard
+            // unrelated headers here: `impl !Send for Rc<T>` must not block `Vec<T>: Send`.
+            let impl_self_ty = self.type_of(DefId::Impl(id)).skip_binder();
+            if !DeepRejectCtxt::relate_rigid_infer(self).types_may_unify(ty, impl_self_ty) {
+                continue;
+            }
             if let std::ops::ControlFlow::Break(residual) = f(DefId::Impl(id)).branch() {
                 return R::from_residual(residual);
             }
@@ -905,9 +914,14 @@ impl<'s> ir::Interner for SolverInterner<'s> {
         ))
     }
 
-    fn impl_polarity(self, _: DefId) -> ir::ImplPolarity {
-        // TODO: Retain impl polarity in source declarations before supporting negative impls.
-        ir::ImplPolarity::Positive
+    fn impl_polarity(self, id: DefId) -> ir::ImplPolarity {
+        match self.metadata(id).kind {
+            DeclarationKind::Impl {
+                polarity: ImplPolarity::Negative,
+                ..
+            } => ir::ImplPolarity::Negative,
+            _ => ir::ImplPolarity::Positive,
+        }
     }
 
     fn trait_is_auto(self, id: DefId) -> bool {

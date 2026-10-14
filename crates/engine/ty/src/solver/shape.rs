@@ -4,7 +4,8 @@
 //! table, and inspecting a shape does not normalize it or choose fallback types.
 
 use rg_ir_model::{
-    FunctionRef, GenericParamRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef, TypeParamRef,
+    DefMapRef, FunctionRef, GenericParamRef, OpaqueTyRef, TraitDefRef, TypeAliasRef, TypeDefRef,
+    TypeParamRef,
 };
 use rustc_abi::ExternAbi;
 use rustc_type_ir::{
@@ -79,6 +80,15 @@ impl<'s> DynTy<'s> {
                 args: projection.args,
                 ty: projection.term.as_type()?,
             })
+        })
+    }
+
+    pub(crate) fn auto_traits(self) -> impl Iterator<Item = TraitDefRef> {
+        self.predicates.auto_traits().into_iter().filter_map(|id| {
+            let DefId::Trait(def) = id else {
+                return None;
+            };
+            Some(def)
         })
     }
 }
@@ -330,7 +340,7 @@ impl<'s> SolverInterner<'s> {
         Ty::new_adt(self, self.adt_def(DefId::Adt(adt.def)), adt.args)
     }
 
-    /// Build the compiler's object type from a trait and its associated bindings.
+    /// Build the compiler's object type from its principal trait, bindings, and auto traits.
     ///
     /// For `dyn Iterator<Item = u8>`, the compiler needs separate entries for `Iterator`
     /// and `Item = u8`. The argument lists supplied here already leave out `Self`.
@@ -339,8 +349,24 @@ impl<'s> SolverInterner<'s> {
         def: TraitDefRef,
         args: GenericArgs<'s>,
         associated_types: impl IntoIterator<Item = DynAssocTypeBinding<'s>>,
+        auto_traits: impl IntoIterator<Item = TraitDefRef>,
         lifetime: Region<'s>,
     ) -> Ty<'s> {
+        // Bound order is not part of an object's identity. Sort and deduplicate auto traits
+        // so `dyn Reader + Send + Sync` and `dyn Reader + Sync + Send` intern identically.
+        let mut auto_traits = auto_traits.into_iter().collect::<Vec<_>>();
+        auto_traits.sort_unstable_by_key(|def| {
+            let origin = def.origin.origin_crate();
+            let body = match def.origin {
+                DefMapRef::Crate(_) => None,
+                DefMapRef::Body(body) => Some(body.body.0),
+            };
+            (origin.package.0, origin.crate_id.0, body, def.id.0)
+        });
+        auto_traits.dedup();
+        let auto_traits = auto_traits
+            .into_iter()
+            .map(|def| ir::Binder::dummy(ir::ExistentialPredicate::AutoTrait(DefId::Trait(def))));
         let trait_bound = ir::Binder::dummy(ir::ExistentialPredicate::Trait(
             ir::ExistentialTraitRef::new_from_args(self, DefId::Trait(def), args),
         ));
@@ -355,7 +381,9 @@ impl<'s> SolverInterner<'s> {
             ))
         });
         ir::CollectAndApply::collect_and_apply(
-            std::iter::once(trait_bound).chain(bindings),
+            std::iter::once(trait_bound)
+                .chain(bindings)
+                .chain(auto_traits),
             |predicates: &[_]| Ty::new_dynamic(self, List::new(self, predicates), lifetime),
         )
     }

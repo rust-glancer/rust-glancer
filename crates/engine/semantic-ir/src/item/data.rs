@@ -4,8 +4,8 @@ use rg_ir_model::{
     Span, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
-    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ParamKind, TypeBound,
-    TypeRef, VisibilityLevel,
+    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
+    TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use rg_text::Name;
@@ -85,6 +85,7 @@ pub struct TraitData {
     pub super_traits: Vec<TypeBound>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
+    pub is_auto: bool,
 }
 
 impl TraitData {
@@ -118,6 +119,7 @@ pub struct ImplData {
     pub resolved_trait_ref: ExpectedUnique<TraitDefRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
+    pub polarity: ImplPolarity,
 }
 
 impl ImplData {

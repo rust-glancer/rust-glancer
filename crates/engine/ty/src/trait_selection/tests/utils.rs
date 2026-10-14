@@ -14,8 +14,9 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
-    ItemTreeId, TraitBoundModifier, TypeAliasItem, TypeBound, TypeOrConstParamData, TypeParamData,
-    TypePath, TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
+    ImplPolarity, ItemTreeId, TraitBoundModifier, TypeAliasItem, TypeBound, TypeOrConstParamData,
+    TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel,
+    WherePredicate,
 };
 use rg_semantic_ir::{
     CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
@@ -347,6 +348,7 @@ pub(super) fn trait_data_with_items(
         super_traits: Vec::new(),
         items,
         is_unsafe: false,
+        is_auto: false,
     }
 }
 
@@ -487,6 +489,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
     fn parse_trait(&mut self, line: &str) {
         let (id, rest) = Self::parse_numbered_line(line, "trait#");
         assert_eq!(id, self.traits.len(), "trait fixture ids should be dense");
+        let is_auto = rest.starts_with("auto ");
+        let rest = rest.strip_prefix("auto ").unwrap_or(rest);
         let (rest, super_traits) = split_top_level_keyword(rest, ": ")
             .map(|(head, tail)| (head, parse_type_bounds(tail)))
             .unwrap_or((rest, Vec::new()));
@@ -494,6 +498,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         let trait_ref = trait_ref(id);
         self.trait_refs_by_name.insert(name.to_string(), trait_ref);
         let mut data = trait_data(id, name, generics);
+        data.is_auto = is_auto;
         data.super_traits = super_traits;
         self.traits.push(data);
     }
@@ -524,6 +529,12 @@ impl<'a> TraitSelectionFixtureParser<'a> {
 
         let (trait_ty, self_ty) =
             split_top_level_keyword(rest, " for ").expect("impl fixture should contain ` for `");
+        let polarity = if trait_ty.starts_with('!') {
+            ImplPolarity::Negative
+        } else {
+            ImplPolarity::Positive
+        };
+        let trait_ty = trait_ty.strip_prefix('!').unwrap_or(trait_ty);
         let trait_ty = parse_type_ref(trait_ty);
         let self_ty = parse_type_ref(self_ty);
         let trait_name =
@@ -549,6 +560,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             resolved_trait_ref: Self::resolved_one(trait_ref),
             items: Vec::new(),
             is_unsafe: false,
+            polarity,
         };
         self.impls.push(impl_data);
     }
@@ -1644,7 +1656,15 @@ impl TraitSelectionSnapshot {
                     crate::Lifetime::Erased => String::new(),
                     lifetime => format!(" + {lifetime}"),
                 };
-                format!("dyn {}{args}{lifetime}", self.render_trait_ref(object.def))
+                let auto_traits = object
+                    .auto_traits
+                    .iter()
+                    .map(|def| format!(" + {}", self.render_trait_ref(*def)))
+                    .collect::<String>();
+                format!(
+                    "dyn {}{args}{auto_traits}{lifetime}",
+                    self.render_trait_ref(object.def)
+                )
             }
             Ty::Param(param) => self.render_type_param(*param),
             Ty::Alias(AliasTy::Projection(alias)) => format!(

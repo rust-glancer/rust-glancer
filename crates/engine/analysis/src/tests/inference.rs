@@ -11,6 +11,114 @@ use super::utils::{
 };
 
 #[test]
+fn infers_auto_traits_from_aggregate_fields() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "auto_trait_fields"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+pub unsafe auto trait Send {}
+pub unsafe auto trait Sync {}
+pub struct Record<T> { pub value: T }
+pub enum Choice<T> { Value(T), Empty }
+pub union Bits { byte: u8, word: u32 }
+pub struct Node<'a> { next: &'a Node<'a> }
+pub struct Blocked;
+impl !Send for Blocked {}
+pub trait Inspect { fn inspect(&self) -> u16; }
+impl<T: Send + Sync> Inspect for T {
+    fn inspect(&self) -> u16 { 0 }
+}
+pub fn check(record: Record<u8>, choice: Choice<bool>, bits: Bits, node: Node<'_>, blocked: Record<Blocked>) {
+    let array = [0u8; 3];
+    let tuple = (0u8, true);
+    let $result$result = (record.inspect(), choice.inspect(), bits.inspect(), node.inspect(), array.inspect(), tuple.inspect());
+    blocked.inspect()$blocked$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("aggregate methods", "result"),
+            AnalysisQuery::ty("negative field impl", "blocked"),
+        ],
+        expect![[r#"
+            aggregate methods
+            - (u16, u16, u16, u16, u16, u16)
+
+            negative field impl
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_auto_traits_on_boxed_trait_objects() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "auto_trait_objects"
+version = "0.1.0"
+edition = "2024"
+//- /src/lib.rs
+use std::boxed::Box;
+pub trait Stream {
+    type Item;
+    fn peek(&self) -> Self::Item;
+}
+pub struct Source<T> { pub value: T }
+impl<T> Stream for Source<T> {
+    type Item = T;
+    fn peek(&self) -> T { loop {} }
+}
+pub fn make<T>() -> Source<T> { loop {} }
+pub fn id<T>(value: T) -> T { value }
+pub fn object() -> Box<dyn Stream<Item = u8> + Send + Sync> {
+    let source = make();
+    id(Box::new(source$source$))
+}
+pub fn item<T>(value: Box<dyn Stream<Item = T> + Sync + Send>) -> T { loop {} }
+pub trait Inspect { fn inspect(&self) -> u16; }
+impl<T: Send + Sync> Inspect for T {
+    fn inspect(&self) -> u16 { 0 }
+}
+pub fn check() {
+    let object = id(object());
+    let $result$result = (object.peek(), object.inspect(), item(id(object)));
+}
+pub fn borrowed(value: &(dyn Stream<Item = u8> + Send + Sync)) {
+    value.inspect()$borrowed$;
+}
+pub fn reordered<T>(first: &Box<dyn Stream<Item = T> + Send + Sync>, second: &Box<dyn Sync + Stream<Item = T> + Send>) {
+    let value = if true { first } else { second };
+    value.peek()$reordered$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("constructor input", "source").in_lib("auto_trait_objects"),
+            AnalysisQuery::ty("object methods", "result").in_lib("auto_trait_objects"),
+            AnalysisQuery::ty("borrowed object bounds", "borrowed").in_lib("auto_trait_objects"),
+            AnalysisQuery::ty("reordered bounds", "reordered").in_lib("auto_trait_objects"),
+        ],
+        expect![[r#"
+            constructor input
+            - nominal struct auto_trait_objects[lib]::crate::Source<u8>
+
+            object methods
+            - (u8, u16, u8)
+
+            borrowed object bounds
+            - u16
+
+            reordered bounds
+            - param T
+        "#]],
+    );
+}
+
+#[test]
 fn converts_references_to_trait_objects_without_erasing_the_source() {
     check_analysis_queries(
         r#"

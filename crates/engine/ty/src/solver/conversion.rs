@@ -79,6 +79,7 @@ impl<'s> SolverInterner<'s> {
                             args: self.lower_args(&binding.args, params),
                             ty: self.lower_ty(&binding.ty, params),
                         }),
+                    object.auto_traits.iter().copied(),
                     self.lower_region(object.lifetime, params),
                 );
             }
@@ -113,6 +114,7 @@ impl<'s> SolverInterner<'s> {
                 // callable model; the solver still sees the closure's real input/output variables.
                 let kind = Ty::from_closure_kind(self, ir::ClosureKind::Fn);
                 let sig = self.lower_fn_pointer(&c.params, &c.ret, params, true);
+                // Captures are deliberately omitted, so auto-trait inference stays optimistic.
                 let captures = Ty::new_unit(self);
                 ir::Closure(
                     DefId::Closure(c.id),
@@ -331,6 +333,7 @@ impl<'s> SolverInterner<'s> {
                             ty: self.raise_ty(binding.ty).unwrap_or(Stored::Unknown),
                         })
                         .collect(),
+                    auto_traits: object.auto_traits().collect(),
                     lifetime: Self::raise_region(lifetime),
                 }))
             }

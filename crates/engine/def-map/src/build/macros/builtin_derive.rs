@@ -11,9 +11,9 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, Span};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
-    GenericParams, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeRef, TraitBoundModifier,
-    TypeBound, TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
-    VisibilityLevel, WherePredicate,
+    GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeDb, ItemTreeRef,
+    TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment,
+    TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::{Name, NameInterner, PackageNameInterners};
@@ -325,6 +325,7 @@ impl BuiltinDeriveExpansion {
             // no method bodies or extra associated declarations need to remain resident.
             items: Vec::new(),
             is_unsafe: false,
+            polarity: ImplPolarity::Positive,
         })
     }
 
