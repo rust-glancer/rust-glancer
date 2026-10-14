@@ -21,6 +21,8 @@ class LspCompatibilityReport:
     fixture: str
     query_count: Optional[int]
     rows: list[ScoreRow]
+    failed_query_count: int
+    timeout_query_count: int
 
 
 def main() -> None:
@@ -77,10 +79,33 @@ def normalize_report(report: dict[str, Any]) -> LspCompatibilityReport:
         precision_percent=average_optional(row.precision_percent for row in rows),
     )
 
+    # An engine RPC deadline arrives as an LSP error, while the comparison client's timeout
+    # has its own status. Count either as one failed query, even when both servers time out.
+    failed_query_count = 0
+    timeout_query_count = 0
+    queries = report.get("queries", [])
+    for query in queries if isinstance(queries, list) else []:
+        result = dict_value(dict_value(query).get("result"))
+        if result.get("kind") != "non_comparable":
+            continue
+        failed_query_count += 1
+        if any(
+            result.get(f"{server}_status") == "timeout"
+            or (
+                result.get(f"{server}_status") == "error"
+                and "request exceeded its deadline"
+                in string_value(result.get(f"{server}_detail"))
+            )
+            for server in ("rust_glancer", "rust_analyzer")
+        ):
+            timeout_query_count += 1
+
     return LspCompatibilityReport(
         fixture=string_value(fixture.get("kind"), "unknown"),
         query_count=int_value(fixture.get("query_count")),
         rows=[total, *rows],
+        failed_query_count=failed_query_count,
+        timeout_query_count=timeout_query_count,
     )
 
 
@@ -123,6 +148,33 @@ def render_comment(
             "",
         ]
     )
+    # Only add the note when failures could explain a score or its delta. A successful current
+    # run can still benefit from knowing that the base score included failed queries.
+    if current.failed_query_count or (base is not None and base.failed_query_count):
+        failures = []
+        for label, report in (("Current", current), ("base", base)):
+            if report is None:
+                continue
+            count = report.failed_query_count
+            query_word = "query" if count == 1 else "queries"
+            if count == 0:
+                detail = "no queries failed"
+            elif report.timeout_query_count == count:
+                cause = "a timeout" if count == 1 else "timeouts"
+                detail = f"{count} {query_word} failed because of {cause}"
+            else:
+                timeout_count = report.timeout_query_count
+                timeout_word = "timeout" if timeout_count == 1 else "timeouts"
+                detail = f"{count} {query_word} failed ({timeout_count} {timeout_word})"
+            failures.append(f"{label}: {detail}")
+        lines.extend(
+            [
+                "*"
+                + "; ".join(failures)
+                + ". Total penalizes failures in semantic methods; individual method scores exclude them.*",
+                "",
+            ]
+        )
     return "\n".join(lines)
 
 

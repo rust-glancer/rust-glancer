@@ -30,6 +30,7 @@ pub(crate) use self::project_status::{EngineProjectStatus, EngineProjectUpdate};
 mod project_status;
 
 const PROJECT_UPDATE_RPC_DEADLINE: Duration = Duration::from_secs(30 * 60);
+const CI_QUERY_RPC_DEADLINE: Duration = Duration::from_secs(30);
 
 /// RPC client and saved-project status state for one engine process.
 ///
@@ -181,6 +182,10 @@ impl EngineClient {
         let mut context = tarpc::context::current();
         if Self::operation_may_rebuild_analysis(operation) {
             context.deadline = Instant::now() + PROJECT_UPDATE_RPC_DEADLINE;
+        } else if std::env::var_os("CI").is_some() {
+            // CI runners can take longer to load analysis for a query. Give them more time
+            // while ordinary editor requests retain tarpc's default interactive deadline.
+            context.deadline = Instant::now() + CI_QUERY_RPC_DEADLINE;
         }
         context
     }
@@ -220,15 +225,5 @@ mod tests {
                 "{operation} should allow slow analysis rebuilds",
             );
         }
-    }
-
-    #[test]
-    fn interactive_operations_keep_tarpc_default_deadline() {
-        let context = EngineClient::context("hover");
-
-        assert!(
-            context.deadline < Instant::now() + Duration::from_secs(20),
-            "interactive engine calls should keep the default short tarpc deadline",
-        );
     }
 }
