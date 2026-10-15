@@ -438,10 +438,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
-    /// Return let-like bindings whose type is already known from body facts.
+    /// Return bindings whose inferred type is already known from body facts.
     ///
     /// These are the local pattern bindings that can carry inferred type hints: ordinary `let`
-    /// bindings, `let else` and match-pattern bindings, and `for` loop pattern bindings.
+    /// bindings, `let else` and match-pattern bindings, `for` loop pattern bindings, and
+    /// unannotated closure parameters.
     pub fn inferred_binding_tys(
         &self,
         crate_ref: CrateRef,
@@ -455,21 +456,36 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .bodies(crate_ref, Some(file_id))
             .context("read bodies for inferred bindings")?
         {
+            // Function and closure parameters share a binding kind. Use the closure parameter
+            // lists to select only inferred closure inputs. An annotation covers the whole
+            // parameter pattern, even when its individual bindings have no annotation.
+            let mut inferred_closure_params = HashSet::new();
+            for expr in body.exprs() {
+                rg_std::check_cancel!(self.db, "closure parameter candidates");
+                if let ExprKind::Closure { params, .. } = &expr.kind {
+                    inferred_closure_params.extend(
+                        params
+                            .iter()
+                            .filter(|param| param.annotation.is_none())
+                            .flat_map(|param| param.bindings.iter().copied()),
+                    );
+                }
+            }
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "local declaration candidates");
                 if !binding.source.is_written_in_file(file_id) {
                     continue;
                 }
-                if !matches!(binding.kind, BindingKind::Let) {
+                let binding_id = BindingId(binding_idx);
+                if !matches!(binding.kind, BindingKind::Let)
+                    && !inferred_closure_params.contains(&binding_id)
+                {
                     continue;
                 }
                 if binding.name.is_none() || binding.annotation.is_some() {
                     continue;
                 }
-                let ty = body
-                    .binding_ty(BindingId(binding_idx))
-                    .cloned()
-                    .unwrap_or(Ty::Unknown);
+                let ty = body.binding_ty(binding_id).cloned().unwrap_or(Ty::Unknown);
                 if matches!(ty, Ty::Unknown) {
                     continue;
                 }

@@ -54,6 +54,7 @@ $range_start$pub fn inspect() {
     let _hover = alias.na$hover$me;
     let _copy = ali$definition$as;
     let _highlight = al$highlight$ias;
+    let _ = |closure_user| -> User { closure_user };
 }$range_end$
 
 pub fn untouched(_changed: usize) {
@@ -101,6 +102,7 @@ pub fn untouched(_changed: usize) {
                 `: Name` type @ 14:14
                 `: User` type @ 15:13
                 `: User` type @ 16:18
+                `: User` type @ 17:25
             "#]],
         )
         .await;

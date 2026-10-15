@@ -90,7 +90,7 @@ pub fn use_it() {
 
 #[test]
 fn shows_inferred_local_binding_types() {
-    check_inlay_hints(
+    check_inlay_hints_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -114,13 +114,21 @@ pub fn use_it() {
     let wrapped: Option<User> = missing();
     let value = wrapped.value;
     let unknown = missing();
+    with_user(|closure_user| closure_user);
+    with_pair(|(left, right)| left);
 }
+
+pub fn with_user(_: impl FnOnce(User) -> User) {}
+pub fn with_pair(_: impl FnOnce((User, u8)) -> User) {}
 "#,
-        InlayHintsQuery::new("type hints", "/src/lib.rs"),
+        InlayHintsQuery::new("type hints", "/src/lib.rs").in_lib("analysis_type_hints"),
         expect![[r#"
             // type hints
             `: User` @ 11:9-11:13
             `: User` @ 14:9-14:14
+            `: User` @ 16:16-16:28
+            `: User` @ 17:17-17:21
+            `: u8` @ 17:23-17:28
         "#]],
     );
 }
