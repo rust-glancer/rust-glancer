@@ -14,14 +14,14 @@ edition = "2024"
 //- /src/lib.rs
 pub auto trait Send {}
 pub auto trait Sync {}
-pub trait Service<T> { type Reply; }
+pub trait Service<T = u8> { type Reply; }
 pub fn copy<'a>(value: &'a (dyn Service<u8, Reply = u16> + Send + Sync + 'a)) {
     let copied = value;
 }
 "#,
         InlayHintsQuery::new("object bounds", "/src/lib.rs"),
         expect![[r#"
-            `: &'_ (dyn auto_trait_hints::Service<u8, Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15 // object bounds
+            `: &'_ (dyn auto_trait_hints::Service<Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15 // object bounds
         "#]],
     );
 }
@@ -120,6 +120,28 @@ pub fn use_it() {
 
 pub fn with_user(_: impl FnOnce(User) -> User) {}
 pub fn with_pair(_: impl FnOnce((User, u8)) -> User) {}
+
+pub struct CustomAllocator;
+mod defaults {
+    pub type Element = super::User;
+    pub struct Pair<T = Element, U = T, const N: usize = 4>(pub T, pub U);
+}
+
+pub fn default_hints(
+    vector: Vec<String>,
+    custom: Vec<String, CustomAllocator>,
+    pair: defaults::Pair,
+    dependent: defaults::Pair<u16>,
+    partial: defaults::Pair<u16, u8>,
+    explicit: defaults::Pair<User, u8, 8>,
+) {
+    let vector = vector;
+    let custom = custom;
+    let pair = pair;
+    let dependent = dependent;
+    let partial = partial;
+    let explicit = explicit;
+}
 "#,
         InlayHintsQuery::new("type hints", "/src/lib.rs").in_lib("analysis_type_hints"),
         expect![[r#"
@@ -129,6 +151,12 @@ pub fn with_pair(_: impl FnOnce((User, u8)) -> User) {}
             `: User` @ 16:16-16:28
             `: User` @ 17:17-17:21
             `: u8` @ 17:23-17:28
+            `: Vec<String>` @ 37:9-37:15
+            `: Vec<String, CustomAllocator>` @ 38:9-38:15
+            `: Pair` @ 39:9-39:13
+            `: Pair<u16>` @ 40:9-40:18
+            `: Pair<u16, u8>` @ 41:9-41:16
+            `: Pair<User, u8, 8>` @ 42:9-42:17
         "#]],
     );
 }

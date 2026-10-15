@@ -160,7 +160,11 @@ impl Substitution {
         }
     }
 
-    pub(crate) fn apply_arg(&self, arg: &GenericArg) -> GenericArg {
+    /// Fill parameter references inside one generic argument.
+    ///
+    /// With `T = User`, a type argument `Vec<T>` becomes `Vec<User>`. Lifetime and const
+    /// arguments use the same map to replace parameter references such as `'a` or `N`.
+    pub fn apply_arg(&self, arg: &GenericArg) -> GenericArg {
         match arg {
             GenericArg::Type(ty) => GenericArg::Type(Box::new(self.apply(ty))),
             GenericArg::Lifetime(lifetime) => GenericArg::Lifetime(self.apply_lifetime(*lifetime)),

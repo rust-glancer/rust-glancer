@@ -5,12 +5,12 @@
 //! such as `<Worker as Service<u8>>::Output`, becomes the source-valid `Self::Output`. Unrelated
 //! projections remain unknown instead of being shortened to the wrong trait.
 
-use rg_ir_model::{GenericParamRef, ItemOwner, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, ProjectionTy, TraitApplication,
-    TraitRefLowering, Ty, signature::SemanticSignatureQuery,
+    AdtTy, AliasTy, ConstValue, GenericArg, Lifetime, OpaqueTy, ProjectionTy, Substitution,
+    TraitApplication, TraitRefLowering, Ty, signature::SemanticSignatureQuery,
 };
 
 use crate::{
@@ -240,7 +240,10 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Ok(Some(format!(
             "{}{}",
             self.syntax.identifier(name),
-            self.render_generic_args(&ty.args, application)?
+            self.render_generic_args(
+                self.non_default_generic_args(ty.def.into(), &ty.args)?,
+                application
+            )?
         )))
     }
 
@@ -322,7 +325,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let trait_path = PathView::new(self.db, self.syntax.edition())
             .trait_path(def)?
             .unwrap_or_else(|| "<trait>".to_string());
-        let mut args = args
+        let mut args = self
+            .non_default_generic_args(def.into(), args)?
             .iter()
             .map(|arg| self.render_generic_arg(arg, application))
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -423,6 +427,55 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         }
 
         Ok(format!("<{}>", rendered.join(", ")))
+    }
+
+    /// Leave out trailing arguments that equal their declared defaults.
+    ///
+    /// For `struct Pair<T = u8, U = u16>`, `Pair<u8, u16>` can be shown as `Pair`, but
+    /// `Pair<u8, Custom>` needs both arguments to keep `Custom` in the second position.
+    fn non_default_generic_args<'ty>(
+        &self,
+        owner: GenericDefRef,
+        args: &'ty [GenericArg],
+    ) -> anyhow::Result<&'ty [GenericArg]> {
+        if args.is_empty() {
+            return Ok(args);
+        }
+        let generics = GenericsQuery::new(self.db).generics(owner)?;
+        // `trait Service<T>` has parameters `[Self, T]`, but `dyn Service<User>` supplies
+        // only `[User]` here. Skip `Self` so the parameter and argument positions line up.
+        let params = generics
+            .iter()
+            .filter(|param| !matches!(param.source(), GenericParamSource::TraitSelf))
+            .collect::<Vec<_>>();
+        if params.len() != args.len() {
+            return Ok(args);
+        }
+        // A default like `U = T` needs the actual `T` before comparison. For `Pair<User, User>`,
+        // substitute `T = User` so the default for `U` becomes `User` too.
+        let mut substitution = Substitution::new();
+        for (param, arg) in params.iter().zip(args) {
+            substitution.push(param.param(), arg.clone());
+        }
+        let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
+        let mut keep = args.len();
+        // Work backwards: once one argument must stay, all earlier slots must stay too.
+        // Compare resolved values so an alias and the type it names can count as equal.
+        for (param, arg) in params.iter().zip(args).rev() {
+            let Some(default) = signatures.generic_param_default(param.param())? else {
+                break;
+            };
+            let default = substitution.apply_arg(&default);
+            // Two unknown values are not evidence that an argument matches its default.
+            if default.has_unknown()
+                || matches!(default, GenericArg::Const(ConstValue::Unknown))
+                || &default != arg
+            {
+                break;
+            }
+            keep -= 1;
+        }
+        Ok(&args[..keep])
     }
 
     /// Render one generic argument.

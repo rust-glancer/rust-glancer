@@ -7,16 +7,17 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, ImplRef, StaticRef,
-    TraitDefRef, TypeAliasRef, TypeParamRef,
+    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
+    StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::FunctionQualifiers;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rustc_type_ir::TypeVisitableExt as _;
 
 use crate::{
-    Clause, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
+    Clause, GenericArg, OpaqueTy, Substitution, TraitApplication, TraitRefLowering, Ty,
     lookup::ItemPathQuery,
-    lowering::{TypeLoweringQuery, TypePathResolver},
+    lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery, TypePathResolver},
 };
 
 /// One function's parameter types, return type, and qualifiers before choosing call arguments.
@@ -96,6 +97,76 @@ where
             Ok(lowering
                 .function(cx, function)?
                 .map(|value| value.raise(cx)))
+        })
+    }
+
+    /// Read the default written on a type or const parameter.
+    ///
+    /// For `struct Pair<T, U = Vec<T>>`, the default for `U` is still `Vec<T>`. The caller
+    /// substitutes the actual `T` when it knows which `Pair` is being used.
+    pub fn generic_param_default(
+        &self,
+        param: GenericParamRef,
+    ) -> Result<Option<GenericArg>, D::Error> {
+        let owner = param.owner();
+        let generics = self.item_paths.generics().generics(owner)?;
+        let Some(param) = generics.iter().find(|data| data.param() == param) else {
+            return Ok(None);
+        };
+        let has_default = match param.source() {
+            GenericParamSource::Type(source) => source.default.is_some(),
+            GenericParamSource::Const(source) => source.default.is_some(),
+            _ => false,
+        };
+        if !has_default {
+            return Ok(None);
+        }
+        // In `A = Global`, look up `Global` where the parameter was declared, even if the
+        // use site has a different type with that name.
+        let Some(context) = self
+            .item_paths
+            .items()
+            .type_path_context_for_generic_def(owner)?
+        else {
+            return Ok(None);
+        };
+        let lowering = TypeLoweringQuery::new(&self.item_paths, &self.resolver);
+        lowering.with_storage(|cx| {
+            let mut session = lowering.session(
+                cx,
+                TypeLoweringEnv::new(owner, TypeLoweringAnchor::Context(context)),
+            )?;
+            // Failed lowering must not count as a matching default when callers compare args.
+            Ok(match param.source() {
+                GenericParamSource::Type(source) => match &source.default {
+                    Some(default) => {
+                        let ty = session.lower_type_ref(default)?;
+                        if ty.references_error() {
+                            None
+                        } else {
+                            cx.raise_ty(ty).map(|ty| GenericArg::Type(Box::new(ty)))
+                        }
+                    }
+                    None => None,
+                },
+                GenericParamSource::Const(source) => match &source.default {
+                    Some(default) => {
+                        // In `const N: usize = 4`, the declared `usize` tells the lowerer how
+                        // to interpret the literal `4`.
+                        let ty = source
+                            .ty
+                            .as_ref()
+                            .map(|ty| session.lower_type_ref(ty))
+                            .transpose()?
+                            .unwrap_or_else(|| cx.unknown());
+                        let value = session.lower_const(Some(default.as_str()), ty)?;
+                        (!value.references_error())
+                            .then(|| GenericArg::Const(cx.raise_const(value)))
+                    }
+                    None => None,
+                },
+                _ => None,
+            })
         })
     }
 
