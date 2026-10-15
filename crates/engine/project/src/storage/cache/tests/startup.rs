@@ -1,6 +1,9 @@
-use std::{fmt::Write as _, fs};
+use std::{
+    fmt::{self, Write as _},
+    fs,
+};
 
-use expect_test::expect;
+use expect_test::{Expect, expect};
 use rg_body_ir::BodyIrBuildPolicy;
 
 use super::utils::{package_cache_header_for, write_cached_package_artifact};
@@ -61,7 +64,7 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("residency change should rebuild into a fresh cache generation");
-    let transition_profile = transition_run.finish();
+    let transition_profile = CacheProbeCounters::capture(transition_run.finish());
     let transition_artifact = transitioned
         .state
         .cache_store
@@ -71,44 +74,21 @@ pub struct Dep;
         .expect("package artifact should belong to a generation directory")
         .to_path_buf();
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "residency policy cache invalidation")
-        .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "first generation existed {first_generation_existed}",
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "generation changed {}",
+    let mut dump = StartupSnapshot::new("residency policy cache invalidation");
+    dump.value("first generation existed", first_generation_existed);
+    dump.value(
+        "generation changed",
         first_generation != transition_generation,
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "transition hits {}",
-        profile_counter(&transition_profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "transition missing artifacts {}",
-        profile_counter(&transition_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "old generation after transition {}",
-        first_generation.exists(),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "transition artifact {}",
-        transition_artifact.exists(),
-    )
-    .expect("string writes should not fail");
+    );
+    dump.values(&[
+        ("transition hits", transition_profile.hits),
+        (
+            "transition missing artifacts",
+            transition_profile.missing_artifacts,
+        ),
+    ]);
+    dump.value("old generation after transition", first_generation.exists());
+    dump.value("transition artifact", transition_artifact.exists());
     drop(transitioned);
 
     // Switching back must not resurrect the generation used before the first policy change.
@@ -120,21 +100,16 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("switching residency back should rebuild from source again");
-    let switch_back_profile = switch_back_run.finish();
-    writeln!(
-        &mut dump,
-        "switch-back hits {}",
-        profile_counter(&switch_back_profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "switch-back missing artifacts {}",
-        profile_counter(&switch_back_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
-    )
-    .expect("string writes should not fail");
+    let switch_back_profile = CacheProbeCounters::capture(switch_back_run.finish());
+    dump.values(&[
+        ("switch-back hits", switch_back_profile.hits),
+        (
+            "switch-back missing artifacts",
+            switch_back_profile.missing_artifacts,
+        ),
+    ]);
 
-    expect![[r#"
+    dump.check(expect![[r#"
         residency policy cache invalidation
         first generation existed true
         generation changed true
@@ -144,8 +119,7 @@ pub struct Dep;
         transition artifact true
         switch-back hits 0
         switch-back missing artifacts 2
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -211,40 +185,36 @@ fn main() {}
         )
     });
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "offloaded dependency query").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "dep resident {}",
+    let mut dump = StartupSnapshot::new("offloaded dependency query");
+    dump.value(
+        "dep resident",
         project.state.def_map.resident_package(dep).is_some(),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "symbols").expect("string writes should not fail");
+    );
+    dump.section(
+        "symbols",
+        symbols.into_iter().map(|symbol| {
+            let package = project
+                .snapshot()
+                .parse_db()
+                .package(symbol.crate_ref.package.0)
+                .expect("workspace symbol package should be parsed");
+            // Crate ids are allocated in parsed Cargo-target order. The DefMap payload is deliberately
+            // offloaded in this fixture, so render through the stable parsed package shape instead.
+            let target = package
+                .targets()
+                .get(symbol.crate_ref.crate_id.0)
+                .expect("workspace symbol target should be parsed");
+            format!(
+                "{} {} @ {}[{}]",
+                symbol.kind,
+                symbol.name,
+                package.package_name(),
+                target.kind
+            )
+        }),
+    );
 
-    for symbol in symbols {
-        let package = project
-            .snapshot()
-            .parse_db()
-            .package(symbol.crate_ref.package.0)
-            .expect("workspace symbol package should be parsed");
-        // Crate ids are allocated in parsed Cargo-target order. The DefMap payload is deliberately
-        // offloaded in this fixture, so render through the stable parsed package shape instead.
-        let target = package
-            .targets()
-            .get(symbol.crate_ref.crate_id.0)
-            .expect("workspace symbol target should be parsed");
-        writeln!(
-            &mut dump,
-            "- {} {} @ {}[{}]",
-            symbol.kind,
-            symbol.name,
-            package.package_name(),
-            target.kind,
-        )
-        .expect("string writes should not fail");
-    }
-
-    expect![[r#"
+    dump.check(expect![[r#"
         offloaded dependency query
         dep resident false
         symbols
@@ -252,8 +222,7 @@ fn main() {}
         - static DEP_STATIC @ dep[lib]
         - struct DepType @ dep[lib]
         - type_alias DepOpaque @ dep[lib]
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -346,26 +315,20 @@ pub struct DepNew;
         .workspace_symbols("DepNew")
         .expect("new dependency symbol query should resolve");
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "startup artifact-backed indexing").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "dep resident {}",
+    let mut dump = StartupSnapshot::new("startup artifact-backed indexing");
+    dump.value(
+        "dep resident",
         cached_project.state.def_map.resident_package(dep).is_some(),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "old symbols {}", old_symbols.len())
-        .expect("string writes should not fail");
-    writeln!(&mut dump, "new symbols {}", new_symbols.len())
-        .expect("string writes should not fail");
+    );
+    dump.value("old symbols", old_symbols.len());
+    dump.value("new symbols", new_symbols.len());
 
-    expect![[r#"
+    dump.check(expect![[r#"
         startup artifact-backed indexing
         dep resident false
         old symbols 0
         new symbols 1
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -408,46 +371,25 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should build from dependency cache artifact");
-    let snapshot = run.finish();
+    let snapshot = CacheProbeCounters::capture(run.finish());
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "startup cache probe profile").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "packages {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_PACKAGES)
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "resident {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_RESIDENT_PACKAGES)
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "offloadable {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_OFFLOADABLE_PACKAGES)
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "hits {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_HITS)
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "misses {}", cache_probe_misses(&snapshot))
-        .expect("string writes should not fail");
+    let mut dump = StartupSnapshot::new("startup cache probe profile");
+    dump.values(&[
+        ("packages", snapshot.packages),
+        ("resident", snapshot.resident),
+        ("offloadable", snapshot.offloadable),
+        ("hits", snapshot.hits),
+        ("misses", snapshot.misses),
+    ]);
 
-    expect![[r#"
+    dump.check(expect![[r#"
         startup cache probe profile
         packages 2
         resident 1
         offloadable 1
         hits 1
         misses 0
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -529,7 +471,7 @@ pub struct Kept;
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("dependency cache miss should rebuild its reverse dependents");
-    let profile = run.finish();
+    let profile = CacheProbeCounters::capture(run.finish());
 
     let marker = fixture.markers().position("usage");
     let snapshot = project.snapshot();
@@ -557,51 +499,36 @@ pub struct Kept;
         )
     });
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "dependency cache miss closure").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "hits {}",
-        profile_counter(&profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "direct restore misses {}",
-        profile_counter(&profile, metric::CACHE_PROBE_PARSE_RESTORE_ERRORS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "reverse-dependent misses {}",
-        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "definitions").expect("string writes should not fail");
-    for definition in definitions {
-        let package = snapshot
-            .parse_db()
-            .package(definition.crate_ref.package.0)
-            .expect("definition package should exist");
-        writeln!(
-            &mut dump,
-            "- {} {} {}",
-            package.package_name(),
-            definition.kind,
-            definition.name,
-        )
-        .expect("string writes should not fail");
-    }
+    let mut dump = StartupSnapshot::new("dependency cache miss closure");
+    dump.values(&[
+        ("hits", profile.hits),
+        ("direct restore misses", profile.parse_restore_errors),
+        ("reverse-dependent misses", profile.propagated_misses),
+    ]);
+    dump.section(
+        "definitions",
+        definitions.into_iter().map(|definition| {
+            let package = snapshot
+                .parse_db()
+                .package(definition.crate_ref.package.0)
+                .expect("definition package should exist");
+            format!(
+                "{} {} {}",
+                package.package_name(),
+                definition.kind,
+                definition.name
+            )
+        }),
+    );
 
-    expect![[r#"
+    dump.check(expect![[r#"
         dependency cache miss closure
         hits 1
         direct restore misses 1
         reverse-dependent misses 2
         definitions
         - dep struct Kept
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -651,7 +578,7 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("missing dependency artifact should rebuild the dependency closure");
-    let profile = run.finish();
+    let profile = CacheProbeCounters::capture(run.finish());
     let symbols = rebuilt
         .snapshot()
         .full_analysis(rg_std::CancellationToken::new())
@@ -659,38 +586,21 @@ pub struct Dep;
         .workspace_symbols("Dep")
         .expect("dependency symbol query should resolve");
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "missing dependency artifact closure")
-        .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "missing artifacts {}",
-        profile_counter(&profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "reverse-dependent misses {}",
-        profile_counter(&profile, metric::CACHE_PROBE_PROPAGATED_MISSES),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "hits {}",
-        profile_counter(&profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "dependency symbols {}", symbols.len())
-        .expect("string writes should not fail");
+    let mut dump = StartupSnapshot::new("missing dependency artifact closure");
+    dump.values(&[
+        ("missing artifacts", profile.missing_artifacts),
+        ("reverse-dependent misses", profile.propagated_misses),
+        ("hits", profile.hits),
+    ]);
+    dump.value("dependency symbols", symbols.len());
 
-    expect![[r#"
+    dump.check(expect![[r#"
         missing dependency artifact closure
         missing artifacts 1
         reverse-dependent misses 1
         hits 0
         dependency symbols 1
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -752,7 +662,7 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("incomplete cache update should fall back to a cold build");
-    let recovery_profile = recovery_run.finish();
+    let recovery_profile = CacheProbeCounters::capture(recovery_run.finish());
     drop(recovered);
 
     let clean_run = rg_profile::test_support::ProfileTest::start(
@@ -763,36 +673,24 @@ pub struct Dep;
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("cold recovery should publish a reusable cache again");
-    let clean_profile = clean_run.finish();
+    let clean_profile = CacheProbeCounters::capture(clean_run.finish());
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "incomplete cache update recovery").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "recovery hits {}",
-        profile_counter(&recovery_profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "recovery missing artifacts {}",
-        profile_counter(&recovery_profile, metric::CACHE_PROBE_MISSING_ARTIFACTS),
-    )
-    .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "next startup hits {}",
-        profile_counter(&clean_profile, metric::CACHE_PROBE_HITS),
-    )
-    .expect("string writes should not fail");
+    let mut dump = StartupSnapshot::new("incomplete cache update recovery");
+    dump.values(&[
+        ("recovery hits", recovery_profile.hits),
+        (
+            "recovery missing artifacts",
+            recovery_profile.missing_artifacts,
+        ),
+    ]);
+    dump.values(&[("next startup hits", clean_profile.hits)]);
 
-    expect![[r#"
+    dump.check(expect![[r#"
         incomplete cache update recovery
         recovery hits 0
         recovery missing artifacts 2
         next startup hits 2
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -836,7 +734,7 @@ pub fn dep_value() -> usize { 2 }
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should reject body-policy-mismatched artifact");
-    let snapshot = run.finish();
+    let snapshot = CacheProbeCounters::capture(run.finish());
     let header = package_cache_header_for(&project, "dep");
     let reader = project
         .state
@@ -845,42 +743,32 @@ pub fn dep_value() -> usize { 2 }
         .expect("dependency package cache artifact should open")
         .expect("dependency package cache artifact should exist");
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "startup body IR policy mismatch").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "hits {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_HITS)
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "misses {}", cache_probe_misses(&snapshot))
-        .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "body policy mismatches {}",
-        profile_counter(&snapshot, metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "body IR crate statuses").expect("string writes should not fail");
-    for (crate_idx, coverage) in reader.probe().body_ir_coverage.iter().enumerate() {
-        writeln!(
-            &mut dump,
-            "- crate {crate_idx} {} {}",
-            coverage.status(),
-            coverage,
-        )
-        .expect("string writes should not fail");
-    }
+    let mut dump = StartupSnapshot::new("startup body IR policy mismatch");
+    dump.values(&[
+        ("hits", snapshot.hits),
+        ("misses", snapshot.misses),
+        ("body policy mismatches", snapshot.body_policy_mismatches),
+    ]);
+    dump.section(
+        "body IR crate statuses",
+        reader
+            .probe()
+            .body_ir_coverage
+            .iter()
+            .enumerate()
+            .map(|(crate_idx, coverage)| {
+                format!("crate {crate_idx} {} {coverage}", coverage.status())
+            }),
+    );
 
-    expect![[r#"
+    dump.check(expect![[r#"
         startup body IR policy mismatch
         hits 0
         misses 1
         body policy mismatches 1
         body IR crate statuses
         - crate 0 built complete
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
 #[test]
@@ -944,47 +832,98 @@ pub struct DepChildNew;
         .workspace_symbols("DepChildNew")
         .expect("new dependency symbol query should resolve");
 
-    let mut dump = String::new();
-    writeln!(&mut dump, "startup stale out-of-line module").expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "dep resident {}",
+    let mut dump = StartupSnapshot::new("startup stale out-of-line module");
+    dump.value(
+        "dep resident",
         cached_project.state.def_map.resident_package(dep).is_some(),
-    )
-    .expect("string writes should not fail");
-    writeln!(&mut dump, "old symbols {}", old_symbols.len())
-        .expect("string writes should not fail");
-    writeln!(&mut dump, "new symbols {}", new_symbols.len())
-        .expect("string writes should not fail");
+    );
+    dump.value("old symbols", old_symbols.len());
+    dump.value("new symbols", new_symbols.len());
 
-    expect![[r#"
+    dump.check(expect![[r#"
         startup stale out-of-line module
         dep resident false
         old symbols 0
         new symbols 1
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
+    "#]]);
 }
 
-fn profile_counter(
-    snapshot: &rg_profile::test_support::TestSnapshot,
-    metric: rg_profile::CounterMetric,
-) -> u64 {
-    snapshot.inner().counter(metric.path()).unwrap_or(0)
+/// Record values immediately: a later startup can replace or remove the artifact being observed.
+/// This helper only formats observations; cache operations and project lifetimes stay in the tests.
+struct StartupSnapshot {
+    dump: String,
 }
 
-fn cache_probe_misses(snapshot: &rg_profile::test_support::TestSnapshot) -> u64 {
-    [
-        metric::CACHE_PROBE_MISSING_ARTIFACTS,
-        metric::CACHE_PROBE_ARTIFACT_READ_ERRORS,
-        metric::CACHE_PROBE_SOURCE_MISMATCHES,
-        metric::CACHE_PROBE_SOURCE_ERRORS,
-        metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES,
-        metric::CACHE_PROBE_PARSE_RESTORE_ERRORS,
-        metric::CACHE_PROBE_UNPLANNED_PACKAGES,
-        metric::CACHE_PROBE_PROPAGATED_MISSES,
-    ]
-    .into_iter()
-    .map(|metric| profile_counter(snapshot, metric))
-    .sum()
+impl StartupSnapshot {
+    fn new(title: &str) -> Self {
+        Self {
+            dump: format!("{title}\n"),
+        }
+    }
+
+    fn value(&mut self, label: &str, value: impl fmt::Display) {
+        writeln!(self.dump, "{label} {value}").expect("string writes should not fail");
+    }
+
+    fn values(&mut self, rows: &[(&str, impl fmt::Display)]) {
+        for (label, value) in rows {
+            self.value(label, value);
+        }
+    }
+
+    fn section(&mut self, title: &str, rows: impl IntoIterator<Item = impl fmt::Display>) {
+        writeln!(self.dump, "{title}").expect("string writes should not fail");
+        for row in rows {
+            writeln!(self.dump, "- {row}").expect("string writes should not fail");
+        }
+    }
+
+    fn check(&self, expected: Expect) {
+        expected.assert_eq(&self.dump);
+    }
+}
+
+/// A completed startup's counter observations. Tests choose which fields belong in their snapshot.
+struct CacheProbeCounters {
+    packages: u64,
+    resident: u64,
+    offloadable: u64,
+    hits: u64,
+    missing_artifacts: u64,
+    parse_restore_errors: u64,
+    propagated_misses: u64,
+    body_policy_mismatches: u64,
+    misses: u64,
+}
+
+impl CacheProbeCounters {
+    fn capture(profile: rg_profile::test_support::TestSnapshot) -> Self {
+        // Unrecorded counters mean that no events occurred in this profiling run.
+        let counter =
+            |metric: rg_profile::CounterMetric| profile.inner().counter(metric.path()).unwrap_or(0);
+        let misses = [
+            metric::CACHE_PROBE_MISSING_ARTIFACTS,
+            metric::CACHE_PROBE_ARTIFACT_READ_ERRORS,
+            metric::CACHE_PROBE_SOURCE_MISMATCHES,
+            metric::CACHE_PROBE_SOURCE_ERRORS,
+            metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES,
+            metric::CACHE_PROBE_PARSE_RESTORE_ERRORS,
+            metric::CACHE_PROBE_UNPLANNED_PACKAGES,
+            metric::CACHE_PROBE_PROPAGATED_MISSES,
+        ]
+        .into_iter()
+        .map(counter)
+        .sum();
+        Self {
+            packages: counter(metric::CACHE_PROBE_PACKAGES),
+            resident: counter(metric::CACHE_PROBE_RESIDENT_PACKAGES),
+            offloadable: counter(metric::CACHE_PROBE_OFFLOADABLE_PACKAGES),
+            hits: counter(metric::CACHE_PROBE_HITS),
+            missing_artifacts: counter(metric::CACHE_PROBE_MISSING_ARTIFACTS),
+            parse_restore_errors: counter(metric::CACHE_PROBE_PARSE_RESTORE_ERRORS),
+            propagated_misses: counter(metric::CACHE_PROBE_PROPAGATED_MISSES),
+            body_policy_mismatches: counter(metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES),
+            misses,
+        }
+    }
 }
