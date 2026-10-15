@@ -190,7 +190,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
 
     /// Returns whether rename should leave this occurrence untouched because it uses an alias.
     ///
-    /// Reference search intentionally treats aliases as references to the imported declaration.
+    /// A selected cursor or a declaration-backed occurrence can still refer through an alias.
     /// Rename is stricter: editing `Account` while renaming `User`, or `alias_text!()` while
     /// renaming `make_text`, would break the alias surface instead of renaming the declaration.
     fn source_symbol_uses_different_spelling(

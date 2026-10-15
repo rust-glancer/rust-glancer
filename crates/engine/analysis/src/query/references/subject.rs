@@ -7,6 +7,10 @@
 //!
 //! Hints are only used to skip work. The actual reference decision still comes from resolving a
 //! source symbol back to the selected declarations.
+//!
+//! Named items are searched by their declaration spelling. For example, searching `User` after
+//! `use User as Account` finds the import's `User`, but does not follow uses spelled `Account`.
+//! Nominal types also search `Self`, which can refer to that type without repeating its name.
 
 use std::collections::HashSet;
 
@@ -43,10 +47,18 @@ impl ReferenceSubject {
                 continue;
             };
 
-            if let Some(label) =
-                ReferenceSearchHints::exact_label_for_declaration(*declaration_ref, &declaration)
-            {
+            if let Some(label) = ReferenceSearchHints::exact_label_for_declaration(&declaration) {
                 exact_labels.push(label);
+                if matches!(
+                    declaration.kind(),
+                    SymbolKind::Struct
+                        | SymbolKind::Enum
+                        | SymbolKind::Union
+                        | SymbolKind::TypeAlias
+                ) {
+                    exact_labels
+                        .push(ReferenceSearchLabel::new("Self").expect("Self is an identifier"));
+                }
             } else {
                 exact_labels_supported = false;
             }
@@ -100,8 +112,8 @@ impl ReferenceSearchHints {
         self.local_scan_target
     }
 
-    /// Exact labels are intentionally limited to names whose references cannot be imported under
-    /// another spelling. Import-aliasable declarations stay on the full semantic path.
+    /// Skip unrelated spellings before semantic resolution. Imported aliases with another spelling
+    /// are not followed; matching names still have to resolve to the selected declaration.
     pub(super) fn rejects_candidate(
         &self,
         db: &IndexedViewDb<'_>,
@@ -119,32 +131,15 @@ impl ReferenceSearchHints {
         Ok(!self.exact_labels.iter().any(|expected| expected == &label))
     }
 
-    fn exact_label_for_declaration(
-        declaration_ref: DeclarationRef,
-        declaration: &Declaration,
-    ) -> Option<ReferenceSearchLabel> {
+    fn exact_label_for_declaration(declaration: &Declaration) -> Option<ReferenceSearchLabel> {
         match declaration.kind() {
-            SymbolKind::Field | SymbolKind::Method | SymbolKind::Variable => declaration
+            // Anonymous impls have no searchable name. Module references can instead be written
+            // as `crate`, `super`, or `self`, so keep their scans unrestricted.
+            // TODO: Include relative module spellings before narrowing module searches.
+            SymbolKind::Impl | SymbolKind::Module => None,
+            _ => declaration
                 .semantic_name()
                 .and_then(|name| ReferenceSearchLabel::new(name)),
-            SymbolKind::Const
-            | SymbolKind::Enum
-            | SymbolKind::EnumVariant
-            | SymbolKind::Function
-            | SymbolKind::Impl
-            | SymbolKind::Macro
-            | SymbolKind::Module
-            | SymbolKind::Static
-            | SymbolKind::Struct
-            | SymbolKind::Trait
-            | SymbolKind::TypeAlias
-            | SymbolKind::Union => matches!(declaration_ref, DeclarationRef::BodyBinding(_))
-                .then(|| {
-                    declaration
-                        .semantic_name()
-                        .and_then(|name| ReferenceSearchLabel::new(name))
-                })
-                .flatten(),
         }
     }
 

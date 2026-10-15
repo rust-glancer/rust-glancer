@@ -141,7 +141,6 @@ pub fn make(value: u8) {
             - `User` @ src/lib.rs:15:12-15:16
             - `User` @ src/lib.rs:22:18-22:22
             - `User` @ src/lib.rs:23:20-23:24
-            - `Account` @ src/lib.rs:25:18-25:25
 
             record struct references from imported constructor alias without declaration
             - `User` @ src/lib.rs:15:12-15:16
@@ -875,7 +874,7 @@ pub fn app_use(_: dep::Api) {
 }
 
 #[test]
-fn references_keep_import_alias_uses_for_type_declarations() {
+fn references_search_declared_spelling_for_imported_types() {
     check_analysis_queries(
         r#"
 //- /Cargo.toml
@@ -902,7 +901,40 @@ pub fn use_it(_: Account) {}
             aliased type references
             - `User` @ src/lib.rs:2:16-2:20
             - `User` @ src/lib.rs:5:10-5:14
-            - `Account` @ src/lib.rs:7:18-7:25
+        "#]],
+    );
+}
+
+#[test]
+fn finds_self_references_for_nominal_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_self_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Us$type_ref$er;
+
+impl User {
+    pub fn make() -> Self {
+        User
+    }
+}
+"#,
+        &[AnalysisQuery::references(
+            "type references including Self",
+            "type_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            type references including Self
+            - `User` @ src/lib.rs:1:12-1:16
+            - `User` @ src/lib.rs:3:6-3:10
+            - `Self` @ src/lib.rs:4:22-4:26
+            - `User` @ src/lib.rs:5:9-5:13
         "#]],
     );
 }

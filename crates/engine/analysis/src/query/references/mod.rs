@@ -34,7 +34,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Self { analysis, query }
     }
 
-    /// Returns source labels that are safe for request-local text prefiltering.
+    /// Returns declaration spellings used to narrow the request's source scan.
     pub(crate) fn reference_search_labels(
         analysis: &Analysis<'db>,
         crate_ref: CrateRef,
