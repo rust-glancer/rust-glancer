@@ -41,29 +41,29 @@ pub fn use_it() {
             AnalysisQuery::references("local references", "local_ref", ReferenceQuery::all()),
         ],
         expect![[r#"
-            type references
-            - `User` @ src/lib.rs:1:12-1:16
-            - `User` @ src/lib.rs:7:21-7:25
-            - `User` @ src/lib.rs:12:16-12:20
-            - `User` @ src/lib.rs:13:17-13:21
+            // type references
+            `User` @ src/lib.rs:1:12-1:16
+            `User` @ src/lib.rs:7:21-7:25
+            `User` @ src/lib.rs:12:16-12:20
+            `User` @ src/lib.rs:13:17-13:21
 
-            type references without declaration
-            - `User` @ src/lib.rs:7:21-7:25
-            - `User` @ src/lib.rs:12:16-12:20
-            - `User` @ src/lib.rs:13:17-13:21
+            // type references without declaration
+            `User` @ src/lib.rs:7:21-7:25
+            `User` @ src/lib.rs:12:16-12:20
+            `User` @ src/lib.rs:13:17-13:21
 
-            field references
-            - `name` @ src/lib.rs:2:5-2:9
-            - `name` @ src/lib.rs:8:10-8:14
+            // field references
+            `name` @ src/lib.rs:2:5-2:9
+            `name` @ src/lib.rs:8:10-8:14
 
-            function references
-            - `helper` @ src/lib.rs:7:8-7:14
-            - `helper` @ src/lib.rs:14:17-14:23
+            // function references
+            `helper` @ src/lib.rs:7:8-7:14
+            `helper` @ src/lib.rs:14:17-14:23
 
-            local references
-            - `local` @ src/lib.rs:12:9-12:14
-            - `local` @ src/lib.rs:13:24-13:29
-            - `local` @ src/lib.rs:14:24-14:29
+            // local references
+            `local` @ src/lib.rs:12:9-12:14
+            `local` @ src/lib.rs:13:24-13:29
+            `local` @ src/lib.rs:14:24-14:29
         "#]],
     );
 }
@@ -136,29 +136,29 @@ pub fn make(value: u8) {
             ),
         ],
         expect![[r#"
-            record struct references from declaration
-            - `User` @ src/lib.rs:7:12-7:16
-            - `User` @ src/lib.rs:15:12-15:16
-            - `User` @ src/lib.rs:22:18-22:22
-            - `User` @ src/lib.rs:23:20-23:24
+            // record struct references from declaration
+            `User` @ src/lib.rs:7:12-7:16
+            `User` @ src/lib.rs:15:12-15:16
+            `User` @ src/lib.rs:22:18-22:22
+            `User` @ src/lib.rs:23:20-23:24
 
-            record struct references from imported constructor alias without declaration
-            - `User` @ src/lib.rs:15:12-15:16
-            - `User` @ src/lib.rs:22:18-22:22
-            - `User` @ src/lib.rs:23:20-23:24
-            - `Account` @ src/lib.rs:25:18-25:25
+            // record struct references from imported constructor alias without declaration
+            `User` @ src/lib.rs:15:12-15:16
+            `User` @ src/lib.rs:22:18-22:22
+            `User` @ src/lib.rs:23:20-23:24
+            `Account` @ src/lib.rs:25:18-25:25
 
-            qualified generic record constructor references
-            - `Qualified` @ src/lib.rs:2:16-2:25
-            - `Qualified` @ src/lib.rs:24:29-24:38
+            // qualified generic record constructor references
+            `Qualified` @ src/lib.rs:2:16-2:25
+            `Qualified` @ src/lib.rs:24:29-24:38
 
-            record variant constructor references
-            - `Start` @ src/lib.rs:12:5-12:10
-            - `Start` @ src/lib.rs:26:28-26:33
+            // record variant constructor references
+            `Start` @ src/lib.rs:12:5-12:10
+            `Start` @ src/lib.rs:26:28-26:33
 
-            body-local record constructor references
-            - `Local` @ src/lib.rs:18:12-18:17
-            - `Local` @ src/lib.rs:27:18-27:23
+            // body-local record constructor references
+            `Local` @ src/lib.rs:18:12-18:17
+            `Local` @ src/lib.rs:27:18-27:23
         "#]],
     );
 }
@@ -187,10 +187,10 @@ pub fn use_it() -> u32 {
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            const references
-            - `LIMIT` @ src/lib.rs:1:11-1:16
-            - `LIMIT` @ src/lib.rs:2:27-2:32
-            - `LIMIT` @ src/lib.rs:5:5-5:10
+            // const references
+            `LIMIT` @ src/lib.rs:1:11-1:16
+            `LIMIT` @ src/lib.rs:2:27-2:32
+            `LIMIT` @ src/lib.rs:5:5-5:10
         "#]],
     );
 }
@@ -238,19 +238,19 @@ pub fn use_it(input: u64) {
             ),
         ],
         expect![[r#"
-            macro references from declaration
-            - `make_text` @ src/lib.rs:6:14-6:23
-            - `make_text` @ src/lib.rs:11:18-11:27
-            - `make_text` @ src/lib.rs:12:19-12:28
+            // macro references from declaration
+            `make_text` @ src/lib.rs:6:14-6:23
+            `make_text` @ src/lib.rs:11:18-11:27
+            `make_text` @ src/lib.rs:12:19-12:28
 
-            macro references from body call
-            - `make_text` @ src/lib.rs:6:14-6:23
-            - `make_text` @ src/lib.rs:11:18-11:27
-            - `make_text` @ src/lib.rs:12:19-12:28
+            // macro references from body call
+            `make_text` @ src/lib.rs:6:14-6:23
+            `make_text` @ src/lib.rs:11:18-11:27
+            `make_text` @ src/lib.rs:12:19-12:28
 
-            macro references without declaration
-            - `make_text` @ src/lib.rs:11:18-11:27
-            - `make_text` @ src/lib.rs:12:19-12:28
+            // macro references without declaration
+            `make_text` @ src/lib.rs:11:18-11:27
+            `make_text` @ src/lib.rs:12:19-12:28
         "#]],
     );
 }
@@ -281,13 +281,13 @@ fn foo(baz: u8) -> u8 {
             AnalysisQuery::references("local references", "local_ref", ReferenceQuery::all()),
         ],
         expect![[r#"
-            function references
-            - `foo` @ src/lib.rs:2:5-2:8
-            - `foo` @ src/lib.rs:5:4-5:7
+            // function references
+            `foo` @ src/lib.rs:2:5-2:8
+            `foo` @ src/lib.rs:5:4-5:7
 
-            local references
-            - `foo` @ src/lib.rs:6:9-6:12
-            - `foo` @ src/lib.rs:7:5-7:8
+            // local references
+            `foo` @ src/lib.rs:6:9-6:12
+            `foo` @ src/lib.rs:7:5-7:8
         "#]],
     );
 }
@@ -324,9 +324,9 @@ pub fn use_it() {
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            body-local method references
-            - `id` @ src/lib.rs:7:12-7:14
-            - `id` @ src/lib.rs:13:10-13:12
+            // body-local method references
+            `id` @ src/lib.rs:7:12-7:14
+            `id` @ src/lib.rs:13:10-13:12
         "#]],
     );
 }
@@ -390,28 +390,28 @@ pub fn use_it() {
             ),
         ],
         expect![[r#"
-            body-local alias references
-            - `Alias` @ src/lib.rs:4:10-4:15
-            - `Alias` @ src/lib.rs:5:20-5:25
-            - `Alias` @ src/lib.rs:7:20-7:25
-            - `Alias` @ src/lib.rs:15:17-15:22
+            // body-local alias references
+            `Alias` @ src/lib.rs:4:10-4:15
+            `Alias` @ src/lib.rs:5:20-5:25
+            `Alias` @ src/lib.rs:7:20-7:25
+            `Alias` @ src/lib.rs:15:17-15:22
 
-            body-local const references
-            - `DEFAULT` @ src/lib.rs:5:11-5:18
-            - `DEFAULT` @ src/lib.rs:8:9-8:16
-            - `DEFAULT` @ src/lib.rs:16:20-16:27
+            // body-local const references
+            `DEFAULT` @ src/lib.rs:5:11-5:18
+            `DEFAULT` @ src/lib.rs:8:9-8:16
+            `DEFAULT` @ src/lib.rs:16:20-16:27
 
-            body-local static references
-            - `CURRENT` @ src/lib.rs:6:12-6:19
-            - `CURRENT` @ src/lib.rs:17:20-17:27
+            // body-local static references
+            `CURRENT` @ src/lib.rs:6:12-6:19
+            `CURRENT` @ src/lib.rs:17:20-17:27
 
-            body-local function references
-            - `helper` @ src/lib.rs:7:8-7:14
-            - `helper` @ src/lib.rs:15:25-15:31
+            // body-local function references
+            `helper` @ src/lib.rs:7:8-7:14
+            `helper` @ src/lib.rs:15:25-15:31
 
-            body-local enum variant references
-            - `Start` @ src/lib.rs:11:9-11:14
-            - `Start` @ src/lib.rs:18:27-18:32
+            // body-local enum variant references
+            `Start` @ src/lib.rs:11:9-11:14
+            `Start` @ src/lib.rs:18:27-18:32
         "#]],
     );
 }
@@ -467,16 +467,15 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            outer function references
-            - `helper` @ src/lib.rs:5:8-5:14
+            `helper` @ src/lib.rs:5:8-5:14 // outer function references
 
-            inner function references
-            - `value` @ src/lib.rs:11:12-11:17
-            - `value` @ src/lib.rs:14:24-14:29
+            // inner function references
+            `value` @ src/lib.rs:11:12-11:17
+            `value` @ src/lib.rs:14:24-14:29
 
-            inner const references
-            - `helper` @ src/lib.rs:18:15-18:21
-            - `helper` @ src/lib.rs:19:27-19:33
+            // inner const references
+            `helper` @ src/lib.rs:18:15-18:21
+            `helper` @ src/lib.rs:19:27-19:33
         "#]],
     );
 }
@@ -526,29 +525,29 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            parent body-local const references
-            - `SEED` @ src/lib.rs:5:11-5:15
-            - `SEED` @ src/lib.rs:6:29-6:33
-            - `SEED` @ src/lib.rs:9:9-9:13
-            - `SEED` @ src/lib.rs:12:26-12:30
-            - `SEED` @ src/lib.rs:13:26-13:30
-            - `SEED` @ src/lib.rs:14:19-14:23
+            // parent body-local const references
+            `SEED` @ src/lib.rs:5:11-5:15
+            `SEED` @ src/lib.rs:6:29-6:33
+            `SEED` @ src/lib.rs:9:9-9:13
+            `SEED` @ src/lib.rs:12:26-12:30
+            `SEED` @ src/lib.rs:13:26-13:30
+            `SEED` @ src/lib.rs:14:19-14:23
 
-            parent body-local const references from const initializer
-            - `SEED` @ src/lib.rs:5:11-5:15
-            - `SEED` @ src/lib.rs:6:29-6:33
-            - `SEED` @ src/lib.rs:9:9-9:13
-            - `SEED` @ src/lib.rs:12:26-12:30
-            - `SEED` @ src/lib.rs:13:26-13:30
-            - `SEED` @ src/lib.rs:14:19-14:23
+            // parent body-local const references from const initializer
+            `SEED` @ src/lib.rs:5:11-5:15
+            `SEED` @ src/lib.rs:6:29-6:33
+            `SEED` @ src/lib.rs:9:9-9:13
+            `SEED` @ src/lib.rs:12:26-12:30
+            `SEED` @ src/lib.rs:13:26-13:30
+            `SEED` @ src/lib.rs:14:19-14:23
 
-            parent body-local const references from static initializer
-            - `SEED` @ src/lib.rs:5:11-5:15
-            - `SEED` @ src/lib.rs:6:29-6:33
-            - `SEED` @ src/lib.rs:9:9-9:13
-            - `SEED` @ src/lib.rs:12:26-12:30
-            - `SEED` @ src/lib.rs:13:26-13:30
-            - `SEED` @ src/lib.rs:14:19-14:23
+            // parent body-local const references from static initializer
+            `SEED` @ src/lib.rs:5:11-5:15
+            `SEED` @ src/lib.rs:6:29-6:33
+            `SEED` @ src/lib.rs:9:9-9:13
+            `SEED` @ src/lib.rs:12:26-12:30
+            `SEED` @ src/lib.rs:13:26-13:30
+            `SEED` @ src/lib.rs:14:19-14:23
         "#]],
     );
 }
@@ -591,13 +590,13 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            body-local associated const references
-            - `DEFAULT` @ src/lib.rs:7:15-7:22
-            - `DEFAULT` @ src/lib.rs:11:26-11:33
+            // body-local associated const references
+            `DEFAULT` @ src/lib.rs:7:15-7:22
+            `DEFAULT` @ src/lib.rs:11:26-11:33
 
-            body-local associated type references
-            - `Id` @ src/lib.rs:8:14-8:16
-            - `Id` @ src/lib.rs:12:23-12:25
+            // body-local associated type references
+            `Id` @ src/lib.rs:8:14-8:16
+            `Id` @ src/lib.rs:12:23-12:25
         "#]],
     );
 }
@@ -646,12 +645,12 @@ pub fn make() {
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            parent body-local const references inside associated bodies
-            - `SEED` @ src/lib.rs:4:11-4:15
-            - `SEED` @ src/lib.rs:9:41-9:45
-            - `SEED` @ src/lib.rs:12:13-12:17
-            - `SEED` @ src/lib.rs:17:35-17:39
-            - `SEED` @ src/lib.rs:20:13-20:17
+            // parent body-local const references inside associated bodies
+            `SEED` @ src/lib.rs:4:11-4:15
+            `SEED` @ src/lib.rs:9:41-9:45
+            `SEED` @ src/lib.rs:12:13-12:17
+            `SEED` @ src/lib.rs:17:35-17:39
+            `SEED` @ src/lib.rs:20:13-20:17
         "#]],
     );
 }
@@ -682,9 +681,9 @@ pub fn use_it(value: u8) {
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            lowercase const references from ambiguous pattern
-            - `ready` @ src/lib.rs:1:11-1:16
-            - `ready` @ src/lib.rs:5:9-5:14
+            // lowercase const references from ambiguous pattern
+            `ready` @ src/lib.rs:1:11-1:16
+            `ready` @ src/lib.rs:5:9-5:14
         "#]],
     );
 }
@@ -741,14 +740,14 @@ pub fn use_it() {
             .in_lib("app"),
         ],
         expect![[r#"
-            target-scoped external type references
-            - `Tool` @ app/src/lib.rs:2:23-2:27
-            - `Tool` @ app/src/lib.rs:3:25-3:29
-            - `Tool` @ helper/src/lib.rs:1:12-1:16
+            // target-scoped external type references
+            `Tool` @ app/src/lib.rs:2:23-2:27
+            `Tool` @ app/src/lib.rs:3:25-3:29
+            `Tool` @ helper/src/lib.rs:1:12-1:16
 
-            file-scoped external type references
-            - `Tool` @ app/src/lib.rs:2:23-2:27
-            - `Tool` @ app/src/lib.rs:3:25-3:29
+            // file-scoped external type references
+            `Tool` @ app/src/lib.rs:2:23-2:27
+            `Tool` @ app/src/lib.rs:3:25-3:29
         "#]],
     );
 }
@@ -796,15 +795,15 @@ pub fn use_elsewhere(_: User) {}
             ),
         ],
         expect![[r#"
-            current-file type references
-            - `User` @ src/lib.rs:4:12-4:16
-            - `User` @ src/lib.rs:7:12-7:16
+            // current-file type references
+            `User` @ src/lib.rs:4:12-4:16
+            `User` @ src/lib.rs:7:12-7:16
 
-            explicit-file-list type references
-            - `User` @ src/lib.rs:4:12-4:16
-            - `User` @ src/lib.rs:7:12-7:16
-            - `User` @ src/other.rs:1:12-1:16
-            - `User` @ src/other.rs:3:21-3:25
+            // explicit-file-list type references
+            `User` @ src/lib.rs:4:12-4:16
+            `User` @ src/lib.rs:7:12-7:16
+            `User` @ src/other.rs:1:12-1:16
+            `User` @ src/other.rs:3:21-3:25
         "#]],
     );
 }
@@ -864,11 +863,11 @@ pub fn app_use(_: dep::Api) {
         )
         .in_lib("dep")],
         expect![[r#"
-            dependency-scoped type references
-            - `Api` @ app/src/lib.rs:1:24-1:27
-            - `Api` @ dep/src/lib.rs:1:12-1:15
-            - `Api` @ dep/src/lib.rs:3:19-3:22
-            - `Api` @ helper/src/lib.rs:1:27-1:30
+            // dependency-scoped type references
+            `Api` @ app/src/lib.rs:1:24-1:27
+            `Api` @ dep/src/lib.rs:1:12-1:15
+            `Api` @ dep/src/lib.rs:3:19-3:22
+            `Api` @ helper/src/lib.rs:1:27-1:30
         "#]],
     );
 }
@@ -898,9 +897,9 @@ pub fn use_it(_: Account) {}
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            aliased type references
-            - `User` @ src/lib.rs:2:16-2:20
-            - `User` @ src/lib.rs:5:10-5:14
+            // aliased type references
+            `User` @ src/lib.rs:2:16-2:20
+            `User` @ src/lib.rs:5:10-5:14
         "#]],
     );
 }
@@ -930,11 +929,11 @@ impl User {
             ReferenceQuery::all(),
         )],
         expect![[r#"
-            type references including Self
-            - `User` @ src/lib.rs:1:12-1:16
-            - `User` @ src/lib.rs:3:6-3:10
-            - `Self` @ src/lib.rs:4:22-4:26
-            - `User` @ src/lib.rs:5:9-5:13
+            // type references including Self
+            `User` @ src/lib.rs:1:12-1:16
+            `User` @ src/lib.rs:3:6-3:10
+            `Self` @ src/lib.rs:4:22-4:26
+            `User` @ src/lib.rs:5:9-5:13
         "#]],
     );
 }
@@ -981,19 +980,19 @@ fn main() {}
             AnalysisQuery::references("crate root references", "root_ref", ReferenceQuery::all()),
         ],
         expect![[r#"
-            parent module references
-            - `parent` @ src/lib.rs:1:9-1:15
-            - `parent` @ src/lib.rs:3:17-3:23
-            - `self` @ src/parent.rs:3:5-3:9
-            - `super` @ src/parent/child.rs:1:5-1:10
-            - `super` @ src/parent/child.rs:2:5-2:10
+            // parent module references
+            `parent` @ src/lib.rs:1:9-1:15
+            `parent` @ src/lib.rs:3:17-3:23
+            `self` @ src/parent.rs:3:5-3:9
+            `super` @ src/parent/child.rs:1:5-1:10
+            `super` @ src/parent/child.rs:2:5-2:10
 
-            crate root references
-            - `crate` @ src/lib.rs:4:18-4:23
-            - `self` @ src/lib.rs:5:16-5:20
-            - `super` @ src/parent.rs:4:16-4:21
-            - `super` @ src/parent/child.rs:2:12-2:17
-            - `module_reference_filter` @ src/main.rs:1:5-1:28
+            // crate root references
+            `crate` @ src/lib.rs:4:18-4:23
+            `self` @ src/lib.rs:5:16-5:20
+            `super` @ src/parent.rs:4:16-4:21
+            `super` @ src/parent/child.rs:2:12-2:17
+            `module_reference_filter` @ src/main.rs:1:5-1:28
         "#]],
     );
 }

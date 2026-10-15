@@ -154,35 +154,16 @@ pub struct Parser;
             .matching("parser"),
         ],
         expect![[r#"
-            trait member before closing brace
-            - fn required
-
-            trait member at EOF
-            - fn required
-
-            function trait member before closing brace
-            - fn required
-
-            function trait member at EOF
-            - fn required
-
-            trait member before its first prefix at EOF
-            - fn required
-
-            module macro before invocation suffix
-            - macro local_item
-
-            module macro at EOF
-            - macro local_item
-
-            module declaration before semicolon
-            - module parser
-
-            module declaration at EOF
-            - module parser
-
-            module declaration before its first prefix at EOF
-            - module parser
+            fn required // trait member before closing brace
+            fn required // trait member at EOF
+            fn required // function trait member before closing brace
+            fn required // function trait member at EOF
+            fn required // trait member before its first prefix at EOF
+            macro local_item // module macro before invocation suffix
+            macro local_item // module macro at EOF
+            module parser // module declaration before semicolon
+            module parser // module declaration at EOF
+            module parser // module declaration before its first prefix at EOF
         "#]],
     );
 }

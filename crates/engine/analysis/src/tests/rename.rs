@@ -38,34 +38,32 @@ pub fn use_it() {
             AnalysisQuery::rename("rename local", "local_ref", "selected"),
         ],
         expect![[r#"
-            prepare type rename
-            - `User` @ src/lib.rs:12:16-12:20
+            `User` @ src/lib.rs:12:16-12:20 // prepare type rename
 
-            rename type
-            - target `User` @ src/lib.rs:12:16-12:20
-            - `User` -> `Account` @ src/lib.rs:1:12-1:16
-            - `User` -> `Account` @ src/lib.rs:7:21-7:25
-            - `User` -> `Account` @ src/lib.rs:12:16-12:20
-            - `User` -> `Account` @ src/lib.rs:13:17-13:21
+            // rename type
+            target `User` @ src/lib.rs:12:16-12:20
+            `User` -> `Account` @ src/lib.rs:1:12-1:16
+            `User` -> `Account` @ src/lib.rs:7:21-7:25
+            `User` -> `Account` @ src/lib.rs:12:16-12:20
+            `User` -> `Account` @ src/lib.rs:13:17-13:21
 
-            prepare field rename
-            - `name` @ src/lib.rs:8:10-8:14
+            `name` @ src/lib.rs:8:10-8:14 // prepare field rename
 
-            rename field
-            - target `name` @ src/lib.rs:8:10-8:14
-            - `name` -> `label` @ src/lib.rs:2:5-2:9
-            - `name` -> `label` @ src/lib.rs:8:10-8:14
+            // rename field
+            target `name` @ src/lib.rs:8:10-8:14
+            `name` -> `label` @ src/lib.rs:2:5-2:9
+            `name` -> `label` @ src/lib.rs:8:10-8:14
 
-            rename function
-            - target `helper` @ src/lib.rs:7:8-7:14
-            - `helper` -> `build` @ src/lib.rs:7:8-7:14
-            - `helper` -> `build` @ src/lib.rs:14:17-14:23
+            // rename function
+            target `helper` @ src/lib.rs:7:8-7:14
+            `helper` -> `build` @ src/lib.rs:7:8-7:14
+            `helper` -> `build` @ src/lib.rs:14:17-14:23
 
-            rename local
-            - target `local` @ src/lib.rs:12:9-12:14
-            - `local` -> `selected` @ src/lib.rs:12:9-12:14
-            - `local` -> `selected` @ src/lib.rs:13:24-13:29
-            - `local` -> `selected` @ src/lib.rs:14:24-14:29
+            // rename local
+            target `local` @ src/lib.rs:12:9-12:14
+            `local` -> `selected` @ src/lib.rs:12:9-12:14
+            `local` -> `selected` @ src/lib.rs:13:24-13:29
+            `local` -> `selected` @ src/lib.rs:14:24-14:29
         "#]],
     );
 }
@@ -96,15 +94,15 @@ fn foo(baz: u8) -> u8 {
             AnalysisQuery::rename("rename local", "local_ref", "maybe"),
         ],
         expect![[r#"
-            rename function
-            - target `foo` @ src/lib.rs:2:5-2:8
-            - `foo` -> `qux` @ src/lib.rs:2:5-2:8
-            - `foo` -> `qux` @ src/lib.rs:5:4-5:7
+            // rename function
+            target `foo` @ src/lib.rs:2:5-2:8
+            `foo` -> `qux` @ src/lib.rs:2:5-2:8
+            `foo` -> `qux` @ src/lib.rs:5:4-5:7
 
-            rename local
-            - target `foo` @ src/lib.rs:6:9-6:12
-            - `foo` -> `maybe` @ src/lib.rs:6:9-6:12
-            - `foo` -> `maybe` @ src/lib.rs:7:5-7:8
+            // rename local
+            target `foo` @ src/lib.rs:6:9-6:12
+            `foo` -> `maybe` @ src/lib.rs:6:9-6:12
+            `foo` -> `maybe` @ src/lib.rs:7:5-7:8
         "#]],
     );
 }
@@ -166,50 +164,50 @@ pub fn use_it(user: User, status: Sta$enum_type_ref$tus, packet: Pac$union_type_
             AnalysisQuery::rename("rename method", "method_use", "draw"),
         ],
         expect![[r#"
-            rename enum
-            - target `Status` @ src/lib.rs:27:35-27:41
-            - `Status` -> `Phase` @ src/lib.rs:3:10-3:16
-            - `Status` -> `Phase` @ src/lib.rs:27:35-27:41
-            - `Status` -> `Phase` @ src/lib.rs:28:19-28:25
+            // rename enum
+            target `Status` @ src/lib.rs:27:35-27:41
+            `Status` -> `Phase` @ src/lib.rs:3:10-3:16
+            `Status` -> `Phase` @ src/lib.rs:27:35-27:41
+            `Status` -> `Phase` @ src/lib.rs:28:19-28:25
 
-            rename enum variant
-            - target `Ready` @ src/lib.rs:28:27-28:32
-            - `Ready` -> `Active` @ src/lib.rs:4:5-4:10
-            - `Ready` -> `Active` @ src/lib.rs:28:27-28:32
+            // rename enum variant
+            target `Ready` @ src/lib.rs:28:27-28:32
+            `Ready` -> `Active` @ src/lib.rs:4:5-4:10
+            `Ready` -> `Active` @ src/lib.rs:28:27-28:32
 
-            rename union
-            - target `Packet` @ src/lib.rs:27:51-27:57
-            - `Packet` -> `PacketData` @ src/lib.rs:8:11-8:17
-            - `Packet` -> `PacketData` @ src/lib.rs:27:51-27:57
-            - `Packet` -> `PacketData` @ src/lib.rs:29:18-29:24
+            // rename union
+            target `Packet` @ src/lib.rs:27:51-27:57
+            `Packet` -> `PacketData` @ src/lib.rs:8:11-8:17
+            `Packet` -> `PacketData` @ src/lib.rs:27:51-27:57
+            `Packet` -> `PacketData` @ src/lib.rs:29:18-29:24
 
-            rename trait
-            - target `Service` @ src/lib.rs:25:6-25:13
-            - `Service` -> `Renderable` @ src/lib.rs:12:11-12:18
-            - `Service` -> `Renderable` @ src/lib.rs:25:6-25:13
+            // rename trait
+            target `Service` @ src/lib.rs:25:6-25:13
+            `Service` -> `Renderable` @ src/lib.rs:12:11-12:18
+            `Service` -> `Renderable` @ src/lib.rs:25:6-25:13
 
-            rename type alias
-            - target `Handle` @ src/lib.rs:27:62-27:68
-            - `Handle` -> `Output` @ src/lib.rs:14:10-14:16
-            - `Handle` -> `Output` @ src/lib.rs:27:62-27:68
+            // rename type alias
+            target `Handle` @ src/lib.rs:27:62-27:68
+            `Handle` -> `Output` @ src/lib.rs:14:10-14:16
+            `Handle` -> `Output` @ src/lib.rs:27:62-27:68
 
-            rename const
-            - target `LIMIT` @ src/lib.rs:30:18-30:23
-            - `LIMIT` -> `MAX` @ src/lib.rs:16:11-16:16
-            - `LIMIT` -> `MAX` @ src/lib.rs:17:27-17:32
-            - `LIMIT` -> `MAX` @ src/lib.rs:21:9-21:14
-            - `LIMIT` -> `MAX` @ src/lib.rs:30:18-30:23
+            // rename const
+            target `LIMIT` @ src/lib.rs:30:18-30:23
+            `LIMIT` -> `MAX` @ src/lib.rs:16:11-16:16
+            `LIMIT` -> `MAX` @ src/lib.rs:17:27-17:32
+            `LIMIT` -> `MAX` @ src/lib.rs:21:9-21:14
+            `LIMIT` -> `MAX` @ src/lib.rs:30:18-30:23
 
-            rename static
-            - target `CURRENT` @ src/lib.rs:31:20-31:27
-            - `CURRENT` -> `GLOBAL` @ src/lib.rs:17:12-17:19
-            - `CURRENT` -> `GLOBAL` @ src/lib.rs:31:20-31:27
+            // rename static
+            target `CURRENT` @ src/lib.rs:31:20-31:27
+            `CURRENT` -> `GLOBAL` @ src/lib.rs:17:12-17:19
+            `CURRENT` -> `GLOBAL` @ src/lib.rs:31:20-31:27
 
-            rename method
-            - target `render` @ src/lib.rs:32:26-32:32
-            - `render` -> `draw` @ src/lib.rs:20:12-20:18
-            - `render` -> `draw` @ src/lib.rs:32:26-32:32
-            - `render` -> `draw` @ src/lib.rs:33:10-33:16
+            // rename method
+            target `render` @ src/lib.rs:32:26-32:32
+            `render` -> `draw` @ src/lib.rs:20:12-20:18
+            `render` -> `draw` @ src/lib.rs:32:26-32:32
+            `render` -> `draw` @ src/lib.rs:33:10-33:16
         "#]],
     );
 }
@@ -256,17 +254,17 @@ pub fn wrap(user: User) -> crate::model::User {
             "Account",
         )],
         expect![[r#"
-            rename use-path type across modules
-            - target `User` @ src/use_sites.rs:1:19-1:23
-            - `User` -> `Account` @ src/lib.rs:4:16-4:20
-            - `User` -> `Account` @ src/lib.rs:6:19-6:23
-            - `User` -> `Account` @ src/lib.rs:6:35-6:39
-            - `User` -> `Account` @ src/model.rs:1:12-1:16
-            - `User` -> `Account` @ src/model.rs:5:25-5:29
-            - `User` -> `Account` @ src/model.rs:5:34-5:38
-            - `User` -> `Account` @ src/use_sites.rs:1:19-1:23
-            - `User` -> `Account` @ src/use_sites.rs:3:19-3:23
-            - `User` -> `Account` @ src/use_sites.rs:3:42-3:46
+            // rename use-path type across modules
+            target `User` @ src/use_sites.rs:1:19-1:23
+            `User` -> `Account` @ src/lib.rs:4:16-4:20
+            `User` -> `Account` @ src/lib.rs:6:19-6:23
+            `User` -> `Account` @ src/lib.rs:6:35-6:39
+            `User` -> `Account` @ src/model.rs:1:12-1:16
+            `User` -> `Account` @ src/model.rs:5:25-5:29
+            `User` -> `Account` @ src/model.rs:5:34-5:38
+            `User` -> `Account` @ src/use_sites.rs:1:19-1:23
+            `User` -> `Account` @ src/use_sites.rs:3:19-3:23
+            `User` -> `Account` @ src/use_sites.rs:3:42-3:46
         "#]],
     );
 }
@@ -312,20 +310,20 @@ pub fn use_fn(account: Account) -> api::User {
             ),
         ],
         expect![[r#"
-            rename type with import alias references
-            - target `User` @ src/lib.rs:2:16-2:20
-            - `User` -> `Person` @ src/lib.rs:2:16-2:20
-            - `User` -> `Person` @ src/lib.rs:3:24-3:28
-            - `User` -> `Person` @ src/lib.rs:3:33-3:37
-            - `User` -> `Person` @ src/lib.rs:6:10-6:14
-            - `User` -> `Person` @ src/lib.rs:9:43-9:47
-            - `User` -> `Person` @ src/lib.rs:13:41-13:45
+            // rename type with import alias references
+            target `User` @ src/lib.rs:2:16-2:20
+            `User` -> `Person` @ src/lib.rs:2:16-2:20
+            `User` -> `Person` @ src/lib.rs:3:24-3:28
+            `User` -> `Person` @ src/lib.rs:3:33-3:37
+            `User` -> `Person` @ src/lib.rs:6:10-6:14
+            `User` -> `Person` @ src/lib.rs:9:43-9:47
+            `User` -> `Person` @ src/lib.rs:13:41-13:45
 
-            rename function with import alias references
-            - target `make` @ src/lib.rs:3:12-3:16
-            - `make` -> `create` @ src/lib.rs:3:12-3:16
-            - `make` -> `create` @ src/lib.rs:7:10-7:14
-            - `make` -> `create` @ src/lib.rs:15:10-15:14
+            // rename function with import alias references
+            target `make` @ src/lib.rs:3:12-3:16
+            `make` -> `create` @ src/lib.rs:3:12-3:16
+            `make` -> `create` @ src/lib.rs:7:10-7:14
+            `make` -> `create` @ src/lib.rs:15:10-15:14
         "#]],
     );
 }
@@ -385,27 +383,27 @@ pub fn make(value: u8) {
             AnalysisQuery::rename("rename body-local record from use", "local_use", "Nested"),
         ],
         expect![[r#"
-            rename record struct from declaration
-            - target `User` @ src/lib.rs:7:12-7:16
-            - `User` -> `Entity` @ src/lib.rs:7:12-7:16
-            - `User` -> `Entity` @ src/lib.rs:15:12-15:16
-            - `User` -> `Entity` @ src/lib.rs:22:18-22:22
-            - `User` -> `Entity` @ src/lib.rs:23:20-23:24
+            // rename record struct from declaration
+            target `User` @ src/lib.rs:7:12-7:16
+            `User` -> `Entity` @ src/lib.rs:7:12-7:16
+            `User` -> `Entity` @ src/lib.rs:15:12-15:16
+            `User` -> `Entity` @ src/lib.rs:22:18-22:22
+            `User` -> `Entity` @ src/lib.rs:23:20-23:24
 
-            rename qualified generic record from use
-            - target `Qualified` @ src/lib.rs:24:29-24:38
-            - `Qualified` -> `Scoped` @ src/lib.rs:2:16-2:25
-            - `Qualified` -> `Scoped` @ src/lib.rs:24:29-24:38
+            // rename qualified generic record from use
+            target `Qualified` @ src/lib.rs:24:29-24:38
+            `Qualified` -> `Scoped` @ src/lib.rs:2:16-2:25
+            `Qualified` -> `Scoped` @ src/lib.rs:24:29-24:38
 
-            rename record variant from use
-            - target `Start` @ src/lib.rs:26:28-26:33
-            - `Start` -> `Begin` @ src/lib.rs:12:5-12:10
-            - `Start` -> `Begin` @ src/lib.rs:26:28-26:33
+            // rename record variant from use
+            target `Start` @ src/lib.rs:26:28-26:33
+            `Start` -> `Begin` @ src/lib.rs:12:5-12:10
+            `Start` -> `Begin` @ src/lib.rs:26:28-26:33
 
-            rename body-local record from use
-            - target `Local` @ src/lib.rs:27:18-27:23
-            - `Local` -> `Nested` @ src/lib.rs:18:12-18:17
-            - `Local` -> `Nested` @ src/lib.rs:27:18-27:23
+            // rename body-local record from use
+            target `Local` @ src/lib.rs:27:18-27:23
+            `Local` -> `Nested` @ src/lib.rs:18:12-18:17
+            `Local` -> `Nested` @ src/lib.rs:27:18-27:23
         "#]],
     );
 }
@@ -453,26 +451,26 @@ pub fn make() -> Value {
             AnalysisQuery::rename("rename inner function", "inner_fn_decl", "local_compute"),
         ],
         expect![[r#"
-            rename outer function
-            - target `target` @ src/lib.rs:8:18-8:24
-            - `target` -> `compute` @ src/lib.rs:4:8-4:14
-            - `target` -> `compute` @ src/lib.rs:8:18-8:24
-            - `target` -> `compute` @ src/lib.rs:22:19-22:25
+            // rename outer function
+            target `target` @ src/lib.rs:8:18-8:24
+            `target` -> `compute` @ src/lib.rs:4:8-4:14
+            `target` -> `compute` @ src/lib.rs:8:18-8:24
+            `target` -> `compute` @ src/lib.rs:22:19-22:25
 
-            rename inner local
-            - target `target` @ src/lib.rs:11:13-11:19
-            - `target` -> `maybe` @ src/lib.rs:11:13-11:19
-            - `target` -> `maybe` @ src/lib.rs:12:23-12:29
+            // rename inner local
+            target `target` @ src/lib.rs:11:13-11:19
+            `target` -> `maybe` @ src/lib.rs:11:13-11:19
+            `target` -> `maybe` @ src/lib.rs:12:23-12:29
 
-            rename closure parameter
-            - target `target` @ src/lib.rs:12:35-12:41
-            - `target` -> `item` @ src/lib.rs:12:35-12:41
-            - `target` -> `item` @ src/lib.rs:12:43-12:49
+            // rename closure parameter
+            target `target` @ src/lib.rs:12:35-12:41
+            `target` -> `item` @ src/lib.rs:12:35-12:41
+            `target` -> `item` @ src/lib.rs:12:43-12:49
 
-            rename inner function
-            - target `target` @ src/lib.rs:16:12-16:18
-            - `target` -> `local_compute` @ src/lib.rs:16:12-16:18
-            - `target` -> `local_compute` @ src/lib.rs:19:22-19:28
+            // rename inner function
+            target `target` @ src/lib.rs:16:12-16:18
+            `target` -> `local_compute` @ src/lib.rs:16:12-16:18
+            `target` -> `local_compute` @ src/lib.rs:19:22-19:28
         "#]],
     );
 }
@@ -521,29 +519,29 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            rename parent const from nested body
-            - target `SEED` @ src/lib.rs:8:9-8:13
-            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
-            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
-            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+            // rename parent const from nested body
+            target `SEED` @ src/lib.rs:8:9-8:13
+            `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
 
-            rename parent const from nested const initializer
-            - target `SEED` @ src/lib.rs:11:26-11:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
-            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
-            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+            // rename parent const from nested const initializer
+            target `SEED` @ src/lib.rs:11:26-11:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
 
-            rename parent const from nested static initializer
-            - target `SEED` @ src/lib.rs:12:26-12:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
-            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
-            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
-            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+            // rename parent const from nested static initializer
+            target `SEED` @ src/lib.rs:12:26-12:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
         "#]],
     );
 }
@@ -595,23 +593,21 @@ pub fn make() -> GlobalId {
             ),
         ],
         expect![[r#"
-            prepare const from local initializer
-            - `GLOBAL` @ src/lib.rs:7:28-7:34
+            `GLOBAL` @ src/lib.rs:7:28-7:34 // prepare const from local initializer
 
-            rename const from local initializer
-            - target `GLOBAL` @ src/lib.rs:7:28-7:34
-            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:3:11-3:17
-            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:7:28-7:34
-            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:12:19-12:25
+            // rename const from local initializer
+            target `GLOBAL` @ src/lib.rs:7:28-7:34
+            `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:3:11-3:17
+            `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:7:28-7:34
+            `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:12:19-12:25
 
-            prepare static from local initializer
-            - `ACTIVE` @ src/lib.rs:8:29-8:35
+            `ACTIVE` @ src/lib.rs:8:29-8:35 // prepare static from local initializer
 
-            rename static from local initializer
-            - target `ACTIVE` @ src/lib.rs:8:29-8:35
-            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:4:12-4:18
-            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:8:29-8:35
-            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:13:5-13:11
+            // rename static from local initializer
+            target `ACTIVE` @ src/lib.rs:8:29-8:35
+            `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:4:12-4:18
+            `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:8:29-8:35
+            `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:13:5-13:11
         "#]],
     );
 }
@@ -690,40 +686,40 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            rename parent const from associated const body
-            - target `SEED` @ src/lib.rs:10:41-10:45
-            - `SEED` -> `FALLBACK` @ src/lib.rs:4:11-4:15
-            - `SEED` -> `FALLBACK` @ src/lib.rs:10:41-10:45
-            - `SEED` -> `FALLBACK` @ src/lib.rs:13:13-13:17
-            - `SEED` -> `FALLBACK` @ src/lib.rs:30:17-30:21
+            // rename parent const from associated const body
+            target `SEED` @ src/lib.rs:10:41-10:45
+            `SEED` -> `FALLBACK` @ src/lib.rs:4:11-4:15
+            `SEED` -> `FALLBACK` @ src/lib.rs:10:41-10:45
+            `SEED` -> `FALLBACK` @ src/lib.rs:13:13-13:17
+            `SEED` -> `FALLBACK` @ src/lib.rs:30:17-30:21
 
-            rename parent static from associated function body
-            - target `CACHE` @ src/lib.rs:21:13-21:18
-            - `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
-            - `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
-            - `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
-            - `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
-            - `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
-            - `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
+            // rename parent static from associated function body
+            target `CACHE` @ src/lib.rs:21:13-21:18
+            `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
+            `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
+            `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
+            `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
+            `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
+            `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
 
-            rename parent static from local const initializer
-            - target `CACHE` @ src/lib.rs:27:29-27:34
-            - `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
-            - `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
-            - `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
-            - `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
-            - `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
-            - `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
+            // rename parent static from local const initializer
+            target `CACHE` @ src/lib.rs:27:29-27:34
+            `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
+            `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
+            `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
+            `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
+            `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
+            `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
 
-            rename body-local associated const
-            - target `DEFAULT` @ src/lib.rs:32:26-32:33
-            - `DEFAULT` -> `INITIAL` @ src/lib.rs:18:15-18:22
-            - `DEFAULT` -> `INITIAL` @ src/lib.rs:32:26-32:33
+            // rename body-local associated const
+            target `DEFAULT` @ src/lib.rs:32:26-32:33
+            `DEFAULT` -> `INITIAL` @ src/lib.rs:18:15-18:22
+            `DEFAULT` -> `INITIAL` @ src/lib.rs:32:26-32:33
 
-            rename body-local associated type
-            - target `Id` @ src/lib.rs:33:23-33:25
-            - `Id` -> `Identity` @ src/lib.rs:24:14-24:16
-            - `Id` -> `Identity` @ src/lib.rs:33:23-33:25
+            // rename body-local associated type
+            target `Id` @ src/lib.rs:33:23-33:25
+            `Id` -> `Identity` @ src/lib.rs:24:14-24:16
+            `Id` -> `Identity` @ src/lib.rs:33:23-33:25
         "#]],
     );
 }
@@ -757,22 +753,21 @@ pub fn use_it(user: User, name: u8, age: u8) {
             AnalysisQuery::rename("rename record field", "field_access", "label"),
         ],
         expect![[r#"
-            prepare pattern field rename
-            - `name` @ src/lib.rs:7:16-7:20
+            `name` @ src/lib.rs:7:16-7:20 // prepare pattern field rename
 
-            rename from literal field
-            - target `name` @ src/lib.rs:8:26-8:30
-            - `name` -> `title` @ src/lib.rs:2:9-2:13
-            - `name` -> `title` @ src/lib.rs:7:16-7:20
-            - `name` -> `title` @ src/lib.rs:8:26-8:30
-            - `name` -> `title` @ src/lib.rs:9:26-9:30
+            // rename from literal field
+            target `name` @ src/lib.rs:8:26-8:30
+            `name` -> `title` @ src/lib.rs:2:9-2:13
+            `name` -> `title` @ src/lib.rs:7:16-7:20
+            `name` -> `title` @ src/lib.rs:8:26-8:30
+            `name` -> `title` @ src/lib.rs:9:26-9:30
 
-            rename record field
-            - target `name` @ src/lib.rs:9:26-9:30
-            - `name` -> `label` @ src/lib.rs:2:9-2:13
-            - `name` -> `label` @ src/lib.rs:7:16-7:20
-            - `name` -> `label` @ src/lib.rs:8:26-8:30
-            - `name` -> `label` @ src/lib.rs:9:26-9:30
+            // rename record field
+            target `name` @ src/lib.rs:9:26-9:30
+            `name` -> `label` @ src/lib.rs:2:9-2:13
+            `name` -> `label` @ src/lib.rs:7:16-7:20
+            `name` -> `label` @ src/lib.rs:8:26-8:30
+            `name` -> `label` @ src/lib.rs:9:26-9:30
         "#]],
     );
 }
@@ -815,26 +810,26 @@ pub fn use_it(source: User, na$param_decl$me: u8, age: u8) -> u8 {
             ),
         ],
         expect![[r#"
-            rename field with shorthand
-            - target `name` @ src/lib.rs:2:9-2:13
-            - `name` -> `title` @ src/lib.rs:2:9-2:13
-            - `name` -> `title: name` @ src/lib.rs:7:25-7:29
-            - `name` -> `title` @ src/lib.rs:8:27-8:31
-            - `name` -> `title: name` @ src/lib.rs:9:16-9:20
-            - `name` -> `title` @ src/lib.rs:10:25-10:29
-            - `name` -> `title` @ src/lib.rs:11:19-11:23
-            - `name` -> `title` @ src/lib.rs:11:35-11:39
+            // rename field with shorthand
+            target `name` @ src/lib.rs:2:9-2:13
+            `name` -> `title` @ src/lib.rs:2:9-2:13
+            `name` -> `title: name` @ src/lib.rs:7:25-7:29
+            `name` -> `title` @ src/lib.rs:8:27-8:31
+            `name` -> `title: name` @ src/lib.rs:9:16-9:20
+            `name` -> `title` @ src/lib.rs:10:25-10:29
+            `name` -> `title` @ src/lib.rs:11:19-11:23
+            `name` -> `title` @ src/lib.rs:11:35-11:39
 
-            rename parameter through shorthand literal
-            - target `name` @ src/lib.rs:7:25-7:29
-            - `name` -> `label` @ src/lib.rs:6:29-6:33
-            - `name` -> `name: label` @ src/lib.rs:7:25-7:29
-            - `name` -> `label` @ src/lib.rs:8:33-8:37
+            // rename parameter through shorthand literal
+            target `name` @ src/lib.rs:7:25-7:29
+            `name` -> `label` @ src/lib.rs:6:29-6:33
+            `name` -> `name: label` @ src/lib.rs:7:25-7:29
+            `name` -> `label` @ src/lib.rs:8:33-8:37
 
-            rename pattern shorthand binding
-            - target `name` @ src/lib.rs:9:16-9:20
-            - `name` -> `name: selected` @ src/lib.rs:9:16-9:20
-            - `name` -> `selected` @ src/lib.rs:11:5-11:9
+            // rename pattern shorthand binding
+            target `name` @ src/lib.rs:9:16-9:20
+            `name` -> `name: selected` @ src/lib.rs:9:16-9:20
+            `name` -> `selected` @ src/lib.rs:11:5-11:9
         "#]],
     );
 }
@@ -882,28 +877,28 @@ pub fn use_it(by_ref_source: User, by_mut_source: User, by_at_source: User) -> u
             AnalysisQuery::rename("rename explicit at binding", "at_binding", "matched"),
         ],
         expect![[r#"
-            rename field through complex shorthand
-            - target `name` @ src/lib.rs:7:9-7:13
-            - `name` -> `title` @ src/lib.rs:7:9-7:13
-            - `ref name` -> `title: ref name` @ src/lib.rs:11:16-11:24
-            - `mut name` -> `title: mut name` @ src/lib.rs:13:16-13:24
-            - `name` -> `title` @ src/lib.rs:16:16-16:20
-            - `name` -> `title` @ src/lib.rs:17:16-17:20
+            // rename field through complex shorthand
+            target `name` @ src/lib.rs:7:9-7:13
+            `name` -> `title` @ src/lib.rs:7:9-7:13
+            `ref name` -> `title: ref name` @ src/lib.rs:11:16-11:24
+            `mut name` -> `title: mut name` @ src/lib.rs:13:16-13:24
+            `name` -> `title` @ src/lib.rs:16:16-16:20
+            `name` -> `title` @ src/lib.rs:17:16-17:20
 
-            rename ref shorthand binding
-            - target `name` @ src/lib.rs:11:20-11:24
-            - `ref name` -> `name: ref borrowed` @ src/lib.rs:11:16-11:24
-            - `name` -> `borrowed` @ src/lib.rs:12:18-12:22
+            // rename ref shorthand binding
+            target `name` @ src/lib.rs:11:20-11:24
+            `ref name` -> `name: ref borrowed` @ src/lib.rs:11:16-11:24
+            `name` -> `borrowed` @ src/lib.rs:12:18-12:22
 
-            rename mut shorthand binding
-            - target `name` @ src/lib.rs:13:20-13:24
-            - `mut name` -> `name: mut editable` @ src/lib.rs:13:16-13:24
-            - `name` -> `editable` @ src/lib.rs:14:5-14:9
+            // rename mut shorthand binding
+            target `name` @ src/lib.rs:13:20-13:24
+            `mut name` -> `name: mut editable` @ src/lib.rs:13:16-13:24
+            `name` -> `editable` @ src/lib.rs:14:5-14:9
 
-            rename explicit at binding
-            - target `alias` @ src/lib.rs:16:22-16:27
-            - `alias` -> `matched` @ src/lib.rs:16:22-16:27
-            - `alias` -> `matched` @ src/lib.rs:16:43-16:48
+            // rename explicit at binding
+            target `alias` @ src/lib.rs:16:22-16:27
+            `alias` -> `matched` @ src/lib.rs:16:22-16:27
+            `alias` -> `matched` @ src/lib.rs:16:43-16:48
         "#]],
     );
 }
@@ -955,38 +950,34 @@ pub fn use_it(input: u64) {
             ),
         ],
         expect![[r#"
-            prepare macro rename
-            - `make_text` @ src/lib.rs:7:14-7:23
+            `make_text` @ src/lib.rs:7:14-7:23 // prepare macro rename
 
-            rename macro from declaration
-            - target `make_text` @ src/lib.rs:7:14-7:23
-            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
-            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
-            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
-            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
-            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+            // rename macro from declaration
+            target `make_text` @ src/lib.rs:7:14-7:23
+            `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
 
-            rename macro from body call
-            - target `make_text` @ src/lib.rs:14:18-14:27
-            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
-            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
-            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
-            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
-            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+            // rename macro from body call
+            target `make_text` @ src/lib.rs:14:18-14:27
+            `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
 
-            rename macro from qualified body call
-            - target `make_text` @ src/lib.rs:16:29-16:38
-            - `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
-            - `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
-            - `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
-            - `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
-            - `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
+            // rename macro from qualified body call
+            target `make_text` @ src/lib.rs:16:29-16:38
+            `make_text` -> `build_text` @ src/lib.rs:7:14-7:23
+            `make_text` -> `build_text` @ src/lib.rs:11:12-11:21
+            `make_text` -> `build_text` @ src/lib.rs:14:18-14:27
+            `make_text` -> `build_text` @ src/lib.rs:15:19-15:28
+            `make_text` -> `build_text` @ src/lib.rs:16:29-16:38
 
-            reject aliased macro rename
-            - <none>
-
-            reject direct aliased macro rename
-            - <none>
+            <none> // reject aliased macro rename
+            <none> // reject direct aliased macro rename
         "#]],
     );
 }
@@ -1015,11 +1006,8 @@ pub fn use_it(_account: Account) {}
             AnalysisQuery::prepare_rename("reject alias rename", "alias_ref"),
         ],
         expect![[r#"
-            reject module rename
-            - <none>
-
-            reject alias rename
-            - <none>
+            <none> // reject module rename
+            <none> // reject alias rename
         "#]],
     );
 }

@@ -80,26 +80,13 @@ pub fn run() {
             .matching("GenericVisibleType"),
         ],
         expect![[r#"
-            empty import at EOF
-            - keyword crate
-
-            empty qualified import segment at EOF
-            - struct VisibleType
-
-            empty signature type at EOF
-            - struct SignatureVisibleType
-
-            empty qualified signature segment at EOF
-            - struct VisibleType
-
-            empty body expression at EOF
-            - variable local_value
-
-            empty call argument at EOF
-            - variable local_value
-
-            empty generic argument at EOF
-            - struct GenericVisibleType
+            keyword crate // empty import at EOF
+            struct VisibleType // empty qualified import segment at EOF
+            struct SignatureVisibleType // empty signature type at EOF
+            struct VisibleType // empty qualified signature segment at EOF
+            variable local_value // empty body expression at EOF
+            variable local_value // empty call argument at EOF
+            struct GenericVisibleType // empty generic argument at EOF
         "#]],
     );
 }
@@ -158,20 +145,11 @@ pub fn run(value: bool) {
                 .matching("ref"),
         ],
         expect![[r#"
-            type keyword at EOF
-            - keyword dyn
-
-            impl Trait keyword at EOF
-            - keyword impl
-
-            statement keyword at EOF
-            - keyword let
-
-            expression keyword at EOF
-            - keyword match
-
-            pattern keyword at EOF
-            - keyword ref
+            keyword dyn // type keyword at EOF
+            keyword impl // impl Trait keyword at EOF
+            keyword let // statement keyword at EOF
+            keyword match // expression keyword at EOF
+            keyword ref // pattern keyword at EOF
         "#]],
     );
 }
@@ -227,23 +205,12 @@ extern "C" {
             keyword_query("extern block item at EOF", "extern_block_eof"),
         ],
         expect![[r#"
-            source-file item at EOF
-            - keyword fn
-
-            module item at EOF
-            - keyword fn
-
-            inherent impl item at EOF
-            - keyword fn
-
-            trait item at EOF
-            - keyword fn
-
-            trait impl item at EOF
-            - keyword fn
-
-            extern block item at EOF
-            - keyword fn
+            keyword fn // source-file item at EOF
+            keyword fn // module item at EOF
+            keyword fn // inherent impl item at EOF
+            keyword fn // trait item at EOF
+            keyword fn // trait impl item at EOF
+            keyword fn // extern block item at EOF
         "#]],
     );
 }
@@ -286,20 +253,11 @@ const f$after_const_eof$
             keyword_query("after const at EOF", "after_const_eof"),
         ],
         expect![[r#"
-            after pub at EOF
-            - keyword fn
-
-            after unsafe at EOF
-            - keyword fn
-
-            after async at EOF
-            - keyword fn
-
-            after extern at EOF
-            - keyword crate
-
-            after const at EOF
-            - keyword fn
+            keyword fn // after pub at EOF
+            keyword fn // after unsafe at EOF
+            keyword fn // after async at EOF
+            keyword crate // after extern at EOF
+            keyword fn // after const at EOF
         "#]],
     );
 }
@@ -378,26 +336,13 @@ pub fn run(event: crate::Event) {
             ),
         ],
         expect![[r#"
-            qualified name pattern with suffix
-            - variant Start
-
-            tuple pattern with suffix
-            - variant Data
-
-            record pattern with suffix
-            - variant Stop
-
-            unqualified expected pattern without semicolon
-            - variant Start
-
-            unqualified expected pattern with suffix
-            - variant Start
-
-            qualified name pattern at EOF
-            - variant Start
-
-            empty qualified pattern segment at EOF
-            - variant Start
+            variant Start // qualified name pattern with suffix
+            variant Data // tuple pattern with suffix
+            variant Stop // record pattern with suffix
+            variant Start // unqualified expected pattern without semicolon
+            variant Start // unqualified expected pattern with suffix
+            variant Start // qualified name pattern at EOF
+            variant Start // empty qualified pattern segment at EOF
         "#]],
     );
 }

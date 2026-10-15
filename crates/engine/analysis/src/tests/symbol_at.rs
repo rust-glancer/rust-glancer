@@ -31,14 +31,9 @@ pub fn use_it() {
             AnalysisQuery::symbol("symbol at item path", "symbol_item"),
         ],
         expect![[r#"
-            symbol at declaration
-            - local local @ 8:9-8:14
-
-            symbol at local path
-            - expr path local @ 9:24-9:29
-
-            symbol at item path
-            - expr path helper @ 10:23-10:29
+            local local @ 8:9-8:14 // symbol at declaration
+            expr path local @ 9:24-9:29 // symbol at local path
+            expr path helper @ 10:23-10:29 // symbol at item path
         "#]],
     );
 }
@@ -71,17 +66,10 @@ pub fn make(user: Us$symbol_param$er) -> Us$symbol_ret$er {
             AnalysisQuery::symbol("symbol at return type", "symbol_ret"),
         ],
         expect![[r#"
-            symbol at struct declaration
-            - struct User @ 1:12-1:16
-
-            symbol at trait declaration
-            - trait Named @ 3:11-3:16
-
-            symbol at parameter type
-            - type path User @ 7:19-7:23
-
-            symbol at return type
-            - type path User @ 7:28-7:32
+            struct User @ 1:12-1:16 // symbol at struct declaration
+            trait Named @ 3:11-3:16 // symbol at trait declaration
+            type path User @ 7:19-7:23 // symbol at parameter type
+            type path User @ 7:28-7:32 // symbol at return type
         "#]],
     );
 }
@@ -114,8 +102,7 @@ pub fn use_it(input: u64) {
             "symbol_macro",
         )],
         expect![[r#"
-            symbol at body macro call
-            - macro make_text @ 10:17-10:26
+            macro make_text @ 10:17-10:26 // symbol at body macro call
         "#]],
     );
 }
@@ -144,14 +131,9 @@ pub fn make() {
             AnalysisQuery::symbol("symbol at local constructor", "symbol_local_ctor"),
         ],
         expect![[r#"
-            symbol at local struct declaration
-            - struct User @ 4:12-4:16
-
-            symbol at local type path
-            - type path User @ 5:17-5:21
-
-            symbol at local constructor
-            - expr path User @ 5:24-5:28
+            struct User @ 4:12-4:16 // symbol at local struct declaration
+            type path User @ 5:17-5:21 // symbol at local type path
+            expr path User @ 5:24-5:28 // symbol at local constructor
         "#]],
     );
 }
@@ -200,35 +182,16 @@ pub fn use_it() {
             AnalysisQuery::symbol("symbol at local variant path", "symbol_variant_path"),
         ],
         expect![[r#"
-            symbol at local alias declaration
-            - type_alias Alias @ 4:10-4:15
-
-            symbol at local const declaration
-            - const DEFAULT @ 5:11-5:18
-
-            symbol at local static declaration
-            - static CURRENT @ 6:12-6:19
-
-            symbol at local function declaration
-            - fn helper @ 7:8-7:14
-
-            symbol at local variant declaration
-            - variant Start @ 11:9-11:14
-
-            symbol at local alias path
-            - type path Alias @ 15:17-15:22
-
-            symbol at local function path
-            - expr path helper @ 15:25-15:31
-
-            symbol at local const path
-            - expr path DEFAULT @ 16:20-16:27
-
-            symbol at local static path
-            - expr path CURRENT @ 17:20-17:27
-
-            symbol at local variant path
-            - expr path Action::Start @ 18:19-18:32
+            type_alias Alias @ 4:10-4:15 // symbol at local alias declaration
+            const DEFAULT @ 5:11-5:18 // symbol at local const declaration
+            static CURRENT @ 6:12-6:19 // symbol at local static declaration
+            fn helper @ 7:8-7:14 // symbol at local function declaration
+            variant Start @ 11:9-11:14 // symbol at local variant declaration
+            type path Alias @ 15:17-15:22 // symbol at local alias path
+            expr path helper @ 15:25-15:31 // symbol at local function path
+            expr path DEFAULT @ 16:20-16:27 // symbol at local const path
+            expr path CURRENT @ 17:20-17:27 // symbol at local static path
+            expr path Action::Start @ 18:19-18:32 // symbol at local variant path
         "#]],
     );
 }

@@ -32,14 +32,9 @@ pub fn use_it() {
             AnalysisQuery::ty("binding use", "type_use"),
         ],
         expect![[r#"
-            binding declaration
-            - nominal struct analysis_type_at[lib]::crate::User
-
-            binding initializer
-            - nominal struct analysis_type_at[lib]::crate::User
-
-            binding use
-            - nominal struct analysis_type_at[lib]::crate::User
+            nominal struct analysis_type_at[lib]::crate::User // binding declaration
+            nominal struct analysis_type_at[lib]::crate::User // binding initializer
+            nominal struct analysis_type_at[lib]::crate::User // binding use
         "#]],
     );
 }
@@ -93,53 +88,22 @@ pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
             AnalysisQuery::ty("shift expression", "type_shift"),
         ],
         expect![[r#"
-            bool literal
-            - bool
-
-            char literal
-            - char
-
-            byte literal
-            - u8
-
-            default int literal
-            - i32
-
-            suffixed int literal
-            - usize
-
-            default float literal
-            - f64
-
-            suffixed float literal
-            - f32
-
-            string literal
-            - &str
-
-            not expression
-            - bool
-
-            integer not expression
-            - u8
-
-            neg expression
-            - i32
-
-            sum expression
-            - i32
-
-            comparison expression
-            - bool
-
-            logic expression
-            - bool
-
-            bit expression
-            - i32
-
-            shift expression
-            - i32
+            bool // bool literal
+            char // char literal
+            u8 // byte literal
+            i32 // default int literal
+            usize // suffixed int literal
+            f64 // default float literal
+            f32 // suffixed float literal
+            &str // string literal
+            bool // not expression
+            u8 // integer not expression
+            i32 // neg expression
+            i32 // sum expression
+            bool // comparison expression
+            bool // logic expression
+            i32 // bit expression
+            i32 // shift expression
         "#]],
     );
 }
@@ -186,23 +150,12 @@ pub async fn use_it(mut user: User) -> Result<(), Error> {
             ty("type at await wrapper", "type_await"),
         ],
         expect![[r#"
-            type at reference wrapper
-            - &nominal struct analysis_wrapper_type_at[lib]::crate::User
-
-            type at mutable reference wrapper
-            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
-
-            type at mutable reference binding
-            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
-
-            type at try wrapper
-            - nominal struct analysis_wrapper_type_at[lib]::crate::User
-
-            type at borrowed try wrapper
-            - <unknown>
-
-            type at await wrapper
-            - nominal struct analysis_wrapper_type_at[lib]::crate::User
+            &nominal struct analysis_wrapper_type_at[lib]::crate::User // type at reference wrapper
+            &mut nominal struct analysis_wrapper_type_at[lib]::crate::User // type at mutable reference wrapper
+            &mut nominal struct analysis_wrapper_type_at[lib]::crate::User // type at mutable reference binding
+            nominal struct analysis_wrapper_type_at[lib]::crate::User // type at try wrapper
+            <unknown> // type at borrowed try wrapper
+            nominal struct analysis_wrapper_type_at[lib]::crate::User // type at await wrapper
         "#]],
     );
 }
@@ -248,20 +201,11 @@ pub fn use_it(mut user: User, value: u8) {
             AnalysisQuery::ty("explicit non-reference deref", "type_deref_non_ref"),
         ],
         expect![[r#"
-            field through double reference
-            - nominal struct analysis_reference_autoderef[lib]::crate::Profile
-
-            method through double reference
-            - nominal struct analysis_reference_autoderef[lib]::crate::Label
-
-            explicit shared deref
-            - nominal struct analysis_reference_autoderef[lib]::crate::User
-
-            explicit mutable deref
-            - nominal struct analysis_reference_autoderef[lib]::crate::User
-
-            explicit non-reference deref
-            - <unknown>
+            nominal struct analysis_reference_autoderef[lib]::crate::Profile // field through double reference
+            nominal struct analysis_reference_autoderef[lib]::crate::Label // method through double reference
+            nominal struct analysis_reference_autoderef[lib]::crate::User // explicit shared deref
+            nominal struct analysis_reference_autoderef[lib]::crate::User // explicit mutable deref
+            <unknown> // explicit non-reference deref
         "#]],
     );
 }
@@ -387,38 +331,17 @@ pub fn explicit_reference(value: &&Predicate) {
             AnalysisQuery::ty("explicit reference Self", "explicit_reference"),
         ],
         expect![[r#"
-            borrowed match binding
-            - u8
-
-            double reference
-            - u16
-
-            reference-only implementation
-            - u16
-
-            wrapper implementation before Deref
-            - u32
-
-            implementation through Deref
-            - u8
-
-            shared trait receiver before mutable inherent receiver
-            - u32
-
-            mutable inherent receiver matches directly
-            - u64
-
-            value trait receiver before borrowed inherent receiver
-            - u64
-
-            reference taken by value
-            - u64
-
-            inherent precedence at the same receiver
-            - u64
-
-            explicit reference Self
-            - u16
+            u8 // borrowed match binding
+            u16 // double reference
+            u16 // reference-only implementation
+            u32 // wrapper implementation before Deref
+            u8 // implementation through Deref
+            u32 // shared trait receiver before mutable inherent receiver
+            u64 // mutable inherent receiver matches directly
+            u64 // value trait receiver before borrowed inherent receiver
+            u64 // reference taken by value
+            u64 // inherent precedence at the same receiver
+            u16 // explicit reference Self
         "#]],
     );
 }
@@ -475,23 +398,12 @@ pub fn use_it(user: Arc<User>, tuple: Arc<(Id, Label)>, cell: RefCell<User>) {
             AnalysisQuery::ty("method through Ref Deref", "type_ref_deref_method").in_lib("app"),
         ],
         expect![[r#"
-            field through Deref
-            - nominal struct app[lib]::crate::Id
-
-            method through Deref
-            - nominal struct app[lib]::crate::Label
-
-            explicit Deref
-            - nominal struct app[lib]::crate::User
-
-            tuple field through Deref
-            - nominal struct app[lib]::crate::Id
-
-            field through Ref Deref
-            - nominal struct app[lib]::crate::Id
-
-            method through Ref Deref
-            - nominal struct app[lib]::crate::Label
+            nominal struct app[lib]::crate::Id // field through Deref
+            nominal struct app[lib]::crate::Label // method through Deref
+            nominal struct app[lib]::crate::User // explicit Deref
+            nominal struct app[lib]::crate::Id // tuple field through Deref
+            nominal struct app[lib]::crate::Id // field through Ref Deref
+            nominal struct app[lib]::crate::Label // method through Ref Deref
         "#]],
     );
 }
@@ -571,11 +483,8 @@ pub fn use_it(language: LanguageWrapper<User>, name_only: NameOnlyWrapper<User>)
             AnalysisQuery::ty("Deref ignores path and name alone", "type_name_only").in_lib("app"),
         ],
         expect![[r#"
-            Deref follows language identity
-            - nominal struct app[lib]::crate::Id
-
-            Deref ignores path and name alone
-            - <unknown>
+            nominal struct app[lib]::crate::Id // Deref follows language identity
+            <unknown> // Deref ignores path and name alone
         "#]],
     );
 }
@@ -623,8 +532,7 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
 "#,
         &[AnalysisQuery::ty("rejected nested Deref impl", "type_rejected_deref").in_lib("app")],
         expect![[r#"
-            rejected nested Deref impl
-            - <unknown>
+            <unknown> // rejected nested Deref impl
         "#]],
     );
 }
@@ -672,8 +580,7 @@ pub fn use_it(wrapper: Wrapper) {
         )
         .in_lib("app")],
         expect![[r#"
-            unproven defaulted Deref bound
-            - <unknown>
+            <unknown> // unproven defaulted Deref bound
         "#]],
     );
 }
@@ -739,11 +646,8 @@ pub fn use_it(wrapper: Wrapper) {
             AnalysisQuery::ty("ambiguous same-depth Deref method", "type_method").in_lib("app"),
         ],
         expect![[r#"
-            ambiguous same-depth Deref field
-            - <unknown>
-
-            ambiguous same-depth Deref method
-            - <unknown>
+            <unknown> // ambiguous same-depth Deref field
+            <unknown> // ambiguous same-depth Deref method
         "#]],
     );
 }
@@ -805,14 +709,9 @@ pub fn use_it(user_box: &Box<User>, ref_box: &Box<&User>) {
             .in_lib("app"),
         ],
         expect![[r#"
-            field through &Box<User>
-            - nominal struct app[lib]::crate::Id
-
-            method through &*&Box<User>
-            - nominal struct app[lib]::crate::Label
-
-            field through &*&Box<&User>
-            - nominal struct app[lib]::crate::Id
+            nominal struct app[lib]::crate::Id // field through &Box<User>
+            nominal struct app[lib]::crate::Label // method through &*&Box<User>
+            nominal struct app[lib]::crate::Id // field through &*&Box<&User>
         "#]],
     );
 }
@@ -846,14 +745,9 @@ pub fn use_it() {
             AnalysisQuery::ty("type at propagated primitive generic", "type_flag"),
         ],
         expect![[r#"
-            type at primitive binding
-            - u8
-
-            type at primitive reference binding
-            - &str
-
-            type at propagated primitive generic
-            - bool
+            u8 // type at primitive binding
+            &str // type at primitive reference binding
+            bool // type at propagated primitive generic
         "#]],
     );
 }
@@ -918,47 +812,20 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
             ty("slice pattern first", "type_first"),
         ],
         expect![[r#"
-            annotated tuple binding
-            - (u8, bool)
-
-            annotated array binding
-            - [u8; 3]
-
-            annotated slice binding
-            - &[u8]
-
-            tuple expression
-            - (u8, bool)
-
-            array expression
-            - [u8; 2]
-
-            repeat array expression
-            - [u8; 3]
-
-            named repeat array expression
-            - [u8; _]
-
-            spaced repeat array expression
-            - [u8; _]
-
-            self repeat array expression
-            - [u8; _]
-
-            tuple field
-            - u8
-
-            array index
-            - u8
-
-            tuple pattern left
-            - u8
-
-            tuple pattern right
-            - bool
-
-            slice pattern first
-            - u8
+            (u8, bool) // annotated tuple binding
+            [u8; 3] // annotated array binding
+            &[u8] // annotated slice binding
+            (u8, bool) // tuple expression
+            [u8; 2] // array expression
+            [u8; 3] // repeat array expression
+            [u8; _] // named repeat array expression
+            [u8; _] // spaced repeat array expression
+            [u8; _] // self repeat array expression
+            u8 // tuple field
+            u8 // array index
+            u8 // tuple pattern left
+            bool // tuple pattern right
+            u8 // slice pattern first
         "#]],
     );
 }
@@ -987,14 +854,9 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
             ty("nested slice reference index", "type_nested_item"),
         ],
         expect![[r#"
-            slice reference index
-            - u8
-
-            array reference index
-            - bool
-
-            nested slice reference index
-            - u16
+            u8 // slice reference index
+            bool // array reference index
+            u16 // nested slice reference index
         "#]],
     );
 }
@@ -1053,20 +915,11 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
             AnalysisQuery::ty("array ref len method return", "type_array_ref_len").in_lib("app"),
         ],
         expect![[r#"
-            slice generic method return
-            - &nominal struct app[lib]::crate::Package
-
-            slice len method return
-            - usize
-
-            array generic method return
-            - &nominal struct app[lib]::crate::Package
-
-            array len method return
-            - usize
-
-            array ref len method return
-            - usize
+            &nominal struct app[lib]::crate::Package // slice generic method return
+            usize // slice len method return
+            &nominal struct app[lib]::crate::Package // array generic method return
+            usize // array len method return
+            usize // array ref len method return
         "#]],
     );
 }
@@ -1161,17 +1014,10 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
             AnalysisQuery::ty("reference trait method return", "type_reference").in_lib("app"),
         ],
         expect![[r#"
-            primitive trait method return
-            - nominal struct runtime[lib]::crate::Label
-
-            array trait associated return
-            - &nominal struct app[lib]::crate::User
-
-            blanket trait method return
-            - nominal struct runtime[lib]::crate::Label
-
-            reference trait method return
-            - &nominal struct app[lib]::crate::User
+            nominal struct runtime[lib]::crate::Label // primitive trait method return
+            &nominal struct app[lib]::crate::User // array trait associated return
+            nominal struct runtime[lib]::crate::Label // blanket trait method return
+            &nominal struct app[lib]::crate::User // reference trait method return
         "#]],
     );
 }
@@ -1200,8 +1046,7 @@ pub fn use_it(array: [Package; 3]) {
 "#,
         &[AnalysisQuery::ty("array into_iter return", "type_iterator").in_lib("app")],
         expect![[r#"
-            array into_iter return
-            - nominal struct core[lib]::crate::array::IntoIter<nominal struct app[lib]::crate::Package, 3>
+            nominal struct core[lib]::crate::array::IntoIter<nominal struct app[lib]::crate::Package, 3> // array into_iter return
         "#]],
     );
 }
@@ -1229,11 +1074,8 @@ pub fn use_it() {
             AnalysisQuery::ty("optional environment variable", "type_option").in_lib("app"),
         ],
         expect![[r#"
-            format arguments
-            - nominal struct core[lib]::crate::fmt::Arguments
-
-            optional environment variable
-            - nominal enum core[lib]::crate::option::Option<&str>
+            nominal struct core[lib]::crate::fmt::Arguments // format arguments
+            nominal enum core[lib]::crate::option::Option<&str> // optional environment variable
         "#]],
     );
 }
@@ -1291,11 +1133,8 @@ pub fn included(&self) -> Included {
             AnalysisQuery::ty("included associated method return", "type_included").in_lib("app"),
         ],
         expect![[r#"
-            cfg-selected associated method return
-            - nominal struct app[lib]::crate::Selected
-
-            included associated method return
-            - nominal struct app[lib]::crate::Included
+            nominal struct app[lib]::crate::Selected // cfg-selected associated method return
+            nominal struct app[lib]::crate::Included // included associated method return
         "#]],
     );
 }
@@ -1426,32 +1265,15 @@ pub fn use_it(
                 .in_lib("app"),
         ],
         expect![[r#"
-            for item from borrowed slice
-            - &nominal struct app[lib]::crate::Package
-
-            for item from array
-            - nominal struct app[lib]::crate::Package
-
-            for tuple item first field
-            - nominal struct app[lib]::crate::Package
-
-            for tuple item second field
-            - nominal struct app[lib]::crate::UserId
-
-            for item from nominal impl
-            - nominal struct app[lib]::crate::UserId
-
-            for item from iterator blanket impl
-            - nominal struct app[lib]::crate::Event
-
-            opaque iterator return
-            - impl trait core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId>
-
-            for item from concrete iterator return
-            - nominal struct app[lib]::crate::UserId
-
-            for item from opaque iterator return
-            - nominal struct app[lib]::crate::UserId
+            &nominal struct app[lib]::crate::Package // for item from borrowed slice
+            nominal struct app[lib]::crate::Package // for item from array
+            nominal struct app[lib]::crate::Package // for tuple item first field
+            nominal struct app[lib]::crate::UserId // for tuple item second field
+            nominal struct app[lib]::crate::UserId // for item from nominal impl
+            nominal struct app[lib]::crate::Event // for item from iterator blanket impl
+            impl trait core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId> // opaque iterator return
+            nominal struct app[lib]::crate::UserId // for item from concrete iterator return
+            nominal struct app[lib]::crate::UserId // for item from opaque iterator return
         "#]],
     );
 }
@@ -1539,11 +1361,8 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
             .in_lib("app"),
         ],
         expect![[r#"
-            for item from method returned slice
-            - &nominal struct storage[lib]::crate::ImportData
-
-            for item from chained method returned slice
-            - &nominal struct storage[lib]::crate::ImportData
+            &nominal struct storage[lib]::crate::ImportData // for item from method returned slice
+            &nominal struct storage[lib]::crate::ImportData // for item from chained method returned slice
         "#]],
     );
 }
@@ -1588,11 +1407,8 @@ pub fn use_it(fields: &[Field]) {
             AnalysisQuery::ty("collected mapped values", "type_values").in_lib("app"),
         ],
         expect![[r#"
-            map closure field
-            - &nominal struct app[lib]::crate::Field
-
-            collected mapped values
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered, nominal struct alloc[lib]::crate::vec::Global>
+            &nominal struct app[lib]::crate::Field // map closure field
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::Rendered, nominal struct alloc[lib]::crate::vec::Global> // collected mapped values
         "#]],
     );
 }
@@ -1650,15 +1466,12 @@ pub fn use_it(def_map: &DefMap) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            slice iter method return
-            - nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
+            nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> // slice iter method return
+            &nominal struct storage[lib]::crate::ImportData // for item from slice iter method
 
-            for item from slice iter method
-            - &nominal struct storage[lib]::crate::ImportData
-
-            hover for item from slice iter method
-            - range: 6:9-6:15
-            - block:
+            // hover for item from slice iter method
+            range: 6:9-6:15
+            block:
               kind: variable
               signature:
                 let import: &ImportData
@@ -1786,35 +1599,32 @@ pub fn use_it(state: &CrateState) {
             .in_lib("app"),
         ],
         expect![[r#"
-            hover item from project-style slice iter
-            - range: 4:9-4:15
-            - block:
+            // hover item from project-style slice iter
+            range: 4:9-4:15
+            block:
               kind: variable
               signature:
                 let import: &ImportData
 
-            use item from project-style slice iter
-            - &nominal struct storage[lib]::crate::ImportData
+            &nominal struct storage[lib]::crate::ImportData // use item from project-style slice iter
 
-            hover import id from project-style opaque iterator
-            - range: 8:10-8:19
-            - block:
+            // hover import id from project-style opaque iterator
+            range: 8:10-8:19
+            block:
               kind: variable
               signature:
                 let import_id: ImportId
 
-            use import id from project-style opaque iterator
-            - nominal struct storage[lib]::crate::ImportId
+            nominal struct storage[lib]::crate::ImportId // use import id from project-style opaque iterator
 
-            hover item from project-style opaque iterator
-            - range: 8:21-8:27
-            - block:
+            // hover item from project-style opaque iterator
+            range: 8:21-8:27
+            block:
               kind: variable
               signature:
                 let import: &ImportData
 
-            use item from project-style opaque iterator
-            - &nominal struct storage[lib]::crate::ImportData
+            &nominal struct storage[lib]::crate::ImportData // use item from project-style opaque iterator
         "#]],
     );
 }
@@ -1851,14 +1661,9 @@ pub fn local_shadow() {
             AnalysisQuery::ty("type at shadowed local binding", "type_local_binding"),
         ],
         expect![[r#"
-            type at shadowed signature path
-            - nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize
-
-            type at shadowed module binding
-            - nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize
-
-            type at shadowed local binding
-            - nominal struct fn analysis_primitive_shadow_type_at[lib]::crate::local_shadow::u8
+            nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize // type at shadowed signature path
+            nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize // type at shadowed module binding
+            nominal struct fn analysis_primitive_shadow_type_at[lib]::crate::local_shadow::u8 // type at shadowed local binding
         "#]],
     );
 }
@@ -1896,11 +1701,8 @@ pub fn use_it() {
             AnalysisQuery::ty("type at enum variant call", "type_variant_call"),
         ],
         expect![[r#"
-            type at associated function call
-            - nominal struct analysis_associated_path_type[lib]::crate::Widget
-
-            type at enum variant call
-            - nominal enum analysis_associated_path_type[lib]::crate::Action
+            nominal struct analysis_associated_path_type[lib]::crate::Widget // type at associated function call
+            nominal enum analysis_associated_path_type[lib]::crate::Action // type at enum variant call
         "#]],
     );
 }
@@ -1949,8 +1751,7 @@ fn main() {
 "#,
         &[AnalysisQuery::ty("type at bin dependency binding", "type_bin_dep").in_bin("app")],
         expect![[r#"
-            type at bin dependency binding
-            - nominal struct dep[lib]::crate::Thing
+            nominal struct dep[lib]::crate::Thing // type at bin dependency binding
         "#]],
     );
 }
@@ -1978,8 +1779,7 @@ pub fn use_it(user: User) {
 "#,
         &[AnalysisQuery::ty("type at field", "type_field")],
         expect![[r#"
-            type at field
-            - nominal struct analysis_field_type[lib]::crate::Profile
+            nominal struct analysis_field_type[lib]::crate::Profile // type at field
         "#]],
     );
 }
@@ -2038,20 +1838,11 @@ pub fn use_it() {
             AnalysisQuery::ty("generic method return", "type_method"),
         ],
         expect![[r#"
-            generic result field
-            - nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error>
-
-            generic vec field
-            - nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>
-
-            generic option field
-            - nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>
-
-            generic user field
-            - nominal struct analysis_generic_type_at[lib]::crate::User
-
-            generic method return
-            - nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error>
+            nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error> // generic result field
+            nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>> // generic vec field
+            nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User> // generic option field
+            nominal struct analysis_generic_type_at[lib]::crate::User // generic user field
+            nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error> // generic method return
         "#]],
     );
 }
@@ -2112,20 +1903,11 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("explicit body-local call return", "type_local"),
         ],
         expect![[r#"
-            explicit free function return
-            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
-
-            explicit associated function return
-            - nominal struct analysis_explicit_generic_call_args[lib]::crate::Project
-
-            explicit method return
-            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
-
-            explicit multi-param method return
-            - (nominal struct analysis_explicit_generic_call_args[lib]::crate::User, nominal struct analysis_explicit_generic_call_args[lib]::crate::Project)
-
-            explicit body-local call return
-            - nominal struct fn analysis_explicit_generic_call_args[lib]::crate::use_it::Local
+            nominal struct analysis_explicit_generic_call_args[lib]::crate::User // explicit free function return
+            nominal struct analysis_explicit_generic_call_args[lib]::crate::Project // explicit associated function return
+            nominal struct analysis_explicit_generic_call_args[lib]::crate::User // explicit method return
+            (nominal struct analysis_explicit_generic_call_args[lib]::crate::User, nominal struct analysis_explicit_generic_call_args[lib]::crate::Project) // explicit multi-param method return
+            nominal struct fn analysis_explicit_generic_call_args[lib]::crate::use_it::Local // explicit body-local call return
         "#]],
     );
 }
@@ -2198,23 +1980,12 @@ pub fn use_it(builder: Builder, user: User, project: Project) {
             AnalysisQuery::ty("conflicting inferred params", "type_conflict"),
         ],
         expect![[r#"
-            inferred free function return
-            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
-
-            inferred multi-param return
-            - (nominal struct analysis_generic_call_arg_inference[lib]::crate::User, nominal struct analysis_generic_call_arg_inference[lib]::crate::Project)
-
-            inferred associated function return
-            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Wrapper<nominal struct analysis_generic_call_arg_inference[lib]::crate::User>
-
-            inferred method return
-            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Project
-
-            inferred reference param return
-            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
-
-            conflicting inferred params
-            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
+            nominal struct analysis_generic_call_arg_inference[lib]::crate::User // inferred free function return
+            (nominal struct analysis_generic_call_arg_inference[lib]::crate::User, nominal struct analysis_generic_call_arg_inference[lib]::crate::Project) // inferred multi-param return
+            nominal struct analysis_generic_call_arg_inference[lib]::crate::Wrapper<nominal struct analysis_generic_call_arg_inference[lib]::crate::User> // inferred associated function return
+            nominal struct analysis_generic_call_arg_inference[lib]::crate::Project // inferred method return
+            nominal struct analysis_generic_call_arg_inference[lib]::crate::User // inferred reference param return
+            nominal struct analysis_generic_call_arg_inference[lib]::crate::User // conflicting inferred params
         "#]],
     );
 }
@@ -2261,11 +2032,8 @@ pub fn use_it(container: Container<User>, project: Project) {
             AnalysisQuery::ty("shadowed method generic return", "type_replaced"),
         ],
         expect![[r#"
-            impl generic method return
-            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::User
-
-            shadowed method generic return
-            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::Project
+            nominal struct analysis_generic_call_arg_shadowing[lib]::crate::User // impl generic method return
+            nominal struct analysis_generic_call_arg_shadowing[lib]::crate::Project // shadowed method generic return
         "#]],
     );
 }
@@ -2333,17 +2101,10 @@ pub fn use_it<'db>(
             AnalysisQuery::ty("method on Formatter placeholder lifetime", "type_debug"),
         ],
         expect![[r#"
-            self method in lifetime impl
-            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
-
-            self sibling method in lifetime impl
-            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
-
-            external method on lifetime receiver
-            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
-
-            method on Formatter placeholder lifetime
-            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::DebugStruct
+            nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module // self method in lifetime impl
+            nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module // self sibling method in lifetime impl
+            nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module // external method on lifetime receiver
+            nominal struct analysis_lifetime_receiver_method_type[lib]::crate::DebugStruct // method on Formatter placeholder lifetime
         "#]],
     );
 }
@@ -2399,14 +2160,9 @@ pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
             ),
         ],
         expect![[r#"
-            concrete impl method on matching receiver
-            - nominal struct analysis_concrete_impl_args[lib]::crate::User
-
-            generic impl method on concrete receiver
-            - nominal struct analysis_concrete_impl_args[lib]::crate::Error
-
-            concrete impl method on wrong receiver
-            - <unknown>
+            nominal struct analysis_concrete_impl_args[lib]::crate::User // concrete impl method on matching receiver
+            nominal struct analysis_concrete_impl_args[lib]::crate::Error // generic impl method on concrete receiver
+            <unknown> // concrete impl method on wrong receiver
         "#]],
     );
 }
@@ -2459,11 +2215,8 @@ pub fn use_local() {
             AnalysisQuery::ty("local const impl arg mismatch", "type_local"),
         ],
         expect![[r#"
-            const impl arg mismatch
-            - <unknown>
-
-            local const impl arg mismatch
-            - <unknown>
+            <unknown> // const impl arg mismatch
+            <unknown> // local const impl arg mismatch
         "#]],
     );
 }
@@ -2523,11 +2276,8 @@ pub fn use_it(generic: Wrapper<Error>, concrete: Wrapper<Error>) {
             AnalysisQuery::ty("concrete trait impl mismatch", "type_wrong"),
         ],
         expect![[r#"
-            maybe trait method return
-            - nominal struct analysis_trait_applicability_type_at[lib]::crate::User
-
-            concrete trait impl mismatch
-            - <unknown>
+            nominal struct analysis_trait_applicability_type_at[lib]::crate::User // maybe trait method return
+            <unknown> // concrete trait impl mismatch
         "#]],
     );
 }
@@ -2570,8 +2320,7 @@ pub fn use_it(user: User) {
             "type_direct_trait",
         )],
         expect![[r#"
-            trait method return through binding
-            - nominal struct analysis_direct_trait_type_at[lib]::crate::UserId
+            nominal struct analysis_direct_trait_type_at[lib]::crate::UserId // trait method return through binding
         "#]],
     );
 }
@@ -2660,32 +2409,15 @@ pub fn inspect(value: Value) {
             AnalysisQuery::ty("type shadow keeps outer trait", "type_shadowed_name").in_lib("app"),
         ],
         expect![[r#"
-            method without trait import
-            - <unknown>
-
-            const without trait import
-            - <unknown>
-
-            function without trait import
-            - <unknown>
-
-            explicit qualified trait const
-            - nominal struct runtime[lib]::crate::Output
-
-            explicit qualified trait function
-            - nominal struct runtime[lib]::crate::Output
-
-            method with block trait import
-            - nominal struct runtime[lib]::crate::Output
-
-            const with block trait import
-            - nominal struct runtime[lib]::crate::Output
-
-            function with block trait import
-            - nominal struct runtime[lib]::crate::Output
-
-            type shadow keeps outer trait
-            - nominal struct runtime[lib]::crate::Output
+            <unknown> // method without trait import
+            <unknown> // const without trait import
+            <unknown> // function without trait import
+            nominal struct runtime[lib]::crate::Output // explicit qualified trait const
+            nominal struct runtime[lib]::crate::Output // explicit qualified trait function
+            nominal struct runtime[lib]::crate::Output // method with block trait import
+            nominal struct runtime[lib]::crate::Output // const with block trait import
+            nominal struct runtime[lib]::crate::Output // function with block trait import
+            nominal struct runtime[lib]::crate::Output // type shadow keeps outer trait
         "#]],
     );
 }
@@ -2714,8 +2446,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::ty("type at body-local field", "type_field")],
         expect![[r#"
-            type at body-local field
-            - nominal struct analysis_body_local_field_type[lib]::crate::GlobalId
+            nominal struct analysis_body_local_field_type[lib]::crate::GlobalId // type at body-local field
         "#]],
     );
 }
@@ -2744,8 +2475,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::ty("body-local generic field", "type_field")],
         expect![[r#"
-            body-local generic field
-            - nominal struct analysis_body_local_generic_field_type[lib]::crate::User
+            nominal struct analysis_body_local_generic_field_type[lib]::crate::User // body-local generic field
         "#]],
     );
 }
@@ -2786,11 +2516,8 @@ pub fn use_it() {
             AnalysisQuery::ty("type at body-local Self method", "type_again"),
         ],
         expect![[r#"
-            type at body-local method
-            - nominal struct analysis_body_local_method_type[lib]::crate::GlobalId
-
-            type at body-local Self method
-            - nominal struct fn analysis_body_local_method_type[lib]::crate::use_it::User
+            nominal struct analysis_body_local_method_type[lib]::crate::GlobalId // type at body-local method
+            nominal struct fn analysis_body_local_method_type[lib]::crate::use_it::User // type at body-local Self method
         "#]],
     );
 }
@@ -2824,8 +2551,7 @@ pub fn use_it() {
             "type_value",
         )],
         expect![[r#"
-            type at body-local imported value
-            - nominal struct fn analysis_body_local_import_type[lib]::crate::use_it::User
+            nominal struct fn analysis_body_local_import_type[lib]::crate::use_it::User // type at body-local imported value
         "#]],
     );
 }
@@ -2863,8 +2589,7 @@ pub fn use_it() {
             "type_id",
         )],
         expect![[r#"
-            type at nested body-local method
-            - nominal struct analysis_nested_body_local_method_type[lib]::crate::GlobalId
+            nominal struct analysis_nested_body_local_method_type[lib]::crate::GlobalId // type at nested body-local method
         "#]],
     );
 }
@@ -2901,8 +2626,7 @@ pub fn use_it() {
             "type_get",
         )],
         expect![[r#"
-            type at body-local generic impl method
-            - nominal struct fn analysis_body_local_impl_generic_method_type[lib]::crate::use_it::User
+            nominal struct fn analysis_body_local_impl_generic_method_type[lib]::crate::use_it::User // type at body-local generic impl method
         "#]],
     );
 }
@@ -2954,14 +2678,9 @@ pub fn match_it(maybe: Option<User>) {
             AnalysisQuery::ty("type from tuple variant match pattern", "type_match"),
         ],
         expect![[r#"
-            type from tuple variant let pattern
-            - nominal struct analysis_enum_pattern_type_at[lib]::crate::User
-
-            type from record variant let pattern
-            - nominal struct analysis_enum_pattern_type_at[lib]::crate::Profile
-
-            type from tuple variant match pattern
-            - nominal struct analysis_enum_pattern_type_at[lib]::crate::User
+            nominal struct analysis_enum_pattern_type_at[lib]::crate::User // type from tuple variant let pattern
+            nominal struct analysis_enum_pattern_type_at[lib]::crate::Profile // type from record variant let pattern
+            nominal struct analysis_enum_pattern_type_at[lib]::crate::User // type from tuple variant match pattern
         "#]],
     );
 }
@@ -2988,8 +2707,7 @@ pub fn use_it(pair: Pair) {
 "#,
         &[AnalysisQuery::ty("type at tuple field", "type_tuple_field")],
         expect![[r#"
-            type at tuple field
-            - nominal struct analysis_tuple_field_type[lib]::crate::Right
+            nominal struct analysis_tuple_field_type[lib]::crate::Right // type at tuple field
         "#]],
     );
 }
@@ -3022,17 +2740,10 @@ pub fn make(profile: Pro$type_param$file) -> Pro$type_ret$file {
             AnalysisQuery::ty("type at return type", "type_ret"),
         ],
         expect![[r#"
-            type at field declaration
-            - nominal struct analysis_signature_type_at[lib]::crate::Profile
-
-            type at field type path
-            - nominal struct analysis_signature_type_at[lib]::crate::Profile
-
-            type at parameter type
-            - nominal struct analysis_signature_type_at[lib]::crate::Profile
-
-            type at return type
-            - nominal struct analysis_signature_type_at[lib]::crate::Profile
+            nominal struct analysis_signature_type_at[lib]::crate::Profile // type at field declaration
+            nominal struct analysis_signature_type_at[lib]::crate::Profile // type at field type path
+            nominal struct analysis_signature_type_at[lib]::crate::Profile // type at parameter type
+            nominal struct analysis_signature_type_at[lib]::crate::Profile // type at return type
         "#]],
     );
 }
@@ -3061,8 +2772,7 @@ impl User {
             "type_impl_self_signature",
         )],
         expect![[r#"
-            type at impl signature Self
-            - nominal struct analysis_impl_self_signature_type[lib]::crate::User
+            nominal struct analysis_impl_self_signature_type[lib]::crate::User // type at impl signature Self
         "#]],
     );
 }
@@ -3100,14 +2810,9 @@ impl User {
             AnalysisQuery::ty("type at mutable self", "type_unique_self"),
         ],
         expect![[r#"
-            type at owned self
-            - nominal struct analysis_self_receiver_type[lib]::crate::User
-
-            type at shared self
-            - &nominal struct analysis_self_receiver_type[lib]::crate::User
-
-            type at mutable self
-            - &mut nominal struct analysis_self_receiver_type[lib]::crate::User
+            nominal struct analysis_self_receiver_type[lib]::crate::User // type at owned self
+            &nominal struct analysis_self_receiver_type[lib]::crate::User // type at shared self
+            &mut nominal struct analysis_self_receiver_type[lib]::crate::User // type at mutable self
         "#]],
     );
 }
@@ -3142,17 +2847,10 @@ pub fn outside() {
             AnalysisQuery::ty("type at module binding", "type_module_binding"),
         ],
         expect![[r#"
-            type at local binding
-            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
-
-            type at local type path
-            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
-
-            type at local expr
-            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
-
-            type at module binding
-            - nominal struct analysis_local_struct_type[lib]::crate::User
+            nominal struct fn analysis_local_struct_type[lib]::crate::make::User // type at local binding
+            nominal struct fn analysis_local_struct_type[lib]::crate::make::User // type at local type path
+            nominal struct fn analysis_local_struct_type[lib]::crate::make::User // type at local expr
+            nominal struct analysis_local_struct_type[lib]::crate::User // type at module binding
         "#]],
     );
 }
@@ -3184,8 +2882,7 @@ pub fn make() {
             "type_local_variant",
         )],
         expect![[r#"
-            type at local enum variant
-            - nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action
+            nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action // type at local enum variant
         "#]],
     );
 }
@@ -3216,11 +2913,8 @@ pub fn make() {
             AnalysisQuery::ty("type at record literal", "type_record_literal"),
         ],
         expect![[r#"
-            type at record binding
-            - nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
-
-            type at record literal
-            - nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
+            nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User // type at record binding
+            nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User // type at record literal
         "#]],
     );
 }
@@ -3263,11 +2957,8 @@ pub fn make() {
             AnalysisQuery::ty("type at inner const result", "type_inner_const_binding"),
         ],
         expect![[r#"
-            type at inner function result
-            - nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner
-
-            type at inner const result
-            - nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner
+            nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner // type at inner function result
+            nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner // type at inner const result
         "#]],
     );
 }
@@ -3318,17 +3009,10 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            type at associated const result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
-
-            type at associated type result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
-
-            type at nested associated const result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
-
-            type at nested associated type result
-            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+            nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId // type at associated const result
+            nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId // type at associated type result
+            nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId // type at nested associated const result
+            nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId // type at nested associated type result
         "#]],
     );
 }
@@ -3364,11 +3048,8 @@ pub fn make() {
             AnalysisQuery::ty("type at record payload", "type_record_payload"),
         ],
         expect![[r#"
-            type at tuple payload
-            - nominal struct analysis_body_local_enum_pattern_type[lib]::crate::User
-
-            type at record payload
-            - nominal struct analysis_body_local_enum_pattern_type[lib]::crate::GlobalId
+            nominal struct analysis_body_local_enum_pattern_type[lib]::crate::User // type at tuple payload
+            nominal struct analysis_body_local_enum_pattern_type[lib]::crate::GlobalId // type at record payload
         "#]],
     );
 }
@@ -3405,17 +3086,10 @@ pub fn make() {
             AnalysisQuery::ty("type at tuple annotation right", "type_tuple_right"),
         ],
         expect![[r#"
-            type at body Self annotation
-            - nominal struct analysis_body_annotation_type[lib]::crate::User
-
-            type at wildcard annotation
-            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
-
-            type at tuple annotation left
-            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
-
-            type at tuple annotation right
-            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+            nominal struct analysis_body_annotation_type[lib]::crate::User // type at body Self annotation
+            nominal struct fn analysis_body_annotation_type[lib]::crate::make::User // type at wildcard annotation
+            nominal struct fn analysis_body_annotation_type[lib]::crate::make::User // type at tuple annotation left
+            nominal struct fn analysis_body_annotation_type[lib]::crate::make::User // type at tuple annotation right
         "#]],
     );
 }

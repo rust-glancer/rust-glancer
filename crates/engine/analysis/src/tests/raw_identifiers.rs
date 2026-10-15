@@ -59,9 +59,9 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
             AnalysisQuery::complete("complete raw method", "method_completion"),
         ],
         expect![[r#"
-            hover raw type
-            - range: 26:23-26:29
-            - block:
+            // hover raw type
+            range: 26:23-26:29
+            block:
               kind: struct
               path: analysis_raw_identifiers::r#type
               signature:
@@ -69,47 +69,46 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
                     pub r#struct: r#match,
                 }
 
-            goto raw type
-            - struct r#type @ 1:12-1:18
+            struct r#type @ 1:12-1:18 // goto raw type
 
-            hover raw field
-            - range: 27:24-27:32
-            - block:
+            // hover raw field
+            range: 27:24-27:32
+            block:
               kind: field
               path: analysis_raw_identifiers::r#type
               signature:
                 pub r#struct: r#match
 
-            hover raw method
-            - range: 28:25-28:29
-            - block:
+            // hover raw method
+            range: 28:25-28:29
+            block:
               kind: method
               path: analysis_raw_identifiers::r#type::r#fn
               signature:
                 pub fn r#fn(&self) -> &r#match
 
-            hover macro-generated raw type
-            - range: 26:66-26:73
-            - block:
+            // hover macro-generated raw type
+            range: 26:66-26:73
+            block:
               kind: struct
               path: analysis_raw_identifiers::r#async
               signature:
                 pub struct r#async
 
-            complete raw type
-            - struct Imported
-            - struct r#async
-            - struct r#gen
-            - module r#mod
-            - struct r#type
+            // complete raw type
+            struct Imported
+            struct r#async
+            struct r#gen
+            module r#mod
+            struct r#type
 
-            complete raw field
-            - inherent_method r#fn
-            - field r#struct
+            // complete raw field
+            inherent_method r#fn
+            field r#struct
 
-            complete raw method
-            - inherent_method r#fn
-            - field r#struct
+            // complete raw method
+            inherent_method r#fn
+            field r#struct
         "#]],
     );
 }
@@ -136,16 +135,15 @@ fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
             AnalysisQuery::complete("complete 2021 identifier", "gen_completion"),
         ],
         expect![[r#"
-            hover 2021 identifier
-            - range: 3:23-3:26
-            - block:
+            // hover 2021 identifier
+            range: 3:23-3:26
+            block:
               kind: struct
               path: analysis_2021_identifiers::gen
               signature:
                 pub struct gen
 
-            complete 2021 identifier
-            - struct gen
+            struct gen // complete 2021 identifier
         "#]],
     );
 }
@@ -185,8 +183,7 @@ fn prepare_rename_preserves_the_selected_occurrence_edition() {
                 .in_lib("app"),
         ],
         expect![[r#"
-            prepare cross-edition raw use
-            - `r#gen` @ app/src/lib.rs:1:24-1:29
+            `r#gen` @ app/src/lib.rs:1:24-1:29 // prepare cross-edition raw use
         "#]],
     );
 }
@@ -217,9 +214,9 @@ fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
             "raw_lifetime_hover",
         )],
         expect![[r#"
-            hover signature with raw lifetime
-            - range: 9:23-9:31
-            - block:
+            // hover signature with raw lifetime
+            range: 9:23-9:31
+            block:
               kind: struct
               path: analysis_raw_lifetimes::Borrowed
               signature:
@@ -252,14 +249,13 @@ fn rename_treats_raw_syntax_as_presentation_of_one_semantic_name() {
             AnalysisQuery::rename("rename raw identifier to keyword", "raw_decl", "match"),
         ],
         expect![[r#"
-            prepare raw rename
-            - `r#type` @ src/lib.rs:3:24-3:30
+            `r#type` @ src/lib.rs:3:24-3:30 // prepare raw rename
 
-            rename raw identifier to keyword
-            - target `r#type` @ src/lib.rs:1:12-1:18
-            - `r#type` -> `r#match` @ src/lib.rs:1:12-1:18
-            - `r#type` -> `r#match` @ src/lib.rs:3:24-3:30
-            - `r#type` -> `r#match` @ src/lib.rs:3:35-3:41
+            // rename raw identifier to keyword
+            target `r#type` @ src/lib.rs:1:12-1:18
+            `r#type` -> `r#match` @ src/lib.rs:1:12-1:18
+            `r#type` -> `r#match` @ src/lib.rs:3:24-3:30
+            `r#type` -> `r#match` @ src/lib.rs:3:35-3:41
         "#]],
     );
 }

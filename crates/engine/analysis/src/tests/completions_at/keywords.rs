@@ -45,71 +45,71 @@ extern "C" {
             AnalysisQuery::complete_keywords_with_source("extern block items", "extern_block"),
         ],
         expect![[r#"
-            source-file items
-            - keyword async
-            - keyword const
-            - keyword enum
-            - keyword extern
-            - keyword fn
-            - keyword impl
-            - keyword impl for
-            - keyword mod
-            - keyword pub
-            - keyword static
-            - keyword struct
-            - keyword trait
-            - keyword type
-            - keyword union
-            - keyword unsafe
-            - keyword use
+            // source-file items
+            keyword async
+            keyword const
+            keyword enum
+            keyword extern
+            keyword fn
+            keyword impl
+            keyword impl for
+            keyword mod
+            keyword pub
+            keyword static
+            keyword struct
+            keyword trait
+            keyword type
+            keyword union
+            keyword unsafe
+            keyword use
 
-            module items
-            - keyword async
-            - keyword const
-            - keyword enum
-            - keyword extern
-            - keyword fn
-            - keyword impl
-            - keyword impl for
-            - keyword mod
-            - keyword pub
-            - keyword static
-            - keyword struct
-            - keyword trait
-            - keyword type
-            - keyword union
-            - keyword unsafe
-            - keyword use
+            // module items
+            keyword async
+            keyword const
+            keyword enum
+            keyword extern
+            keyword fn
+            keyword impl
+            keyword impl for
+            keyword mod
+            keyword pub
+            keyword static
+            keyword struct
+            keyword trait
+            keyword type
+            keyword union
+            keyword unsafe
+            keyword use
 
-            inherent impl items
-            - keyword async
-            - keyword const
-            - keyword extern
-            - keyword fn
-            - keyword pub
-            - keyword unsafe
+            // inherent impl items
+            keyword async
+            keyword const
+            keyword extern
+            keyword fn
+            keyword pub
+            keyword unsafe
 
-            trait items
-            - keyword async
-            - keyword const
-            - keyword extern
-            - keyword fn
-            - keyword type
-            - keyword unsafe
+            // trait items
+            keyword async
+            keyword const
+            keyword extern
+            keyword fn
+            keyword type
+            keyword unsafe
 
-            trait impl items
-            - keyword async
-            - keyword const
-            - keyword extern
-            - keyword fn
-            - keyword type
-            - keyword unsafe
+            // trait impl items
+            keyword async
+            keyword const
+            keyword extern
+            keyword fn
+            keyword type
+            keyword unsafe
 
-            extern block items
-            - keyword fn
-            - keyword pub
-            - keyword static
-            - keyword unsafe
+            // extern block items
+            keyword fn
+            keyword pub
+            keyword static
+            keyword unsafe
         "#]],
     );
 }
@@ -183,49 +183,28 @@ mod restricted_visibility_context {
             ),
         ],
         expect![[r#"
-            dyn type
-            - keyword dyn
+            // dyn type
+            keyword dyn
               detail: keyword dyn
               sort: ~keyword:00:dyn
               replace: 71..73
               snippet: dyn ${1:Trait}
 
-            fn type
-            - keyword fn
-            - keyword for
+            // fn type
+            keyword fn
+            keyword for
 
-            for type
-            - keyword for
-
-            impl Trait excluded from fields
-            - <none>
-
-            impl Trait function parameter
-            - keyword impl
-
-            impl Trait function return
-            - keyword impl
-
-            after visibility
-            - keyword fn
-
-            after unsafe
-            - keyword fn
-
-            after async
-            - keyword fn
-
-            after extern
-            - keyword crate
-
-            after const
-            - keyword fn
-
-            extern crate name has no item fallback
-            - <none>
-
-            restricted visibility has no item fallback
-            - <none>
+            keyword for // for type
+            <none> // impl Trait excluded from fields
+            keyword impl // impl Trait function parameter
+            keyword impl // impl Trait function return
+            keyword fn // after visibility
+            keyword fn // after unsafe
+            keyword fn // after async
+            keyword crate // after extern
+            keyword fn // after const
+            <none> // extern crate name has no item fallback
+            <none> // restricted visibility has no item fallback
         "#]],
     );
 }
@@ -250,9 +229,9 @@ pub fn body() {
             "0",
         )],
         expect![[r#"
-            path root keyword completions
-            - fn body
-            - keyword crate
+            // path root keyword completions
+            fn body
+            keyword crate
         "#]],
     );
 }

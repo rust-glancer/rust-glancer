@@ -40,17 +40,10 @@ pub fn use_it(account: Account) {
             AnalysisQuery::goto_type("goto type from call expression", "goto_call_type"),
         ],
         expect![[r#"
-            goto type from binding declaration
-            - struct User @ 1:12-1:16
-
-            goto type from local usage
-            - struct User @ 1:12-1:16
-
-            goto type from field access
-            - struct Profile @ 2:12-2:19
-
-            goto type from call expression
-            - struct User @ 1:12-1:16
+            struct User @ 1:12-1:16 // goto type from binding declaration
+            struct User @ 1:12-1:16 // goto type from local usage
+            struct Profile @ 2:12-2:19 // goto type from field access
+            struct User @ 1:12-1:16 // goto type from call expression
         "#]],
     );
 }
@@ -96,17 +89,10 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             goto_type("goto type from await wrapper", "goto_await_type"),
         ],
         expect![[r#"
-            goto type from reference wrapper
-            - struct User @ 2:12-2:16
-
-            goto type from double reference
-            - struct User @ 2:12-2:16
-
-            goto type from try wrapper
-            - struct User @ 2:12-2:16
-
-            goto type from await wrapper
-            - struct User @ 2:12-2:16
+            struct User @ 2:12-2:16 // goto type from reference wrapper
+            struct User @ 2:12-2:16 // goto type from double reference
+            struct User @ 2:12-2:16 // goto type from try wrapper
+            struct User @ 2:12-2:16 // goto type from await wrapper
         "#]],
     );
 }
@@ -147,20 +133,11 @@ impl User {
             AnalysisQuery::goto_type("goto type from Self", "goto_self_type"),
         ],
         expect![[r#"
-            goto type from field declaration
-            - struct Profile @ 2:12-2:19
-
-            goto type from field type path
-            - struct Profile @ 2:12-2:19
-
-            goto type from parameter
-            - struct User @ 1:12-1:16
-
-            goto type from return
-            - struct User @ 1:12-1:16
-
-            goto type from Self
-            - struct User @ 1:12-1:16
+            struct Profile @ 2:12-2:19 // goto type from field declaration
+            struct Profile @ 2:12-2:19 // goto type from field type path
+            struct User @ 1:12-1:16 // goto type from parameter
+            struct User @ 1:12-1:16 // goto type from return
+            struct User @ 1:12-1:16 // goto type from Self
         "#]],
     );
 }
@@ -192,13 +169,13 @@ pub fn inspect(_: Ali$signature_alias$as<User>) {
             AnalysisQuery::goto_type("goto nominal types inside a body alias", "body_alias"),
         ],
         expect![[r#"
-            goto nominal types inside a signature alias
-            - struct User @ 2:12-2:16
-            - struct Wrapper @ 1:12-1:19
+            // goto nominal types inside a signature alias
+            struct User @ 2:12-2:16
+            struct Wrapper @ 1:12-1:19
 
-            goto nominal types inside a body alias
-            - struct User @ 2:12-2:16
-            - struct Wrapper @ 1:12-1:19
+            // goto nominal types inside a body alias
+            struct User @ 2:12-2:16
+            struct Wrapper @ 1:12-1:19
         "#]],
     );
 }
@@ -231,11 +208,8 @@ pub fn use_it() {
             AnalysisQuery::goto_type("goto type from body-local usage", "goto_local_usage_type"),
         ],
         expect![[r#"
-            goto type from body-local binding declaration
-            - struct User @ 4:12-4:16
-
-            goto type from body-local usage
-            - struct User @ 4:12-4:16
+            struct User @ 4:12-4:16 // goto type from body-local binding declaration
+            struct User @ 4:12-4:16 // goto type from body-local usage
         "#]],
     );
 }
@@ -272,8 +246,7 @@ pub fn use_it() {
             "goto_type",
         )],
         expect![[r#"
-            goto type from body-local generic impl method
-            - struct User @ 2:12-2:16
+            struct User @ 2:12-2:16 // goto type from body-local generic impl method
         "#]],
     );
 }
@@ -306,8 +279,7 @@ pub fn use_it(maybe: Option<User>) {
             "goto_type",
         )],
         expect![[r#"
-            goto type from enum pattern payload
-            - struct User @ 1:12-1:16
+            struct User @ 1:12-1:16 // goto type from enum pattern payload
         "#]],
     );
 }

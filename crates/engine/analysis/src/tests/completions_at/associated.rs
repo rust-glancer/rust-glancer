@@ -52,12 +52,12 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::complete("primitive associated items", "primitive").in_lib("app")],
         expect![[r#"
-            primitive associated items
-            - const DEFAULT
-            - const MAX
-            - fn count_ones
-            - fn from_be_bytes
-            - fn make
+            // primitive associated items
+            const DEFAULT
+            const MAX
+            fn count_ones
+            fn from_be_bytes
+            fn make
         "#]],
     );
 }
@@ -144,77 +144,77 @@ pub fn inspect_signature<T: Factory>(_: T::Out$signature_param$) -> <T as Factor
             AnalysisQuery::complete("enum variant import items", "import_variant"),
         ],
         expect![[r#"
-            concrete associated items
-            - const LIMIT
-            - type_alias Output
-            - const PARENT
-            - type_alias ParentItem
-            - const ZERO
-            - fn inspect
-            - fn make
-            - fn new
-            - fn parent_fn
-            - fn touch
+            // concrete associated items
+            const LIMIT
+            type_alias Output
+            const PARENT
+            type_alias ParentItem
+            const ZERO
+            fn inspect
+            fn make
+            fn new
+            fn parent_fn
+            fn touch
 
-            alias associated items
-            - const LIMIT
-            - type_alias Output
-            - const PARENT
-            - type_alias ParentItem
-            - const ZERO
-            - fn inspect
-            - fn make
-            - fn new
-            - fn parent_fn
-            - fn touch
+            // alias associated items
+            const LIMIT
+            type_alias Output
+            const PARENT
+            type_alias ParentItem
+            const ZERO
+            fn inspect
+            fn make
+            fn new
+            fn parent_fn
+            fn touch
 
-            parameter value associated items
-            - const LIMIT
-            - type_alias Output
-            - const PARENT
-            - type_alias ParentItem
-            - fn inspect
-            - fn make
-            - fn parent_fn
+            // parameter value associated items
+            const LIMIT
+            type_alias Output
+            const PARENT
+            type_alias ParentItem
+            fn inspect
+            fn make
+            fn parent_fn
 
-            parameter type associated items
-            - type_alias Output
-            - type_alias ParentItem
+            // parameter type associated items
+            type_alias Output
+            type_alias ParentItem
 
-            qualified value associated items
-            - const LIMIT
-            - type_alias Output
-            - const PARENT
-            - type_alias ParentItem
-            - fn inspect
-            - fn make
-            - fn parent_fn
+            // qualified value associated items
+            const LIMIT
+            type_alias Output
+            const PARENT
+            type_alias ParentItem
+            fn inspect
+            fn make
+            fn parent_fn
 
-            qualified type associated items
-            - type_alias Output
-            - type_alias ParentItem
+            // qualified type associated items
+            type_alias Output
+            type_alias ParentItem
 
-            direct trait associated items
-            - const LIMIT
-            - type_alias Output
-            - const PARENT
-            - type_alias ParentItem
-            - fn inspect
-            - fn make
-            - fn parent_fn
+            // direct trait associated items
+            const LIMIT
+            type_alias Output
+            const PARENT
+            type_alias ParentItem
+            fn inspect
+            fn make
+            fn parent_fn
 
-            signature parameter associated items
-            - type_alias Output
-            - type_alias ParentItem
+            // signature parameter associated items
+            type_alias Output
+            type_alias ParentItem
 
-            signature qualified associated items
-            - type_alias Output
-            - type_alias ParentItem
+            // signature qualified associated items
+            type_alias Output
+            type_alias ParentItem
 
-            enum variant import items
-            - variant Data
-            - variant Start
-            - variant Stop
+            // enum variant import items
+            variant Data
+            variant Start
+            variant Stop
         "#]],
     );
 }
@@ -260,22 +260,22 @@ pub fn body() {
             AnalysisQuery::complete_verbose("body associated binding", "body"),
         ],
         expect![[r#"
-            signature associated binding
-            - type_alias Item
+            // signature associated binding
+            type_alias Item
               detail: type Item
               sort: Item|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(1) }) })
               replace: 212..214
-            - type_alias ParentItem
+            type_alias ParentItem
               detail: type ParentItem
               sort: ParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(0) }) })
               replace: 212..214
 
-            body associated binding
-            - type_alias LocalItem
+            // body associated binding
+            type_alias LocalItem
               detail: type LocalItem
               sort: LocalItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }), id: TypeAliasId(1) }) })
               replace: 474..477
-            - type_alias LocalParentItem
+            type_alias LocalParentItem
               detail: type LocalParentItem
               sort: LocalParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }), id: TypeAliasId(0) }) })
               replace: 474..477
@@ -329,26 +329,25 @@ pub fn use_local() {
             AnalysisQuery::complete("body local type associated items", "local_type"),
         ],
         expect![[r#"
-            body local Self associated items
-            - const EMPTY
-            - type_alias Output
-            - const READY
-            - fn build
-            - fn create
-            - fn inside
-            - fn inspect
+            // body local Self associated items
+            const EMPTY
+            type_alias Output
+            const READY
+            fn build
+            fn create
+            fn inside
+            fn inspect
 
-            body local value associated items
-            - const EMPTY
-            - type_alias Output
-            - const READY
-            - fn build
-            - fn create
-            - fn inside
-            - fn inspect
+            // body local value associated items
+            const EMPTY
+            type_alias Output
+            const READY
+            fn build
+            fn create
+            fn inside
+            fn inspect
 
-            body local type associated items
-            - type_alias Output
+            type_alias Output // body local type associated items
         "#]],
     );
 }

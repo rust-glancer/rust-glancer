@@ -36,8 +36,8 @@ impl Service$action$<u8> for Worker {
             "action",
         )],
         expect![[r#"
-            implement missing members
-            - quickfix Implement missing trait members
+            // implement missing members
+            quickfix Implement missing trait members
               preferred: true
               result:
                 trait Service<T> {
@@ -98,8 +98,8 @@ impl protocol::Service for Worker {$action$
             "action",
         )],
         expect![[r#"
-            out-of-scope signature type
-            - quickfix Implement missing trait members
+            // out-of-scope signature type
+            quickfix Implement missing trait members
               preferred: true
               result:
                 mod protocol {
@@ -150,9 +150,8 @@ impl Worker {$inherent$
             AnalysisQuery::code_actions("inherent impl", "inherent"),
         ],
         expect![[r#"
-            complete trait impl
-
-            inherent impl
+            // complete trait impl
+            // inherent impl
         "#]],
     );
 }
@@ -191,8 +190,8 @@ fn load() {
             AnalysisQuery::code_actions("unresolved qualified root", "qualified_root_action"),
         ],
         expect![[r#"
-            unresolved type
-            - quickfix Import `crate::models::User`
+            // unresolved type
+            quickfix Import `crate::models::User`
               preferred: true
               result:
                 use crate::models::User;
@@ -214,8 +213,8 @@ fn load() {
                     let _ = Client::new();
                 }
 
-            unresolved value
-            - quickfix Import `crate::models::make_user`
+            // unresolved value
+            quickfix Import `crate::models::make_user`
               preferred: true
               result:
                 use crate::models::make_user;
@@ -237,8 +236,8 @@ fn load() {
                     let _ = Client::new();
                 }
 
-            unresolved qualified root
-            - quickfix Import `crate::models::Client`
+            // unresolved qualified root
+            quickfix Import `crate::models::Client`
               preferred: true
               result:
                 use crate::models::Client;
@@ -283,8 +282,8 @@ fn load() {
                 .in_lib("analysis_std_import_actions"),
         ],
         expect![[r#"
-            unresolved std path root
-            - quickfix Import `alloc::sync::Arc`
+            // unresolved std path root
+            quickfix Import `alloc::sync::Arc`
               preferred: true
               result:
                 use alloc::sync::Arc;
@@ -345,8 +344,8 @@ mod nested {
             AnalysisQuery::code_actions("crate re-export", "reexport").in_lib("app"),
         ],
         expect![[r#"
-            private parent import
-            - quickfix Import `catalog::collections::HashMap`
+            // private parent import
+            quickfix Import `catalog::collections::HashMap`
               preferred: true
               result:
                 use catalog::collections::HashMap;
@@ -364,8 +363,8 @@ mod nested {
                     }
                 }
 
-            crate re-export
-            - quickfix Import `crate::BTreeMap`
+            // crate re-export
+            quickfix Import `crate::BTreeMap`
               preferred: true
               result:
                 use catalog::collections::HashMap;
@@ -410,8 +409,8 @@ fn load() {
             AnalysisQuery::automatic_code_actions("automatic discovery", "automatic"),
         ],
         expect![[r#"
-            explicit import discovery
-            - quickfix Import `crate::alpha::User`
+            // explicit import discovery
+            quickfix Import `crate::alpha::User`
               preferred: false
               result:
                 use crate::alpha::User;
@@ -424,7 +423,7 @@ fn load() {
                     let _: User;
                 }
 
-            - quickfix Import `crate::beta::User`
+            quickfix Import `crate::beta::User`
               preferred: false
               result:
                 use crate::beta::User;
@@ -437,7 +436,7 @@ fn load() {
                     let _: User;
                 }
 
-            automatic discovery
+            // automatic discovery
         "#]],
     );
 }
@@ -461,7 +460,7 @@ fn load() {
 "#,
         &[AnalysisQuery::code_actions("resolved type", "resolved")],
         expect![[r#"
-            resolved type
+            // resolved type
         "#]],
     );
 }
@@ -493,8 +492,8 @@ fn load() {
             AnalysisQuery::code_actions("qualified value", "value_action"),
         ],
         expect![[r#"
-            qualified type
-            - refactor.rewrite Replace qualified path with `use`
+            // qualified type
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 use crate::models::User;
@@ -510,8 +509,8 @@ fn load() {
                     let _ = crate::models::make_user();
                 }
 
-            qualified value
-            - refactor.rewrite Replace qualified path with `use`
+            // qualified value
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 use crate::models::make_user;
@@ -550,8 +549,8 @@ fn load() {
 "#,
         &[AnalysisQuery::code_actions("existing import", "action")],
         expect![[r#"
-            existing import
-            - refactor.rewrite Replace qualified path with `use`
+            // existing import
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 mod models { pub struct User; }
@@ -617,17 +616,12 @@ fn body_local() {
             AnalysisQuery::code_actions("body-local module", "body_local"),
         ],
         expect![[r#"
-            short-name conflict
-
-            associated item
-
-            enum variant
-
-            Self path
-
-            qualified type anchor
-
-            body-local module
+            // short-name conflict
+            // associated item
+            // enum variant
+            // Self path
+            // qualified type anchor
+            // body-local module
         "#]],
     );
 }
@@ -661,8 +655,8 @@ impl Unknown for Worker {$unresolved$}
             AnalysisQuery::code_actions("unresolved trait", "unresolved"),
         ],
         expect![[r#"
-            nested one-line impl
-            - quickfix Implement missing trait members
+            // nested one-line impl
+            quickfix Implement missing trait members
               preferred: true
               result:
                 trait Service {
@@ -684,7 +678,7 @@ impl Unknown for Worker {$unresolved$}
 
                 impl Unknown for Worker {}
 
-            unresolved trait
+            // unresolved trait
         "#]],
     );
 }
@@ -720,8 +714,8 @@ fn reexport(_: PublicUser$reexport$) {}
             AnalysisQuery::code_actions("re-export import", "reexport"),
         ],
         expect![[r#"
-            one-character nested import
-            - quickfix Import `crate::models::X`
+            // one-character nested import
+            quickfix Import `crate::models::X`
               preferred: true
               result:
                 mod models {
@@ -741,8 +735,8 @@ fn reexport(_: PublicUser$reexport$) {}
 
                 fn reexport(_: PublicUser) {}
 
-            re-export import
-            - quickfix Import `crate::exports::PublicUser`
+            // re-export import
+            quickfix Import `crate::exports::PublicUser`
               preferred: true
               result:
                 use crate::exports::PublicUser;
@@ -799,13 +793,10 @@ fn load(_: Secret$private$) {
             AnalysisQuery::code_actions("cfg-disabled item", "cfg_disabled"),
         ],
         expect![[r#"
-            private item
-
-            macro call
-
-            enum variant
-
-            cfg-disabled item
+            // private item
+            // macro call
+            // enum variant
+            // cfg-disabled item
         "#]],
     );
 }
@@ -840,10 +831,10 @@ mod outer {
             AnalysisQuery::code_actions("super-root target", "super_root"),
         ],
         expect![[r#"
-            use item
+            // use item
 
-            same-module target
-            - refactor.rewrite Replace qualified path with `use`
+            // same-module target
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 mod outer {
@@ -859,8 +850,8 @@ mod outer {
                     }
                 }
 
-            super-root target
-            - refactor.rewrite Replace qualified path with `use`
+            // super-root target
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 mod outer {
@@ -911,8 +902,8 @@ fn load(_: catalog::External$action$) {}
 "#,
         &[AnalysisQuery::code_actions("external path", "action").in_lib("app")],
         expect![[r#"
-            external path
-            - refactor.rewrite Replace qualified path with `use`
+            // external path
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 use catalog::External;
@@ -938,8 +929,8 @@ fn load(_: std::sync::Arc$action$<u8>) {}
         &[AnalysisQuery::code_actions("std path", "action")
             .in_lib("analysis_std_qualified_path_actions")],
         expect![[r#"
-            std path
-            - refactor.rewrite Replace qualified path with `use`
+            // std path
+            refactor.rewrite Replace qualified path with `use`
               preferred: false
               result:
                 use alloc::sync::Arc;
@@ -973,8 +964,8 @@ impl Service for Worker {
 "#,
         &[AnalysisQuery::code_actions("combined actions", "action")],
         expect![[r#"
-            combined actions
-            - quickfix Implement missing trait members
+            // combined actions
+            quickfix Implement missing trait members
               preferred: true
               result:
                 trait Service {
@@ -992,7 +983,7 @@ impl Service for Worker {
                     }
                 }
 
-            - quickfix Import `crate::models::User`
+            quickfix Import `crate::models::User`
               preferred: true
               result:
                 use crate::models::User;

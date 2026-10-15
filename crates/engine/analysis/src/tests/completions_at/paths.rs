@@ -40,117 +40,117 @@ pub fn body(param: u8) {
             ),
         ],
         expect![[r#"
-            empty import path
-            - const MODULE_VALUE
-            - struct ModuleType
-            - struct Wrapper
-            - fn body
-            - fn consume
-            - keyword crate
-            - keyword self
-            - fn signature
-            - keyword super
+            // empty import path
+            const MODULE_VALUE
+            struct ModuleType
+            struct Wrapper
+            fn body
+            fn consume
+            keyword crate
+            keyword self
+            fn signature
+            keyword super
 
-            empty type path
-            - struct ModuleType
-            - type_parameter T
-            - struct Wrapper
-            - primitive_type bool
-            - primitive_type char
-            - keyword crate
-            - keyword dyn
-            - primitive_type f128
-            - primitive_type f16
-            - primitive_type f32
-            - primitive_type f64
-            - keyword fn
-            - keyword for
-            - primitive_type i128
-            - primitive_type i16
-            - primitive_type i32
-            - primitive_type i64
-            - primitive_type i8
-            - primitive_type isize
-            - keyword self
-            - primitive_type str
-            - keyword super
-            - primitive_type u128
-            - primitive_type u16
-            - primitive_type u32
-            - primitive_type u64
-            - primitive_type u8
-            - primitive_type usize
+            // empty type path
+            struct ModuleType
+            type_parameter T
+            struct Wrapper
+            primitive_type bool
+            primitive_type char
+            keyword crate
+            keyword dyn
+            primitive_type f128
+            primitive_type f16
+            primitive_type f32
+            primitive_type f64
+            keyword fn
+            keyword for
+            primitive_type i128
+            primitive_type i16
+            primitive_type i32
+            primitive_type i64
+            primitive_type i8
+            primitive_type isize
+            keyword self
+            primitive_type str
+            keyword super
+            primitive_type u128
+            primitive_type u16
+            primitive_type u32
+            primitive_type u64
+            primitive_type u8
+            primitive_type usize
 
-            empty expression path
-            - const MODULE_VALUE
-            - struct ModuleType
-            - struct Wrapper
-            - keyword async
-            - variable before
-            - fn body
-            - fn consume
-            - keyword crate
-            - keyword false
-            - keyword if
-            - keyword loop
-            - keyword match
-            - keyword move
-            - variable param
-            - keyword return
-            - keyword self
-            - fn signature
-            - keyword super
-            - keyword true
+            // empty expression path
+            const MODULE_VALUE
+            struct ModuleType
+            struct Wrapper
+            keyword async
+            variable before
+            fn body
+            fn consume
+            keyword crate
+            keyword false
+            keyword if
+            keyword loop
+            keyword match
+            keyword move
+            variable param
+            keyword return
+            keyword self
+            fn signature
+            keyword super
+            keyword true
 
-            empty argument path
-            - const MODULE_VALUE
-            - struct ModuleType
-            - struct Wrapper
-            - keyword async
-            - variable before
-            - fn body
-            - fn consume
-            - keyword crate
-            - keyword false
-            - keyword if
-            - keyword loop
-            - keyword match
-            - keyword move
-            - variable param
-            - keyword return
-            - keyword self
-            - fn signature
-            - keyword super
-            - keyword true
+            // empty argument path
+            const MODULE_VALUE
+            struct ModuleType
+            struct Wrapper
+            keyword async
+            variable before
+            fn body
+            fn consume
+            keyword crate
+            keyword false
+            keyword if
+            keyword loop
+            keyword match
+            keyword move
+            variable param
+            keyword return
+            keyword self
+            fn signature
+            keyword super
+            keyword true
 
-            empty generic argument path
-            - struct ModuleType
-            - struct Wrapper
-            - primitive_type bool
-            - primitive_type char
-            - keyword crate
-            - keyword dyn
-            - primitive_type f128
-            - primitive_type f16
-            - primitive_type f32
-            - primitive_type f64
-            - keyword fn
-            - keyword for
-            - primitive_type i128
-            - primitive_type i16
-            - primitive_type i32
-            - primitive_type i64
-            - primitive_type i8
-            - primitive_type isize
-            - keyword self
-            - primitive_type str
-            - keyword super
-            - primitive_type u128
-            - primitive_type u16
-            - primitive_type u32
-            - primitive_type u64
-            - primitive_type u8
-            - primitive_type usize
+            // empty generic argument path
+            struct ModuleType
+            struct Wrapper
+            primitive_type bool
+            primitive_type char
+            keyword crate
+            keyword dyn
+            primitive_type f128
+            primitive_type f16
+            primitive_type f32
+            primitive_type f64
+            keyword fn
+            keyword for
+            primitive_type i128
+            primitive_type i16
+            primitive_type i32
+            primitive_type i64
+            primitive_type i8
+            primitive_type isize
+            keyword self
+            primitive_type str
+            keyword super
+            primitive_type u128
+            primitive_type u16
+            primitive_type u32
+            primitive_type u64
+            primitive_type u8
+            primitive_type usize
         "#]],
     );
 }
@@ -196,29 +196,29 @@ pub fn use_it() {
         // Value-position paths include type-namespace entries too because modules and nominal
         // types can be intermediate prefixes. Prefix filtering is left to the LSP client.
         expect![[r#"
-            type path completions
-            - type_alias ApiAlias
-            - trait ApiNamed
-            - enum ApiState
-            - struct ApiUser
-            - module api_nested
+            // type path completions
+            type_alias ApiAlias
+            trait ApiNamed
+            enum ApiState
+            struct ApiUser
+            module api_nested
 
-            cast type path completions
-            - type_alias ApiAlias
-            - trait ApiNamed
-            - enum ApiState
-            - struct ApiUser
-            - module api_nested
+            // cast type path completions
+            type_alias ApiAlias
+            trait ApiNamed
+            enum ApiState
+            struct ApiUser
+            module api_nested
 
-            value path completions
-            - type_alias ApiAlias
-            - trait ApiNamed
-            - enum ApiState
-            - struct ApiUser
-            - static FLAG
-            - const VERSION
-            - module api_nested
-            - fn build_user
+            // value path completions
+            type_alias ApiAlias
+            trait ApiNamed
+            enum ApiState
+            struct ApiUser
+            static FLAG
+            const VERSION
+            module api_nested
+            fn build_user
         "#]],
     );
 }
@@ -246,10 +246,10 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::complete("bare value path completions", "0")],
         expect![[r#"
-            bare value path completions
-            - module api
-            - fn make_root
-            - fn use_it
+            // bare value path completions
+            module api
+            fn make_root
+            fn use_it
         "#]],
     );
 }
@@ -277,9 +277,9 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::complete("bare type path completions", "0")],
         expect![[r#"
-            bare type path completions
-            - struct RootType
-            - module api
+            // bare type path completions
+            struct RootType
+            module api
         "#]],
     );
 }
@@ -308,8 +308,8 @@ pub fn use_it() {
             "0",
         )],
         expect![[r#"
-            path metadata completions
-            - struct User
+            // path metadata completions
+            struct User
               detail: struct User
               sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 79..81

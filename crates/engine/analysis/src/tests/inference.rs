@@ -44,11 +44,8 @@ pub fn check(record: Record<u8>, choice: Choice<bool>, bits: Bits, node: Node<'_
             AnalysisQuery::ty("negative field impl", "blocked"),
         ],
         expect![[r#"
-            aggregate methods
-            - (u16, u16, u16, u16, u16, u16)
-
-            negative field impl
-            - <unknown>
+            (u16, u16, u16, u16, u16, u16) // aggregate methods
+            <unknown> // negative field impl
         "#]],
     );
 }
@@ -103,17 +100,10 @@ pub fn reordered<T>(first: &Box<dyn Stream<Item = T> + Send + Sync>, second: &Bo
             AnalysisQuery::ty("reordered bounds", "reordered").in_lib("auto_trait_objects"),
         ],
         expect![[r#"
-            constructor input
-            - nominal struct auto_trait_objects[lib]::crate::Source<u8>
-
-            object methods
-            - (u8, u16, u8)
-
-            borrowed object bounds
-            - u16
-
-            reordered bounds
-            - param T
+            nominal struct auto_trait_objects[lib]::crate::Source<u8> // constructor input
+            (u8, u16, u8) // object methods
+            u16 // borrowed object bounds
+            param T // reordered bounds
         "#]],
     );
 }
@@ -154,8 +144,7 @@ pub fn check() {
             "result",
         )],
         expect![[r#"
-            object results and concrete source items
-            - (u8, u16, u8, u16)
+            (u8, u16, u8, u16) // object results and concrete source items
         "#]],
     );
 }
@@ -201,11 +190,8 @@ pub fn check() {
                 AnalysisQuery::ty("object method result", "result").in_lib("object_pointers"),
             ],
             expect![[r#"
-                constructor keeps concrete input
-                - nominal struct object_pointers[lib]::crate::Source<u8>
-
-                object method result
-                - u8
+                nominal struct object_pointers[lib]::crate::Source<u8> // constructor keeps concrete input
+                u8 // object method result
             "#]],
         );
     }
@@ -259,35 +245,16 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
             AnalysisQuery::ty("mutable self", "self_mutable"),
         ],
         expect![[r#"
-            shared referent
-            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            mutable referent
-            - &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            nested referent
-            - &&mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            copied reference
-            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            borrowed reference
-            - &&'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            annotated reference
-            - &dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            alias reference
-            - &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            finalized generic reference
-            - &'static <unknown>
-
-            shared self
-            - &dyn trait analysis_trait_object_references[lib]::crate::Opaque
-
-            mutable self
-            - &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque
+            &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // shared referent
+            &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // mutable referent
+            &&mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // nested referent
+            &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // copied reference
+            &&'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // borrowed reference
+            &dyn trait analysis_trait_object_references[lib]::crate::Opaque // annotated reference
+            &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // alias reference
+            &'static <unknown> // finalized generic reference
+            &dyn trait analysis_trait_object_references[lib]::crate::Opaque // shared self
+            &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // mutable self
         "#]],
     );
 }
@@ -337,38 +304,17 @@ pub fn fields(holder: &mut Holder) {
             AnalysisQuery::ty("mutably borrowed field", "mutable"),
         ],
         expect![[r#"
-            peeled parameter
-            - u8
-
-            borrowed parameter
-            - &u8
-
-            mutably borrowed parameter
-            - &mut u8
-
-            peeled trait object parameter
-            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            borrowed trait object parameter
-            - &&dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            tuple parameter
-            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            record parameter
-            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            mutable record parameter
-            - &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            implicitly borrowed field
-            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            explicitly borrowed field
-            - &dyn trait analysis_reference_patterns[lib]::crate::Opaque
-
-            mutably borrowed field
-            - &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque
+            u8 // peeled parameter
+            &u8 // borrowed parameter
+            &mut u8 // mutably borrowed parameter
+            &dyn trait analysis_reference_patterns[lib]::crate::Opaque // peeled trait object parameter
+            &&dyn trait analysis_reference_patterns[lib]::crate::Opaque // borrowed trait object parameter
+            &dyn trait analysis_reference_patterns[lib]::crate::Opaque // tuple parameter
+            &dyn trait analysis_reference_patterns[lib]::crate::Opaque // record parameter
+            &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque // mutable record parameter
+            &dyn trait analysis_reference_patterns[lib]::crate::Opaque // implicitly borrowed field
+            &dyn trait analysis_reference_patterns[lib]::crate::Opaque // explicitly borrowed field
+            &mut dyn trait analysis_reference_patterns[lib]::crate::Opaque // mutably borrowed field
         "#]],
     );
 }
@@ -403,8 +349,7 @@ pub fn inspect(value: &dyn Opaque) {
 "#,
         &[AnalysisQuery::ty("reference method result", "result")],
         expect![[r#"
-            reference method result
-            - u16
+            u16 // reference method result
         "#]],
     );
 }
@@ -469,60 +414,30 @@ pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>)
             AnalysisQuery::ty("block with statements", "statements"),
         ],
         expect![[r#"
-            array repeat
-            - [u8; 4]
+            [u8; 4] // array repeat
 
-            hover array repeat
-            - range: 9:9-9:17
-            - block:
+            // hover array repeat
+            range: 9:9-9:17
+            block:
               kind: variable
               signature:
                 let repeated: [u8; 4]
 
-            parenthesized arithmetic
-            - [u8; 20]
-
-            integer bases
-            - [u8; 26]
-
-            shifted array length
-            - [u8; 16]
-
-            bitwise array length
-            - [u8; 3]
-
-            bitwise array type annotation
-            - [u16; 9]
-
-            shifted const generic argument
-            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
-
-            array type annotation
-            - [u16; 4]
-
-            const generic argument
-            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
-
-            const generic default
-            - nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4>
-
-            u8 const generic default
-            - nominal struct analysis_const_arithmetic[lib]::crate::Small<_>
-
-            named const
-            - [u8; _]
-
-            named operand
-            - [u8; _]
-
-            associated const
-            - [u8; _]
-
-            const function
-            - [u8; _]
-
-            block with statements
-            - [u8; _]
+            [u8; 20] // parenthesized arithmetic
+            [u8; 26] // integer bases
+            [u8; 16] // shifted array length
+            [u8; 3] // bitwise array length
+            [u16; 9] // bitwise array type annotation
+            nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // shifted const generic argument
+            [u16; 4] // array type annotation
+            nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // const generic argument
+            nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // const generic default
+            nominal struct analysis_const_arithmetic[lib]::crate::Small<_> // u8 const generic default
+            [u8; _] // named const
+            [u8; _] // named operand
+            [u8; _] // associated const
+            [u8; _] // const function
+            [u8; _] // block with statements
         "#]],
     );
 }
@@ -560,17 +475,10 @@ pub fn use_it() {
             AnalysisQuery::ty("type alias receiver", "alias"),
         ],
         expect![[r#"
-            omitted element type
-            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<<unknown>>
-
-            explicit element type
-            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
-
-            qualified trait call
-            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
-
-            type alias receiver
-            - nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8>
+            nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<<unknown>> // omitted element type
+            nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8> // explicit element type
+            nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8> // qualified trait call
+            nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8> // type alias receiver
         "#]],
     );
 }
@@ -606,11 +514,8 @@ pub fn use_it() {
                 .in_lib("analysis_inherent_constructor_bounds"),
         ],
         expect![[r#"
-            constructor result
-            - nominal struct analysis_inherent_constructor_bounds[lib]::crate::Wrapper<nominal struct analysis_inherent_constructor_bounds[lib]::crate::User>
-
-            inferred member
-            - nominal struct analysis_inherent_constructor_bounds[lib]::crate::User
+            nominal struct analysis_inherent_constructor_bounds[lib]::crate::Wrapper<nominal struct analysis_inherent_constructor_bounds[lib]::crate::User> // constructor result
+            nominal struct analysis_inherent_constructor_bounds[lib]::crate::User // inferred member
         "#]],
     );
 }
@@ -650,32 +555,15 @@ pub fn use_it() {
             AnalysisQuery::ty("mismatched numeric literal", "type_mismatch"),
         ],
         expect![[r#"
-            default integer literal
-            - i32
-
-            annotated integer literal
-            - u64
-
-            default float literal
-            - f64
-
-            annotated float literal
-            - f32
-
-            annotated half float literal
-            - f16
-
-            annotated quad float literal
-            - f128
-
-            suffixed half float literal
-            - f16
-
-            suffixed quad float literal
-            - f128
-
-            mismatched numeric literal
-            - i32
+            i32 // default integer literal
+            u64 // annotated integer literal
+            f64 // default float literal
+            f32 // annotated float literal
+            f16 // annotated half float literal
+            f128 // annotated quad float literal
+            f16 // suffixed half float literal
+            f128 // suffixed quad float literal
+            i32 // mismatched numeric literal
         "#]],
     );
 }
@@ -714,17 +602,10 @@ pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
         ]
         .map(|query| query.in_lib("analysis_float_clone")),
         expect![[r#"
-            half float clone
-            - f16
-
-            quad float clone
-            - f128
-
-            handwritten clone
-            - nominal struct analysis_float_clone[lib]::crate::Manual
-
-            derived clone
-            - nominal struct analysis_float_clone[lib]::crate::Derived
+            f16 // half float clone
+            f128 // quad float clone
+            nominal struct analysis_float_clone[lib]::crate::Manual // handwritten clone
+            nominal struct analysis_float_clone[lib]::crate::Derived // derived clone
         "#]],
     );
 }
@@ -763,32 +644,15 @@ pub fn use_it(end: u16) {
             ty("range with typed start", "reversed"),
         ],
         expect![[r#"
-            exclusive range
-            - nominal struct core[lib]::crate::ops::Range<u16>
-
-            range from
-            - nominal struct core[lib]::crate::ops::RangeFrom<u32>
-
-            range to with numeric fallback
-            - nominal struct core[lib]::crate::ops::RangeTo<i32>
-
-            inclusive character range
-            - nominal struct core[lib]::crate::ops::RangeInclusive<char>
-
-            inclusive range to
-            - nominal struct core[lib]::crate::ops::RangeToInclusive<u64>
-
-            full range
-            - nominal struct core[lib]::crate::ops::RangeFull
-
-            start refined by end
-            - u16
-
-            end refined by start
-            - u16
-
-            range with typed start
-            - nominal struct core[lib]::crate::ops::Range<u16>
+            nominal struct core[lib]::crate::ops::Range<u16> // exclusive range
+            nominal struct core[lib]::crate::ops::RangeFrom<u32> // range from
+            nominal struct core[lib]::crate::ops::RangeTo<i32> // range to with numeric fallback
+            nominal struct core[lib]::crate::ops::RangeInclusive<char> // inclusive character range
+            nominal struct core[lib]::crate::ops::RangeToInclusive<u64> // inclusive range to
+            nominal struct core[lib]::crate::ops::RangeFull // full range
+            u16 // start refined by end
+            u16 // end refined by start
+            nominal struct core[lib]::crate::ops::Range<u16> // range with typed start
         "#]],
     );
 }
@@ -847,47 +711,20 @@ pub fn use_it() {
             ty("range with diverging endpoint", "never_range"),
         ],
         expect![[r#"
-            annotated range
-            - nominal struct core[lib]::crate::ops::Range<u32>
-
-            expected start
-            - u32
-
-            expected end
-            - u32
-
-            alias expectation
-            - nominal struct core[lib]::crate::ops::RangeInclusive<u8>
-
-            endpoint under alias expectation
-            - u8
-
-            literal refined through range local
-            - usize
-
-            endpoint local
-            - usize
-
-            range before later use
-            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
-
-            refined range binding
-            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
-
-            generic range before later use
-            - nominal struct core[lib]::crate::ops::RangeInclusive<u64>
-
-            generic start after later use
-            - u64
-
-            generic end after later use
-            - u64
-
-            diverging endpoint
-            - !
-
-            range with diverging endpoint
-            - nominal struct core[lib]::crate::ops::Range<u8>
+            nominal struct core[lib]::crate::ops::Range<u32> // annotated range
+            u32 // expected start
+            u32 // expected end
+            nominal struct core[lib]::crate::ops::RangeInclusive<u8> // alias expectation
+            u8 // endpoint under alias expectation
+            usize // literal refined through range local
+            usize // endpoint local
+            nominal struct core[lib]::crate::ops::RangeFrom<usize> // range before later use
+            nominal struct core[lib]::crate::ops::RangeFrom<usize> // refined range binding
+            nominal struct core[lib]::crate::ops::RangeInclusive<u64> // generic range before later use
+            u64 // generic start after later use
+            u64 // generic end after later use
+            ! // diverging endpoint
+            nominal struct core[lib]::crate::ops::Range<u8> // range with diverging endpoint
         "#]],
     );
 }
@@ -916,11 +753,8 @@ pub fn use_it() {
             AnalysisQuery::ty("field on renamed range", "field"),
         ],
         expect![[r#"
-            renamed range declaration
-            - nominal struct analysis_range_identity[lib]::crate::Interval<u8>
-
-            field on renamed range
-            - u8
+            nominal struct analysis_range_identity[lib]::crate::Interval<u8> // renamed range declaration
+            u8 // field on renamed range
         "#]],
     );
 }
@@ -980,44 +814,19 @@ pub fn use_it(mut bytes: [u8; 4], slice: &[u16], text: &str) {
             ty("generic array length index", "generic_length_index"),
         ],
         expect![[r#"
-            scalar index
-            - usize
-
-            element reference
-            - &u8
-
-            all array range forms
-            - (&[u8], &[u8], &[u8], &[u8], &[u8], &[u8])
-
-            all slice range forms
-            - (&[u16], &[u16], &[u16], &[u16], &[u16], &[u16])
-
-            all string range forms
-            - (&str, &str, &str, &str, &str, &str)
-
-            mutable slice reference
-            - &mut [u8]
-
-            endpoint inferred from indexing
-            - usize
-
-            stored range
-            - nominal struct core[lib]::crate::ops::RangeFrom<usize>
-
-            indexing with stored range
-            - &[u16]
-
-            named array length output
-            - u8
-
-            named array length index
-            - usize
-
-            generic array length output
-            - u16
-
-            generic array length index
-            - usize
+            usize // scalar index
+            &u8 // element reference
+            (&[u8], &[u8], &[u8], &[u8], &[u8], &[u8]) // all array range forms
+            (&[u16], &[u16], &[u16], &[u16], &[u16], &[u16]) // all slice range forms
+            (&str, &str, &str, &str, &str, &str) // all string range forms
+            &mut [u8] // mutable slice reference
+            usize // endpoint inferred from indexing
+            nominal struct core[lib]::crate::ops::RangeFrom<usize> // stored range
+            &[u16] // indexing with stored range
+            u8 // named array length output
+            usize // named array length index
+            u16 // generic array length output
+            usize // generic array length index
         "#]],
     );
 }
@@ -1081,26 +890,13 @@ pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
             ty("generic Deref bound", "deref_bound"),
         ],
         expect![[r#"
-            custom index type
-            - u8
-
-            index through Deref
-            - u8
-
-            direct Index before Deref
-            - u32
-
-            Deref after rejected Index bound
-            - u8
-
-            index unaffected by rejected receiver
-            - u16
-
-            generic Index bound
-            - param T
-
-            generic Deref bound
-            - u8
+            u8 // custom index type
+            u8 // index through Deref
+            u32 // direct Index before Deref
+            u8 // Deref after rejected Index bound
+            u16 // index unaffected by rejected receiver
+            param T // generic Index bound
+            u8 // generic Deref bound
         "#]],
     );
 }
@@ -1167,44 +963,19 @@ pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> 
             ty("indexing after the argument projection", "pending_output"),
         ],
         expect![[r#"
-            string index
-            - u32
-
-            original string reference
-            - &nominal struct alloc[lib]::crate::string::String
-
-            mutable string reborrow
-            - u32
-
-            exact argument before coercion
-            - u8
-
-            array index
-            - u8
-
-            original array reference
-            - &[u8; 2]
-
-            mutable array unsizing
-            - u16
-
-            generic Deref argument
-            - u32
-
-            receiver refined by output
-            - nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8>
-
-            array elements refined by output
-            - &[u8; 2]
-
-            output expectation
-            - u8
-
-            argument supplied by a pending projection
-            - &nominal struct alloc[lib]::crate::string::String
-
-            indexing after the argument projection
-            - u32
+            u32 // string index
+            &nominal struct alloc[lib]::crate::string::String // original string reference
+            u32 // mutable string reborrow
+            u8 // exact argument before coercion
+            u8 // array index
+            &[u8; 2] // original array reference
+            u16 // mutable array unsizing
+            u32 // generic Deref argument
+            nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8> // receiver refined by output
+            &[u8; 2] // array elements refined by output
+            u8 // output expectation
+            &nominal struct alloc[lib]::crate::string::String // argument supplied by a pending projection
+            u32 // indexing after the argument projection
         "#]],
     );
 }
@@ -1234,11 +1005,8 @@ pub fn use_it(array: [u8; 3]) {
             AnalysisQuery::ty("index argument", "index"),
         ],
         expect![[r#"
-            array through slice implementation
-            - u8
-
-            index argument
-            - usize
+            u8 // array through slice implementation
+            usize // index argument
         "#]],
     );
 }
@@ -1334,56 +1102,23 @@ pub fn output_drives_bound() {
             ty("equivalent method output", "method_output"),
         ],
         expect![[r#"
-            output after later index evidence
-            - nominal struct analysis_index_evidence[lib]::crate::User
-
-            dependent field
-            - u32
-
-            dependent method
-            - u32
-
-            dependent trait obligation
-            - u32
-
-            refined index
-            - bool
-
-            refined base
-            - nominal struct analysis_index_evidence[lib]::crate::Store
-
-            output after later base evidence
-            - nominal struct analysis_index_evidence[lib]::crate::User
-
-            array initializer refined by output use
-            - [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1]
-
-            indexed collection refined by method argument
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
-
-            refined array binding
-            - [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1]
-
-            diverging output
-            - !
-
-            coerced binding
-            - u8
-
-            receiver refined through pending bound
-            - nominal struct analysis_index_evidence[lib]::crate::Bag<u8>
-
-            index refined through pending bound
-            - usize
-
-            output refining pending bound
-            - u8
-
-            equivalent method receiver
-            - nominal struct analysis_index_evidence[lib]::crate::Bag<u8>
-
-            equivalent method output
-            - &u8
+            nominal struct analysis_index_evidence[lib]::crate::User // output after later index evidence
+            u32 // dependent field
+            u32 // dependent method
+            u32 // dependent trait obligation
+            bool // refined index
+            nominal struct analysis_index_evidence[lib]::crate::Store // refined base
+            nominal struct analysis_index_evidence[lib]::crate::User // output after later base evidence
+            [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1] // array initializer refined by output use
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global> // indexed collection refined by method argument
+            [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1] // refined array binding
+            ! // diverging output
+            u8 // coerced binding
+            nominal struct analysis_index_evidence[lib]::crate::Bag<u8> // receiver refined through pending bound
+            usize // index refined through pending bound
+            u8 // output refining pending bound
+            nominal struct analysis_index_evidence[lib]::crate::Bag<u8> // equivalent method receiver
+            &u8 // equivalent method output
         "#]],
     );
 }
@@ -1421,41 +1156,18 @@ pub fn use_it() {
             AnalysisQuery::ty("conflicting tuple expression", "type_conflict_pair"),
         ],
         expect![[r#"
-            default tuple expression
-            - (i32, f64)
-
-            annotated tuple integer field
-            - u64
-
-            annotated tuple float field
-            - f32
-
-            annotated tuple expression
-            - (u64, f32)
-
-            nested tuple integer field
-            - u64
-
-            nested tuple float field
-            - f32
-
-            nested tuple bool field
-            - bool
-
-            nested inner tuple expression
-            - (f32, bool)
-
-            nested tuple expression
-            - (u64, (f32, bool))
-
-            conflicting tuple integer field
-            - i32
-
-            conflicting tuple float field
-            - f32
-
-            conflicting tuple expression
-            - (i32, f32)
+            (i32, f64) // default tuple expression
+            u64 // annotated tuple integer field
+            f32 // annotated tuple float field
+            (u64, f32) // annotated tuple expression
+            u64 // nested tuple integer field
+            f32 // nested tuple float field
+            bool // nested tuple bool field
+            (f32, bool) // nested inner tuple expression
+            (u64, (f32, bool)) // nested tuple expression
+            i32 // conflicting tuple integer field
+            f32 // conflicting tuple float field
+            (i32, f32) // conflicting tuple expression
         "#]],
     );
 }
@@ -1507,47 +1219,20 @@ pub fn use_it() {
             ),
         ],
         expect![[r#"
-            paren generic call inner
-            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
-
-            paren generic call expression
-            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
-
-            reference integer inner
-            - u64
-
-            array left integer
-            - u64
-
-            array right integer
-            - u64
-
-            array expression
-            - [u64; 2]
-
-            repeat array integer
-            - u64
-
-            repeat array expression
-            - [u64; 2]
-
-            array generic call
-            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
-
-            array generic expression
-            - [nominal struct analysis_shape_expected_type_inference[lib]::crate::User; 1]
-
-            empty tuple expression
-            - ()
-
-            array call with later evidence
-            - u64
-
-            array integer with later evidence
-            - u64
-
-            array linked through later branch evidence
-            - [u64; 2]
+            nominal struct analysis_shape_expected_type_inference[lib]::crate::User // paren generic call inner
+            nominal struct analysis_shape_expected_type_inference[lib]::crate::User // paren generic call expression
+            u64 // reference integer inner
+            u64 // array left integer
+            u64 // array right integer
+            [u64; 2] // array expression
+            u64 // repeat array integer
+            [u64; 2] // repeat array expression
+            nominal struct analysis_shape_expected_type_inference[lib]::crate::User // array generic call
+            [nominal struct analysis_shape_expected_type_inference[lib]::crate::User; 1] // array generic expression
+            () // empty tuple expression
+            u64 // array call with later evidence
+            u64 // array integer with later evidence
+            [u64; 2] // array linked through later branch evidence
         "#]],
     );
 }
@@ -1592,26 +1277,13 @@ pub fn explicit_return(flag: bool) -> u64 {
             AnalysisQuery::ty("final tail return", "type_final_tail"),
         ],
         expect![[r#"
-            integer tail return
-            - u64
-
-            float tail return
-            - f32
-
-            tuple return integer field
-            - u64
-
-            tuple return float field
-            - f32
-
-            tuple tail return
-            - (u64, f32)
-
-            explicit return expression
-            - u64
-
-            final tail return
-            - u64
+            u64 // integer tail return
+            f32 // float tail return
+            u64 // tuple return integer field
+            f32 // tuple return float field
+            (u64, f32) // tuple tail return
+            u64 // explicit return expression
+            u64 // final tail return
         "#]],
     );
 }
@@ -1647,20 +1319,11 @@ pub fn use_it() {
             AnalysisQuery::ty("tuple call argument", "type_pair"),
         ],
         expect![[r#"
-            integer call argument
-            - u64
-
-            float call argument
-            - f32
-
-            tuple call integer field
-            - u64
-
-            tuple call float field
-            - f32
-
-            tuple call argument
-            - (u64, f32)
+            u64 // integer call argument
+            f32 // float call argument
+            u64 // tuple call integer field
+            f32 // tuple call float field
+            (u64, f32) // tuple call argument
         "#]],
     );
 }
@@ -1726,32 +1389,15 @@ pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
             ),
         ],
         expect![[r#"
-            integer method argument
-            - u64
-
-            float method argument
-            - f32
-
-            tuple method integer field
-            - u64
-
-            tuple method float field
-            - f32
-
-            tuple method argument
-            - (u64, f32)
-
-            generic receiver method argument
-            - u64
-
-            generic receiver tuple method integer field
-            - u64
-
-            generic receiver tuple method float field
-            - f32
-
-            generic receiver tuple method argument
-            - (u64, f32)
+            u64 // integer method argument
+            f32 // float method argument
+            u64 // tuple method integer field
+            f32 // tuple method float field
+            (u64, f32) // tuple method argument
+            u64 // generic receiver method argument
+            u64 // generic receiver tuple method integer field
+            f32 // generic receiver tuple method float field
+            (u64, f32) // generic receiver tuple method argument
         "#]],
     );
 }
@@ -1807,29 +1453,14 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("unconstrained generic call result", "type_unconstrained"),
         ],
         expect![[r#"
-            annotated generic call result
-            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
-
-            function argument generic call result
-            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
-
-            tuple generic call field
-            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
-
-            tuple bool field
-            - bool
-
-            tuple containing generic call
-            - (nominal struct analysis_generic_call_result_inference[lib]::crate::User, bool)
-
-            associated function generic call result
-            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
-
-            method generic call result
-            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
-
-            unconstrained generic call result
-            - <unknown>
+            nominal struct analysis_generic_call_result_inference[lib]::crate::User // annotated generic call result
+            nominal struct analysis_generic_call_result_inference[lib]::crate::User // function argument generic call result
+            nominal struct analysis_generic_call_result_inference[lib]::crate::User // tuple generic call field
+            bool // tuple bool field
+            (nominal struct analysis_generic_call_result_inference[lib]::crate::User, bool) // tuple containing generic call
+            nominal struct analysis_generic_call_result_inference[lib]::crate::User // associated function generic call result
+            nominal struct analysis_generic_call_result_inference[lib]::crate::User // method generic call result
+            <unknown> // unconstrained generic call result
         "#]],
     );
 }
@@ -1898,23 +1529,12 @@ pub fn use_it(builder: Builder) {
             AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
         ],
         expect![[r#"
-            free function generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
-
-            associated function generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
-
-            method generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
-
-            single-param generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Option<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
-
-            multi-param generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
-
-            unconstrained generic return shape
-            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>>
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // free function generic return shape
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // associated function generic return shape
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // method generic return shape
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Option<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // single-param generic return shape
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error> // multi-param generic return shape
+            nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>> // unconstrained generic return shape
         "#]],
     );
 }
@@ -1954,8 +1574,7 @@ pub fn use_it(user: User, name: Name) {
 "#,
         &[AnalysisQuery::ty("method Self return", "type_pair")],
         expect![[r#"
-            method Self return
-            - nominal struct analysis_method_self_return_inference[lib]::crate::Pair<nominal struct analysis_method_self_return_inference[lib]::crate::Iter<nominal struct analysis_method_self_return_inference[lib]::crate::User>, nominal struct analysis_method_self_return_inference[lib]::crate::Name>
+            nominal struct analysis_method_self_return_inference[lib]::crate::Pair<nominal struct analysis_method_self_return_inference[lib]::crate::Iter<nominal struct analysis_method_self_return_inference[lib]::crate::User>, nominal struct analysis_method_self_return_inference[lib]::crate::Name> // method Self return
         "#]],
     );
 }
@@ -2046,14 +1665,9 @@ pub fn associated_equality_destination(stream: UserStream) {
             .in_lib("app"),
         ],
         expect![[r#"
-            explicit collect destination
-            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
-
-            expected collect destination
-            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global>
-
-            associated equality collect destination
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
+            nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> // explicit collect destination
+            nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> // expected collect destination
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct app[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global> // associated equality collect destination
         "#]],
     );
 }
@@ -2132,17 +1746,10 @@ pub fn use_it(users: &[User], same_name: SameNameMap) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            direct HashMap collect result
-            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
-
-            mapped HashMap collect result
-            - nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
-
-            overlapping impl shared guidance
-            - nominal struct app[lib]::crate::OverlappingMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value>
-
-            same-name map closure param
-            - <unknown>
+            nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value> // direct HashMap collect result
+            nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value> // mapped HashMap collect result
+            nominal struct app[lib]::crate::OverlappingMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value> // overlapping impl shared guidance
+            <unknown> // same-name map closure param
         "#]],
     );
 }
@@ -2290,92 +1897,35 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
             ty("keyword collect result", "type_completions"),
         ],
         expect![[r#"
-            realistic iterator map closure param
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
-
-            realistic iterator map closure call
-            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
-
-            realistic iterator map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator skip collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator named function collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator function binding collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator named function vec collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator identity map closure param
-            - &u8
-
-            realistic iterator identity map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<&u8, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator field-copy map closure param
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile
-
-            realistic iterator field-copy map field
-            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot
-
-            realistic iterator field-copy collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator filter_map closure param
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
-
-            realistic iterator filter_map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator enumerate call result
-            - nominal struct core[lib]::crate::iter::adapters::Enumerate<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>>
-
-            realistic iterator enumerate map id
-            - usize
-
-            realistic iterator enumerate map user
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
-
-            realistic iterator enumerate map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global>
-
-            realistic iterator filter closure param
-            - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
-
-            realistic iterator filter call result
-            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>, closure #64>
-
-            realistic iterator filtered map closure param
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User
-
-            realistic iterator filtered map closure call
-            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name
-
-            realistic iterator filtered map collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global>
-
-            keyword filter closure param
-            - &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
-
-            keyword filter label
-            - &'static str
-
-            keyword filter call result
-            - nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78>
-
-            keyword map closure param
-            - &nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate
-
-            keyword map closure call
-            - nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem
-
-            keyword collect result
-            - nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem, nominal struct alloc[lib]::crate::vec::Global>
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User // realistic iterator map closure param
+            nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name // realistic iterator map closure call
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator map collect result
+            nominal struct alloc[lib]::crate::vec::Vec<&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator skip collect result
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator named function collect result
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator function binding collect result
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator named function vec collect result
+            &u8 // realistic iterator identity map closure param
+            nominal struct alloc[lib]::crate::vec::Vec<&u8, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator identity map collect result
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::ChangedFile // realistic iterator field-copy map closure param
+            nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot // realistic iterator field-copy map field
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::PackageSlot, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator field-copy collect result
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User // realistic iterator filter_map closure param
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Email, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator filter_map collect result
+            nominal struct core[lib]::crate::iter::adapters::Enumerate<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>> // realistic iterator enumerate call result
+            usize // realistic iterator enumerate map id
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User // realistic iterator enumerate map user
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Row, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator enumerate map collect result
+            &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::User // realistic iterator filter closure param
+            nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::User>, closure #64> // realistic iterator filter call result
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::User // realistic iterator filtered map closure param
+            nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name // realistic iterator filtered map closure call
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::Name, nominal struct alloc[lib]::crate::vec::Global> // realistic iterator filtered map collect result
+            &&nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate // keyword filter closure param
+            &'static str // keyword filter label
+            nominal struct core[lib]::crate::iter::adapters::Filter<nominal struct core[lib]::crate::slice::Iter<'_, nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate>, closure #78> // keyword filter call result
+            &nominal struct analysis_realistic_iterator_adapters[lib]::crate::KeywordCandidate // keyword map closure param
+            nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem // keyword map closure call
+            nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_realistic_iterator_adapters[lib]::crate::CompletionItem, nominal struct alloc[lib]::crate::vec::Global> // keyword collect result
         "#]],
     );
 }
@@ -2431,32 +1981,15 @@ pub fn outer(flag: bool) -> u64 {
             ty("enclosing function return", "outer_return"),
         ],
         expect![[r#"
-            inferred closure output
-            - i32
-
-            bare closure return
-            - ()
-
-            explicit return follows the tail type
-            - u16
-
-            mixed closure output
-            - u16
-
-            nested closure output
-            - bool
-
-            enclosing closure output
-            - u8
-
-            annotated closure return
-            - f32
-
-            callable bound constrains returned call
-            - u16
-
-            enclosing function return
-            - u64
+            i32 // inferred closure output
+            () // bare closure return
+            u16 // explicit return follows the tail type
+            u16 // mixed closure output
+            bool // nested closure output
+            u8 // enclosing closure output
+            f32 // annotated closure return
+            u16 // callable bound constrains returned call
+            u64 // enclosing function return
         "#]],
     );
 }
@@ -2567,41 +2100,18 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
             ty("conflicting generic closure return result", "type_conflict"),
         ],
         expect![[r#"
-            direct callable closure param
-            - &mut nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_callable_closure_bound_inference[lib]::crate::Attr, nominal struct alloc[lib]::crate::vec::Global>
-
-            direct callable closure method call
-            - ()
-
-            direct closure inherent associated param
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Id
-
-            direct callable closure return body
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
-
-            inline generic closure param
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
-
-            inline generic closure method call
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
-
-            where generic closure param
-            - &nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
-
-            where generic closure method call
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name
-
-            generic closure return result
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
-
-            stored generic closure return result
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
-
-            nested generic closure return result
-            - nominal enum core[lib]::crate::option::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User>
-
-            conflicting generic closure return result
-            - nominal struct analysis_callable_closure_bound_inference[lib]::crate::User
+            &mut nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_callable_closure_bound_inference[lib]::crate::Attr, nominal struct alloc[lib]::crate::vec::Global> // direct callable closure param
+            () // direct callable closure method call
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::Id // direct closure inherent associated param
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // direct callable closure return body
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // inline generic closure param
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name // inline generic closure method call
+            &nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // where generic closure param
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::Name // where generic closure method call
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // generic closure return result
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // stored generic closure return result
+            nominal enum core[lib]::crate::option::Option<nominal struct analysis_callable_closure_bound_inference[lib]::crate::User> // nested generic closure return result
+            nominal struct analysis_callable_closure_bound_inference[lib]::crate::User // conflicting generic closure return result
         "#]],
     );
 }
@@ -2669,29 +2179,14 @@ pub fn use_it(users: &[User], searcher: Searcher) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            iterator map closure param
-            - &nominal struct app[lib]::crate::User
-
-            iterator map closure method call
-            - nominal struct app[lib]::crate::Name
-
-            iterator filter closure param
-            - &&nominal struct app[lib]::crate::User
-
-            iterator filter closure method call
-            - bool
-
-            iterator find closure param
-            - &&nominal struct app[lib]::crate::User
-
-            iterator find closure method call
-            - bool
-
-            iterator callable return body
-            - &nominal struct app[lib]::crate::User
-
-            same-name find closure param
-            - <unknown>
+            &nominal struct app[lib]::crate::User // iterator map closure param
+            nominal struct app[lib]::crate::Name // iterator map closure method call
+            &&nominal struct app[lib]::crate::User // iterator filter closure param
+            bool // iterator filter closure method call
+            &&nominal struct app[lib]::crate::User // iterator find closure param
+            bool // iterator find closure method call
+            &nominal struct app[lib]::crate::User // iterator callable return body
+            <unknown> // same-name find closure param
         "#]],
     );
 }
@@ -2742,11 +2237,8 @@ pub fn use_it(not_callable: NotCallable) {
                 .in_lib("analysis_callable_impl_where_projection"),
         ],
         expect![[r#"
-            callable impl where projection
-            - nominal struct analysis_callable_impl_where_projection[lib]::crate::Name
-
-            non-callable impl where projection
-            - <unknown>
+            nominal struct analysis_callable_impl_where_projection[lib]::crate::Name // callable impl where projection
+            <unknown> // non-callable impl where projection
         "#]],
     );
 }
@@ -2858,14 +2350,9 @@ pub fn use_it(source: Source<User>) {
                 .in_lib("analysis_callable_impl_where_assoc_input_projection"),
         ],
         expect![[r#"
-            callable impl where associated input projection
-            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
-
-            callable impl where referenced associated input projection
-            - nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name
-
-            unsupported impl where projection
-            - <unknown>
+            nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name // callable impl where associated input projection
+            nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name // callable impl where referenced associated input projection
+            <unknown> // unsupported impl where projection
         "#]],
     );
 }
@@ -2916,29 +2403,14 @@ pub fn use_it(flag: bool, kind: Kind, user: User) {
             AnalysisQuery::ty("match expression", "type_match"),
         ],
         expect![[r#"
-            block generic call result
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            block expression
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            if then generic call result
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            if else result
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            if expression
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            match arm generic call result
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            match arm known result
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
-
-            match expression
-            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // block generic call result
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // block expression
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // if then generic call result
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // if else result
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // if expression
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // match arm generic call result
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // match arm known result
+            nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // match expression
         "#]],
     );
 }
@@ -2992,20 +2464,11 @@ pub fn use_it(user: User) {
             ),
         ],
         expect![[r#"
-            explicit concrete generic arg
-            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
-
-            explicit root wildcard constrained by annotation
-            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User
-
-            explicit wildcard constrained by annotation
-            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
-
-            explicit wildcard initializer
-            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
-
-            explicit wildcard read after method evidence
-            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
+            nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User> // explicit concrete generic arg
+            nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User // explicit root wildcard constrained by annotation
+            nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User> // explicit wildcard constrained by annotation
+            nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User> // explicit wildcard initializer
+            nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User> // explicit wildcard read after method evidence
         "#]],
     );
 }
@@ -3067,38 +2530,17 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("outer generic call solved from arg", "type_outer_arg"),
         ],
         expect![[r#"
-            direct generic arg
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
-
-            generic arg from call result
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
-
-            wrapped generic arg
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
-
-            explicit wildcard generic arg
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
-
-            independent byte call
-            - u8
-
-            independent bool call
-            - bool
-
-            inferred array element and length
-            - [bool; 3]
-
-            inner generic call solved from return
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
-
-            outer generic call solved from return
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
-
-            inner generic call solved from arg
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
-
-            outer generic call solved from arg
-            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::User // direct generic arg
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::User // generic arg from call result
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User> // wrapped generic arg
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User> // explicit wildcard generic arg
+            u8 // independent byte call
+            bool // independent bool call
+            [bool; 3] // inferred array element and length
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::User // inner generic call solved from return
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::User // outer generic call solved from return
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::User // inner generic call solved from arg
+            nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User> // outer generic call solved from arg
         "#]],
     );
 }
@@ -3129,11 +2571,8 @@ pub fn use_it() {
             AnalysisQuery::ty("second component learns from the first", "right"),
         ],
         expect![[r#"
-            alias shares its inferred argument
-            - (u16, u16)
-
-            second component learns from the first
-            - u16
+            (u16, u16) // alias shares its inferred argument
+            u16 // second component learns from the first
         "#]],
     );
 }
@@ -3240,45 +2679,32 @@ pub fn use_it(user: User) {
             ),
         ],
         expect![[r#"
-            associated function inferred prefix generic
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // associated function inferred prefix generic
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // associated function explicit prefix generic
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<<unknown>> // associated function wildcard prefix generic
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // associated function impl generic argument
 
-            associated function explicit prefix generic
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
-
-            associated function wildcard prefix generic
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<<unknown>>
-
-            associated function impl generic argument
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
-
-            hover lifetime generic associated constructor
-            - range: 42:46-42:49
-            - block:
+            // hover lifetime generic associated constructor
+            range: 42:46-42:49
+            block:
               kind: method
               path: analysis_associated_function_prefix_generic_inference::Borrowed::new
               signature:
                 pub fn new(value: &'value T) -> Self
 
-            lifetime generic associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // lifetime generic associated constructor result
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // lifetime generic explicit prefix constructor result
 
-            lifetime generic explicit prefix constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Borrowed<'_, nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
-
-            hover method after lifetime generic constructor
-            - range: 44:40-44:50
-            - block:
+            // hover method after lifetime generic constructor
+            range: 44:40-44:50
+            block:
               kind: method
               path: analysis_associated_function_prefix_generic_inference::Borrowed::into_value
               signature:
                 pub fn into_value(self) -> T
 
-            lifetime-only associated constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard<'_>
-
-            trait method after lifetime-only constructor result
-            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Guard<'_> // lifetime-only associated constructor result
+            nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User // trait method after lifetime-only constructor result
         "#]],
     );
 }
@@ -3328,23 +2754,12 @@ pub fn use_it() {
             AnalysisQuery::ty("wrapped binding read", "type_wrapped_read"),
         ],
         expect![[r#"
-            binding initializer generic result
-            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
-
-            binding read constrained by annotation
-            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
-
-            binding read through alias
-            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
-
-            alias read constrained by annotation
-            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
-
-            wrapped binding initializer
-            - (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,)
-
-            wrapped binding read
-            - (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,)
+            nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // binding initializer generic result
+            nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // binding read constrained by annotation
+            nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // binding read through alias
+            nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // alias read constrained by annotation
+            (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,) // wrapped binding initializer
+            (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,) // wrapped binding read
         "#]],
     );
 }
@@ -3431,38 +2846,17 @@ pub fn selected_inherent_receiver() {
             AnalysisQuery::ty("selected receiver read", "type_wrapper_read"),
         ],
         expect![[r#"
-            user receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
-
-            user receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
-
-            u64 receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
-
-            u64 receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
-
-            i32 receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
-
-            i32 receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
-
-            conflicting receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
-
-            conflicting receiver argument
-            - bool
-
-            conflicting receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
-
-            selected receiver initializer
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
-
-            selected receiver read
-            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // user receiver initializer
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // user receiver read
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64> // u64 receiver initializer
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64> // u64 receiver read
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32> // i32 receiver initializer
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32> // i32 receiver read
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64> // conflicting receiver initializer
+            bool // conflicting receiver argument
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64> // conflicting receiver read
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // selected receiver initializer
+            nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // selected receiver read
         "#]],
     );
 }
@@ -3530,32 +2924,15 @@ pub fn tuple_field(user: User) {
             AnalysisQuery::ty("tuple owner read", "type_pair_read"),
         ],
         expect![[r#"
-            declared field owner initializer
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            declared field projection
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::User
-
-            declared field owner read
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            reference field owner initializer
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            reference field projection
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::User
-
-            reference field owner read
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            tuple owner initializer
-            - (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,)
-
-            tuple field projection
-            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
-
-            tuple owner read
-            - (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,)
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // declared field owner initializer
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::User // declared field projection
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // declared field owner read
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // reference field owner initializer
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::User // reference field projection
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // reference field owner read
+            (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,) // tuple owner initializer
+            nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // tuple field projection
+            (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,) // tuple owner read
         "#]],
     );
 }
@@ -3612,23 +2989,12 @@ pub fn slice_pattern(user: User) {
             AnalysisQuery::ty("slice pattern binding read", "type_slice_read"),
         ],
         expect![[r#"
-            tuple pattern initializer
-            - (nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,)
-
-            tuple pattern binding read
-            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
-
-            reference pattern initializer
-            - &(nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,)
-
-            reference pattern binding read
-            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
-
-            slice pattern initializer
-            - [nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>; 1]
-
-            slice pattern binding read
-            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
+            (nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,) // tuple pattern initializer
+            nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User> // tuple pattern binding read
+            &(nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,) // reference pattern initializer
+            nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User> // reference pattern binding read
+            [nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>; 1] // slice pattern initializer
+            nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User> // slice pattern binding read
         "#]],
     );
 }
@@ -3715,41 +3081,18 @@ pub fn borrowed_mut(holder: &mut Holder) {
             ty("shared borrow of mutable reference", "type_shared_binding"),
         ],
         expect![[r#"
-            borrowed record binding
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
-
-            borrowed record field
-            - u64
-
-            borrowed variant binding
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
-
-            borrowed variant field
-            - u64
-
-            deferred borrowed record binding
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
-
-            deferred borrowed record field
-            - u64
-
-            deferred borrowed variant binding
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
-
-            deferred borrowed variant field
-            - u64
-
-            inferred borrowed initializer
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::Account<nominal struct analysis_borrowed_patterns[lib]::crate::User>
-
-            inferred borrowed field
-            - u64
-
-            mutable borrowed binding
-            - &mut nominal struct analysis_borrowed_patterns[lib]::crate::User
-
-            shared borrow of mutable reference
-            - &nominal struct analysis_borrowed_patterns[lib]::crate::User
+            &nominal struct analysis_borrowed_patterns[lib]::crate::User // borrowed record binding
+            u64 // borrowed record field
+            &nominal struct analysis_borrowed_patterns[lib]::crate::User // borrowed variant binding
+            u64 // borrowed variant field
+            &nominal struct analysis_borrowed_patterns[lib]::crate::User // deferred borrowed record binding
+            u64 // deferred borrowed record field
+            &nominal struct analysis_borrowed_patterns[lib]::crate::User // deferred borrowed variant binding
+            u64 // deferred borrowed variant field
+            &nominal struct analysis_borrowed_patterns[lib]::crate::Account<nominal struct analysis_borrowed_patterns[lib]::crate::User> // inferred borrowed initializer
+            u64 // inferred borrowed field
+            &mut nominal struct analysis_borrowed_patterns[lib]::crate::User // mutable borrowed binding
+            &nominal struct analysis_borrowed_patterns[lib]::crate::User // shared borrow of mutable reference
         "#]],
     );
 }
@@ -3782,14 +3125,9 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("assignment binding read", "type_read"),
         ],
         expect![[r#"
-            assignment missing argument
-            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
-
-            assignment initializer
-            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
-
-            assignment binding read
-            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
+            nominal struct analysis_assignment_generic_inference[lib]::crate::User // assignment missing argument
+            nominal struct analysis_assignment_generic_inference[lib]::crate::User // assignment initializer
+            nominal struct analysis_assignment_generic_inference[lib]::crate::User // assignment binding read
         "#]],
     );
 }
@@ -3859,35 +3197,16 @@ pub fn use_it(user: User, error: Error) {
             ),
         ],
         expect![[r#"
-            enum variant explicit generic payload
-            - u64
-
-            enum variant explicit generic result
-            - nominal enum analysis_enum_payload_inference[lib]::crate::Slot<u64>
-
-            option generic variant result
-            - nominal enum analysis_enum_payload_inference[lib]::crate::Option<nominal struct analysis_enum_payload_inference[lib]::crate::User>
-
-            result generic variant result
-            - nominal enum analysis_enum_payload_inference[lib]::crate::Result<nominal struct analysis_enum_payload_inference[lib]::crate::Error, <unknown>>
-
-            enum variant integer payload
-            - u64
-
-            enum variant float payload
-            - f32
-
-            enum variant tuple integer field
-            - u64
-
-            enum variant tuple float field
-            - f32
-
-            enum variant tuple payload
-            - (u64, f32)
-
-            imported variant retains all generic kinds
-            - nominal enum analysis_enum_payload_inference[lib]::crate::Borrowed<'_, nominal struct analysis_enum_payload_inference[lib]::crate::User, 3>
+            u64 // enum variant explicit generic payload
+            nominal enum analysis_enum_payload_inference[lib]::crate::Slot<u64> // enum variant explicit generic result
+            nominal enum analysis_enum_payload_inference[lib]::crate::Option<nominal struct analysis_enum_payload_inference[lib]::crate::User> // option generic variant result
+            nominal enum analysis_enum_payload_inference[lib]::crate::Result<nominal struct analysis_enum_payload_inference[lib]::crate::Error, <unknown>> // result generic variant result
+            u64 // enum variant integer payload
+            f32 // enum variant float payload
+            u64 // enum variant tuple integer field
+            f32 // enum variant tuple float field
+            (u64, f32) // enum variant tuple payload
+            nominal enum analysis_enum_payload_inference[lib]::crate::Borrowed<'_, nominal struct analysis_enum_payload_inference[lib]::crate::User, 3> // imported variant retains all generic kinds
         "#]],
     );
 }
@@ -3961,35 +3280,16 @@ pub fn use_it(user: User, error: Error) {
             AnalysisQuery::ty("record conflicting generic field result", "type_conflict"),
         ],
         expect![[r#"
-            record integer field initializer
-            - u64
-
-            record float field initializer
-            - f32
-
-            record tuple integer field
-            - u64
-
-            record tuple float field
-            - f32
-
-            record tuple field initializer
-            - (u64, f32)
-
-            record generic call field initializer
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::User
-
-            record generic field result
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::User>
-
-            record two generic field result
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair2<nominal struct analysis_bidirectional_record_inference[lib]::crate::User, nominal struct analysis_bidirectional_record_inference[lib]::crate::Error>
-
-            record wildcard generic field result
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::Error>
-
-            record conflicting generic field result
-            - nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<nominal struct analysis_bidirectional_record_inference[lib]::crate::User>
+            u64 // record integer field initializer
+            f32 // record float field initializer
+            u64 // record tuple integer field
+            f32 // record tuple float field
+            (u64, f32) // record tuple field initializer
+            nominal struct analysis_bidirectional_record_inference[lib]::crate::User // record generic call field initializer
+            nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::User> // record generic field result
+            nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair2<nominal struct analysis_bidirectional_record_inference[lib]::crate::User, nominal struct analysis_bidirectional_record_inference[lib]::crate::Error> // record two generic field result
+            nominal struct analysis_bidirectional_record_inference[lib]::crate::Pair<nominal struct analysis_bidirectional_record_inference[lib]::crate::Error> // record wildcard generic field result
+            nominal struct analysis_bidirectional_record_inference[lib]::crate::Same<nominal struct analysis_bidirectional_record_inference[lib]::crate::User> // record conflicting generic field result
         "#]],
     );
 }
@@ -4031,17 +3331,10 @@ pub fn use_it() {
             AnalysisQuery::ty("destructured binding", "type_user"),
         ],
         expect![[r#"
-            associated result
-            - (nominal struct analysis_late_projection[lib]::crate::User,)
-
-            field after pending projection
-            - nominal struct analysis_late_projection[lib]::crate::Name
-
-            method after pending projection
-            - nominal struct analysis_late_projection[lib]::crate::Name
-
-            destructured binding
-            - nominal struct analysis_late_projection[lib]::crate::User
+            (nominal struct analysis_late_projection[lib]::crate::User,) // associated result
+            nominal struct analysis_late_projection[lib]::crate::Name // field after pending projection
+            nominal struct analysis_late_projection[lib]::crate::Name // method after pending projection
+            nominal struct analysis_late_projection[lib]::crate::User // destructured binding
         "#]],
     );
 }
@@ -4079,8 +3372,7 @@ pub fn use_it(input: Fallible<u16>) -> Fallible<()> {
             "output",
         )],
         expect![[r#"
-            output through residual supertrait
-            - u16
+            u16 // output through residual supertrait
         "#]],
     );
 }
@@ -4142,38 +3434,17 @@ pub fn generic<T: core::ops::Try<Output = U>, U>(value: T) -> T {
             ty("output under generic bound", "generic_output"),
         ],
         expect![[r#"
-            Result operand
-            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
-
-            Result output
-            - u16
-
-            Option operand
-            - nominal enum core[lib]::crate::option::Option<u16>
-
-            Option output
-            - u16
-
-            alias operand
-            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
-
-            alias output
-            - u16
-
-            explicit wildcard alias operand
-            - nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error>
-
-            explicit wildcard alias output
-            - u16
-
-            custom operand
-            - nominal struct analysis_try_outputs[lib]::crate::Packet<nominal struct analysis_try_outputs[lib]::crate::Error, u16>
-
-            custom output
-            - u16
-
-            output under generic bound
-            - param U
+            nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // Result operand
+            u16 // Result output
+            nominal enum core[lib]::crate::option::Option<u16> // Option operand
+            u16 // Option output
+            nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // alias operand
+            u16 // alias output
+            nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // explicit wildcard alias operand
+            u16 // explicit wildcard alias output
+            nominal struct analysis_try_outputs[lib]::crate::Packet<nominal struct analysis_try_outputs[lib]::crate::Error, u16> // custom operand
+            u16 // custom output
+            param U // output under generic bound
         "#]],
     );
 }
@@ -4222,20 +3493,11 @@ pub fn use_it() -> Carrier<UserSource> {
             ty("refined operand", "operand"),
         ],
         expect![[r#"
-            output after later operand evidence
-            - nominal struct analysis_late_try_operand[lib]::crate::User
-
-            field on pending output
-            - u32
-
-            method on pending output
-            - u32
-
-            dependent trait obligation
-            - nominal struct analysis_late_try_operand[lib]::crate::User
-
-            refined operand
-            - nominal struct analysis_late_try_operand[lib]::crate::Carrier<nominal struct analysis_late_try_operand[lib]::crate::UserSource>
+            nominal struct analysis_late_try_operand[lib]::crate::User // output after later operand evidence
+            u32 // field on pending output
+            u32 // method on pending output
+            nominal struct analysis_late_try_operand[lib]::crate::User // dependent trait obligation
+            nominal struct analysis_late_try_operand[lib]::crate::Carrier<nominal struct analysis_late_try_operand[lib]::crate::UserSource> // refined operand
         "#]],
     );
 }
@@ -4272,14 +3534,9 @@ pub fn use_it() -> Stop {
             ty("refined operand", "operand"),
         ],
         expect![[r#"
-            diverging try output
-            - !
-
-            coerced binding
-            - u8
-
-            refined operand
-            - nominal struct analysis_try_never[lib]::crate::Stop
+            ! // diverging try output
+            u8 // coerced binding
+            nominal struct analysis_try_never[lib]::crate::Stop // refined operand
         "#]],
     );
 }
@@ -4321,11 +3578,8 @@ pub fn convert_later(number: usize) -> Option<u32> {
             ty("conversion binding read", "type_read"),
         ],
         expect![[r#"
-            conversion initializer
-            - u32
-
-            conversion binding read
-            - u32
+            u32 // conversion initializer
+            u32 // conversion binding read
         "#]],
     );
 }
@@ -4405,50 +3659,21 @@ pub fn use_it(flag: bool) {
             ty("projected call result", "type_projected_result"),
         ],
         expect![[r#"
-            deferred diverging branch
-            - !
-
-            numeric alternate branch
-            - i32
-
-            numeric call result
-            - i32
-
-            unconstrained generic branch
-            - <unknown>
-
-            unconstrained generic call result
-            - <unknown>
-
-            annotated diverging branch
-            - !
-
-            annotated generic branch
-            - u64
-
-            annotated call result
-            - u64
-
-            deferred diverging match arm
-            - !
-
-            numeric alternate match arm
-            - i32
-
-            match call result
-            - i32
-
-            deferred generic branch
-            - i32
-
-            deferred generic call result
-            - i32
-
-            deferred diverging projection
-            - !
-
-            projected call result
-            - i32
+            ! // deferred diverging branch
+            i32 // numeric alternate branch
+            i32 // numeric call result
+            <unknown> // unconstrained generic branch
+            <unknown> // unconstrained generic call result
+            ! // annotated diverging branch
+            u64 // annotated generic branch
+            u64 // annotated call result
+            ! // deferred diverging match arm
+            i32 // numeric alternate match arm
+            i32 // match call result
+            i32 // deferred generic branch
+            i32 // deferred generic call result
+            ! // deferred diverging projection
+            i32 // projected call result
         "#]],
     );
 }
@@ -4483,11 +3708,8 @@ pub fn relay<I: Produce<Item = T>, T: Marker>(input: I) -> T {
             ),
         ],
         expect![[r#"
-            projection under generic assumptions
-            - param T
-
-            dependent obligation under generic assumptions
-            - param T
+            param T // projection under generic assumptions
+            param T // dependent obligation under generic assumptions
         "#]],
     );
 }
@@ -4521,8 +3743,7 @@ pub fn run() {
         &[AnalysisQuery::ty("iterator item field", "iterator_field")
             .in_lib("analysis_iterator_impl_shapes")],
         expect![[r#"
-            iterator item field
-            - u64
+            u64 // iterator item field
         "#]],
     );
 }
@@ -4553,8 +3774,7 @@ pub fn run() {
 "#,
         &[AnalysisQuery::ty("converted field", "converted_field")],
         expect![[r#"
-            converted field
-            - u64
+            u64 // converted field
         "#]],
     );
 }
@@ -4590,14 +3810,9 @@ pub fn run() {
             AnalysisQuery::ty("projected field", "projected_field"),
         ],
         expect![[r#"
-            projection after numeric evidence
-            - nominal struct analysis_deferred_numeric_projection[lib]::crate::User
-
-            independent field
-            - u64
-
-            projected field
-            - u64
+            nominal struct analysis_deferred_numeric_projection[lib]::crate::User // projection after numeric evidence
+            u64 // independent field
+            u64 // projected field
         "#]],
     );
 }
@@ -4652,17 +3867,10 @@ pub fn check_parent() {
             AnalysisQuery::ty("nongeneric enclosing impl requirement", "parent_bound"),
         ],
         expect![[r#"
-            saved alias with satisfied bound
-            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
-
-            saved alias with unsatisfied bound
-            - <unknown>
-
-            body-local alias in its own bound
-            - nominal struct analysis_impl_bound_aliases[lib]::crate::Good
-
-            nongeneric enclosing impl requirement
-            - <unknown>
+            nominal struct analysis_impl_bound_aliases[lib]::crate::Good // saved alias with satisfied bound
+            <unknown> // saved alias with unsatisfied bound
+            nominal struct analysis_impl_bound_aliases[lib]::crate::Good // body-local alias in its own bound
+            <unknown> // nongeneric enclosing impl requirement
         "#]],
     );
 }
@@ -4705,17 +3913,10 @@ pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
             AnalysisQuery::ty("argument impl Trait equality", "display_result"),
         ],
         expect![[r#"
-            inherited equality
-            - u64
-
-            two supertrait substitutions
-            - bool
-
-            bindings stay with their trait
-            - impl trait analysis_inherited_equalities[lib]::crate::Derived<u8, Item = u64> + trait analysis_inherited_equalities[lib]::crate::Other<u8, Item = bool>
-
-            argument impl Trait equality
-            - u64
+            u64 // inherited equality
+            bool // two supertrait substitutions
+            impl trait analysis_inherited_equalities[lib]::crate::Derived<u8, Item = u64> + trait analysis_inherited_equalities[lib]::crate::Other<u8, Item = bool> // bindings stay with their trait
+            u64 // argument impl Trait equality
         "#]],
     );
 }
@@ -4765,35 +3966,16 @@ pub fn use_it(flag: bool) {
             AnalysisQuery::ty("empty labeled block", "type_empty"),
         ],
         expect![[r#"
-            break statement
-            - u64
-
-            break tail
-            - u64
-
-            break through ordinary block
-            - u64
-
-            break in let initializer
-            - u64
-
-            both branches break
-            - u64
-
-            break and normal tail
-            - u64
-
-            return and break
-            - u64
-
-            unit break
-            - ()
-
-            unit fallthrough
-            - ()
-
-            empty labeled block
-            - ()
+            u64 // break statement
+            u64 // break tail
+            u64 // break through ordinary block
+            u64 // break in let initializer
+            u64 // both branches break
+            u64 // break and normal tail
+            u64 // return and break
+            () // unit break
+            () // unit fallthrough
+            () // empty labeled block
         "#]],
     );
 }
@@ -4844,32 +4026,15 @@ pub fn use_it(flag: bool) {
             AnalysisQuery::ty("raw label", "type_raw"),
         ],
         expect![[r#"
-            shadowed block label
-            - bool
-
-            outer block result
-            - u64
-
-            block exit through loop
-            - u64
-
-            block exit through another label
-            - u64
-
-            closure block result
-            - bool
-
-            block containing closure
-            - u64
-
-            async inner block result
-            - bool
-
-            block containing async block
-            - u64
-
-            raw label
-            - u64
+            bool // shadowed block label
+            u64 // outer block result
+            u64 // block exit through loop
+            u64 // block exit through another label
+            bool // closure block result
+            u64 // block containing closure
+            bool // async inner block result
+            u64 // block containing async block
+            u64 // raw label
         "#]],
     );
 }
@@ -4934,38 +4099,17 @@ pub fn use_it(flag: bool) {
             ),
         ],
         expect![[r#"
-            expected break literal
-            - u64
-
-            annotated block
-            - u64
-
-            generic break payload
-            - u64
-
-            block constrained by later use
-            - u64
-
-            deferred break payload
-            - u64
-
-            deferred payload result
-            - u64
-
-            diverging break payload
-            - !
-
-            surviving break result
-            - u64
-
-            diverging final statement
-            - !
-
-            deferred statement result
-            - u64
-
-            deferred statement with normal tail
-            - u64
+            u64 // expected break literal
+            u64 // annotated block
+            u64 // generic break payload
+            u64 // block constrained by later use
+            u64 // deferred break payload
+            u64 // deferred payload result
+            ! // diverging break payload
+            u64 // surviving break result
+            ! // diverging final statement
+            u64 // deferred statement result
+            u64 // deferred statement with normal tail
         "#]],
     );
 }
@@ -5043,44 +4187,19 @@ pub fn spin() {
             AnalysisQuery::ty("loop without exits", "type_infinite"),
         ],
         expect![[r#"
-            bare break
-            - ()
-
-            explicit unit payload
-            - ()
-
-            single value break
-            - u64
-
-            literal constrained by another break
-            - u64
-
-            multiple break values
-            - u64
-
-            inner loop result
-            - bool
-
-            block shadowing a loop label
-            - u8
-
-            loop shadowing a loop label
-            - u16
-
-            outer loop result
-            - u64
-
-            loop used as break payload
-            - u32
-
-            loop exiting to outer block
-            - !
-
-            block receiving loop exit
-            - u64
-
-            loop without exits
-            - !
+            () // bare break
+            () // explicit unit payload
+            u64 // single value break
+            u64 // literal constrained by another break
+            u64 // multiple break values
+            bool // inner loop result
+            u8 // block shadowing a loop label
+            u16 // loop shadowing a loop label
+            u64 // outer loop result
+            u32 // loop used as break payload
+            ! // loop exiting to outer block
+            u64 // block receiving loop exit
+            ! // loop without exits
         "#]],
     );
 }
@@ -5138,29 +4257,14 @@ pub fn all_diverging() {
             AnalysisQuery::ty("all break payloads diverge", "type_diverging_result"),
         ],
         expect![[r#"
-            expected break literal
-            - u64
-
-            generic break payload
-            - u64
-
-            loop constrained by later use
-            - u64
-
-            deferred diverging payload
-            - !
-
-            deferred value payload
-            - u64
-
-            deferred loop result
-            - u64
-
-            only payload diverges
-            - !
-
-            all break payloads diverge
-            - !
+            u64 // expected break literal
+            u64 // generic break payload
+            u64 // loop constrained by later use
+            ! // deferred diverging payload
+            u64 // deferred value payload
+            u64 // deferred loop result
+            ! // only payload diverges
+            ! // all break payloads diverge
         "#]],
     );
 }

@@ -34,17 +34,17 @@ pub fn use_it(user: api::User, users: Users) {
             AnalysisQuery::complete("for pattern path completions", "for_path"),
         ],
         expect![[r#"
-            if let pattern path completions
-            - struct Profile
-            - struct User
+            // if let pattern path completions
+            struct Profile
+            struct User
 
-            while let pattern path completions
-            - struct Profile
-            - struct User
+            // while let pattern path completions
+            struct Profile
+            struct User
 
-            for pattern path completions
-            - struct Profile
-            - struct User
+            // for pattern path completions
+            struct Profile
+            struct User
         "#]],
     );
 }
@@ -73,11 +73,11 @@ pub fn use_it(items: Items) {
             "0",
         )],
         expect![[r#"
-            for pattern binding completions
-            - struct Items
-            - variable item
-            - variable items
-            - fn use_it
+            // for pattern binding completions
+            struct Items
+            variable item
+            variable items
+            fn use_it
         "#]],
     );
 }
@@ -152,147 +152,141 @@ pub fn pattern_param(Sta$function_param$: Action) {}
             AnalysisQuery::complete("function parameter pattern", "function_param"),
         ],
         expect![[r#"
-            match pattern
-            - variant Data
+            // match pattern
+            variant Data
               detail: variant Action::Data
               sort: 00-expected|Data|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 2 })
               replace: 447..450
               snippet: Action::Data($0)
-            - variant Start
+            variant Start
               detail: variant Action::Start
               sort: 00-expected|Start|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 0 })
               replace: 447..450
               insert: Action::Start
-            - variant Stop
+            variant Stop
               detail: variant Action::Stop
               sort: 00-expected|Stop|04|00|EnumVariant(EnumVariantRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), enum_id: EnumId(0), index: 1 })
               replace: 447..450
               snippet: Action::Stop { $0 }
-            - enum Action
+            enum Action
               detail: enum Action
               sort: 01-module|Action|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 447..450
-            - type_alias Alias
+            type_alias Alias
               detail: type Alias
               sort: 01-module|Alias|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(4) } })
               replace: 447..450
-            - struct Marker
+            struct Marker
               detail: struct Marker
               sort: 01-module|Marker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 447..450
-            - const READY
+            const READY
               detail: const READY
               sort: 01-module|READY|05|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
               replace: 447..450
-            - struct RecordMarker
+            struct RecordMarker
               detail: struct RecordMarker
               sort: 01-module|RecordMarker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 447..450
               snippet: RecordMarker { $0 }
-            - struct TupleMarker
+            struct TupleMarker
               detail: struct TupleMarker
               sort: 01-module|TupleMarker|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
               replace: 447..450
               snippet: TupleMarker($0)
-            - module nested
+            module nested
               detail: mod nested
               sort: 01-module|nested|03|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), module: ModuleId(1) } })
               replace: 447..450
 
-            qualified pattern root
-            - enum Action
-            - type_alias Alias
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - struct TupleMarker
-            - module nested
+            // qualified pattern root
+            enum Action
+            type_alias Alias
+            struct Marker
+            const READY
+            struct RecordMarker
+            struct TupleMarker
+            module nested
 
-            qualified enum variant
-            - variant Data
-            - variant Start
-            - variant Stop
+            // qualified enum variant
+            variant Data
+            variant Start
+            variant Stop
 
-            tuple variant constructor
-            - variant Data
+            variant Data // tuple variant constructor
+            variant Stop // record variant constructor
 
-            record variant constructor
-            - variant Stop
+            // if let pattern
+            enum Action
+            type_alias Alias
+            variant Data
+            struct Marker
+            const READY
+            struct RecordMarker
+            variant Start
+            variant Stop
+            struct TupleMarker
+            module nested
 
-            if let pattern
-            - enum Action
-            - type_alias Alias
-            - variant Data
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - variant Start
-            - variant Stop
-            - struct TupleMarker
-            - module nested
+            // while let pattern
+            enum Action
+            type_alias Alias
+            variant Data
+            struct Marker
+            const READY
+            struct RecordMarker
+            variant Start
+            variant Stop
+            struct TupleMarker
+            module nested
 
-            while let pattern
-            - enum Action
-            - type_alias Alias
-            - variant Data
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - variant Start
-            - variant Stop
-            - struct TupleMarker
-            - module nested
+            // let pattern
+            enum Action
+            type_alias Alias
+            variant Data
+            struct Marker
+            const READY
+            struct RecordMarker
+            variant Start
+            variant Stop
+            struct TupleMarker
+            module nested
 
-            let pattern
-            - enum Action
-            - type_alias Alias
-            - variant Data
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - variant Start
-            - variant Stop
-            - struct TupleMarker
-            - module nested
+            // for pattern
+            enum Action
+            type_alias Alias
+            struct Marker
+            const READY
+            struct RecordMarker
+            struct TupleMarker
+            module nested
 
-            for pattern
-            - enum Action
-            - type_alias Alias
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - struct TupleMarker
-            - module nested
+            // closure parameter pattern
+            enum Action
+            type_alias Alias
+            variant Data
+            struct Marker
+            const READY
+            struct RecordMarker
+            variant Start
+            variant Stop
+            struct TupleMarker
+            module nested
 
-            closure parameter pattern
-            - enum Action
-            - type_alias Alias
-            - variant Data
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - variant Start
-            - variant Stop
-            - struct TupleMarker
-            - module nested
+            struct TupleMarker // tuple struct constructor
+            struct RecordMarker // record struct constructor
 
-            tuple struct constructor
-            - struct TupleMarker
-
-            record struct constructor
-            - struct RecordMarker
-
-            function parameter pattern
-            - enum Action
-            - type_alias Alias
-            - variant Data
-            - struct Marker
-            - const READY
-            - struct RecordMarker
-            - variant Start
-            - variant Stop
-            - struct TupleMarker
-            - module nested
+            // function parameter pattern
+            enum Action
+            type_alias Alias
+            variant Data
+            struct Marker
+            const READY
+            struct RecordMarker
+            variant Start
+            variant Stop
+            struct TupleMarker
+            module nested
         "#]],
     );
 }
@@ -322,20 +316,15 @@ pub fn inspect(value: bool) {
             AnalysisQuery::complete_with_source("false pattern keyword", "false_kw"),
         ],
         expect![[r#"
-            ref pattern keyword
-            - keyword ref
+            // ref pattern keyword
+            keyword ref
               detail: keyword ref
               sort: ~keyword:00:ref
               replace: 41..42
 
-            mut pattern keyword
-            - keyword mut
-
-            true pattern keyword
-            - keyword true
-
-            false pattern keyword
-            - keyword false
+            keyword mut // mut pattern keyword
+            keyword true // true pattern keyword
+            keyword false // false pattern keyword
         "#]],
     );
 }
@@ -366,9 +355,9 @@ pub fn inspect(event: Event) {
 "#,
         &[AnalysisQuery::complete("pattern invocation macro", "0")],
         expect![[r#"
-            pattern invocation macro
-            - enum Event
-            - macro pattern_macro
+            // pattern invocation macro
+            enum Event
+            macro pattern_macro
         "#]],
     );
 }
@@ -397,11 +386,8 @@ pub fn inspect() {
             AnalysisQuery::complete("local record constructor", "record"),
         ],
         expect![[r#"
-            local tuple constructor
-            - struct LocalTuple
-
-            local record constructor
-            - struct LocalRecord
+            struct LocalTuple // local tuple constructor
+            struct LocalRecord // local record constructor
         "#]],
     );
 }

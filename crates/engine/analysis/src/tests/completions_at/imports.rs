@@ -117,53 +117,46 @@ fn values() {
                 .matching("make_widget"),
         ],
         expect![[r#"
-            coalesced HashMap import
-            - struct HashMap
+            // coalesced HashMap import
+            struct HashMap
               detail: struct HashMap (use catalog::collections::HashMap)
               sort: 05-auto-import:0003|00|HashMap|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 61..66
               additional: 4..34 => "catalog::collections::{BTreeMap, HashMap}"
 
-            ambiguous imports
-            - struct Widget
+            // ambiguous imports
+            struct Widget
               detail: struct Widget (use catalog::left::Widget)
               sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(2) } })
               replace: 79..82
               additional: 35..35 => "\nuse catalog::left::Widget;"
-            - struct Widget
+            struct Widget
               detail: struct Widget (use catalog::right::Widget)
               sort: 05-auto-import:0003|00|Widget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(3) } })
               replace: 79..82
               additional: 35..35 => "\nuse catalog::right::Widget;"
 
-            short re-export path
-            - struct RankedWidget
+            // short re-export path
+            struct RankedWidget
               detail: struct RankedWidget (use catalog::RankedWidget)
               sort: 05-auto-import:0002|00|RankedWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(5) } })
               replace: 95..102
               additional: 35..35 => "\nuse catalog::RankedWidget;"
 
-            public re-export
-            - struct PublicWidget
+            // public re-export
+            struct PublicWidget
               detail: struct PublicWidget (use catalog::PublicWidget)
               sort: 05-auto-import:0002|00|PublicWidget|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), local_def: LocalDefId(4) } })
               replace: 115..122
               additional: 35..35 => "\nuse catalog::PublicWidget;"
 
-            hidden re-export
-            - <none>
+            <none> // hidden re-export
+            <none> // hidden declaration
+            <none> // unstable declaration
+            <none> // cfg-disabled declaration
 
-            hidden declaration
-            - <none>
-
-            unstable declaration
-            - <none>
-
-            cfg-disabled declaration
-            - <none>
-
-            value auto-import
-            - fn make_widget
+            // value auto-import
+            fn make_widget
               detail: pub fn make_widget() (use catalog::make_widget)
               sort: 05-auto-import:0002|make_widget|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(1), crate_id: CrateId(0) }), id: FunctionId(0) })
               replace: 229..235
@@ -201,16 +194,16 @@ pub fn use_it() {
             AnalysisQuery::complete("body-local imported value completions", "value"),
         ],
         expect![[r#"
-            body-local imported type completions
-            - struct User
-            - module local
+            // body-local imported type completions
+            struct User
+            module local
 
-            body-local imported value completions
-            - struct User
-            - const VALUE
-            - variable _typed
-            - module local
-            - fn use_it
+            // body-local imported value completions
+            struct User
+            const VALUE
+            variable _typed
+            module local
+            fn use_it
         "#]],
     );
 }
@@ -249,13 +242,13 @@ fn main() {
                 .in_bin("analysis_unqualified_roots"),
         ],
         expect![[r#"
-            unqualified use root completions
-            - module analysis_unqualified_roots
-            - fn main
+            // unqualified use root completions
+            module analysis_unqualified_roots
+            fn main
 
-            unqualified value root completions
-            - module analysis_unqualified_roots
-            - fn main
+            // unqualified value root completions
+            module analysis_unqualified_roots
+            fn main
         "#]],
     );
 }
@@ -295,17 +288,16 @@ pub mod parent {
                 .in_lib("analysis_rooted_path_completions"),
         ],
         expect![[r#"
-            absolute root completions
-            - module alloc
-            - module core
-            - module std
+            // absolute root completions
+            module alloc
+            module core
+            module std
 
-            crate root completions
-            - module parent
+            module parent // crate root completions
 
-            super root completions
-            - module child
-            - module sibling
+            // super root completions
+            module child
+            module sibling
         "#]],
     );
 }
@@ -330,28 +322,28 @@ pub fn use_it() {
                 .in_lib("analysis_unqualified_prelude_completions"),
         ],
         expect![[r#"
-            unqualified prelude completions
-            - trait Clone
-            - trait Copy
-            - trait Default
-            - trait Eq
-            - trait Fn
-            - trait FnMut
-            - trait FnOnce
-            - trait IntoIterator
-            - trait Iterator
-            - enum Option
-            - trait Ord
-            - trait PartialEq
-            - trait PartialOrd
-            - enum Result
-            - trait Send
-            - struct String
-            - trait Sync
-            - struct Vec
-            - module alloc
-            - module core
-            - module std
+            // unqualified prelude completions
+            trait Clone
+            trait Copy
+            trait Default
+            trait Eq
+            trait Fn
+            trait FnMut
+            trait FnOnce
+            trait IntoIterator
+            trait Iterator
+            enum Option
+            trait Ord
+            trait PartialEq
+            trait PartialOrd
+            enum Result
+            trait Send
+            struct String
+            trait Sync
+            struct Vec
+            module alloc
+            module core
+            module std
         "#]],
     );
 }
@@ -387,15 +379,15 @@ pub mod api {
 "#,
         &[AnalysisQuery::complete("use path completions", "use_path")],
         expect![[r#"
-            use path completions
-            - type_alias ApiAlias
-            - trait ApiNamed
-            - enum ApiState
-            - struct ApiUser
-            - static FLAG
-            - const VERSION
-            - module api_nested
-            - fn build_user
+            // use path completions
+            type_alias ApiAlias
+            trait ApiNamed
+            enum ApiState
+            struct ApiUser
+            static FLAG
+            const VERSION
+            module api_nested
+            fn build_user
         "#]],
     );
 }
@@ -423,9 +415,9 @@ pub mod api {
             "use_path",
         )],
         expect![[r#"
-            braced use path completions
-            - struct ApiUser
-            - module api_nested
+            // braced use path completions
+            struct ApiUser
+            module api_nested
         "#]],
     );
 }
@@ -449,8 +441,7 @@ pub mod api_notify {
 "#,
         &[AnalysisQuery::complete("bare use path completions", "0")],
         expect![[r#"
-            bare use path completions
-            - struct Notification
+            struct Notification // bare use path completions
         "#]],
     );
 }
@@ -477,8 +468,7 @@ use crate::api_notify::$0
             "0",
         )],
         expect![[r#"
-            incomplete bare use path completions
-            - struct Notification
+            struct Notification // incomplete bare use path completions
         "#]],
     );
 }
@@ -510,8 +500,7 @@ pub fn run() {}
                 .in_lib("analysis_sysroot_bare_use_path_completions"),
         ],
         expect![[r#"
-            incomplete sysroot use path completions
-            - struct Arc
+            struct Arc // incomplete sysroot use path completions
         "#]],
     );
 }

@@ -178,59 +178,24 @@ pub fn method_edit(target: MemberTarget) {
             query("edited method candidate", "method_edit", "method_name"),
         ],
         expect![[r#"
-            unfinished lexical candidate
-            - variable local_value
-
-            unfinished generic candidate
-            - type_parameter GenericTy
-
-            unfinished primitive candidate
-            - primitive_type u16
-
-            unfinished macro candidate
-            - macro local_macro
-
-            unfinished qualified macro candidate
-            - macro exported_macro
-
-            unfinished module candidate
-            - struct ModuleType
-
-            unfinished associated candidate
-            - fn new
-
-            unfinished field candidate
-            - field field_name
-
-            unfinished method candidate
-            - inherent_method method_name
-
-            edited lexical candidate
-            - variable local_value
-
-            edited generic candidate
-            - type_parameter GenericTy
-
-            edited primitive candidate
-            - primitive_type u16
-
-            edited macro candidate
-            - macro local_macro
-
-            edited qualified macro candidate
-            - macro exported_macro
-
-            edited module candidate
-            - struct ModuleType
-
-            edited associated candidate
-            - fn new
-
-            edited field candidate
-            - field field_name
-
-            edited method candidate
-            - inherent_method method_name
+            variable local_value // unfinished lexical candidate
+            type_parameter GenericTy // unfinished generic candidate
+            primitive_type u16 // unfinished primitive candidate
+            macro local_macro // unfinished macro candidate
+            macro exported_macro // unfinished qualified macro candidate
+            struct ModuleType // unfinished module candidate
+            fn new // unfinished associated candidate
+            field field_name // unfinished field candidate
+            inherent_method method_name // unfinished method candidate
+            variable local_value // edited lexical candidate
+            type_parameter GenericTy // edited generic candidate
+            primitive_type u16 // edited primitive candidate
+            macro local_macro // edited macro candidate
+            macro exported_macro // edited qualified macro candidate
+            struct ModuleType // edited module candidate
+            fn new // edited associated candidate
+            field field_name // edited field candidate
+            inherent_method method_name // edited method candidate
         "#]],
     );
 }
@@ -285,11 +250,8 @@ pub fn auto_import_edit() {
             ),
         ],
         expect![[r#"
-            unfinished auto-import candidate
-            - struct AutoImportedType
-
-            edited auto-import candidate
-            - struct AutoImportedType
+            struct AutoImportedType // unfinished auto-import candidate
+            struct AutoImportedType // edited auto-import candidate
         "#]],
     );
 }
@@ -356,44 +318,44 @@ pub fn run(target: Target) {
             verbose_query("method edit", "method_edit", "method_name"),
         ],
         expect![[r#"
-            module macro edit
-            - macro local_macro
+            // module macro edit
+            macro local_macro
               detail: macro local_macro
               sort: local_macro|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 262..269
 
-            qualified module macro edit
-            - macro exported_macro
+            // qualified module macro edit
+            macro exported_macro
               detail: macro exported_macro
               sort: exported_macro|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 281..291
 
-            function edit
-            - fn plain_function
+            // function edit
+            fn plain_function
               detail: pub fn plain_function()
               sort: 01-module|plain_function|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
               replace: 330..337
 
-            body macro edit
-            - macro local_macro
+            // body macro edit
+            macro local_macro
               detail: macro local_macro
               sort: 01-module|local_macro|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(0) } })
               replace: 353..360
 
-            qualified body macro edit
-            - macro exported_macro
+            // qualified body macro edit
+            macro exported_macro
               detail: macro exported_macro
               sort: exported_macro|06|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), local_def: LocalDefId(1) } })
               replace: 384..394
 
-            associated function edit
-            - fn new
+            // associated function edit
+            fn new
               detail: pub fn new() -> Self
               sort: new|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(2) })
               replace: 419..421
 
-            method edit
-            - inherent_method method_name
+            // method edit
+            inherent_method method_name
               detail: pub fn method_name(&self)
               sort: method_name|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(3) })
               replace: 436..444

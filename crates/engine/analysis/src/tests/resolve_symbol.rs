@@ -30,11 +30,8 @@ pub fn use_it() {
             AnalysisQuery::resolve("resolve item", "resolve_item"),
         ],
         expect![[r#"
-            resolve local
-            - local local @ 8:9-8:14
-
-            resolve item
-            - fn helper @ 3:8-3:14
+            local local @ 8:9-8:14 // resolve local
+            fn helper @ 3:8-3:14 // resolve item
         "#]],
     );
 }
@@ -67,8 +64,7 @@ pub fn use_it(input: u64) {
             "resolve_macro",
         )],
         expect![[r#"
-            resolve body macro call
-            - macro make_text @ 5:14-5:23
+            macro make_text @ 5:14-5:23 // resolve body macro call
         "#]],
     );
 }
@@ -96,11 +92,8 @@ pub fn make() {
             AnalysisQuery::resolve("resolve local constructor", "resolve_local_ctor"),
         ],
         expect![[r#"
-            resolve local type path
-            - struct User @ 4:12-4:16
-
-            resolve local constructor
-            - struct User @ 4:12-4:16
+            struct User @ 4:12-4:16 // resolve local type path
+            struct User @ 4:12-4:16 // resolve local constructor
         "#]],
     );
 }

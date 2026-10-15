@@ -34,9 +34,9 @@ fn hovers_with_formatted_function_signatures() {
             "function",
         )],
         expect![[r#"
-            hover long function signature
-            - range: 2:15-2:31
-            - block:
+            // hover long function signature
+            range: 2:15-2:31
+            block:
               kind: fn
               path: analysis_hover_signatures::impl_header_with
               signature:
@@ -94,9 +94,9 @@ fn hovers_over_documented_items_and_usages() {
             AnalysisQuery::hover("hover local", "local_hover"),
         ],
         expect![[r#"
-            hover function
-            - range: 16:16-16:25
-            - block:
+            // hover function
+            range: 16:16-16:25
+            block:
               kind: fn
               path: analysis_hover::make_user
               signature:
@@ -104,9 +104,9 @@ fn hovers_over_documented_items_and_usages() {
               docs:
                 Builds a user.
 
-            hover field
-            - range: 17:22-17:26
-            - block:
+            // hover field
+            range: 17:22-17:26
+            block:
               kind: field
               path: analysis_hover::User
               signature:
@@ -114,9 +114,9 @@ fn hovers_over_documented_items_and_usages() {
               docs:
                 Display name shown in the UI.
 
-            hover type
-            - range: 18:17-18:21
-            - block:
+            // hover type
+            range: 18:17-18:21
+            block:
               kind: struct
               path: analysis_hover::User
               signature:
@@ -126,9 +126,9 @@ fn hovers_over_documented_items_and_usages() {
               docs:
                 User account stored by the service.
 
-            hover local
-            - range: 19:9-19:14
-            - block:
+            // hover local
+            range: 19:9-19:14
+            block:
               kind: variable
               signature:
                 let local: Profile
@@ -158,9 +158,9 @@ pub fn configure(f$fn_once_hover$: impl FnOnce(&mut AttrVec)) {
                 .in_lib("analysis_hover_fn_trait_args"),
         ],
         expect![[r#"
-            hover impl FnOnce parenthesized args
-            - range: 3:18-3:19
-            - block:
+            // hover impl FnOnce parenthesized args
+            range: 3:18-3:19
+            block:
               kind: variable
               signature:
                 let f: impl FnOnce(&mut AttrVec)
@@ -201,9 +201,9 @@ fn hovers_over_body_macro_calls_without_exposing_generated_internals() {
             "macro_hover",
         )],
         expect![[r#"
-            hover generated macro call
-            - range: 14:16-14:25
-            - block:
+            // hover generated macro call
+            range: 14:16-14:25
+            block:
               kind: macro
               path: analysis_hover_body_macros::make_text
               signature:
@@ -267,27 +267,27 @@ fn hovers_over_enum_variants_and_body_local_items() {
             AnalysisQuery::hover("hover body-local type", "local_type_hover"),
         ],
         expect![[r#"
-            hover body-local method
-            - range: 27:23-27:25
-            - block:
+            // hover body-local method
+            range: 27:23-27:25
+            block:
               kind: method
               signature:
                 fn id(&self) -> Event
               docs:
                 Returns the request id.
 
-            hover body-local field
-            - range: 28:26-28:28
-            - block:
+            // hover body-local field
+            range: 28:26-28:28
+            block:
               kind: field
               signature:
                 id: Event
               docs:
                 Request identifier.
 
-            hover enum variant declaration
-            - range: 3:5-3:12
-            - block:
+            // hover enum variant declaration
+            range: 3:5-3:12
+            block:
               kind: variant
               path: analysis_hover_locals::Event::Started
               signature:
@@ -295,9 +295,9 @@ fn hovers_over_enum_variants_and_body_local_items() {
               docs:
                 Event has started.
 
-            hover enum variant
-            - range: 29:25-29:32
-            - block:
+            // hover enum variant
+            range: 29:25-29:32
+            block:
               kind: variant
               path: analysis_hover_locals::Event::Started
               signature:
@@ -305,18 +305,18 @@ fn hovers_over_enum_variants_and_body_local_items() {
               docs:
                 Event has started.
 
-            hover body-local enum variant
-            - range: 30:27-30:32
-            - block:
+            // hover body-local enum variant
+            range: 30:27-30:32
+            block:
               kind: variant
               signature:
                 Start(Event)
               docs:
                 Local action has started.
 
-            hover body-local type
-            - range: 31:17-31:24
-            - block:
+            // hover body-local type
+            range: 31:17-31:24
+            block:
               kind: struct
               signature:
                 struct Request {
@@ -366,36 +366,36 @@ fn hovers_over_more_body_local_items() {
             AnalysisQuery::hover("hover body-local free function", "local_fn_hover"),
         ],
         expect![[r#"
-            hover body-local alias
-            - range: 15:17-15:22
-            - block:
+            // hover body-local alias
+            range: 15:17-15:22
+            block:
               kind: type_alias
               signature:
                 type Alias = GlobalId
               docs:
                 User id alias.
 
-            hover body-local const
-            - range: 16:20-16:27
-            - block:
+            // hover body-local const
+            range: 16:20-16:27
+            block:
               kind: const
               signature:
                 const DEFAULT: Alias
               docs:
                 Local default id.
 
-            hover body-local static
-            - range: 17:20-17:27
-            - block:
+            // hover body-local static
+            range: 17:20-17:27
+            block:
               kind: static
               signature:
                 static CURRENT: GlobalId
               docs:
                 Current id.
 
-            hover body-local free function
-            - range: 18:19-18:25
-            - block:
+            // hover body-local free function
+            range: 18:19-18:25
+            block:
               kind: fn
               signature:
                 fn helper() -> Alias
@@ -433,9 +433,9 @@ fn hovers_over_documented_module_declarations() {
             AnalysisQuery::hover("hover inline module", "inline_module_hover"),
         ],
         expect![[r#"
-            hover out-of-line module
-            - range: 1:9-1:12
-            - block:
+            // hover out-of-line module
+            range: 1:9-1:12
+            block:
               kind: module
               path: analysis_hover_modules::api
               signature:
@@ -443,9 +443,9 @@ fn hovers_over_documented_module_declarations() {
               docs:
                 Public API surface.
 
-            hover inline module
-            - range: 4:9-4:16
-            - block:
+            // hover inline module
+            range: 4:9-4:16
+            block:
               kind: module
               path: analysis_hover_modules::helpers
               signature:
@@ -496,9 +496,9 @@ pub fn use_roots(_: cra$crate_root_hover$te::Api, _: de$dep_root_hover$p::Thing)
             AnalysisQuery::hover("hover dependency root path", "dep_root_hover").in_lib("app"),
         ],
         expect![[r#"
-            hover crate root path
-            - range: 4:21-4:26
-            - block:
+            // hover crate root path
+            range: 4:21-4:26
+            block:
               kind: module
               path: app
               signature:
@@ -506,9 +506,9 @@ pub fn use_roots(_: cra$crate_root_hover$te::Api, _: de$dep_root_hover$p::Thing)
               docs:
                 Application crate docs.
 
-            hover dependency root path
-            - range: 4:36-4:39
-            - block:
+            // hover dependency root path
+            range: 4:36-4:39
+            block:
               kind: module
               path: dep
               signature:
@@ -581,9 +581,9 @@ pub fn demo(maybe: shared::Maybe<shared::User>) {
 "#,
         &[AnalysisQuery::hover("hover visible method", "method_hover").in_lib("app")],
         expect![[r#"
-            hover visible method
-            - range: 2:24-2:32
-            - block:
+            // hover visible method
+            range: 2:24-2:32
+            block:
               kind: method
               path: shared::Maybe::and_then
               signature:
@@ -653,9 +653,9 @@ pub fn use_it(text: OwnedText) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            hover primitive method through Deref
-            - range: 3:23-3:31
-            - block:
+            // hover primitive method through Deref
+            range: 3:23-3:31
+            block:
               kind: method
               path: runtime::contains
               signature:
@@ -712,9 +712,9 @@ pub fn use_it(bytes: [u8; 4]) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            hover primitive associated const
-            - range: 2:21-2:24
-            - block:
+            // hover primitive associated const
+            range: 2:21-2:24
+            block:
               kind: const
               path: runtime::MAX
               signature:
@@ -722,9 +722,9 @@ pub fn use_it(bytes: [u8; 4]) {
               docs:
                 Largest represented value.
 
-            hover primitive associated function
-            - range: 3:23-3:36
-            - block:
+            // hover primitive associated function
+            range: 3:23-3:36
+            block:
               kind: method
               path: runtime::from_be_bytes
               signature:
@@ -769,9 +769,9 @@ fn hovers_with_bounded_item_previews() {
             AnalysisQuery::hover("hover enum preview", "enum_preview"),
         ],
         expect![[r#"
-            hover struct preview
-            - range: 1:12-1:18
-            - block:
+            // hover struct preview
+            range: 1:12-1:18
+            block:
               kind: struct
               path: analysis_hover_previews::Packet
               signature:
@@ -784,9 +784,9 @@ fn hovers_with_bounded_item_previews() {
                     ...,
                 }
 
-            hover enum preview
-            - range: 10:10-10:15
-            - block:
+            // hover enum preview
+            range: 10:10-10:15
+            block:
               kind: enum
               path: analysis_hover_previews::Event
               signature:

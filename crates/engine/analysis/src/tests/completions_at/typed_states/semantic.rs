@@ -130,47 +130,20 @@ use crate::api::PathT$import_unfinished$
                 .matching("PathType"),
         ],
         expect![[r#"
-            unfinished associated path
-            - fn new
-
-            unfinished dot member
-            - inherent_method named_method
-
-            unfinished unqualified name
-            - variable local_value
-
-            unfinished qualified type
-            - struct PathType
-
-            unfinished record field
-            - field record_field
-
-            unfinished pattern field
-            - field record_field
-
-            unfinished import path
-            - struct PathType
-
-            edited associated path
-            - fn new
-
-            edited dot member
-            - inherent_method named_method
-
-            edited unqualified name
-            - variable local_value
-
-            edited qualified type
-            - struct PathType
-
-            edited record field
-            - field record_field
-
-            edited pattern field
-            - field record_field
-
-            edited import path
-            - struct PathType
+            fn new // unfinished associated path
+            inherent_method named_method // unfinished dot member
+            variable local_value // unfinished unqualified name
+            struct PathType // unfinished qualified type
+            field record_field // unfinished record field
+            field record_field // unfinished pattern field
+            struct PathType // unfinished import path
+            fn new // edited associated path
+            inherent_method named_method // edited dot member
+            variable local_value // edited unqualified name
+            struct PathType // edited qualified type
+            field record_field // edited record field
+            field record_field // edited pattern field
+            struct PathType // edited import path
         "#]],
     );
 }
@@ -292,41 +265,18 @@ pub fn run() {
                 .matching("'inner"),
         ],
         expect![[r#"
-            associated path at EOF
-            - fn new
-
-            empty associated path at EOF
-            - fn new
-
-            dot member at EOF
-            - inherent_method named_method
-
-            empty dot member at EOF
-            - inherent_method named_method
-
-            unqualified name at EOF
-            - variable local_value
-
-            qualified type at EOF
-            - struct PathType
-
-            empty qualified path at EOF
-            - struct PathType
-
-            record field at EOF
-            - field record_field
-
-            empty record field at EOF
-            - field record_field
-
-            pattern field at EOF
-            - field record_field
-
-            empty pattern field at EOF
-            - field record_field
-
-            loop label at EOF
-            - label 'inner
+            fn new // associated path at EOF
+            fn new // empty associated path at EOF
+            inherent_method named_method // dot member at EOF
+            inherent_method named_method // empty dot member at EOF
+            variable local_value // unqualified name at EOF
+            struct PathType // qualified type at EOF
+            struct PathType // empty qualified path at EOF
+            field record_field // record field at EOF
+            field record_field // empty record field at EOF
+            field record_field // pattern field at EOF
+            field record_field // empty pattern field at EOF
+            label 'inner // loop label at EOF
         "#]],
     );
 }
@@ -396,23 +346,12 @@ pub fn run<T: crate::Sequence<It$eof$
                 .matching("Item"),
         ],
         expect![[r#"
-            binding with existing equals
-            - type_alias Item
-
-            binding before equals
-            - type_alias Item
-
-            ordinary positional type remains available
-            - struct PositionalType
-
-            binding after positional argument
-            - type_alias Output
-
-            body-local binding before equals
-            - type_alias LocalItem
-
-            binding before equals at EOF
-            - type_alias Item
+            type_alias Item // binding with existing equals
+            type_alias Item // binding before equals
+            struct PositionalType // ordinary positional type remains available
+            type_alias Output // binding after positional argument
+            type_alias LocalItem // body-local binding before equals
+            type_alias Item // binding before equals at EOF
         "#]],
     );
 }

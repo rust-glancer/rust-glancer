@@ -66,47 +66,44 @@ pub fn use_it(user: User) {
             ),
         ],
         expect![[r#"
-            goto implementations of type
-            - impl Named for User @ 15:1-19:2
-            - impl User @ 9:1-13:2
+            // goto implementations of type
+            impl Named for User @ 15:1-19:2
+            impl User @ 9:1-13:2
 
-            goto implementations of trait
-            - impl Named for Account @ 21:1-25:2
-            - impl Named for User @ 15:1-19:2
+            // goto implementations of trait
+            impl Named for Account @ 21:1-25:2
+            impl Named for User @ 15:1-19:2
 
-            goto implementations of trait method
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto implementations of trait method
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto implementations from impl method
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto implementations from impl method
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto implementations from associated call
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto implementations from associated call
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto implementations from qualified call
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto implementations from qualified call
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto implementations from method path
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto implementations from method path
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto inherent implementation
-            - fn new @ 10:12-10:15
+            fn new @ 10:12-10:15 // goto inherent implementation
+            fn new @ 10:12-10:15 // goto inherent implementation use
 
-            goto inherent implementation use
-            - fn new @ 10:12-10:15
+            // goto trait implementation from call
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
 
-            goto trait implementation from call
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
-
-            goto trait implementation from reference call
-            - fn name @ 16:8-16:12
-            - fn name @ 22:8-22:12
+            // goto trait implementation from reference call
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
         "#]],
     );
 }
@@ -143,11 +140,8 @@ pub fn use_it() {
             ),
         ],
         expect![[r#"
-            goto body-local implementations from type
-            - impl User @ 4:5-6:6
-
-            goto body-local implementations from binding
-            - impl User @ 4:5-6:6
+            impl User @ 4:5-6:6 // goto body-local implementations from type
+            impl User @ 4:5-6:6 // goto body-local implementations from binding
         "#]],
     );
 }
@@ -188,9 +182,9 @@ pub fn use_it(account: Wrapper<Account>) {
             "impl_account_call",
         )],
         expect![[r#"
-            goto trait implementation from generic receiver call
-            - fn name @ 10:8-10:12
-            - fn name @ 14:8-14:12
+            // goto trait implementation from generic receiver call
+            fn name @ 10:8-10:12
+            fn name @ 14:8-14:12
         "#]],
     );
 }
@@ -237,41 +231,41 @@ pub fn use_it() {
             AnalysisQuery::goto_impl("global trait standalone method path", "global_path"),
         ],
         expect![[r#"
-            local trait impl blocks
-            - impl Local for Account @ 10:5-10:48
-            - impl Local for User @ 9:5-9:45
+            // local trait impl blocks
+            impl Local for Account @ 10:5-10:48
+            impl Local for User @ 9:5-9:45
 
-            local trait method
-            - fn run @ 9:30-9:33
-            - fn run @ 10:33-10:36
+            // local trait method
+            fn run @ 9:30-9:33
+            fn run @ 10:33-10:36
 
-            local impl method
-            - fn run @ 9:30-9:33
-            - fn run @ 10:33-10:36
+            // local impl method
+            fn run @ 9:30-9:33
+            fn run @ 10:33-10:36
 
-            local trait from nested body
-            - fn run @ 9:30-9:33
-            - fn run @ 10:33-10:36
+            // local trait from nested body
+            fn run @ 9:30-9:33
+            fn run @ 10:33-10:36
 
-            global trait in local impl header
-            - impl Global for Account @ 12:5-12:49
-            - impl Global for Service @ 3:1-3:45
-            - impl Global for User @ 11:5-11:46
+            // global trait in local impl header
+            impl Global for Account @ 12:5-12:49
+            impl Global for Service @ 3:1-3:45
+            impl Global for User @ 11:5-11:46
 
-            global trait local impl method
-            - fn run @ 3:30-3:33
-            - fn run @ 11:31-11:34
-            - fn run @ 12:34-12:37
+            // global trait local impl method
+            fn run @ 3:30-3:33
+            fn run @ 11:31-11:34
+            fn run @ 12:34-12:37
 
-            global trait from nested body
-            - fn run @ 3:30-3:33
-            - fn run @ 11:31-11:34
-            - fn run @ 12:34-12:37
+            // global trait from nested body
+            fn run @ 3:30-3:33
+            fn run @ 11:31-11:34
+            fn run @ 12:34-12:37
 
-            global trait standalone method path
-            - fn run @ 3:30-3:33
-            - fn run @ 11:31-11:34
-            - fn run @ 12:34-12:37
+            // global trait standalone method path
+            fn run @ 3:30-3:33
+            fn run @ 11:31-11:34
+            fn run @ 12:34-12:37
         "#]],
     );
 }
@@ -315,47 +309,47 @@ pub fn use_it<T: Child>(value: T, wrapped: Wrapper<User>, number: u8, slice: &[u
             AnalysisQuery::goto_impl("structural receiver call", "structural"),
         ],
         expect![[r#"
-            parent method
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // parent method
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
 
-            method through supertrait bound
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // method through supertrait bound
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
 
-            blanket receiver call
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // blanket receiver call
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
 
-            primitive receiver call
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // primitive receiver call
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
 
-            reference receiver call
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // reference receiver call
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
 
-            structural receiver call
-            - fn run @ 5:27-5:30
-            - fn run @ 7:36-7:39
-            - fn run @ 8:28-8:31
-            - fn run @ 9:25-9:28
-            - fn run @ 10:27-10:30
+            // structural receiver call
+            fn run @ 5:27-5:30
+            fn run @ 7:36-7:39
+            fn run @ 8:28-8:31
+            fn run @ 9:25-9:28
+            fn run @ 10:27-10:30
         "#]],
     );
 }
@@ -401,29 +395,14 @@ pub fn override_call<T: Overridden>(value: T) { value.ma$dot_override$ke(); }
             AnalysisQuery::goto("definition of standalone default", "default_path"),
         ],
         expect![[r#"
-            default-only declaration
-            - <none>
-
-            default-only qualified call
-            - <none>
-
-            default-only standalone path
-            - <none>
-
-            default-only dot call
-            - <none>
-
-            explicit override from inherited default call
-            - fn make @ 9:34-9:38
-
-            explicit override from generic call
-            - fn make @ 9:34-9:38
-
-            definition of inherited default
-            - fn make @ 3:28-3:32
-
-            definition of standalone default
-            - fn make @ 3:28-3:32
+            <none> // default-only declaration
+            <none> // default-only qualified call
+            <none> // default-only standalone path
+            <none> // default-only dot call
+            fn make @ 9:34-9:38 // explicit override from inherited default call
+            fn make @ 9:34-9:38 // explicit override from generic call
+            fn make @ 3:28-3:32 // definition of inherited default
+            fn make @ 3:28-3:32 // definition of standalone default
         "#]],
     );
 }
@@ -479,31 +458,28 @@ pub fn use_it(local: Local, remote: api::Remote) {
                 .in_lib("analysis_dependency_implementations"),
         ],
         expect![[r#"
-            trait impl method declaration
-            - fn convert @ 3:34-3:41
-            - fn convert @ 4:34-4:41
-            - fn convert @ 4:8-4:15
+            // trait impl method declaration
+            fn convert @ 3:34-3:41
+            fn convert @ 4:34-4:41
+            fn convert @ 4:8-4:15
 
-            local receiver call
-            - fn convert @ 3:34-3:41
-            - fn convert @ 4:34-4:41
-            - fn convert @ 4:8-4:15
+            // local receiver call
+            fn convert @ 3:34-3:41
+            fn convert @ 4:34-4:41
+            fn convert @ 4:8-4:15
 
-            dependency receiver call
-            - fn convert @ 3:34-3:41
-            - fn convert @ 4:34-4:41
-            - fn convert @ 4:8-4:15
+            // dependency receiver call
+            fn convert @ 3:34-3:41
+            fn convert @ 4:34-4:41
+            fn convert @ 4:8-4:15
 
-            qualified generic call
-            - fn convert @ 3:34-3:41
-            - fn convert @ 4:34-4:41
-            - fn convert @ 4:8-4:15
+            // qualified generic call
+            fn convert @ 3:34-3:41
+            fn convert @ 4:34-4:41
+            fn convert @ 4:8-4:15
 
-            selected local definition
-            - fn convert @ 3:34-3:41
-
-            selected dependency definition
-            - fn convert @ 4:8-4:15
+            fn convert @ 3:34-3:41 // selected local definition
+            fn convert @ 4:8-4:15 // selected dependency definition
         "#]],
     );
 }

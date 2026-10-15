@@ -21,8 +21,7 @@ pub fn copy<'a>(value: &'a (dyn Service<u8, Reply = u16> + Send + Sync + 'a)) {
 "#,
         InlayHintsQuery::new("object bounds", "/src/lib.rs"),
         expect![[r#"
-            object bounds
-            - `: &'_ (dyn auto_trait_hints::Service<u8, Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15
+            `: &'_ (dyn auto_trait_hints::Service<u8, Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15 // object bounds
         "#]],
     );
 }
@@ -52,11 +51,11 @@ pub fn references<'a>(
 "#,
         InlayHintsQuery::new("reference hints", "/src/lib.rs"),
         expect![[r#"
-            reference hints
-            - `: &'_ (dyn analysis_reference_hints::Service<u8, Reply = u16> + '_)` @ 8:9-8:15
-            - `: &mut dyn analysis_reference_hints::Opaque` @ 9:9-9:19
-            - `: &&mut dyn analysis_reference_hints::Opaque` @ 10:9-10:22
-            - `: &_` @ 11:9-11:17
+            // reference hints
+            `: &'_ (dyn analysis_reference_hints::Service<u8, Reply = u16> + '_)` @ 8:9-8:15
+            `: &mut dyn analysis_reference_hints::Opaque` @ 9:9-9:19
+            `: &&mut dyn analysis_reference_hints::Opaque` @ 10:9-10:22
+            `: &_` @ 11:9-11:17
         "#]],
     );
 }
@@ -81,10 +80,10 @@ pub fn use_it() {
 "#,
         InlayHintsQuery::new("const expression hints", "/src/lib.rs"),
         expect![[r#"
-            const expression hints
-            - `: [u8; 4]` @ 3:9-3:19
-            - `: [u8; _]` @ 4:9-4:14
-            - `: [u8; 3]` @ 5:9-5:15
+            // const expression hints
+            `: [u8; 4]` @ 3:9-3:19
+            `: [u8; _]` @ 4:9-4:14
+            `: [u8; 3]` @ 5:9-5:15
         "#]],
     );
 }
@@ -119,9 +118,9 @@ pub fn use_it() {
 "#,
         InlayHintsQuery::new("type hints", "/src/lib.rs"),
         expect![[r#"
-            type hints
-            - `: User` @ 11:9-11:13
-            - `: User` @ 14:9-14:14
+            // type hints
+            `: User` @ 11:9-11:13
+            `: User` @ 14:9-14:14
         "#]],
     );
 }
@@ -153,8 +152,7 @@ fn main() {
 "#,
         InlayHintsQuery::new("bin type hints", "/src/main.rs").in_bin("analysis_bin_type_hints"),
         expect![[r#"
-            bin type hints
-            - `: User` @ 8:9-8:13
+            `: User` @ 8:9-8:13 // bin type hints
         "#]],
     );
 }
@@ -186,8 +184,7 @@ pub fn demo(input: u64) {
 "#,
         InlayHintsQuery::new("body macro inlay hints", "/src/lib.rs"),
         expect![[r#"
-            body macro inlay hints
-            - `: Text` @ 12:9-12:13
+            `: Text` @ 12:9-12:13 // body macro inlay hints
         "#]],
     );
 }
@@ -235,10 +232,10 @@ pub fn match_it(maybe: Option<User>) {
 "#,
         InlayHintsQuery::new("pattern type hints", "/src/lib.rs"),
         expect![[r#"
-            pattern type hints
-            - `: User` @ 15:14-15:19
-            - `: Profile` @ 18:25-18:32
-            - `: User` @ 24:22-24:26
+            // pattern type hints
+            `: User` @ 15:14-15:19
+            `: Profile` @ 18:25-18:32
+            `: User` @ 24:22-24:26
         "#]],
     );
 }
@@ -279,11 +276,11 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 "#,
         InlayHintsQuery::new("for loop type hints", "/app/src/lib.rs").in_lib("app"),
         expect![[r#"
-            for loop type hints
-            - `: &Package` @ 5:9-5:17
-            - `: Package` @ 9:9-9:14
-            - `: Package` @ 13:10-13:17
-            - `: UserId` @ 13:19-13:26
+            // for loop type hints
+            `: &Package` @ 5:9-5:17
+            `: Package` @ 9:9-9:14
+            `: Package` @ 13:10-13:17
+            `: UserId` @ 13:19-13:26
         "#]],
     );
 }
@@ -339,9 +336,9 @@ pub fn inline_and_unknown(factory: Factory) {
 "#,
         InlayHintsQuery::new("method chain expression type hint policy", "/src/lib.rs"),
         expect![[r#"
-            method chain expression type hint policy
-            - `User` @ 25:26-26:17
-            - `Profile` @ 25:26-27:19
+            // method chain expression type hint policy
+            `User` @ 25:26-26:17
+            `Profile` @ 25:26-27:19
         "#]],
     );
 }
@@ -411,14 +408,14 @@ pub fn short() {
 "#,
         InlayHintsQuery::new("closing brace hint policy", "/src/lib.rs"),
         expect![[r#"
-            closing brace hint policy
-            - `// loop` @ 37:29-37:30
-            - `// while active` @ 39:25-39:26
-            - `// for item in items` @ 40:21-40:22
-            - `// match mode` @ 43:13-43:14
-            - `// fn process` @ 44:9-44:10
-            - `// impl User` @ 45:5-45:6
-            - `// mod outer` @ 46:1-46:2
+            // closing brace hint policy
+            `// loop` @ 37:29-37:30
+            `// while active` @ 39:25-39:26
+            `// for item in items` @ 40:21-40:22
+            `// match mode` @ 43:13-43:14
+            `// fn process` @ 44:9-44:10
+            `// impl User` @ 45:5-45:6
+            `// mod outer` @ 46:1-46:2
         "#]],
     );
 }
@@ -462,13 +459,13 @@ pub fn use_it(scope: u32, user: User, other: User, normal: User) {
 "#,
         InlayHintsQuery::new("parameter hint policy", "/src/lib.rs"),
         expect![[r#"
-            parameter hint policy
-            - `annotation:` @ 18:18-18:22
-            - `initializer:` @ 18:24-18:29
-            - `active:` @ 19:17-19:21
-            - `pending_tys:` @ 19:23-19:28
-            - `value:` @ 20:16-20:20
-            - `count:` @ 20:22-20:24
+            // parameter hint policy
+            `annotation:` @ 18:18-18:22
+            `initializer:` @ 18:24-18:29
+            `active:` @ 19:17-19:21
+            `pending_tys:` @ 19:23-19:28
+            `value:` @ 20:16-20:20
+            `count:` @ 20:22-20:24
         "#]],
     );
 }
@@ -511,11 +508,11 @@ pub fn use_it(nested: Wrapper<Wrapper<Item>>) {
 "#,
         InlayHintsQuery::new("receiver steps", "/src/lib.rs"),
         expect![[r#"
-            receiver steps
-            - `: u16` @ 19:9-19:14
-            - `: u8` @ 20:9-20:18
-            - `: Wrapper<Wrapper<Item>>` @ 21:9-21:14
-            - `: u16` @ 22:9-22:16
+            // receiver steps
+            `: u16` @ 19:9-19:14
+            `: u8` @ 20:9-20:18
+            `: Wrapper<Wrapper<Item>>` @ 21:9-21:14
+            `: u16` @ 22:9-22:16
         "#]],
     );
 }

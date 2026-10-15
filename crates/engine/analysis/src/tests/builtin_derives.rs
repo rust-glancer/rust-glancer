@@ -42,24 +42,15 @@ pub fn use_it() {
         ]
         .map(|query| query.in_lib("builtin_derives")),
         expect![[r#"
-            derived default
-            - nominal struct builtin_derives[lib]::crate::Key
+            nominal struct builtin_derives[lib]::crate::Key // derived default
+            nominal struct builtin_derives[lib]::crate::Key // derived clone
+            bool // derived comparison
+            nominal enum core[lib]::crate::cmp::Ordering // derived ordering
+            bool // all nine bounds
 
-            derived clone
-            - nominal struct builtin_derives[lib]::crate::Key
-
-            derived comparison
-            - bool
-
-            derived ordering
-            - nominal enum core[lib]::crate::cmp::Ordering
-
-            all nine bounds
-            - bool
-
-            clone completion
-            - trait_method clone
-            - trait_method clone_from
+            // clone completion
+            trait_method clone
+            trait_method clone_from
         "#]],
     );
 }
@@ -112,14 +103,9 @@ pub fn use_it(original: Wrapper<Value>) {
         ]
         .map(|query| query.in_lib("derive_generics")),
         expect![[r#"
-            generic aliased derive
-            - nominal struct derive_generics[lib]::crate::Wrapper<nominal struct derive_generics[lib]::crate::Value>
-
-            unit default needs no T bound
-            - nominal enum derive_generics[lib]::crate::Choice<nominal struct derive_generics[lib]::crate::NoDefault>
-
-            derive in macro output
-            - nominal struct derive_generics[lib]::crate::Generated
+            nominal struct derive_generics[lib]::crate::Wrapper<nominal struct derive_generics[lib]::crate::Value> // generic aliased derive
+            nominal enum derive_generics[lib]::crate::Choice<nominal struct derive_generics[lib]::crate::NoDefault> // unit default needs no T bound
+            nominal struct derive_generics[lib]::crate::Generated // derive in macro output
         "#]],
     );
 }
@@ -142,10 +128,10 @@ pub type Alias = Foo;
 "#,
         &[AnalysisQuery::rename("rename derived type", "type", "Bar").in_lib("derive_rename")],
         expect![[r#"
-            rename derived type
-            - target `Foo` @ derive_rename/src/lib.rs:2:12-2:15
-            - `Foo` -> `Bar` @ derive_rename/src/lib.rs:2:12-2:15
-            - `Foo` -> `Bar` @ derive_rename/src/lib.rs:4:18-4:21
+            // rename derived type
+            target `Foo` @ derive_rename/src/lib.rs:2:12-2:15
+            `Foo` -> `Bar` @ derive_rename/src/lib.rs:2:12-2:15
+            `Foo` -> `Bar` @ derive_rename/src/lib.rs:4:18-4:21
         "#]],
     );
 }
@@ -202,11 +188,8 @@ pub fn use_it() {
         ]
         .map(|query| query.in_lib("derive_app")),
         expect![[r#"
-            derived struct clone
-            - nominal struct derive_app[lib]::crate::nested::Generated
-
-            derived enum clone
-            - nominal enum derive_app[lib]::crate::nested::Choice
+            nominal struct derive_app[lib]::crate::nested::Generated // derived struct clone
+            nominal enum derive_app[lib]::crate::nested::Choice // derived enum clone
         "#]],
     );
 }
@@ -246,8 +229,7 @@ pub fn use_it(value: Wrap<Owner>) {
                 .in_lib("derive_projection"),
         ],
         expect![[r#"
-            clone with a non-Clone associated type
-            - nominal struct derive_projection[lib]::crate::Wrap<nominal struct derive_projection[lib]::crate::Owner>
+            nominal struct derive_projection[lib]::crate::Wrap<nominal struct derive_projection[lib]::crate::Owner> // clone with a non-Clone associated type
         "#]],
     );
 }

@@ -43,23 +43,20 @@ pub fn run(value: &Service) {
             AnalysisQuery::complete("object methods", "members"),
         ],
         expect![[r#"
-            object method results
-            - range: 16:9-16:16
-            - block:
+            // object method results
+            range: 16:9-16:16
+            block:
               kind: variable
               signature:
                 let results: (u8, u16, u64, u16)
 
-            qualified method declaration
-            - fn parent @ 4:12-4:18
+            fn parent @ 4:12-4:18 // qualified method declaration
+            trait Service @ 6:15-6:22 // object trait declaration
 
-            object trait declaration
-            - trait Service @ 6:15-6:22
-
-            object methods
-            - inherent_method inspect
-            - trait_method parent
-            - trait_method request
+            // object methods
+            inherent_method inspect
+            trait_method parent
+            trait_method request
         "#]],
     );
 }
@@ -100,25 +97,18 @@ pub fn inspect<T: api::Render>(value: T) {
                 .matching("render"),
         ],
         expect![[r#"
-            direct bound result
-            - u32
+            u32 // direct bound result
+            u16 // supertrait result
+            fn render @ 6:12-6:18 // direct declaration
+            fn render_base @ 3:12-3:23 // supertrait declaration
 
-            supertrait result
-            - u16
+            // saved bound methods
+            trait_method render
+            trait_method render_base
 
-            direct declaration
-            - fn render @ 6:12-6:18
-
-            supertrait declaration
-            - fn render_base @ 3:12-3:23
-
-            saved bound methods
-            - trait_method render
-            - trait_method render_base
-
-            request-local bound methods
-            - trait_method render
-            - trait_method render_base
+            // request-local bound methods
+            trait_method render
+            trait_method render_base
         "#]],
     );
 }
@@ -168,19 +158,16 @@ where
                 .matching("value"),
         ],
         expect![[r#"
-            field through generic Deref chain
-            - u16
+            u16 // field through generic Deref chain
+            u32 // method through generic Deref chain
 
-            method through generic Deref chain
-            - u32
+            // generic Deref members
+            field value
+            inherent_method value_len
 
-            generic Deref members
-            - field value
-            - inherent_method value_len
-
-            request-local Deref members
-            - field value
-            - inherent_method value_len
+            // request-local Deref members
+            field value
+            inherent_method value_len
         "#]],
     );
 }
@@ -262,41 +249,18 @@ impl Owner where Other: Marker {
             .matching("from_marker"),
         ],
         expect![[r#"
-            function bound
-            - bool
-
-            saved function bound
-            - trait_method from_marker
-
-            request-local function bound
-            - trait_method from_marker
-
-            trait parameter bound
-            - bool
-
-            saved trait parameter bound
-            - trait_method from_marker
-
-            request-local trait parameter bound
-            - trait_method from_marker
-
-            implicit Self bound
-            - u16
-
-            saved implicit Self bound
-            - trait_method from_render
-
-            request-local implicit Self bound
-            - trait_method from_render
-
-            nongeneric impl bound
-            - bool
-
-            saved nongeneric impl bound
-            - trait_method from_marker
-
-            request-local nongeneric impl bound
-            - trait_method from_marker
+            bool // function bound
+            trait_method from_marker // saved function bound
+            trait_method from_marker // request-local function bound
+            bool // trait parameter bound
+            trait_method from_marker // saved trait parameter bound
+            trait_method from_marker // request-local trait parameter bound
+            u16 // implicit Self bound
+            trait_method from_render // saved implicit Self bound
+            trait_method from_render // request-local implicit Self bound
+            bool // nongeneric impl bound
+            trait_method from_marker // saved nongeneric impl bound
+            trait_method from_marker // request-local nongeneric impl bound
         "#]],
     );
 }
@@ -343,15 +307,15 @@ pub fn use_it(user: User) {
             AnalysisQuery::complete("bare dot completions", "bare"),
         ],
         expect![[r#"
-            partial dot completions
-            - inherent_method id
-            - inherent_method touch
-            - trait_method trait_name
+            // partial dot completions
+            inherent_method id
+            inherent_method touch
+            trait_method trait_name
 
-            bare dot completions
-            - inherent_method id
-            - inherent_method touch
-            - trait_method trait_name
+            // bare dot completions
+            inherent_method id
+            inherent_method touch
+            trait_method trait_name
         "#]],
     );
 }
@@ -441,37 +405,37 @@ pub fn inspect(value: Value) {
             AnalysisQuery::complete("type shadow keeps outer trait", "shadowed").in_lib("app"),
         ],
         expect![[r#"
-            outer trait scope
-            - trait_method aliased
-            - trait_method named
-            - trait_method underscore
-            - trait_method wildcard
+            // outer trait scope
+            trait_method aliased
+            trait_method named
+            trait_method underscore
+            trait_method wildcard
 
-            block trait scope
-            - trait_method aliased
-            - trait_method hidden
-            - trait_method named
-            - trait_method underscore
-            - trait_method wildcard
+            // block trait scope
+            trait_method aliased
+            trait_method hidden
+            trait_method named
+            trait_method underscore
+            trait_method wildcard
 
-            block underscore trait scope
-            - trait_method aliased
-            - trait_method hidden
-            - trait_method named
-            - trait_method underscore
-            - trait_method wildcard
+            // block underscore trait scope
+            trait_method aliased
+            trait_method hidden
+            trait_method named
+            trait_method underscore
+            trait_method wildcard
 
-            scope after block
-            - trait_method aliased
-            - trait_method named
-            - trait_method underscore
-            - trait_method wildcard
+            // scope after block
+            trait_method aliased
+            trait_method named
+            trait_method underscore
+            trait_method wildcard
 
-            type shadow keeps outer trait
-            - trait_method aliased
-            - trait_method named
-            - trait_method underscore
-            - trait_method wildcard
+            // type shadow keeps outer trait
+            trait_method aliased
+            trait_method named
+            trait_method underscore
+            trait_method wildcard
         "#]],
     );
 }
@@ -527,8 +491,7 @@ pub fn inspect() {
             "receiver",
         )],
         expect![[r#"
-            inferred receiver with many unrelated impls
-            - inherent_method marker
+            inherent_method marker // inferred receiver with many unrelated impls
         "#]],
     );
 }
@@ -563,13 +526,13 @@ pub fn use_it(user: User) {
             "0",
         )],
         expect![[r#"
-            bare dot before statement completions
-            - inherent_method id
+            // bare dot before statement completions
+            inherent_method id
               detail: pub fn id(&self)
               sort: id|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })
               replace: 119..119
               snippet: id()$0
-            - field name
+            field name
               detail: pub name: String
               sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(0)) }, index: 0 })
               replace: 119..119
@@ -630,25 +593,25 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             complete("cast completions", "cast"),
         ],
         expect![[r#"
-            reference completions
-            - inherent_method id
-            - field profile
+            // reference completions
+            inherent_method id
+            field profile
 
-            double reference completions
-            - inherent_method id
-            - field profile
+            // double reference completions
+            inherent_method id
+            field profile
 
-            try completions
-            - inherent_method id
-            - field profile
+            // try completions
+            inherent_method id
+            field profile
 
-            await completions
-            - inherent_method id
-            - field profile
+            // await completions
+            inherent_method id
+            field profile
 
-            cast completions
-            - inherent_method id
-            - field profile
+            // cast completions
+            inherent_method id
+            field profile
         "#]],
     );
 }
@@ -686,9 +649,9 @@ fn main() {
 "#,
         &[AnalysisQuery::complete("bin root completions", "0").in_bin("analysis_bin_completion")],
         expect![[r#"
-            bin root completions
-            - inherent_method ping
-            - inherent_method work
+            // bin root completions
+            inherent_method ping
+            inherent_method work
         "#]],
     );
 }
@@ -721,8 +684,7 @@ pub fn use_it(user: User) {
             "inside_arg",
         )],
         expect![[r#"
-            completion inside method argument
-            - <none>
+            <none> // completion inside method argument
         "#]],
     );
 }
@@ -769,13 +731,12 @@ pub fn use_it(user: User) {
             AnalysisQuery::ty("inherent call takes precedence", "picked"),
         ],
         expect![[r#"
-            same-name completions
-            - inherent_method label
-            - trait_method label
-            - trait_method label
+            // same-name completions
+            inherent_method label
+            trait_method label
+            trait_method label
 
-            inherent call takes precedence
-            - u32
+            u32 // inherent call takes precedence
         "#]],
     );
 }
@@ -823,9 +784,9 @@ pub fn use_it(error: Wrapper<Error>) {
             "0",
         )],
         expect![[r#"
-            wrong generic arg completions
-            - inherent_method generic
-            - field value
+            // wrong generic arg completions
+            inherent_method generic
+            field value
         "#]],
     );
 }
@@ -874,9 +835,9 @@ pub fn use_it(wrapper: Wrapper<User>) {
 "#,
         &[AnalysisQuery::complete("generic trait completions", "0")],
         expect![[r#"
-            generic trait completions
-            - trait_method generic_trait_name
-            - field value
+            // generic trait completions
+            trait_method generic_trait_name
+            field value
         "#]],
     );
 }
@@ -908,8 +869,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
 "#,
         &[AnalysisQuery::complete("const trait impl completions", "0")],
         expect![[r#"
-            const trait impl completions
-            - <none>
+            <none> // const trait impl completions
         "#]],
     );
 }
@@ -945,11 +905,8 @@ pub fn use_it(user: User) {
             AnalysisQuery::complete("outer receiver completions", "user"),
         ],
         expect![[r#"
-            field receiver completions
-            - inherent_method display
-
-            outer receiver completions
-            - field profile
+            inherent_method display // field receiver completions
+            field profile // outer receiver completions
         "#]],
     );
 }
@@ -988,13 +945,13 @@ pub fn use_it() {
             AnalysisQuery::complete("body-local tuple field completions", "tuple"),
         ],
         expect![[r#"
-            body-local field completions
-            - field id
-            - field profile
+            // body-local field completions
+            field id
+            field profile
 
-            body-local tuple field completions
-            - field 0
-            - field 1
+            // body-local tuple field completions
+            field 0
+            field 1
         "#]],
     );
 }
@@ -1040,13 +997,13 @@ pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
             AnalysisQuery::complete("dyn Deref completions", "object_deref").in_lib("app"),
         ],
         expect![[r#"
-            Deref completions
-            - field id
-            - inherent_method label
+            // Deref completions
+            field id
+            inherent_method label
 
-            dyn Deref completions
-            - field id
-            - inherent_method label
+            // dyn Deref completions
+            field id
+            inherent_method label
         "#]],
     );
 }
@@ -1102,17 +1059,17 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
                 .in_lib("app"),
         ],
         expect![[r#"
-            slice method completions
-            - inherent_method first_ref
-            - inherent_method len
+            // slice method completions
+            inherent_method first_ref
+            inherent_method len
 
-            array method completions
-            - inherent_method first_ref
-            - inherent_method len
+            // array method completions
+            inherent_method first_ref
+            inherent_method len
 
-            array ref method completions
-            - inherent_method first_ref
-            - inherent_method len
+            // array ref method completions
+            inherent_method first_ref
+            inherent_method len
         "#]],
     );
 }
@@ -1187,14 +1144,9 @@ pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
             AnalysisQuery::complete("scalar primitive method", "scalar").in_lib("app"),
         ],
         expect![[r#"
-            primitive method through Deref
-            - inherent_method contains
-
-            primitive method through reference
-            - inherent_method contains
-
-            scalar primitive method
-            - inherent_method count_ones
+            inherent_method contains // primitive method through Deref
+            inherent_method contains // primitive method through reference
+            inherent_method count_ones // scalar primitive method
         "#]],
     );
 }
@@ -1273,10 +1225,10 @@ pub fn use_it(value: u32) {
 "#,
         &[AnalysisQuery::complete("macro-generated methods", "methods").in_lib("app")],
         expect![[r#"
-            macro-generated methods
-            - inherent_method generated_count
-            - inherent_method generated_nested
-            - trait_method generated_trait
+            // macro-generated methods
+            inherent_method generated_count
+            inherent_method generated_nested
+            trait_method generated_trait
         "#]],
     );
 }
@@ -1322,8 +1274,7 @@ pub fn use_it(pointer: *const u8) {
 "#,
         &[AnalysisQuery::complete("raw pointer methods", "pointer").in_lib("app")],
         expect![[r#"
-            raw pointer methods
-            - inherent_method is_null
+            inherent_method is_null // raw pointer methods
         "#]],
     );
 }
@@ -1418,20 +1369,19 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
             AnalysisQuery::complete("reference trait methods", "reference").in_lib("app"),
         ],
         expect![[r#"
-            primitive trait methods
-            - trait_method blanket_label
-            - trait_method scalar_label
+            // primitive trait methods
+            trait_method blanket_label
+            trait_method scalar_label
 
-            array trait methods
-            - trait_method array_element
-            - trait_method blanket_label
+            // array trait methods
+            trait_method array_element
+            trait_method blanket_label
 
-            blanket trait methods
-            - trait_method blanket_label
+            trait_method blanket_label // blanket trait methods
 
-            reference trait methods
-            - trait_method blanket_label
-            - trait_method reference_identity
+            // reference trait methods
+            trait_method blanket_label
+            trait_method reference_identity
         "#]],
     );
 }
@@ -1544,22 +1494,18 @@ pub fn nested_body_owner() {
             ),
         ],
         expect![[r#"
-            body-local type impl completions
-            - field id
-            - inherent_method id
+            // body-local type impl completions
+            field id
+            inherent_method id
 
-            body-local target impl completions
-            - inherent_method local
+            inherent_method local // body-local target impl completions
+            trait_method label // body-local target trait impl completions
 
-            body-local target trait impl completions
-            - trait_method label
+            // nested body-local impl completions
+            field id
+            inherent_method id
 
-            nested body-local impl completions
-            - field id
-            - inherent_method id
-
-            parent body-local impl completions from nested body
-            - inherent_method id
+            inherent_method id // parent body-local impl completions from nested body
         "#]],
     );
 }
@@ -1616,17 +1562,17 @@ pub fn use_it() {
             AnalysisQuery::complete("wrong generic receiver completions", "wrong_receiver"),
         ],
         expect![[r#"
-            generic method return completions
-            - field id
-            - inherent_method label
+            // generic method return completions
+            field id
+            inherent_method label
 
-            generic field receiver completions
-            - field id
-            - inherent_method label
+            // generic field receiver completions
+            field id
+            inherent_method label
 
-            wrong generic receiver completions
-            - inherent_method get
-            - field value
+            // wrong generic receiver completions
+            inherent_method get
+            field value
         "#]],
     );
 }
@@ -1691,40 +1637,40 @@ pub fn use_it(maybe: Option<User>) {
             AnalysisQuery::complete("match pattern payload completions", "match_payload"),
         ],
         expect![[r#"
-            closure parameter completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // closure parameter completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            let pattern payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // let pattern payload completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            if let-chain rhs completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // if let-chain rhs completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            if let pattern payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // if let pattern payload completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            while let pattern payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // while let pattern payload completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            match guard payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // match guard payload completions
+            field id
+            inherent_method is_valid
+            inherent_method label
 
-            match pattern payload completions
-            - field id
-            - inherent_method is_valid
-            - inherent_method label
+            // match pattern payload completions
+            field id
+            inherent_method is_valid
+            inherent_method label
         "#]],
     );
 }
@@ -1751,9 +1697,9 @@ pub fn use_it(pair: Pair) {
 "#,
         &[AnalysisQuery::complete("tuple field completions", "0")],
         expect![[r#"
-            tuple field completions
-            - field 0
-            - field 1
+            // tuple field completions
+            field 0
+            field 1
         "#]],
     );
 }
@@ -1789,13 +1735,13 @@ pub fn use_it(user: User) {
 "#,
         &[AnalysisQuery::complete_verbose("metadata completions", "0")],
         expect![[r#"
-            metadata completions
-            - field name
+            // metadata completions
+            field name
               detail: pub name: Profile
               docs: Name field.
               sort: name|00|00|Field(FieldRef { owner: TypeDefRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: Struct(StructId(1)) }, index: 0 })
               replace: 216..218
-            - inherent_method name
+            inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
               sort: name|01|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(1) })

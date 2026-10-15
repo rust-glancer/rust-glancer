@@ -32,11 +32,8 @@ pub fn use_it() {
             AnalysisQuery::goto("goto item", "goto_item"),
         ],
         expect![[r#"
-            goto local
-            - local local @ 8:9-8:14
-
-            goto item
-            - fn helper @ 3:8-3:14
+            local local @ 8:9-8:14 // goto local
+            fn helper @ 3:8-3:14 // goto item
         "#]],
     );
 }
@@ -64,8 +61,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::goto("goto declaration binding", "goto_decl")],
         expect![[r#"
-            goto declaration binding
-            - local local @ 8:9-8:14
+            local local @ 8:9-8:14 // goto declaration binding
         "#]],
     );
 }
@@ -98,11 +94,8 @@ pub fn use_it() {
             AnalysisQuery::goto("goto documented function", "goto_fn"),
         ],
         expect![[r#"
-            goto documented type
-            - struct User @ 2:12-2:16
-
-            goto documented function
-            - fn make @ 5:8-5:12
+            struct User @ 2:12-2:16 // goto documented type
+            fn make @ 5:8-5:12 // goto documented function
         "#]],
     );
 }
@@ -133,8 +126,7 @@ pub fn use_it(input: u64) {
 "#,
         &[AnalysisQuery::goto("goto body macro call", "goto_macro")],
         expect![[r#"
-            goto body macro call
-            - macro make_text @ 6:14-6:23
+            macro make_text @ 6:14-6:23 // goto body macro call
         "#]],
     );
 }
@@ -187,8 +179,7 @@ pub fn use_it() {
                 .in_lib("goto_proc_macro_app"),
         ],
         expect![[r#"
-            goto proc macro implementation
-            - macro emit @ 5:8-5:12
+            macro emit @ 5:8-5:12 // goto proc macro implementation
         "#]],
     );
 }
@@ -212,8 +203,7 @@ pub fn use_it(_: a$goto_module$pi::User) {}
 "#,
         &[AnalysisQuery::goto("goto module", "goto_module")],
         expect![[r#"
-            goto module
-            - module api @ 1:5-1:8
+            module api @ 1:5-1:8 // goto module
         "#]],
     );
 }
@@ -241,8 +231,7 @@ pub fn use_it(user: User) {
 "#,
         &[AnalysisQuery::goto("goto field", "goto_field")],
         expect![[r#"
-            goto field
-            - field profile @ 4:9-4:16
+            field profile @ 4:9-4:16 // goto field
         "#]],
     );
 }
@@ -271,8 +260,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::goto("goto body-local field", "goto_field")],
         expect![[r#"
-            goto body-local field
-            - field local_id @ 5:9-5:17
+            field local_id @ 5:9-5:17 // goto body-local field
         "#]],
     );
 }
@@ -305,8 +293,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::goto("goto body-local method", "goto_method")],
         expect![[r#"
-            goto body-local method
-            - fn id @ 7:12-7:14
+            fn id @ 7:12-7:14 // goto body-local method
         "#]],
     );
 }
@@ -380,17 +367,10 @@ pub fn use_it<'db>(
             ),
         ],
         expect![[r#"
-            goto self method in lifetime impl
-            - fn alloc_module @ 13:8-13:20
-
-            goto self sibling method in lifetime impl
-            - fn collect_items @ 17:8-17:21
-
-            goto external method on lifetime receiver
-            - fn collect_items @ 17:8-17:21
-
-            goto method on Formatter placeholder lifetime
-            - fn debug_struct @ 33:8-33:20
+            fn alloc_module @ 13:8-13:20 // goto self method in lifetime impl
+            fn collect_items @ 17:8-17:21 // goto self sibling method in lifetime impl
+            fn collect_items @ 17:8-17:21 // goto external method on lifetime receiver
+            fn debug_struct @ 33:8-33:20 // goto method on Formatter placeholder lifetime
         "#]],
     );
 }
@@ -464,38 +444,17 @@ pub fn use_it(action: Action, value: i32) {
             AnalysisQuery::goto("goto const block shadowed path", "goto_const_shadow"),
         ],
         expect![[r#"
-            goto associated type prefix
-            - struct Widget @ 1:12-1:18
-
-            goto associated function
-            - fn create @ 4:12-4:18
-
-            goto enum expression prefix
-            - enum Action @ 9:10-9:16
-
-            goto expression variant
-            - variant Configure @ 10:5-10:14
-
-            goto tuple pattern enum prefix
-            - enum Action @ 9:10-9:16
-
-            goto tuple pattern variant
-            - variant Configure @ 10:5-10:14
-
-            goto record pattern variant
-            - variant Project @ 11:5-11:12
-
-            goto range pattern start
-            - const MIN @ 19:15-19:18
-
-            goto range pattern end
-            - const MAX @ 20:15-20:18
-
-            goto const block pattern path
-            - const EXACT @ 15:11-15:16
-
-            goto const block shadowed path
-            - const shadow @ 16:11-16:17
+            struct Widget @ 1:12-1:18 // goto associated type prefix
+            fn create @ 4:12-4:18 // goto associated function
+            enum Action @ 9:10-9:16 // goto enum expression prefix
+            variant Configure @ 10:5-10:14 // goto expression variant
+            enum Action @ 9:10-9:16 // goto tuple pattern enum prefix
+            variant Configure @ 10:5-10:14 // goto tuple pattern variant
+            variant Project @ 11:5-11:12 // goto record pattern variant
+            const MIN @ 19:15-19:18 // goto range pattern start
+            const MAX @ 20:15-20:18 // goto range pattern end
+            const EXACT @ 15:11-15:16 // goto const block pattern path
+            const shadow @ 16:11-16:17 // goto const block shadowed path
         "#]],
     );
 }
@@ -542,11 +501,8 @@ pub fn use_it(bytes: [u8; 4]) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            goto primitive associated const
-            - const MAX @ 2:15-2:18
-
-            goto primitive associated function
-            - fn from_be_bytes @ 3:12-3:25
+            const MAX @ 2:15-2:18 // goto primitive associated const
+            fn from_be_bytes @ 3:12-3:25 // goto primitive associated function
         "#]],
     );
 }
@@ -585,8 +541,7 @@ pub fn use_it() {
 "#,
         &[AnalysisQuery::goto("goto crate prefix", "goto_crate_prefix").in_lib("app")],
         expect![[r#"
-            goto crate prefix
-            - module crate @ <root>
+            module crate @ <root> // goto crate prefix
         "#]],
     );
 }
@@ -613,8 +568,7 @@ pub fn use_it(pair: Pair) {
 "#,
         &[AnalysisQuery::goto("goto tuple field", "goto_tuple_field")],
         expect![[r#"
-            goto tuple field
-            - field #0 @ 4:17-4:25
+            field #0 @ 4:17-4:25 // goto tuple field
         "#]],
     );
 }
@@ -649,8 +603,7 @@ pub fn use_it(user: User) {
             "goto_direct_trait",
         )],
         expect![[r#"
-            goto direct trait method
-            - fn id @ 8:8-8:10
+            fn id @ 8:8-8:10 // goto direct trait method
         "#]],
     );
 }
@@ -724,23 +677,12 @@ pub fn explicit_reference(value: &&Predicate) {
             AnalysisQuery::goto("explicit reference Self", "explicit_reference"),
         ],
         expect![[r#"
-            borrowed match binding
-            - fn record @ 6:8-6:14
-
-            double reference selects the reference impl
-            - fn record @ 9:8-9:14
-
-            reference-only implementation
-            - fn record @ 9:8-9:14
-
-            wrapper implementation before Deref
-            - fn record @ 26:8-26:14
-
-            implementation through Deref
-            - fn record @ 6:8-6:14
-
-            explicit reference Self
-            - fn record @ 9:8-9:14
+            fn record @ 6:8-6:14 // borrowed match binding
+            fn record @ 9:8-9:14 // double reference selects the reference impl
+            fn record @ 9:8-9:14 // reference-only implementation
+            fn record @ 26:8-26:14 // wrapper implementation before Deref
+            fn record @ 6:8-6:14 // implementation through Deref
+            fn record @ 9:8-9:14 // explicit reference Self
         "#]],
     );
 }
@@ -789,27 +731,16 @@ pub fn use_it(source: Source) {
             AnalysisQuery::goto_impl("all implementations of the conversion method", "wide"),
         ],
         expect![[r#"
-            wide conversion
-            - fn convert @ 8:8-8:15
+            fn convert @ 8:8-8:15 // wide conversion
+            fn convert @ 12:8-12:15 // narrow conversion
+            fn convert @ 12:8-12:15 // qualified conversion
+            fn convert @ 8:8-8:15 // associated conversion
+            fn convert @ 12:8-12:15 // borrowed conversion
+            fn convert @ 8:8-8:15 // resolve selected call symbol
 
-            narrow conversion
-            - fn convert @ 12:8-12:15
-
-            qualified conversion
-            - fn convert @ 12:8-12:15
-
-            associated conversion
-            - fn convert @ 8:8-8:15
-
-            borrowed conversion
-            - fn convert @ 12:8-12:15
-
-            resolve selected call symbol
-            - fn convert @ 8:8-8:15
-
-            all implementations of the conversion method
-            - fn convert @ 8:8-8:15
-            - fn convert @ 12:8-12:15
+            // all implementations of the conversion method
+            fn convert @ 8:8-8:15
+            fn convert @ 12:8-12:15
         "#]],
     );
 }
@@ -856,17 +787,10 @@ pub fn abstract_call<T: Named>(value: T) {
             AnalysisQuery::goto("call through a generic bound", "bound"),
         ],
         expect![[r#"
-            generic receiver with a blanket impl
-            - fn name @ 10:8-10:12
-
-            inherited default body
-            - fn name @ 2:8-2:12
-
-            associated call to the default body
-            - fn name @ 2:8-2:12
-
-            call through a generic bound
-            - fn name @ 2:8-2:12
+            fn name @ 10:8-10:12 // generic receiver with a blanket impl
+            fn name @ 2:8-2:12 // inherited default body
+            fn name @ 2:8-2:12 // associated call to the default body
+            fn name @ 2:8-2:12 // call through a generic bound
         "#]],
     );
 }
@@ -901,11 +825,8 @@ pub fn use_it() {
             AnalysisQuery::goto("body-local associated call", "associated"),
         ],
         expect![[r#"
-            body-local trait implementation
-            - fn name @ 8:12-8:16
-
-            body-local associated call
-            - fn name @ 8:12-8:16
+            fn name @ 8:12-8:16 // body-local trait implementation
+            fn name @ 8:12-8:16 // body-local associated call
         "#]],
     );
 }
@@ -969,11 +890,8 @@ pub fn use_it(value: u8, wrapped: Wrapper) {
             AnalysisQuery::goto("trait implementation after deref", "deref").in_lib("app"),
         ],
         expect![[r#"
-            primitive trait implementation
-            - fn name @ 6:8-6:12
-
-            trait implementation after deref
-            - fn name @ 6:8-6:12
+            fn name @ 6:8-6:12 // primitive trait implementation
+            fn name @ 6:8-6:12 // trait implementation after deref
         "#]],
     );
 }
@@ -1056,11 +974,8 @@ pub fn use_it(text: OwnedText, value: u32) {
                 .in_lib("app"),
         ],
         expect![[r#"
-            goto primitive method through Deref
-            - fn contains @ 11:12-11:20
-
-            goto macro-generated primitive method
-            - fn generated_count @ 26:5-26:24
+            fn contains @ 11:12-11:20 // goto primitive method through Deref
+            fn generated_count @ 26:5-26:24 // goto macro-generated primitive method
         "#]],
     );
 }
@@ -1098,23 +1013,12 @@ pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
             AnalysisQuery::goto("goto return type", "goto_ret"),
         ],
         expect![[r#"
-            goto use module
-            - module api @ 1:5-1:8
-
-            goto use path
-            - struct User @ 3:16-3:20
-
-            goto impl trait
-            - trait Named @ 2:15-2:20
-
-            goto impl self type
-            - struct User @ 3:16-3:20
-
-            goto parameter type
-            - struct User @ 3:16-3:20
-
-            goto return type
-            - struct User @ 3:16-3:20
+            module api @ 1:5-1:8 // goto use module
+            struct User @ 3:16-3:20 // goto use path
+            trait Named @ 2:15-2:20 // goto impl trait
+            struct User @ 3:16-3:20 // goto impl self type
+            struct User @ 3:16-3:20 // goto parameter type
+            struct User @ 3:16-3:20 // goto return type
         "#]],
     );
 }
@@ -1167,11 +1071,8 @@ fn main() {
             AnalysisQuery::goto("goto bin root to dependency item", "goto_bin_dep").in_bin("app"),
         ],
         expect![[r#"
-            goto bin root to library item
-            - struct Api @ 1:12-1:15
-
-            goto bin root to dependency item
-            - struct Thing @ 1:12-1:17
+            struct Api @ 1:12-1:15 // goto bin root to library item
+            struct Thing @ 1:12-1:17 // goto bin root to dependency item
         "#]],
     );
 }
@@ -1194,8 +1095,7 @@ pub fn use_it(_: Str$goto_prelude$ing) {}
                 .in_lib("analysis_prelude_goto"),
         ],
         expect![[r#"
-            goto prelude type
-            - struct String @ 1:12-1:18
+            struct String @ 1:12-1:18 // goto prelude type
         "#]],
     );
 }
@@ -1230,11 +1130,8 @@ mod macro_shadow {
                 .in_lib("analysis_prelude_shadow_goto"),
         ],
         expect![[r#"
-            goto prelude type shadowed by value
-            - struct String @ 1:12-1:18
-
-            goto prelude type shadowed by macro
-            - struct String @ 1:12-1:18
+            struct String @ 1:12-1:18 // goto prelude type shadowed by value
+            struct String @ 1:12-1:18 // goto prelude type shadowed by macro
         "#]],
     );
 }
@@ -1264,8 +1161,7 @@ pub fn use_it(_: crate::A$goto_nested_file$pi) {}
                 .in_lib("nested_analysis"),
         ],
         expect![[r#"
-            goto from nested file
-            - struct Api @ 1:12-1:15
+            struct Api @ 1:12-1:15 // goto from nested file
         "#]],
     );
 }
@@ -1292,11 +1188,8 @@ pub struct User {
             AnalysisQuery::goto("goto field type", "goto_field_type"),
         ],
         expect![[r#"
-            goto field declaration
-            - field profile @ 4:9-4:16
-
-            goto field type
-            - struct Profile @ 1:12-1:19
+            field profile @ 4:9-4:16 // goto field declaration
+            struct Profile @ 1:12-1:19 // goto field type
         "#]],
     );
 }
@@ -1323,8 +1216,7 @@ use api::User as Acc$goto_import_alias$ount;
             "goto_import_alias",
         )],
         expect![[r#"
-            goto import alias
-            - struct User @ 2:16-2:20
+            struct User @ 2:16-2:20 // goto import alias
         "#]],
     );
 }
@@ -1353,8 +1245,7 @@ impl User {
             "goto_impl_self_signature",
         )],
         expect![[r#"
-            goto impl signature Self
-            - struct User @ 1:12-1:16
+            struct User @ 1:12-1:16 // goto impl signature Self
         "#]],
     );
 }
@@ -1387,14 +1278,9 @@ pub fn outside() {
             AnalysisQuery::goto("goto module constructor", "goto_module_ctor"),
         ],
         expect![[r#"
-            goto local type path
-            - struct User @ 4:12-4:16
-
-            goto local constructor
-            - struct User @ 4:12-4:16
-
-            goto module constructor
-            - struct User @ 1:12-1:16
+            struct User @ 4:12-4:16 // goto local type path
+            struct User @ 4:12-4:16 // goto local constructor
+            struct User @ 1:12-1:16 // goto module constructor
         "#]],
     );
 }
@@ -1424,8 +1310,7 @@ pub fn make() {
             "goto_local_variant",
         )],
         expect![[r#"
-            goto local enum variant
-            - variant Start @ 3:9-3:14
+            variant Start @ 3:9-3:14 // goto local enum variant
         "#]],
     );
 }
@@ -1456,8 +1341,7 @@ pub fn make() {
             "goto_record_local_type",
         )],
         expect![[r#"
-            goto local record literal
-            - struct User @ 4:12-4:16
+            struct User @ 4:12-4:16 // goto local record literal
         "#]],
     );
 }
@@ -1500,11 +1384,8 @@ pub fn make() {
             AnalysisQuery::goto("goto inner const", "goto_inner_const"),
         ],
         expect![[r#"
-            goto inner function
-            - fn value @ 11:12-11:17
-
-            goto inner const
-            - const helper @ 18:15-18:21
+            fn value @ 11:12-11:17 // goto inner function
+            const helper @ 18:15-18:21 // goto inner const
         "#]],
     );
 }
@@ -1560,20 +1441,11 @@ pub fn make() {
             ),
         ],
         expect![[r#"
-            goto parent const from nested function
-            - const DEFAULT @ 5:11-5:18
-
-            goto parent static from nested const initializer
-            - static CURRENT @ 6:12-6:19
-
-            goto parent type from nested static initializer
-            - struct Local @ 4:12-4:17
-
-            goto parent const from nested const initializer
-            - const DEFAULT @ 5:11-5:18
-
-            goto parent const from nested static initializer
-            - const DEFAULT @ 5:11-5:18
+            const DEFAULT @ 5:11-5:18 // goto parent const from nested function
+            static CURRENT @ 6:12-6:19 // goto parent static from nested const initializer
+            struct Local @ 4:12-4:17 // goto parent type from nested static initializer
+            const DEFAULT @ 5:11-5:18 // goto parent const from nested const initializer
+            const DEFAULT @ 5:11-5:18 // goto parent const from nested static initializer
         "#]],
     );
 }
@@ -1608,11 +1480,8 @@ pub fn make() {
             AnalysisQuery::goto("goto associated type", "goto_assoc_type"),
         ],
         expect![[r#"
-            goto associated const
-            - const DEFAULT @ 7:15-7:22
-
-            goto associated type
-            - type_alias Id @ 8:14-8:16
+            const DEFAULT @ 7:15-7:22 // goto associated const
+            type_alias Id @ 8:14-8:16 // goto associated type
         "#]],
     );
 }
@@ -1664,17 +1533,10 @@ pub fn use_it() {
             ),
         ],
         expect![[r#"
-            goto trait associated const
-            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
-
-            type at trait associated const
-            - bool
-
-            goto qualified trait associated const
-            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
-
-            type at qualified trait associated const
-            - bool
+            const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38 // goto trait associated const
+            bool // type at trait associated const
+            const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38 // goto qualified trait associated const
+            bool // type at qualified trait associated const
         "#]],
     );
 }
@@ -1712,11 +1574,8 @@ pub fn use_it(id: GlobalId) {
             AnalysisQuery::goto("goto imported impl method", "goto_method"),
         ],
         expect![[r#"
-            goto chained body-local import
-            - struct GlobalId @ 1:12-1:20
-
-            goto imported impl method
-            - fn local @ 9:12-9:17
+            struct GlobalId @ 1:12-1:20 // goto chained body-local import
+            fn local @ 9:12-9:17 // goto imported impl method
         "#]],
     );
 }
@@ -1753,17 +1612,10 @@ pub fn make() {
             AnalysisQuery::goto("goto tuple annotation right", "goto_tuple_right"),
         ],
         expect![[r#"
-            goto body Self annotation
-            - struct User @ 1:12-1:16
-
-            goto wildcard annotation
-            - struct User @ 10:12-10:16
-
-            goto tuple annotation left
-            - struct User @ 10:12-10:16
-
-            goto tuple annotation right
-            - struct User @ 10:12-10:16
+            struct User @ 1:12-1:16 // goto body Self annotation
+            struct User @ 10:12-10:16 // goto wildcard annotation
+            struct User @ 10:12-10:16 // goto tuple annotation left
+            struct User @ 10:12-10:16 // goto tuple annotation right
         "#]],
     );
 }
