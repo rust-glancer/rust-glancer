@@ -1,9 +1,9 @@
 use expect_test::expect;
 
-use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 #[test]
 fn completes_explicit_empty_import_type_expression_argument_and_generic_argument_paths() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -12,7 +12,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use $empty_import$;
+use $0; // complete_with_source("empty import path")
 
 pub struct ModuleType;
 pub struct Wrapper<T>(T);
@@ -20,25 +20,15 @@ pub const MODULE_VALUE: u8 = 1;
 
 pub fn consume(value: u8) {}
 
-pub fn signature<T, const N: usize>(value: $empty_type$) {}
+pub fn signature<T, const N: usize>(value: $0) {} // complete_with_source("empty type path")
 
 pub fn body(param: u8) {
     let before = param;
-    let _: ModuleType = $empty_expression$;
-    consume($empty_argument$);
-    let _: Wrapper<$empty_generic_argument$>;
+    let _: ModuleType = $0; // complete_with_source("empty expression path")
+    consume($0); // complete_with_source("empty argument path")
+    let _: Wrapper<$0>; // complete_with_source("empty generic argument path")
 }
 "#,
-        &[
-            AnalysisQuery::complete_with_source("empty import path", "empty_import"),
-            AnalysisQuery::complete_with_source("empty type path", "empty_type"),
-            AnalysisQuery::complete_with_source("empty expression path", "empty_expression"),
-            AnalysisQuery::complete_with_source("empty argument path", "empty_argument"),
-            AnalysisQuery::complete_with_source(
-                "empty generic argument path",
-                "empty_generic_argument",
-            ),
-        ],
         expect![[r#"
             // empty import path
             const MODULE_VALUE
@@ -225,7 +215,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_bare_qualified_paths_in_value_contexts() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -241,10 +231,9 @@ pub mod api {
 pub fn make_root() {}
 
 pub fn use_it() {
-    let _foo = crate::$0
+    let _foo = crate::$0 // complete("bare value path completions")
 }
 "#,
-        &[AnalysisQuery::complete("bare value path completions", "0")],
         expect![[r#"
             // bare value path completions
             module api
@@ -256,7 +245,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_bare_qualified_paths_in_type_contexts_without_semicolon() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -272,10 +261,9 @@ pub mod api {
 pub struct RootType;
 
 pub fn use_it() {
-    let _foo: crate::$0
+    let _foo: crate::$0 // complete("bare type path completions")
 }
 "#,
-        &[AnalysisQuery::complete("bare type path completions", "0")],
         expect![[r#"
             // bare type path completions
             struct RootType
@@ -286,7 +274,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_qualified_paths_with_replacement_range() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -300,13 +288,9 @@ pub mod api {
 }
 
 pub fn use_it() {
-    let _: crate::api::Us$0;
+    let _: crate::api::Us$0; // complete_verbose("path metadata completions")
 }
 "#,
-        &[AnalysisQuery::complete_verbose(
-            "path metadata completions",
-            "0",
-        )],
         expect![[r#"
             // path metadata completions
             struct User

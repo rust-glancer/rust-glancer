@@ -1,12 +1,10 @@
 use expect_test::expect;
 
-use crate::tests::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
-};
+use crate::tests::utils::{check_analysis, check_analysis_with_fake_sysroot};
 #[test]
 #[ignore = "TODO(#160)"]
 fn completes_unqualified_names_with_bounded_auto_imports() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -73,49 +71,20 @@ catalog = { path = "../catalog" }
 use catalog::collections::BTreeMap;
 
 fn types() {
-    let _: HashM$hash_map$;
-    let _: Wid$ambiguous$;
-    let _: RankedW$ranked_reexport$;
-    let _: PublicW$public_reexport$;
-    let _: SecretW$hidden_reexport$;
-    let _: HiddenW$hidden_decl$;
-    let _: UnstableW$unstable_decl$;
-    let _: DisabledW$disabled_decl$;
+    let _: HashM$0; // complete_verbose_with_source("coalesced HashMap import").in_lib("app").matching("HashMap")
+    let _: Wid$0; // complete_verbose_with_source("ambiguous imports").in_lib("app").matching("Widget")
+    let _: RankedW$0; // complete_verbose_with_source("short re-export path").in_lib("app").matching("RankedWidget")
+    let _: PublicW$0; // complete_verbose_with_source("public re-export").in_lib("app").matching("PublicWidget")
+    let _: SecretW$0; // complete_with_source("hidden re-export").in_lib("app").matching("SecretWidget")
+    let _: HiddenW$0; // complete_with_source("hidden declaration").in_lib("app").matching("HiddenWidget")
+    let _: UnstableW$0; // complete_with_source("unstable declaration").in_lib("app").matching("UnstableWidget")
+    let _: DisabledW$0; // complete_with_source("cfg-disabled declaration").in_lib("app").matching("DisabledWidget")
 }
 
 fn values() {
-    make_w$value_name$;
+    make_w$0; // complete_verbose_with_source("value auto-import").in_lib("app").matching("make_widget")
 }
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source("coalesced HashMap import", "hash_map")
-                .in_lib("app")
-                .matching("HashMap"),
-            AnalysisQuery::complete_verbose_with_source("ambiguous imports", "ambiguous")
-                .in_lib("app")
-                .matching("Widget"),
-            AnalysisQuery::complete_verbose_with_source("short re-export path", "ranked_reexport")
-                .in_lib("app")
-                .matching("RankedWidget"),
-            AnalysisQuery::complete_verbose_with_source("public re-export", "public_reexport")
-                .in_lib("app")
-                .matching("PublicWidget"),
-            AnalysisQuery::complete_with_source("hidden re-export", "hidden_reexport")
-                .in_lib("app")
-                .matching("SecretWidget"),
-            AnalysisQuery::complete_with_source("hidden declaration", "hidden_decl")
-                .in_lib("app")
-                .matching("HiddenWidget"),
-            AnalysisQuery::complete_with_source("unstable declaration", "unstable_decl")
-                .in_lib("app")
-                .matching("UnstableWidget"),
-            AnalysisQuery::complete_with_source("cfg-disabled declaration", "disabled_decl")
-                .in_lib("app")
-                .matching("DisabledWidget"),
-            AnalysisQuery::complete_verbose_with_source("value auto-import", "value_name")
-                .in_lib("app")
-                .matching("make_widget"),
-        ],
         expect![[r#"
             // coalesced HashMap import
             struct HashMap
@@ -168,7 +137,7 @@ fn values() {
 
 #[test]
 fn completes_body_local_imported_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -185,14 +154,10 @@ pub fn use_it() {
 
     use local::*;
 
-    let _typed: U$type$;
-    let _value = V$value$;
+    let _typed: U$0; // complete("body-local imported type completions")
+    let _value = V$0; // complete("body-local imported value completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("body-local imported type completions", "type"),
-            AnalysisQuery::complete("body-local imported value completions", "value"),
-        ],
         expect![[r#"
             // body-local imported type completions
             struct User
@@ -210,7 +175,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_unqualified_import_roots_and_external_roots() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -229,18 +194,12 @@ path = "src/main.rs"
 pub struct Api;
 
 //- /src/main.rs
-use analysis_unqualified_roots$use_root$;
+use analysis_unqualified_roots$0; // complete("unqualified use root completions").in_bin("analysis_unqualified_roots")
 
 fn main() {
-    let _ = analysis_unqualified_roots$value_root$;
+    let _ = analysis_unqualified_roots$0; // complete("unqualified value root completions").in_bin("analysis_unqualified_roots")
 }
 "#,
-        &[
-            AnalysisQuery::complete("unqualified use root completions", "use_root")
-                .in_bin("analysis_unqualified_roots"),
-            AnalysisQuery::complete("unqualified value root completions", "value_root")
-                .in_bin("analysis_unqualified_roots"),
-        ],
         expect![[r#"
             // unqualified use root completions
             module analysis_unqualified_roots
@@ -255,7 +214,7 @@ fn main() {
 
 #[test]
 fn completes_absolute_keyword_rooted_paths_and_root_keywords() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -270,23 +229,15 @@ pub mod parent {
     }
 
     pub mod child {
-        use ::st$absolute_root$;
-        use crate::par$crate_root$;
-        use super::sib$super_root$;
+        use ::st$0; // complete("absolute root completions").in_lib("analysis_rooted_path_completions")
+        use crate::par$0; // complete("crate root completions").in_lib("analysis_rooted_path_completions")
+        use super::sib$0; // complete("super root completions").in_lib("analysis_rooted_path_completions")
 
         pub fn body() {}
     }
 }
 
 "#,
-        &[
-            AnalysisQuery::complete("absolute root completions", "absolute_root")
-                .in_lib("analysis_rooted_path_completions"),
-            AnalysisQuery::complete("crate root completions", "crate_root")
-                .in_lib("analysis_rooted_path_completions"),
-            AnalysisQuery::complete("super root completions", "super_root")
-                .in_lib("analysis_rooted_path_completions"),
-        ],
         expect![[r#"
             // absolute root completions
             module alloc
@@ -304,7 +255,7 @@ pub mod parent {
 
 #[test]
 fn completes_unqualified_prelude_names() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -314,13 +265,9 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn use_it() {
-    let _value: Vec$0;
+    let _value: Vec$0; // complete("unqualified prelude completions").in_lib("analysis_unqualified_prelude_completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("unqualified prelude completions", "0")
-                .in_lib("analysis_unqualified_prelude_completions"),
-        ],
         expect![[r#"
             // unqualified prelude completions
             trait Clone
@@ -350,7 +297,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_qualified_paths_in_use_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -359,7 +306,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use crate::api::Ap$use_path$;
+use crate::api::Ap$0; // complete("use path completions")
 
 pub mod api {
     pub mod api_nested {}
@@ -377,7 +324,6 @@ pub mod api {
     }
 }
 "#,
-        &[AnalysisQuery::complete("use path completions", "use_path")],
         expect![[r#"
             // use path completions
             type_alias ApiAlias
@@ -394,7 +340,7 @@ pub mod api {
 
 #[test]
 fn completes_qualified_paths_inside_braced_use_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -403,17 +349,13 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use crate::api::{Ap$use_path$};
+use crate::api::{Ap$0}; // complete("braced use path completions")
 
 pub mod api {
     pub mod api_nested {}
     pub struct ApiUser;
 }
 "#,
-        &[AnalysisQuery::complete(
-            "braced use path completions",
-            "use_path",
-        )],
         expect![[r#"
             // braced use path completions
             struct ApiUser
@@ -424,7 +366,7 @@ pub mod api {
 
 #[test]
 fn completes_qualified_paths_at_bare_use_path_coloncolon() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -433,13 +375,12 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use crate::api_notify::$0;
+use crate::api_notify::$0; // complete("bare use path completions")
 
 pub mod api_notify {
     pub struct Notification;
 }
 "#,
-        &[AnalysisQuery::complete("bare use path completions", "0")],
         expect![[r#"
             struct Notification // bare use path completions
         "#]],
@@ -448,7 +389,7 @@ pub mod api_notify {
 
 #[test]
 fn completes_qualified_paths_at_incomplete_bare_use_path_coloncolon() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -461,12 +402,8 @@ pub mod api_notify {
     pub struct Notification;
 }
 
-use crate::api_notify::$0
+use crate::api_notify::$0 // complete("incomplete bare use path completions")
 "#,
-        &[AnalysisQuery::complete(
-            "incomplete bare use path completions",
-            "0",
-        )],
         expect![[r#"
             struct Notification // incomplete bare use path completions
         "#]],
@@ -475,7 +412,7 @@ use crate::api_notify::$0
 
 #[test]
 fn completes_sysroot_paths_at_incomplete_bare_use_path_coloncolon() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -484,7 +421,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-use std::sync::$0
+use std::sync::$0 // complete("incomplete sysroot use path completions").in_lib("analysis_sysroot_bare_use_path_completions")
 
 #[derive(Debug)]
 enum CliInvocation {
@@ -495,10 +432,6 @@ const DEFAULT_BASE_BRANCH: &str = "main";
 
 pub fn run() {}
 "#,
-        &[
-            AnalysisQuery::complete("incomplete sysroot use path completions", "0")
-                .in_lib("analysis_sysroot_bare_use_path_completions"),
-        ],
         expect![[r#"
             struct Arc // incomplete sysroot use path completions
         "#]],

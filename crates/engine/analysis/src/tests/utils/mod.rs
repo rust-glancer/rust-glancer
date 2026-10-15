@@ -1,3 +1,5 @@
+mod inline;
+
 use std::{
     fmt::Write as _,
     path::{Path, PathBuf},
@@ -23,6 +25,21 @@ use crate::{
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
     RenameResult, RenameTarget, SavedSourceView, SymbolAt, WorkspaceSymbol,
 };
+
+/// Queries written beside their markers are removed before the fixture reaches analysis.
+pub(super) fn check_analysis(fixture: &str, expect: Expect) {
+    let fixture = inline::InlineAnalysisFixture::parse(fixture);
+    let db = AnalysisFixtureDb::build_from_crate(CrateFixture::from_files(fixture.files));
+    let renderer = AnalysisQuerySnapshot::new(&db, fixture.markers, &fixture.queries);
+    expect.assert_eq(&renderer.render());
+}
+
+pub(super) fn check_analysis_with_fake_sysroot(fixture: &str, expect: Expect) {
+    let fixture = inline::InlineAnalysisFixture::parse(fixture);
+    let db = AnalysisFixtureDb::build_with_fake_sysroot(CrateFixture::from_files(fixture.files));
+    let renderer = AnalysisQuerySnapshot::new(&db, fixture.markers, &fixture.queries);
+    expect.assert_eq(&renderer.render());
+}
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
@@ -122,43 +139,43 @@ fn render_analysis_responses<'a>(responses: impl IntoIterator<Item = (&'a str, S
 }
 
 pub(super) struct AnalysisQuery {
-    title: &'static str,
-    marker: &'static str,
+    title: String,
+    marker: String,
     target: AnalysisTarget,
     kind: AnalysisQueryKind,
-    completion_label_prefix: Option<&'static str>,
+    completion_label_prefix: Option<String>,
 }
 
 impl AnalysisQuery {
-    pub(super) fn symbol(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn symbol(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::SymbolAt)
     }
 
-    pub(super) fn resolve(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn resolve(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::ResolveSymbol)
     }
 
-    pub(super) fn goto(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn goto(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::GotoDefinition)
     }
 
-    pub(super) fn goto_type(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn goto_type(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::GotoTypeDefinition)
     }
 
-    pub(super) fn goto_impl(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn goto_impl(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::GotoImplementation)
     }
 
-    pub(super) fn ty(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn ty(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::TypeAt)
     }
 
-    pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn complete(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAt)
     }
 
-    pub(super) fn code_actions(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn code_actions(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
@@ -166,7 +183,7 @@ impl AnalysisQuery {
         )
     }
 
-    pub(super) fn automatic_code_actions(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn automatic_code_actions(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
@@ -174,16 +191,16 @@ impl AnalysisQuery {
         )
     }
 
-    pub(super) fn complete_verbose(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn complete_verbose(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
     }
 
     /// Run completion as if the saved fixture text were the document captured for this request.
-    pub(super) fn complete_with_source(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn complete_with_source(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAtWithSource)
     }
 
-    pub(super) fn complete_verbose_with_source(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn complete_verbose_with_source(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
@@ -192,7 +209,7 @@ impl AnalysisQuery {
     }
 
     /// Render only keyword rows from a full request-local completion query.
-    pub(super) fn complete_keywords_with_source(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn complete_keywords_with_source(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
@@ -200,10 +217,7 @@ impl AnalysisQuery {
         )
     }
 
-    pub(super) fn complete_keywords_verbose_with_source(
-        title: &'static str,
-        marker: &'static str,
-    ) -> Self {
+    pub(super) fn complete_keywords_verbose_with_source(title: &str, marker: &str) -> Self {
         Self::new(
             title,
             marker,
@@ -211,50 +225,46 @@ impl AnalysisQuery {
         )
     }
 
-    pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn hover(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::Hover)
     }
 
-    pub(super) fn references(
-        title: &'static str,
-        marker: &'static str,
-        query: ReferenceQuery,
-    ) -> Self {
+    pub(super) fn references(title: &str, marker: &str, query: ReferenceQuery) -> Self {
         Self::new(title, marker, AnalysisQueryKind::References(query))
     }
 
-    pub(super) fn prepare_rename(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn prepare_rename(title: &str, marker: &str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::PrepareRename)
     }
 
-    pub(super) fn rename(
-        title: &'static str,
-        marker: &'static str,
-        new_name: &'static str,
-    ) -> Self {
-        Self::new(title, marker, AnalysisQueryKind::Rename(new_name))
+    pub(super) fn rename(title: &str, marker: &str, new_name: &str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::Rename(new_name.to_string()),
+        )
     }
 
-    pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
+    pub(super) fn in_bin(mut self, package_name: &str) -> Self {
         self.target = AnalysisTarget::bin(package_name);
         self
     }
 
-    pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
+    pub(super) fn in_lib(mut self, package_name: &str) -> Self {
         self.target = AnalysisTarget::lib_package(package_name);
         self
     }
 
     /// Restrict a completion snapshot to the rows that an editor would keep for this prefix.
-    pub(super) fn matching(mut self, label_prefix: &'static str) -> Self {
-        self.completion_label_prefix = Some(label_prefix);
+    pub(super) fn matching(mut self, label_prefix: &str) -> Self {
+        self.completion_label_prefix = Some(label_prefix.to_string());
         self
     }
 
-    fn new(title: &'static str, marker: &'static str, kind: AnalysisQueryKind) -> Self {
+    fn new(title: &str, marker: &str, kind: AnalysisQueryKind) -> Self {
         Self {
-            title,
-            marker,
+            title: title.to_string(),
+            marker: marker.to_string(),
             target: AnalysisTarget::lib(),
             kind,
             completion_label_prefix: None,
@@ -311,7 +321,7 @@ impl InlayHintsQuery {
 
 #[derive(Debug, Clone)]
 struct AnalysisTarget {
-    package_name: Option<&'static str>,
+    package_name: Option<String>,
     kind: TargetKind,
 }
 
@@ -323,27 +333,28 @@ impl AnalysisTarget {
         }
     }
 
-    fn lib_package(package_name: &'static str) -> Self {
+    fn lib_package(package_name: &str) -> Self {
         Self {
-            package_name: Some(package_name),
+            package_name: Some(package_name.to_string()),
             kind: TargetKind::Lib,
         }
     }
 
-    fn bin(package_name: &'static str) -> Self {
+    fn bin(package_name: &str) -> Self {
         Self {
-            package_name: Some(package_name),
+            package_name: Some(package_name.to_string()),
             kind: TargetKind::Bin,
         }
     }
 
     fn matches_package(&self, package_name: &str) -> bool {
         self.package_name
+            .as_deref()
             .is_none_or(|expected| expected == package_name)
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum AnalysisQueryKind {
     SymbolAt,
     ResolveSymbol,
@@ -352,7 +363,7 @@ enum AnalysisQueryKind {
     GotoImplementation,
     References(ReferenceQuery),
     PrepareRename,
-    Rename(&'static str),
+    Rename(String),
     TypeAt,
     CodeActions(CodeActionTrigger),
     CompletionsAt,
@@ -364,7 +375,7 @@ enum AnalysisQueryKind {
     Hover,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct ReferenceQuery {
     include_declaration: bool,
     scope: ReferenceQueryScope,
@@ -392,17 +403,24 @@ impl ReferenceQuery {
         }
     }
 
-    pub(super) fn files(paths: &'static [&'static str]) -> Self {
+    pub(super) fn files(paths: &[&str]) -> Self {
         Self {
             include_declaration: true,
-            scope: ReferenceQueryScope::Files(paths),
+            scope: ReferenceQueryScope::Files(
+                paths.iter().map(|path| (*path).to_string()).collect(),
+            ),
         }
     }
 
-    pub(super) fn libs(packages: &'static [&'static str]) -> Self {
+    pub(super) fn libs(packages: &[&str]) -> Self {
         Self {
             include_declaration: true,
-            scope: ReferenceQueryScope::LibTargets(packages),
+            scope: ReferenceQueryScope::LibTargets(
+                packages
+                    .iter()
+                    .map(|package| (*package).to_string())
+                    .collect(),
+            ),
         }
     }
 
@@ -412,13 +430,13 @@ impl ReferenceQuery {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum ReferenceQueryScope {
     AllIncludedTargets,
     CurrentTarget,
     CurrentFile,
-    Files(&'static [&'static str]),
-    LibTargets(&'static [&'static str]),
+    Files(Vec<String>),
+    LibTargets(Vec<String>),
 }
 
 struct AnalysisFixtureDb {
@@ -616,14 +634,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         render_analysis_responses(
             self.queries
                 .iter()
-                .map(|query| (query.title, self.render_query(query))),
+                .map(|query| (query.title.as_str(), self.render_query(query))),
         )
     }
 
     fn render_query(&self, query: &AnalysisQuery) -> String {
         let (target, file_id, offset) = self.query_location(query);
         let mut dump = String::new();
-        match query.kind {
+        match &query.kind {
             AnalysisQueryKind::SymbolAt => {
                 self.render_symbol(
                     self.db
@@ -681,7 +699,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 );
             }
             AnalysisQueryKind::References(reference_options) => {
-                let references = match reference_options.scope {
+                let references = match &reference_options.scope {
                     ReferenceQueryScope::AllIncludedTargets => {
                         let use_site_targets = self.db.all_targets();
                         let reference_query = AnalysisReferenceQuery::find_references(
@@ -813,7 +831,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                             },
                             &source_text,
                         )
-                        .with_trigger(trigger),
+                        .with_trigger(*trigger),
                     )
                     .expect("fixture code action query should resolve");
                 self.render_code_actions(actions, &source_text, &mut dump);
@@ -902,13 +920,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn filter_completion_labels(query: &AnalysisQuery, completions: &mut Vec<CompletionItem>) {
-        if let Some(prefix) = query.completion_label_prefix {
+        if let Some(prefix) = &query.completion_label_prefix {
             completions.retain(|completion| completion.label.starts_with(prefix));
         }
     }
 
     fn query_location(&self, query: &AnalysisQuery) -> (CrateRef, FileId, u32) {
-        let marker = self.markers.position(query.marker);
+        let marker = self.markers.position(&query.marker);
         let (target, file_id) = self
             .db
             .target_and_file_for_path(&query.target, &marker.path);

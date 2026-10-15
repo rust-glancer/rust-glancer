@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::check_analysis;
 
 /// Keep the common completion families honest about the source states editors actually send.
 ///
@@ -9,7 +9,7 @@ use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 /// when a user returns to a complete expression and replaces part of it.
 #[test]
 fn completes_common_sites_across_realistic_typed_states() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -38,112 +38,73 @@ pub struct Record {
     pub record_field: u8,
 }
 
-use crate::api::PathT$import_edit$ as ImportedPathType;
+use crate::api::PathT$0 as ImportedPathType; // complete_with_source("edited import path").matching("PathType")
 
 pub fn associated_unfinished() {
-    let _ = Widget::<u8>::ne$associated_unfinished$
+    let _ = Widget::<u8>::ne$0 // complete_with_source("unfinished associated path").matching("new")
 }
 
 pub fn dot_unfinished(widget: Widget<u8>) {
-    let _ = widget.na$dot_unfinished$
+    let _ = widget.na$0 // complete_with_source("unfinished dot member").matching("named_method")
 }
 
 pub fn unqualified_unfinished(local_value: u8) {
-    let _ = local_v$unqualified_unfinished$
+    let _ = local_v$0 // complete_with_source("unfinished unqualified name").matching("local_value")
 }
 
 pub fn qualified_unfinished() {
-    let _: crate::api::PathT$qualified_unfinished$
+    let _: crate::api::PathT$0 // complete_with_source("unfinished qualified type").matching("PathType")
 }
 
 pub fn record_unfinished() {
-    let _ = Record { record_f$record_unfinished$ }
+    let _ = Record { record_f$0 } // complete_with_source("unfinished record field").matching("record_field")
 }
 
 pub fn pattern_unfinished(record: Record) {
-    let Record { record_f$pattern_unfinished$ } = record
+    let Record { record_f$0 } = record // complete_with_source("unfinished pattern field").matching("record_field")
 }
 
 pub fn associated_edit() {
-    let _ = Widget::<u8>::ne$associated_edit$();
+    let _ = Widget::<u8>::ne$0(); // complete_with_source("edited associated path").matching("new")
 }
 
 pub fn dot_edit(widget: Widget<u8>) {
-    let _ = widget.na$dot_edit$();
+    let _ = widget.na$0(); // complete_with_source("edited dot member").matching("named_method")
 }
 
 pub fn unqualified_edit(local_value: u8) {
-    let _ = local_v$unqualified_edit$ + 1;
+    let _ = local_v$0 + 1; // complete_with_source("edited unqualified name").matching("local_value")
 }
 
 pub fn qualified_edit() {
-    let _: crate::api::PathT$qualified_edit$ = todo!();
+    let _: crate::api::PathT$0 = todo!(); // complete_with_source("edited qualified type").matching("PathType")
 }
 
 pub fn record_edit() {
-    let _ = Record { record_f$record_edit$: 1 };
+    let _ = Record { record_f$0: 1 }; // complete_with_source("edited record field").matching("record_field")
 }
 
 pub fn pattern_edit(record: Record) {
-    let Record { record_f$pattern_edit$: _ } = record;
+    let Record { record_f$0: _ } = record; // complete_with_source("edited pattern field").matching("record_field")
 }
 
-use crate::api::PathT$import_unfinished$
+use crate::api::PathT$0 // complete_with_source("unfinished import path").matching("PathType")
 "#,
-        &[
-            AnalysisQuery::complete_with_source(
-                "unfinished associated path",
-                "associated_unfinished",
-            )
-            .matching("new"),
-            AnalysisQuery::complete_with_source("unfinished dot member", "dot_unfinished")
-                .matching("named_method"),
-            AnalysisQuery::complete_with_source(
-                "unfinished unqualified name",
-                "unqualified_unfinished",
-            )
-            .matching("local_value"),
-            AnalysisQuery::complete_with_source(
-                "unfinished qualified type",
-                "qualified_unfinished",
-            )
-            .matching("PathType"),
-            AnalysisQuery::complete_with_source("unfinished record field", "record_unfinished")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("unfinished pattern field", "pattern_unfinished")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("unfinished import path", "import_unfinished")
-                .matching("PathType"),
-            AnalysisQuery::complete_with_source("edited associated path", "associated_edit")
-                .matching("new"),
-            AnalysisQuery::complete_with_source("edited dot member", "dot_edit")
-                .matching("named_method"),
-            AnalysisQuery::complete_with_source("edited unqualified name", "unqualified_edit")
-                .matching("local_value"),
-            AnalysisQuery::complete_with_source("edited qualified type", "qualified_edit")
-                .matching("PathType"),
-            AnalysisQuery::complete_with_source("edited record field", "record_edit")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("edited pattern field", "pattern_edit")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("edited import path", "import_edit")
-                .matching("PathType"),
-        ],
         expect![[r#"
+            struct PathType // edited import path
             fn new // unfinished associated path
             inherent_method named_method // unfinished dot member
             variable local_value // unfinished unqualified name
             struct PathType // unfinished qualified type
             field record_field // unfinished record field
             field record_field // unfinished pattern field
-            struct PathType // unfinished import path
             fn new // edited associated path
             inherent_method named_method // edited dot member
             variable local_value // edited unqualified name
             struct PathType // edited qualified type
             field record_field // edited record field
             field record_field // edited pattern field
-            struct PathType // edited import path
+            struct PathType // unfinished import path
         "#]],
     );
 }
@@ -155,7 +116,7 @@ use crate::api::PathT$import_unfinished$
 /// distinct recovery boundary and must not be represented only by otherwise-complete fixtures.
 #[test]
 fn completes_common_body_sites_at_incomplete_file_end() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -199,71 +160,42 @@ pub struct Record {
 
 //- /src/associated.rs
 pub fn run() {
-    let _ = crate::Widget::<u8>::ne$associated_eof$
+    let _ = crate::Widget::<u8>::ne$0 // complete_with_source("associated path at EOF").matching("new")
 //- /src/bare_associated.rs
 pub fn run() {
-    let _ = crate::Widget::<u8>::$bare_associated_eof$
+    let _ = crate::Widget::<u8>::$0 // complete_with_source("empty associated path at EOF").matching("new")
 //- /src/dot.rs
 pub fn run(widget: crate::Widget<u8>) {
-    let _ = widget.na$dot_eof$
+    let _ = widget.na$0 // complete_with_source("dot member at EOF").matching("named_method")
 //- /src/bare_dot.rs
 pub fn run(widget: crate::Widget<u8>) {
-    let _ = widget.$bare_dot_eof$
+    let _ = widget.$0 // complete_with_source("empty dot member at EOF").matching("named_method")
 //- /src/unqualified.rs
 pub fn run(local_value: u8) {
-    let _ = local_v$unqualified_eof$
+    let _ = local_v$0 // complete_with_source("unqualified name at EOF").matching("local_value")
 //- /src/qualified.rs
 pub fn run() {
-    let _: crate::api::PathT$qualified_eof$
+    let _: crate::api::PathT$0 // complete_with_source("qualified type at EOF").matching("PathType")
 //- /src/bare_path.rs
 pub fn run() {
-    let _: crate::api::$bare_path_eof$
+    let _: crate::api::$0 // complete_with_source("empty qualified path at EOF").matching("PathType")
 //- /src/record.rs
 pub fn run() {
-    let _ = crate::Record { record_f$record_eof$
+    let _ = crate::Record { record_f$0 // complete_with_source("record field at EOF").matching("record_field")
 //- /src/empty_record.rs
 pub fn run() {
-    let _ = crate::Record { $empty_record_eof$
+    let _ = crate::Record { $0 // complete_with_source("empty record field at EOF").matching("record_field")
 //- /src/pattern.rs
 pub fn run(record: crate::Record) {
-    let crate::Record { record_f$pattern_eof$
+    let crate::Record { record_f$0 // complete_with_source("pattern field at EOF").matching("record_field")
 //- /src/empty_pattern.rs
 pub fn run(record: crate::Record) {
-    let crate::Record { $empty_pattern_eof$
+    let crate::Record { $0 // complete_with_source("empty pattern field at EOF").matching("record_field")
 //- /src/label.rs
 pub fn run() {
     'inner: loop {
-        break 'inn$label_eof$
+        break 'inn$0 // complete_with_source("loop label at EOF").matching("'inner")
 "#,
-        &[
-            AnalysisQuery::complete_with_source("associated path at EOF", "associated_eof")
-                .matching("new"),
-            AnalysisQuery::complete_with_source(
-                "empty associated path at EOF",
-                "bare_associated_eof",
-            )
-            .matching("new"),
-            AnalysisQuery::complete_with_source("dot member at EOF", "dot_eof")
-                .matching("named_method"),
-            AnalysisQuery::complete_with_source("empty dot member at EOF", "bare_dot_eof")
-                .matching("named_method"),
-            AnalysisQuery::complete_with_source("unqualified name at EOF", "unqualified_eof")
-                .matching("local_value"),
-            AnalysisQuery::complete_with_source("qualified type at EOF", "qualified_eof")
-                .matching("PathType"),
-            AnalysisQuery::complete_with_source("empty qualified path at EOF", "bare_path_eof")
-                .matching("PathType"),
-            AnalysisQuery::complete_with_source("record field at EOF", "record_eof")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("empty record field at EOF", "empty_record_eof")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("pattern field at EOF", "pattern_eof")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("empty pattern field at EOF", "empty_pattern_eof")
-                .matching("record_field"),
-            AnalysisQuery::complete_with_source("loop label at EOF", "label_eof")
-                .matching("'inner"),
-        ],
         expect![[r#"
             fn new // associated path at EOF
             fn new // empty associated path at EOF
@@ -287,7 +219,7 @@ pub fn run() {
 /// immediately after the prefix and the recovery boundary where neither token exists yet.
 #[test]
 fn completes_associated_type_bindings_before_the_equals_sign() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -309,42 +241,22 @@ pub trait Parameterized<Input> {
 
 pub struct PositionalType;
 
-pub fn edit_in_place<T: Sequence<It$edit$ = u8>>() {}
-pub fn before_equals<T: Sequence<It$before_equals$>>() {}
-pub fn positional_argument<T: Parameterized<PositionalT$positional_argument$>>() {}
-pub fn binding_after_positional<T: Parameterized<u8, Out$after_positional$>>() {}
+pub fn edit_in_place<T: Sequence<It$0 = u8>>() {} // complete_with_source("binding with existing equals").matching("Item")
+pub fn before_equals<T: Sequence<It$0>>() {} // complete_with_source("binding before equals").matching("Item")
+pub fn positional_argument<T: Parameterized<PositionalT$0>>() {} // complete_with_source("ordinary positional type remains available").matching("PositionalType")
+pub fn binding_after_positional<T: Parameterized<u8, Out$0>>() {} // complete_with_source("binding after positional argument").matching("Output")
 
 pub fn body_local() {
     trait LocalSequence {
         type LocalItem;
     }
 
-    fn consume<T: LocalSequence<Loc$body_local$>>() {}
+    fn consume<T: LocalSequence<Loc$0>>() {} // complete_with_source("body-local binding before equals").matching("LocalItem")
 }
 
 //- /src/eof.rs
-pub fn run<T: crate::Sequence<It$eof$
+pub fn run<T: crate::Sequence<It$0 // complete_with_source("binding before equals at EOF").matching("Item")
 "#,
-        &[
-            AnalysisQuery::complete_with_source("binding with existing equals", "edit")
-                .matching("Item"),
-            AnalysisQuery::complete_with_source("binding before equals", "before_equals")
-                .matching("Item"),
-            AnalysisQuery::complete_with_source(
-                "ordinary positional type remains available",
-                "positional_argument",
-            )
-            .matching("PositionalType"),
-            AnalysisQuery::complete_with_source(
-                "binding after positional argument",
-                "after_positional",
-            )
-            .matching("Output"),
-            AnalysisQuery::complete_with_source("body-local binding before equals", "body_local")
-                .matching("LocalItem"),
-            AnalysisQuery::complete_with_source("binding before equals at EOF", "eof")
-                .matching("Item"),
-        ],
         expect![[r#"
             type_alias Item // binding with existing equals
             type_alias Item // binding before equals

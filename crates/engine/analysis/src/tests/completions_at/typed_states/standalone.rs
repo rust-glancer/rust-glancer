@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::check_analysis;
 
 /// Standalone sites are discovered directly from incomplete item syntax rather than Body IR.
 ///
@@ -12,7 +12,7 @@ use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 /// declaration prefix with the generated signature.
 #[test]
 fn completes_standalone_sites_while_items_are_being_typed() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -41,7 +41,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    req$trait_closed$
+    req$0 // complete_with_source("trait member before closing brace").matching("required")
 }
 
 //- /src/trait_eof.rs
@@ -53,7 +53,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    req$trait_eof$
+    req$0 // complete_with_source("trait member at EOF").matching("required")
 //- /src/trait_fn_closed.rs
 trait Service {
     fn required(&self);
@@ -62,7 +62,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    fn req$trait_fn_closed$
+    fn req$0 // complete_with_source("function trait member before closing brace").matching("required")
 }
 
 //- /src/trait_fn_eof.rs
@@ -73,7 +73,7 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    fn req$trait_fn_eof$
+    fn req$0 // complete_with_source("function trait member at EOF").matching("required")
 //- /src/trait_empty.rs
 trait Service {
     type Output;
@@ -83,76 +83,36 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    $trait_empty_eof$
+    $0 // complete_with_source("trait member before its first prefix at EOF").matching("required")
 //- /src/macro_edit.rs
 macro_rules! local_item {
     () => { struct Generated; };
 }
 
-local_i$macro_edit$!();
+local_i$0!(); // complete_with_source("module macro before invocation suffix").matching("local_item")
 
 //- /src/macro_forward.rs
 macro_rules! local_item {
     () => { struct Generated; };
 }
 
-local_i$macro_forward$
+local_i$0 // complete_with_source("module macro at EOF").matching("local_item")
 //- /src/module_edit.rs
-mod pars$module_edit$;
+mod pars$0; // complete_with_source("module declaration before semicolon").matching("parser")
 
 //- /src/module_edit/parser.rs
 pub struct Parser;
 
 //- /src/module_forward.rs
-mod pars$module_forward$
+mod pars$0 // complete_with_source("module declaration at EOF").matching("parser")
 //- /src/module_forward/parser.rs
 pub struct Parser;
 
 //- /src/module_empty.rs
-mod $module_empty_eof$
+mod $0 // complete_with_source("module declaration before its first prefix at EOF").matching("parser")
 //- /src/module_empty/parser.rs
 pub struct Parser;
 "#,
-        &[
-            AnalysisQuery::complete_with_source(
-                "trait member before closing brace",
-                "trait_closed",
-            )
-            .matching("required"),
-            AnalysisQuery::complete_with_source("trait member at EOF", "trait_eof")
-                .matching("required"),
-            AnalysisQuery::complete_with_source(
-                "function trait member before closing brace",
-                "trait_fn_closed",
-            )
-            .matching("required"),
-            AnalysisQuery::complete_with_source("function trait member at EOF", "trait_fn_eof")
-                .matching("required"),
-            AnalysisQuery::complete_with_source(
-                "trait member before its first prefix at EOF",
-                "trait_empty_eof",
-            )
-            .matching("required"),
-            AnalysisQuery::complete_with_source(
-                "module macro before invocation suffix",
-                "macro_edit",
-            )
-            .matching("local_item"),
-            AnalysisQuery::complete_with_source("module macro at EOF", "macro_forward")
-                .matching("local_item"),
-            AnalysisQuery::complete_with_source(
-                "module declaration before semicolon",
-                "module_edit",
-            )
-            .matching("parser"),
-            AnalysisQuery::complete_with_source("module declaration at EOF", "module_forward")
-                .matching("parser"),
-            AnalysisQuery::complete_with_source(
-                "module declaration before its first prefix at EOF",
-                "module_empty_eof",
-            )
-            .matching("parser"),
-        ],
         expect![[r#"
             fn required // trait member before closing brace
             fn required // trait member at EOF

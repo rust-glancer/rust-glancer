@@ -1,12 +1,10 @@
 use expect_test::expect;
 
-use super::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
-};
+use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
 fn resolves_body_expression_type_definitions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -27,18 +25,12 @@ pub fn make_user() -> User {
 }
 
 pub fn use_it(account: Account) {
-    let local$goto_binding_type$: User = make_user();
-    let _again: User = loc$goto_local_type$al;
-    let _profile: Profile = account.pro$goto_field_type$file;
-    let _made = make_user($goto_call_type$);
+    let local$0: User = make_user(); // goto_type("goto type from binding declaration")
+    let _again: User = loc$0al; // goto_type("goto type from local usage")
+    let _profile: Profile = account.pro$0file; // goto_type("goto type from field access")
+    let _made = make_user($0); // goto_type("goto type from call expression")
 }
 "#,
-        &[
-            AnalysisQuery::goto_type("goto type from binding declaration", "goto_binding_type"),
-            AnalysisQuery::goto_type("goto type from local usage", "goto_local_type"),
-            AnalysisQuery::goto_type("goto type from field access", "goto_field_type"),
-            AnalysisQuery::goto_type("goto type from call expression", "goto_call_type"),
-        ],
         expect![[r#"
             struct User @ 1:12-1:16 // goto type from binding declaration
             struct User @ 1:12-1:16 // goto type from local usage
@@ -50,10 +42,7 @@ pub fn use_it(account: Account) {
 
 #[test]
 fn resolves_type_definitions_through_references_try_and_await_wrappers() {
-    let goto_type = |title, marker| {
-        AnalysisQuery::goto_type(title, marker).in_lib("analysis_goto_type_wrappers")
-    };
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -74,20 +63,14 @@ pub async fn load_user_async() -> User {
 }
 
 pub async fn use_it(user: User) -> Result<(), Error> {
-    let _borrowed = (&user)$goto_ref_type$;
+    let _borrowed = (&user)$0; // goto_type("goto type from reference wrapper").in_lib("analysis_goto_type_wrappers")
     let borrowed_twice = &&user;
-    let _borrowed_twice = borrowed_twice$goto_double_ref_type$;
-    let _loaded = load_user()?$goto_try_type$;
-    let _awaited = load_user_async().await$goto_await_type$;
+    let _borrowed_twice = borrowed_twice$0; // goto_type("goto type from double reference").in_lib("analysis_goto_type_wrappers")
+    let _loaded = load_user()?$0; // goto_type("goto type from try wrapper").in_lib("analysis_goto_type_wrappers")
+    let _awaited = load_user_async().await$0; // goto_type("goto type from await wrapper").in_lib("analysis_goto_type_wrappers")
     Result::Ok(())
 }
 "#,
-        &[
-            goto_type("goto type from reference wrapper", "goto_ref_type"),
-            goto_type("goto type from double reference", "goto_double_ref_type"),
-            goto_type("goto type from try wrapper", "goto_try_type"),
-            goto_type("goto type from await wrapper", "goto_await_type"),
-        ],
         expect![[r#"
             struct User @ 2:12-2:16 // goto type from reference wrapper
             struct User @ 2:12-2:16 // goto type from double reference
@@ -99,7 +82,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 
 #[test]
 fn resolves_signature_type_definitions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -112,26 +95,19 @@ pub struct User;
 pub struct Profile;
 
 pub struct Account {
-    profile$goto_field_decl_type$: Pro$goto_field_path_type$file,
+    profile$0: Pro$1file, // goto_type("goto type from field declaration"), goto_type("goto type from field type path")
 }
 
-pub fn make(user: Us$goto_param_type$er) -> Us$goto_ret_type$er {
+pub fn make(user: Us$0er) -> Us$1er { // goto_type("goto type from parameter"), goto_type("goto type from return")
     user
 }
 
 impl User {
-    pub fn new() -> Se$goto_self_type$lf {
+    pub fn new() -> Se$0lf { // goto_type("goto type from Self")
         User
     }
 }
 "#,
-        &[
-            AnalysisQuery::goto_type("goto type from field declaration", "goto_field_decl_type"),
-            AnalysisQuery::goto_type("goto type from field type path", "goto_field_path_type"),
-            AnalysisQuery::goto_type("goto type from parameter", "goto_param_type"),
-            AnalysisQuery::goto_type("goto type from return", "goto_ret_type"),
-            AnalysisQuery::goto_type("goto type from Self", "goto_self_type"),
-        ],
         expect![[r#"
             struct Profile @ 2:12-2:19 // goto type from field declaration
             struct Profile @ 2:12-2:19 // goto type from field type path
@@ -144,7 +120,7 @@ impl User {
 
 #[test]
 fn resolves_nominal_types_inside_a_transparent_generic_alias() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -157,17 +133,10 @@ pub struct Wrapper<T>(pub T);
 pub struct User;
 pub type Alias<T> = Wrapper<T>;
 
-pub fn inspect(_: Ali$signature_alias$as<User>) {
-    let _: Ali$body_alias$as<User>;
+pub fn inspect(_: Ali$0as<User>) { // goto_type("goto nominal types inside a signature alias")
+    let _: Ali$0as<User>; // goto_type("goto nominal types inside a body alias")
 }
 "#,
-        &[
-            AnalysisQuery::goto_type(
-                "goto nominal types inside a signature alias",
-                "signature_alias",
-            ),
-            AnalysisQuery::goto_type("goto nominal types inside a body alias", "body_alias"),
-        ],
         expect![[r#"
             // goto nominal types inside a signature alias
             struct User @ 2:12-2:16
@@ -182,7 +151,7 @@ pub fn inspect(_: Ali$signature_alias$as<User>) {
 
 #[test]
 fn resolves_body_local_type_definitions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -196,17 +165,10 @@ pub struct User;
 pub fn use_it() {
     struct User;
 
-    let local$goto_local_decl_type$: User = User;
-    let _again: User = loc$goto_local_usage_type$al;
+    let local$0: User = User; // goto_type("goto type from body-local binding declaration")
+    let _again: User = loc$0al; // goto_type("goto type from body-local usage")
 }
 "#,
-        &[
-            AnalysisQuery::goto_type(
-                "goto type from body-local binding declaration",
-                "goto_local_decl_type",
-            ),
-            AnalysisQuery::goto_type("goto type from body-local usage", "goto_local_usage_type"),
-        ],
         expect![[r#"
             struct User @ 4:12-4:16 // goto type from body-local binding declaration
             struct User @ 4:12-4:16 // goto type from body-local usage
@@ -216,7 +178,7 @@ pub fn use_it() {
 
 #[test]
 fn resolves_body_local_generic_impl_method_return_type_definitions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -238,13 +200,9 @@ pub fn use_it() {
     }
 
     let wrapper: Wrapper<User>;
-    let _value = wrapper.get($goto_type$);
+    let _value = wrapper.get($0); // goto_type("goto type from body-local generic impl method")
 }
 "#,
-        &[AnalysisQuery::goto_type(
-            "goto type from body-local generic impl method",
-            "goto_type",
-        )],
         expect![[r#"
             struct User @ 2:12-2:16 // goto type from body-local generic impl method
         "#]],
@@ -253,7 +211,7 @@ pub fn use_it() {
 
 #[test]
 fn resolves_enum_pattern_payload_type_definitions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -271,13 +229,9 @@ pub enum Option<T> {
 
 pub fn use_it(maybe: Option<User>) {
     let Some(value) = maybe else { return; };
-    let _again = val$goto_type$ue;
+    let _again = val$0ue; // goto_type("goto type from enum pattern payload")
 }
 "#,
-        &[AnalysisQuery::goto_type(
-            "goto type from enum pattern payload",
-            "goto_type",
-        )],
         expect![[r#"
             struct User @ 1:12-1:16 // goto type from enum pattern payload
         "#]],

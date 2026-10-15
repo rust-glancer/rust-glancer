@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, ReferenceQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, ReferenceQuery, check_analysis, check_analysis_queries};
 
 #[test]
 fn finds_common_reference_subjects() {
@@ -165,7 +165,7 @@ pub fn make(value: u8) {
 
 #[test]
 fn finds_item_initializer_references() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -175,17 +175,12 @@ edition = "2024"
 
 //- /src/lib.rs
 pub const LIMIT: u32 = 3;
-pub static CURRENT: u32 = LI$initializer_ref$MIT;
+pub static CURRENT: u32 = LI$0MIT; // references("const references", ReferenceQuery::all())
 
 pub fn use_it() -> u32 {
     LIMIT
 }
 "#,
-        &[AnalysisQuery::references(
-            "const references",
-            "initializer_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // const references
             `LIMIT` @ src/lib.rs:1:11-1:16
@@ -294,7 +289,7 @@ fn foo(baz: u8) -> u8 {
 
 #[test]
 fn finds_body_local_method_references() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -309,7 +304,7 @@ pub fn use_it() {
     struct User;
 
     impl User {
-        fn i$method_ref$d(&self) -> Id {
+        fn i$0d(&self) -> Id { // references("body-local method references", ReferenceQuery::all())
             Id
         }
     }
@@ -318,11 +313,6 @@ pub fn use_it() {
     user.id();
 }
 "#,
-        &[AnalysisQuery::references(
-            "body-local method references",
-            "method_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // body-local method references
             `id` @ src/lib.rs:7:12-7:14
@@ -333,7 +323,7 @@ pub fn use_it() {
 
 #[test]
 fn finds_more_body_local_item_references() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -345,14 +335,14 @@ edition = "2024"
 pub struct GlobalId;
 
 pub fn use_it() {
-    type Al$alias_ref$ias = GlobalId;
-    const DE$const_ref$FAULT: Alias = GlobalId;
-    static CU$static_ref$RRENT: GlobalId = GlobalId;
-    fn hel$fn_ref$per() -> Alias {
+    type Al$0ias = GlobalId; // references("body-local alias references", ReferenceQuery::all())
+    const DE$0FAULT: Alias = GlobalId; // references("body-local const references", ReferenceQuery::all())
+    static CU$0RRENT: GlobalId = GlobalId; // references("body-local static references", ReferenceQuery::all())
+    fn hel$0per() -> Alias { // references("body-local function references", ReferenceQuery::all())
         DEFAULT
     }
     enum Action {
-        Sta$variant_ref$rt,
+        Sta$0rt, // references("body-local enum variant references", ReferenceQuery::all())
         Stop,
     }
 
@@ -362,33 +352,6 @@ pub fn use_it() {
     let _action = Action::Start;
 }
 "#,
-        &[
-            AnalysisQuery::references(
-                "body-local alias references",
-                "alias_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "body-local const references",
-                "const_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "body-local static references",
-                "static_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "body-local function references",
-                "fn_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "body-local enum variant references",
-                "variant_ref",
-                ReferenceQuery::all(),
-            ),
-        ],
         expect![[r#"
             // body-local alias references
             `Alias` @ src/lib.rs:4:10-4:15
@@ -418,7 +381,7 @@ pub fn use_it() {
 
 #[test]
 fn finds_scope_ordered_body_local_value_references() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -431,41 +394,24 @@ pub struct Outer;
 pub struct Inner;
 
 pub fn make() {
-    fn hel$outer_fn_ref$per() -> Outer {
+    fn hel$0per() -> Outer { // references("outer function references", ReferenceQuery::all())
         Outer
     }
     let value = Outer;
 
     {
-        fn val$inner_fn_ref$ue() -> Inner {
+        fn val$0ue() -> Inner { // references("inner function references", ReferenceQuery::all())
             Inner
         }
         let _from_fn = value();
     };
 
     {
-        const hel$inner_const_ref$per: Inner = Inner;
+        const hel$0per: Inner = Inner; // references("inner const references", ReferenceQuery::all())
         let _from_const = helper;
     };
 }
 "#,
-        &[
-            AnalysisQuery::references(
-                "outer function references",
-                "outer_fn_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "inner function references",
-                "inner_fn_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "inner const references",
-                "inner_const_ref",
-                ReferenceQuery::all(),
-            ),
-        ],
         expect![[r#"
             `helper` @ src/lib.rs:5:8-5:14 // outer function references
 
@@ -482,7 +428,7 @@ pub fn make() {
 
 #[test]
 fn finds_parent_body_local_references_from_nested_body_owners() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -495,45 +441,20 @@ pub struct GlobalId;
 
 pub fn make() {
     struct Local;
-    const SE$const_ref$ED: Local = Local;
-    static CURRENT: Local = SE$static_initializer_use$ED;
+    const SE$0ED: Local = Local; // references("parent body-local const references", ReferenceQuery::all())
+    static CURRENT: Local = SE$0ED; // references("parent body-local const references from static initializer", ReferenceQuery::all())
 
     fn helper() -> Local {
         SEED
     }
 
-    const AGAIN: Local = SE$const_initializer_use$ED;
+    const AGAIN: Local = SE$0ED; // references("parent body-local const references from const initializer", ReferenceQuery::all())
     static LAST: Local = SEED;
     let _direct = SEED;
 }
 "#,
-        &[
-            AnalysisQuery::references(
-                "parent body-local const references",
-                "const_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "parent body-local const references from const initializer",
-                "const_initializer_use",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "parent body-local const references from static initializer",
-                "static_initializer_use",
-                ReferenceQuery::all(),
-            ),
-        ],
         expect![[r#"
             // parent body-local const references
-            `SEED` @ src/lib.rs:5:11-5:15
-            `SEED` @ src/lib.rs:6:29-6:33
-            `SEED` @ src/lib.rs:9:9-9:13
-            `SEED` @ src/lib.rs:12:26-12:30
-            `SEED` @ src/lib.rs:13:26-13:30
-            `SEED` @ src/lib.rs:14:19-14:23
-
-            // parent body-local const references from const initializer
             `SEED` @ src/lib.rs:5:11-5:15
             `SEED` @ src/lib.rs:6:29-6:33
             `SEED` @ src/lib.rs:9:9-9:13
@@ -548,13 +469,21 @@ pub fn make() {
             `SEED` @ src/lib.rs:12:26-12:30
             `SEED` @ src/lib.rs:13:26-13:30
             `SEED` @ src/lib.rs:14:19-14:23
+
+            // parent body-local const references from const initializer
+            `SEED` @ src/lib.rs:5:11-5:15
+            `SEED` @ src/lib.rs:6:29-6:33
+            `SEED` @ src/lib.rs:9:9-9:13
+            `SEED` @ src/lib.rs:12:26-12:30
+            `SEED` @ src/lib.rs:13:26-13:30
+            `SEED` @ src/lib.rs:14:19-14:23
         "#]],
     );
 }
 
 #[test]
 fn finds_body_local_associated_item_references() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -569,26 +498,14 @@ pub fn make() {
     struct User;
 
     impl User {
-        const DE$assoc_const_ref$FAULT: GlobalId = GlobalId;
-        type I$assoc_type_ref$d = GlobalId;
+        const DE$0FAULT: GlobalId = GlobalId; // references("body-local associated const references", ReferenceQuery::all())
+        type I$0d = GlobalId; // references("body-local associated type references", ReferenceQuery::all())
     }
 
     let _default = User::DEFAULT;
     let _typed: User::Id = GlobalId;
 }
 "#,
-        &[
-            AnalysisQuery::references(
-                "body-local associated const references",
-                "assoc_const_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references(
-                "body-local associated type references",
-                "assoc_type_ref",
-                ReferenceQuery::all(),
-            ),
-        ],
         expect![[r#"
             // body-local associated const references
             `DEFAULT` @ src/lib.rs:7:15-7:22
@@ -603,7 +520,7 @@ pub fn make() {
 
 #[test]
 fn finds_parent_body_local_references_inside_associated_item_bodies() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -615,7 +532,7 @@ edition = "2024"
 pub struct GlobalId;
 
 pub fn make() {
-    const SE$seed_ref$ED: GlobalId = GlobalId;
+    const SE$0ED: GlobalId = GlobalId; // references("parent body-local const references inside associated bodies", ReferenceQuery::all())
 
     struct User;
 
@@ -639,11 +556,6 @@ pub fn make() {
     let _made = User::make();
 }
 "#,
-        &[AnalysisQuery::references(
-            "parent body-local const references inside associated bodies",
-            "seed_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // parent body-local const references inside associated bodies
             `SEED` @ src/lib.rs:4:11-4:15
@@ -657,7 +569,7 @@ pub fn make() {
 
 #[test]
 fn finds_lowercase_const_references_from_ambiguous_patterns() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -666,7 +578,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub const re$ready_ref$ady: u8 = 1;
+pub const re$0ady: u8 = 1; // references("lowercase const references from ambiguous pattern", ReferenceQuery::all())
 
 pub fn use_it(value: u8) {
     match value {
@@ -675,11 +587,6 @@ pub fn use_it(value: u8) {
     }
 }
 "#,
-        &[AnalysisQuery::references(
-            "lowercase const references from ambiguous pattern",
-            "ready_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // lowercase const references from ambiguous pattern
             `ready` @ src/lib.rs:1:11-1:16
@@ -810,7 +717,7 @@ pub fn use_elsewhere(_: User) {}
 
 #[test]
 fn scoped_references_from_dependency_include_reverse_dependency_uses() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -825,7 +732,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /dep/src/lib.rs
-pub struct A$dep_api$pi;
+pub struct A$0pi; // references("dependency-scoped type references", ReferenceQuery::libs(&["dep", "helper", "app"])).in_lib("dep")
 
 pub fn dep_use(_: Api) {}
 
@@ -856,12 +763,6 @@ pub fn app_use(_: dep::Api) {
     helper::helper_use(todo!());
 }
 "#,
-        &[AnalysisQuery::references(
-            "dependency-scoped type references",
-            "dep_api",
-            ReferenceQuery::libs(&["dep", "helper", "app"]),
-        )
-        .in_lib("dep")],
         expect![[r#"
             // dependency-scoped type references
             `Api` @ app/src/lib.rs:1:24-1:27
@@ -874,7 +775,7 @@ pub fn app_use(_: dep::Api) {
 
 #[test]
 fn references_search_declared_spelling_for_imported_types() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -884,18 +785,13 @@ edition = "2024"
 
 //- /src/lib.rs
 pub mod api {
-    pub struct Us$aliased_type_ref$er;
+    pub struct Us$0er; // references("aliased type references", ReferenceQuery::all())
 }
 
 use api::User as Account;
 
 pub fn use_it(_: Account) {}
 "#,
-        &[AnalysisQuery::references(
-            "aliased type references",
-            "aliased_type_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // aliased type references
             `User` @ src/lib.rs:2:16-2:20
@@ -906,7 +802,7 @@ pub fn use_it(_: Account) {}
 
 #[test]
 fn finds_self_references_for_nominal_types() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -915,7 +811,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub struct Us$type_ref$er;
+pub struct Us$0er; // references("type references including Self", ReferenceQuery::all())
 
 impl User {
     pub fn make() -> Self {
@@ -923,11 +819,6 @@ impl User {
     }
 }
 "#,
-        &[AnalysisQuery::references(
-            "type references including Self",
-            "type_ref",
-            ReferenceQuery::all(),
-        )],
         expect![[r#"
             // type references including Self
             `User` @ src/lib.rs:1:12-1:16
@@ -942,7 +833,7 @@ impl User {
 fn finds_named_and_relative_module_references() {
     // The two `super` segments in `super::super::Root` select `parent` and the crate root.
     // Query both targets to show that each segment is resolved separately.
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -951,10 +842,10 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub mod pa$module_ref$rent;
+pub mod pa$0rent; // references("parent module references", ReferenceQuery::all())
 pub struct Root;
 pub fn named(_: parent::Item) {}
-pub fn rooted(_: cr$root_ref$ate::Root) {}
+pub fn rooted(_: cr$0ate::Root) {} // references("crate root references", ReferenceQuery::all())
 pub fn here(_: self::Root) {}
 
 //- /src/parent.rs
@@ -971,14 +862,6 @@ use super::super::Root;
 use module_reference_filter::Root;
 fn main() {}
 "#,
-        &[
-            AnalysisQuery::references(
-                "parent module references",
-                "module_ref",
-                ReferenceQuery::all(),
-            ),
-            AnalysisQuery::references("crate root references", "root_ref", ReferenceQuery::all()),
-        ],
         expect![[r#"
             // parent module references
             `parent` @ src/lib.rs:1:9-1:15

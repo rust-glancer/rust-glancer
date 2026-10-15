@@ -3,12 +3,13 @@ use std::fmt::Write as _;
 use expect_test::expect;
 
 use crate::tests::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    AnalysisQuery, check_analysis, check_analysis_queries,
+    check_analysis_queries_with_fake_sysroot, check_analysis_with_fake_sysroot,
 };
 
 #[test]
 fn finds_methods_from_trait_objects_without_importing_the_trait() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -31,17 +32,11 @@ pub mod api {
 pub type Service = dyn api::Service<u8, Item = u16>;
 pub fn consume<T: api::Base<u8, Item = u16> + ?Sized>(value: &T) -> T::Item { loop {} }
 pub fn run(value: &Service) {
-    let $results$results = (value.request(), value.parent(), value.inspect(), consume(value));
-    let callback = <Service as api::Base<u8>>::$reference$parent;
-    value$object$.$members$;
+    let $0results = (value.request(), value.parent(), value.inspect(), consume(value)); // hover("object method results")
+    let callback = <Service as api::Base<u8>>::$0parent; // goto("qualified method declaration")
+    value$0.$1; // goto_type("object trait declaration"), complete("object methods")
 }
 "#,
-        &[
-            AnalysisQuery::hover("object method results", "results"),
-            AnalysisQuery::goto("qualified method declaration", "reference"),
-            AnalysisQuery::goto_type("object trait declaration", "object"),
-            AnalysisQuery::complete("object methods", "members"),
-        ],
         expect![[r#"
             // object method results
             range: 16:9-16:16
@@ -267,7 +262,7 @@ impl Owner where Other: Marker {
 
 #[test]
 fn completes_inherent_and_trait_methods_at_partial_and_bare_dot_sites() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -298,14 +293,10 @@ impl Named for User {
 }
 
 pub fn use_it(user: User) {
-    user.$partial$id();
-    user.$bare$;
+    user.$0id(); // complete("partial dot completions")
+    user.$0; // complete("bare dot completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("partial dot completions", "partial"),
-            AnalysisQuery::complete("bare dot completions", "bare"),
-        ],
         expect![[r#"
             // partial dot completions
             inherent_method id
@@ -322,7 +313,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn trait_method_completion_respects_lexical_trait_scope() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -380,30 +371,22 @@ use runtime::underscore::Underscore as _;
 use runtime::wildcard::*;
 
 pub fn inspect(value: Value) {
-    value.$outer$;
+    value.$0; // complete("outer trait scope").in_lib("app")
     {
         use runtime::hidden::Hidden;
-        value.$inner$;
+        value.$0; // complete("block trait scope").in_lib("app")
     }
     {
         use runtime::hidden::Hidden as _;
-        value.$inner_underscore$;
+        value.$0; // complete("block underscore trait scope").in_lib("app")
     }
-    value.$after$;
+    value.$0; // complete("scope after block").in_lib("app")
     {
         struct Named;
-        value.$shadowed$;
+        value.$0; // complete("type shadow keeps outer trait").in_lib("app")
     }
 }
 "#,
-        &[
-            AnalysisQuery::complete("outer trait scope", "outer").in_lib("app"),
-            AnalysisQuery::complete("block trait scope", "inner").in_lib("app"),
-            AnalysisQuery::complete("block underscore trait scope", "inner_underscore")
-                .in_lib("app"),
-            AnalysisQuery::complete("scope after block", "after").in_lib("app"),
-            AnalysisQuery::complete("type shadow keeps outer trait", "shadowed").in_lib("app"),
-        ],
         expect![[r#"
             // outer trait scope
             trait_method aliased
@@ -498,7 +481,7 @@ pub fn inspect() {
 
 #[test]
 fn completes_bare_dot_before_following_statement() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -516,15 +499,11 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.$0
+    user.$0 // complete_verbose("bare dot before statement completions")
 
     user.id();
 }
 "#,
-        &[AnalysisQuery::complete_verbose(
-            "bare dot before statement completions",
-            "0",
-        )],
         expect![[r#"
             // bare dot before statement completions
             inherent_method id
@@ -542,10 +521,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn completes_through_references_try_and_await_wrappers() {
-    let complete = |title, marker| {
-        AnalysisQuery::complete(title, marker).in_lib("analysis_wrapper_completion")
-    };
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -577,21 +553,14 @@ pub async fn load_user_async() -> User {
 pub async fn use_it(user: User) -> Result<(), Error> {
     let raw = 0;
     let shared: &&User = &&user;
-    (&user).$reference$;
-    shared.$double_reference$;
-    load_user()?.$try$;
-    load_user_async().await.$await$;
-    (raw as User).$cast$;
+    (&user).$0; // complete("reference completions").in_lib("analysis_wrapper_completion")
+    shared.$0; // complete("double reference completions").in_lib("analysis_wrapper_completion")
+    load_user()?.$0; // complete("try completions").in_lib("analysis_wrapper_completion")
+    load_user_async().await.$0; // complete("await completions").in_lib("analysis_wrapper_completion")
+    (raw as User).$0; // complete("cast completions").in_lib("analysis_wrapper_completion")
     Result::Ok(())
 }
 "#,
-        &[
-            complete("reference completions", "reference"),
-            complete("double reference completions", "double_reference"),
-            complete("try completions", "try"),
-            complete("await completions", "await"),
-            complete("cast completions", "cast"),
-        ],
         expect![[r#"
             // reference completions
             inherent_method id
@@ -618,7 +587,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 
 #[test]
 fn completes_methods_for_bin_root_library_type() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -644,10 +613,9 @@ impl Api {
 //- /src/main.rs
 fn main() {
     let api: analysis_bin_completion::Api = todo!();
-    api.$0;
+    api.$0; // complete("bin root completions").in_bin("analysis_bin_completion")
 }
 "#,
-        &[AnalysisQuery::complete("bin root completions", "0").in_bin("analysis_bin_completion")],
         expect![[r#"
             // bin root completions
             inherent_method ping
@@ -658,7 +626,7 @@ fn main() {
 
 #[test]
 fn does_not_trigger_inside_method_arguments() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -676,13 +644,9 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.id($inside_arg$0);
+    user.id($0$0); // complete("completion inside method argument")
 }
 "#,
-        &[AnalysisQuery::complete(
-            "completion inside method argument",
-            "inside_arg",
-        )],
         expect![[r#"
             <none> // completion inside method argument
         "#]],
@@ -691,7 +655,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn preserves_distinct_same_name_candidates() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -723,27 +687,23 @@ impl Displayed for User {
 }
 
 pub fn use_it(user: User) {
-    let $picked$picked = user.$0label();
+    let $0picked = user.$1label(); // ty("inherent call takes precedence"), complete("same-name completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("same-name completions", "0"),
-            AnalysisQuery::ty("inherent call takes precedence", "picked"),
-        ],
         expect![[r#"
+            u32 // inherent call takes precedence
+
             // same-name completions
             inherent_method label
             trait_method label
             trait_method label
-
-            u32 // inherent call takes precedence
         "#]],
     );
 }
 
 #[test]
 fn does_not_complete_concrete_impl_methods_for_wrong_generic_args() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -776,13 +736,9 @@ impl UserOnlyTrait for Wrapper<User> {
 }
 
 pub fn use_it(error: Wrapper<Error>) {
-    error.$0;
+    error.$0; // complete("wrong generic arg completions")
 }
 "#,
-        &[AnalysisQuery::complete(
-            "wrong generic arg completions",
-            "0",
-        )],
         expect![[r#"
             // wrong generic arg completions
             inherent_method generic
@@ -793,7 +749,7 @@ pub fn use_it(error: Wrapper<Error>) {
 
 #[test]
 fn resolves_generic_trait_methods_and_rejects_unmet_bounds() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -830,10 +786,9 @@ where
 }
 
 pub fn use_it(wrapper: Wrapper<User>) {
-    wrapper.$0;
+    wrapper.$0; // complete("generic trait completions")
 }
 "#,
-        &[AnalysisQuery::complete("generic trait completions", "0")],
         expect![[r#"
             // generic trait completions
             trait_method generic_trait_name
@@ -844,7 +799,7 @@ pub fn use_it(wrapper: Wrapper<User>) {
 
 #[test]
 fn rejects_trait_impls_with_different_const_arguments() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -864,10 +819,9 @@ impl Named for Wrapper<1> {
 }
 
 pub fn use_it(wrapper: Wrapper<2>) {
-    wrapper.$0;
+    wrapper.$0; // complete("const trait impl completions")
 }
 "#,
-        &[AnalysisQuery::complete("const trait impl completions", "0")],
         expect![[r#"
             <none> // const trait impl completions
         "#]],
@@ -876,7 +830,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
 
 #[test]
 fn completes_members_for_nested_field_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -896,14 +850,10 @@ pub struct User {
 }
 
 pub fn use_it(user: User) {
-    user.profile.$profile$;
-    user.$user$;
+    user.profile.$0; // complete("field receiver completions")
+    user.$0; // complete("outer receiver completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("field receiver completions", "profile"),
-            AnalysisQuery::complete("outer receiver completions", "user"),
-        ],
         expect![[r#"
             inherent_method display // field receiver completions
             field profile // outer receiver completions
@@ -913,7 +863,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn completes_body_local_struct_fields_at_dot() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -934,16 +884,12 @@ pub fn use_it() {
     struct Profile;
 
     let user: User;
-    user.$0;
+    user.$0; // complete("body-local field completions")
 
     let pair: Pair;
-    pair.$tuple$;
+    pair.$0; // complete("body-local tuple field completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("body-local field completions", "0"),
-            AnalysisQuery::complete("body-local tuple field completions", "tuple"),
-        ],
         expect![[r#"
             // body-local field completions
             field id
@@ -958,7 +904,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_through_core_deref() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -988,14 +934,10 @@ impl User {
 }
 
 pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
-    user.$deref$;
-    object.$object_deref$;
+    user.$0; // complete("Deref completions").in_lib("app")
+    object.$0; // complete("dyn Deref completions").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::complete("Deref completions", "deref").in_lib("app"),
-            AnalysisQuery::complete("dyn Deref completions", "object_deref").in_lib("app"),
-        ],
         expect![[r#"
             // Deref completions
             field id
@@ -1010,7 +952,7 @@ pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
 
 #[test]
 fn completes_structural_slice_inherent_methods() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1047,17 +989,11 @@ core = { package = "fake_core", path = "../core" }
 pub struct Package;
 
 pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
-    packages.$slice_methods$;
-    array.$array_methods$;
-    array_ref.$array_ref_methods$;
+    packages.$0; // complete("slice method completions").in_lib("app")
+    array.$0; // complete("array method completions").in_lib("app")
+    array_ref.$0; // complete("array ref method completions").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::complete("slice method completions", "slice_methods").in_lib("app"),
-            AnalysisQuery::complete("array method completions", "array_methods").in_lib("app"),
-            AnalysisQuery::complete("array ref method completions", "array_ref_methods")
-                .in_lib("app"),
-        ],
         expect![[r#"
             // slice method completions
             inherent_method first_ref
@@ -1076,7 +1012,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 
 #[test]
 fn completes_primitive_inherent_methods_directly_and_through_deref() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1133,16 +1069,11 @@ runtime = { path = "../runtime" }
 use runtime::OwnedText;
 
 pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
-    owned.$owned$;
-    borrowed.$borrowed$;
-    scalar.$scalar$;
+    owned.$0; // complete("primitive method through Deref").in_lib("app")
+    borrowed.$0; // complete("primitive method through reference").in_lib("app")
+    scalar.$0; // complete("scalar primitive method").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::complete("primitive method through Deref", "owned").in_lib("app"),
-            AnalysisQuery::complete("primitive method through reference", "borrowed").in_lib("app"),
-            AnalysisQuery::complete("scalar primitive method", "scalar").in_lib("app"),
-        ],
         expect![[r#"
             inherent_method contains // primitive method through Deref
             inherent_method contains // primitive method through reference
@@ -1153,7 +1084,7 @@ pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
 
 #[test]
 fn completes_methods_generated_by_associated_item_macros() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1220,10 +1151,9 @@ runtime = { path = "../runtime" }
 use runtime::GeneratedTrait;
 
 pub fn use_it(value: u32) {
-    value.$methods$;
+    value.$0; // complete("macro-generated methods").in_lib("app")
 }
 "#,
-        &[AnalysisQuery::complete("macro-generated methods", "methods").in_lib("app")],
         expect![[r#"
             // macro-generated methods
             inherent_method generated_count
@@ -1235,7 +1165,7 @@ pub fn use_it(value: u32) {
 
 #[test]
 fn completes_raw_pointer_inherent_methods_with_compiler_provided_bounds() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1269,10 +1199,9 @@ runtime = { path = "../runtime" }
 
 //- /app/src/lib.rs
 pub fn use_it(pointer: *const u8) {
-    pointer.$pointer$;
+    pointer.$0; // complete("raw pointer methods").in_lib("app")
 }
 "#,
-        &[AnalysisQuery::complete("raw pointer methods", "pointer").in_lib("app")],
         expect![[r#"
             inherent_method is_null // raw pointer methods
         "#]],
@@ -1281,7 +1210,7 @@ pub fn use_it(pointer: *const u8) {
 
 #[test]
 fn completes_trait_methods_for_unkeyed_and_blanket_impl_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1356,18 +1285,12 @@ use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
 pub struct User;
 
 pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
-    scalar.$scalar$;
-    array.$array$;
-    user.$blanket$;
-    reference.$reference$;
+    scalar.$0; // complete("primitive trait methods").in_lib("app")
+    array.$0; // complete("array trait methods").in_lib("app")
+    user.$0; // complete("blanket trait methods").in_lib("app")
+    reference.$0; // complete("reference trait methods").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::complete("primitive trait methods", "scalar").in_lib("app"),
-            AnalysisQuery::complete("array trait methods", "array").in_lib("app"),
-            AnalysisQuery::complete("blanket trait methods", "blanket").in_lib("app"),
-            AnalysisQuery::complete("reference trait methods", "reference").in_lib("app"),
-        ],
         expect![[r#"
             // primitive trait methods
             trait_method blanket_label
@@ -1388,7 +1311,7 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
 
 #[test]
 fn completes_body_local_impl_methods_across_scope_variants() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1416,7 +1339,7 @@ pub fn local_type_receiver() {
     }
 
     let user: User;
-    user.$local_type$;
+    user.$0; // complete("body-local type impl completions")
 }
 
 pub fn target_type_receiver(id: GlobalId) {
@@ -1426,7 +1349,7 @@ pub fn target_type_receiver(id: GlobalId) {
         }
     }
 
-    id.$target_type$;
+    id.$0; // complete("body-local target impl completions")
 }
 
 pub fn trait_target_type_receiver(id: GlobalId) {
@@ -1445,7 +1368,7 @@ pub fn trait_target_type_receiver(id: GlobalId) {
         }
     }
 
-    id.$trait_target$;
+    id.$0; // complete("body-local target trait impl completions")
 }
 
 pub fn nested_impl_block() {
@@ -1462,7 +1385,7 @@ pub fn nested_impl_block() {
     }
 
     let user: User;
-    user.$nested_impl$;
+    user.$0; // complete("nested body-local impl completions")
 }
 
 pub fn nested_body_owner() {
@@ -1479,20 +1402,10 @@ pub fn nested_body_owner() {
     }
 
     fn helper(user: User) {
-        user.$parent_body$;
+        user.$0; // complete("parent body-local impl completions from nested body")
     }
 }
 "#,
-        &[
-            AnalysisQuery::complete("body-local type impl completions", "local_type"),
-            AnalysisQuery::complete("body-local target impl completions", "target_type"),
-            AnalysisQuery::complete("body-local target trait impl completions", "trait_target"),
-            AnalysisQuery::complete("nested body-local impl completions", "nested_impl"),
-            AnalysisQuery::complete(
-                "parent body-local impl completions from nested body",
-                "parent_body",
-            ),
-        ],
         expect![[r#"
             // body-local type impl completions
             field id
@@ -1512,7 +1425,7 @@ pub fn nested_body_owner() {
 
 #[test]
 fn completes_body_local_generic_impl_method_return_and_field_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1549,18 +1462,13 @@ pub fn use_it() {
     }
 
     let wrapper: Wrapper<User>;
-    wrapper.get().$method_return$;
-    wrapper.value.$field_receiver$;
+    wrapper.get().$0; // complete("generic method return completions")
+    wrapper.value.$0; // complete("generic field receiver completions")
 
     let error: Wrapper<Error>;
-    error.$wrong_receiver$;
+    error.$0; // complete("wrong generic receiver completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("generic method return completions", "method_return"),
-            AnalysisQuery::complete("generic field receiver completions", "field_receiver"),
-            AnalysisQuery::complete("wrong generic receiver completions", "wrong_receiver"),
-        ],
         expect![[r#"
             // generic method return completions
             field id
@@ -1579,7 +1487,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_members_for_pattern_and_closure_introduced_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1608,34 +1516,25 @@ pub enum Option<T> {
 }
 
 pub fn use_it(maybe: Option<User>) {
-    let _closure = |user: User| user.$closure_payload$;
+    let _closure = |user: User| user.$0; // complete("closure parameter completions")
 
     let Some(value) = maybe else { return; };
-    value.$let_payload$;
+    value.$0; // complete("let pattern payload completions")
 
-    if let Some(found) = maybe && found.$if_rhs$is_valid() {
-        found.$if_payload$;
+    if let Some(found) = maybe && found.$0is_valid() { // complete("if let-chain rhs completions")
+        found.$0; // complete("if let pattern payload completions")
     }
 
     while let Some(next) = maybe {
-        next.$while_payload$;
+        next.$0; // complete("while let pattern payload completions")
     }
 
     match maybe {
-        Some(user) if user.$match_guard$is_valid() => user.$match_payload$,
+        Some(user) if user.$0is_valid() => user.$1, // complete("match guard payload completions"), complete("match pattern payload completions")
         None => {}
     }
 }
 "#,
-        &[
-            AnalysisQuery::complete("closure parameter completions", "closure_payload"),
-            AnalysisQuery::complete("let pattern payload completions", "let_payload"),
-            AnalysisQuery::complete("if let-chain rhs completions", "if_rhs"),
-            AnalysisQuery::complete("if let pattern payload completions", "if_payload"),
-            AnalysisQuery::complete("while let pattern payload completions", "while_payload"),
-            AnalysisQuery::complete("match guard payload completions", "match_guard"),
-            AnalysisQuery::complete("match pattern payload completions", "match_payload"),
-        ],
         expect![[r#"
             // closure parameter completions
             field id
@@ -1677,7 +1576,7 @@ pub fn use_it(maybe: Option<User>) {
 
 #[test]
 fn completes_tuple_fields_at_dot() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1692,10 +1591,9 @@ pub struct Right;
 pub struct Pair(pub Left, pub Right);
 
 pub fn use_it(pair: Pair) {
-    pair.$0;
+    pair.$0; // complete("tuple field completions")
 }
 "#,
-        &[AnalysisQuery::complete("tuple field completions", "0")],
         expect![[r#"
             // tuple field completions
             field 0
@@ -1706,7 +1604,7 @@ pub fn use_it(pair: Pair) {
 
 #[test]
 fn completes_dot_members_with_metadata_and_replacement_range() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1730,10 +1628,9 @@ impl User {
 }
 
 pub fn use_it(user: User) {
-    user.na$0;
+    user.na$0; // complete_verbose("metadata completions")
 }
 "#,
-        &[AnalysisQuery::complete_verbose("metadata completions", "0")],
         expect![[r#"
             // metadata completions
             field name

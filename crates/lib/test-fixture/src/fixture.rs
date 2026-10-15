@@ -6,8 +6,6 @@ use std::{
 
 use tempfile::TempDir;
 
-const CURSOR_MARKER_NAME: &str = "0";
-
 /// Parsed fixture files and source markers before they are materialized on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixtureSpec {
@@ -92,48 +90,29 @@ impl FixtureSpec {
 
         while idx < line.len() {
             let rest = &line[idx..];
-            if let Some(stripped) = rest.strip_prefix(r"\$") {
-                if stripped.starts_with('0') {
-                    cleaned.push_str("$0");
-                    idx += 3;
-                    continue;
-                }
-                if let Some(marker_name) = Self::take_named_marker(stripped) {
-                    cleaned.push('$');
-                    cleaned.push_str(marker_name);
-                    cleaned.push('$');
-                    idx += marker_name.len() + 3;
-                    continue;
-                }
+            if let Some(stripped) = rest.strip_prefix(r"\$")
+                && let Some((_, length)) = Self::take_marker(stripped)
+            {
+                cleaned.push('$');
+                cleaned.push_str(&stripped[..length]);
+                idx += length + 2;
+                continue;
             }
 
-            if let Some(stripped) = rest.strip_prefix('$') {
-                if stripped.starts_with('0') {
-                    markers.push(
-                        CURSOR_MARKER_NAME,
-                        FixtureMarker {
-                            path: path.to_string(),
-                            offset: line_offset
-                                + u32::try_from(cleaned.len())
-                                    .expect("fixture line length should fit into u32"),
-                        },
-                    );
-                    idx += 2;
-                    continue;
-                }
-                if let Some(marker_name) = Self::take_named_marker(stripped) {
-                    markers.push(
-                        marker_name,
-                        FixtureMarker {
-                            path: path.to_string(),
-                            offset: line_offset
-                                + u32::try_from(cleaned.len())
-                                    .expect("fixture line length should fit into u32"),
-                        },
-                    );
-                    idx += marker_name.len() + 2;
-                    continue;
-                }
+            if let Some(stripped) = rest.strip_prefix('$')
+                && let Some((name, length)) = Self::take_marker(stripped)
+            {
+                markers.push(
+                    name,
+                    FixtureMarker {
+                        path: path.to_string(),
+                        offset: line_offset
+                            + u32::try_from(cleaned.len())
+                                .expect("fixture line length should fit into u32"),
+                    },
+                );
+                idx += length + 1;
+                continue;
             }
 
             let ch = rest
@@ -147,7 +126,16 @@ impl FixtureSpec {
         cleaned
     }
 
-    fn take_named_marker(text: &str) -> Option<&str> {
+    // After the opening `$`, digits form a short marker such as `$0` or `$11`. Read all
+    // digits, and accept a closing `$` so `1$0$2` can put a cursor between source digits.
+    // Named markers still need their closing `$`, as in `$method$`.
+    fn take_marker(text: &str) -> Option<(&str, usize)> {
+        let digits = text.bytes().take_while(u8::is_ascii_digit).count();
+        if digits > 0 {
+            let length = digits + usize::from(text[digits..].starts_with('$'));
+            return Some((&text[..digits], length));
+        }
+
         let end = text.find('$')?;
         let name = &text[..end];
         let mut chars = name.chars();
@@ -156,7 +144,7 @@ impl FixtureSpec {
             return None;
         }
         if chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
-            Some(name)
+            Some((name, end + 1))
         } else {
             None
         }
@@ -241,9 +229,19 @@ pub struct FixtureMarkers {
 }
 
 impl FixtureMarkers {
+    /// Visits every marker occurrence. Sort by offset when source order matters within a file.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &FixtureMarker)> {
+        self.markers.iter().flat_map(|(name, positions)| {
+            positions
+                .iter()
+                .map(move |position| (name.as_str(), position))
+        })
+    }
+
     /// Returns one cursor marker by name.
     ///
-    /// `$0` is exposed as marker name `"0"`. Named markers use `$name$`.
+    /// `$11` and `$11$` both have name `"11"`. Named markers use `$name$`.
+    /// Names must be unique across the fixture for this lookup.
     pub fn position(&self, name: &str) -> &FixtureMarker {
         let positions = self
             .markers
@@ -260,6 +258,16 @@ impl FixtureMarkers {
 
     fn push(&mut self, name: impl Into<String>, marker: FixtureMarker) {
         self.markers.entry(name.into()).or_default().push(marker);
+    }
+}
+
+impl FromIterator<(String, FixtureMarker)> for FixtureMarkers {
+    fn from_iter<T: IntoIterator<Item = (String, FixtureMarker)>>(iter: T) -> Self {
+        let mut markers = Self::default();
+        for (name, marker) in iter {
+            markers.push(name, marker);
+        }
+        markers
     }
 }
 
@@ -342,7 +350,7 @@ impl CrateFixture {
     }
 
     fn from_parsed_fixture(fixture: FixtureSpec) -> Self {
-        Self::materialize(
+        Self::from_files(
             fixture
                 .into_files()
                 .into_iter()
@@ -350,7 +358,8 @@ impl CrateFixture {
         )
     }
 
-    fn materialize<P, C>(files: impl IntoIterator<Item = (P, C)>) -> Self
+    /// Materializes already-parsed files without interpreting source markers a second time.
+    pub fn from_files<P, C>(files: impl IntoIterator<Item = (P, C)>) -> Self
     where
         P: AsRef<str>,
         C: AsRef<str>,
@@ -515,6 +524,36 @@ pub fn use_it(user: User) {
             )
             .expect("fixture offset should fit into u32")
         );
+    }
+
+    #[test]
+    fn strips_numeric_and_named_markers_with_exact_byte_offsets() {
+        let cases = [
+            ("a$0b$1c$11d", "abcd", &[("0", 1), ("1", 2), ("11", 3)][..]),
+            ("1$0$2 + 3$1$4", "12 + 34", &[("0", 1), ("1", 6)]),
+            ("α$10β$11$γ", "αβγ", &[("10", 2), ("11", 4)]),
+            ("a$named$b$11c", "abc", &[("named", 1), ("11", 2)]),
+            (r"\$0 \$1 \$11 \$2$ \$named$", "$0 $1 $11 $2$ $named$", &[]),
+        ];
+
+        for (marked, expected, positions) in cases {
+            let fixture = FixtureSpec::parse(&format!("//- /src/lib.rs\n{marked}\n"));
+            assert_eq!(
+                fixture.files()[0].contents(),
+                format!("{expected}\n"),
+                "{marked}"
+            );
+            assert_eq!(
+                fixture.markers().iter().count(),
+                positions.len(),
+                "{marked}"
+            );
+            for (name, offset) in positions {
+                let marker = fixture.markers().position(name);
+                assert_eq!(marker.path, "src/lib.rs", "{marked}: {name}");
+                assert_eq!(marker.offset, *offset, "{marked}: {name}");
+            }
+        }
     }
 
     #[test]

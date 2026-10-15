@@ -1,9 +1,9 @@
 use expect_test::expect;
 
-use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::check_analysis;
 #[test]
 fn completes_specialized_strings_macro_fragments_and_postfix_transforms() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -15,54 +15,42 @@ edition = "2024"
 const MODULE_CAPTURE: usize = 1;
 static STATIC_CAPTURE: usize = 2;
 
-extern "C-un$abi$" fn foreign();
+extern "C-un$0" fn foreign(); // complete_verbose_with_source("extern ABI").matching("C-unwind")
 
 macro_rules! capture {
-    ($value: ex$fragment$) => { $value };
+    ($value: ex$0) => { $value }; // complete_verbose_with_source("macro fragment").matching("expr")
 }
 
 fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i32) {
     let nested_capture = local_capture;
-    let _ = format!("{loc$format_local$}", explicit_name = value);
-    let _ = format!("{exp$format_named$}", explicit_name = value);
-    let _ = format!("{MOD$format_const$}");
-    let _ = env!("CARGO_MAN$environment$");
-    let _ = option_env!("CARGO_BIN$option_environment$");
-    let _ = write!("ordinary$write_destination$", "{nes$write_format$}");
-    let _ = (value + 1).ma$postfix_match$;
-    let _ = condition.i$postfix_if$;
-    let _ = value.i$non_bool_if$;
+    let _ = format!("{loc$0}", explicit_name = value); // complete_verbose_with_source("format local").matching("local_capture")
+    let _ = format!("{exp$0}", explicit_name = value); // complete_verbose_with_source("format named argument").matching("explicit_name")
+    let _ = format!("{MOD$0}"); // complete_with_source("format module const").matching("MODULE_CAPTURE")
+    let _ = env!("CARGO_MAN$0"); // complete_verbose_with_source("Cargo environment").matching("CARGO_MANIFEST_DIR")
+    let _ = option_env!("CARGO_BIN$0"); // complete_with_source("Cargo option environment").matching("CARGO_BIN_NAME")
+    let _ = write!("ordinary$0", "{nes$1}"); // complete_with_source("write destination is ordinary").matching("nested_capture"), complete_with_source("write format").matching("nested_capture")
+    let _ = (value + 1).ma$0; // complete_verbose_with_source("postfix match").matching("match")
+    let _ = condition.i$0; // complete_verbose_with_source("boolean postfix").matching("if")
+    let _ = value.i$0; // complete_with_source("non-boolean postfix").matching("if")
 }
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source("format local", "format_local")
-                .matching("local_capture"),
-            AnalysisQuery::complete_verbose_with_source("format named argument", "format_named")
-                .matching("explicit_name"),
-            AnalysisQuery::complete_with_source("format module const", "format_const")
-                .matching("MODULE_CAPTURE"),
-            AnalysisQuery::complete_verbose_with_source("Cargo environment", "environment")
-                .matching("CARGO_MANIFEST_DIR"),
-            AnalysisQuery::complete_with_source("Cargo option environment", "option_environment")
-                .matching("CARGO_BIN_NAME"),
-            AnalysisQuery::complete_with_source(
-                "write destination is ordinary",
-                "write_destination",
-            )
-            .matching("nested_capture"),
-            AnalysisQuery::complete_with_source("write format", "write_format")
-                .matching("nested_capture"),
-            AnalysisQuery::complete_verbose_with_source("extern ABI", "abi").matching("C-unwind"),
-            AnalysisQuery::complete_verbose_with_source("macro fragment", "fragment")
-                .matching("expr"),
-            AnalysisQuery::complete_verbose_with_source("postfix match", "postfix_match")
-                .matching("match"),
-            AnalysisQuery::complete_verbose_with_source("boolean postfix", "postfix_if")
-                .matching("if"),
-            AnalysisQuery::complete_with_source("non-boolean postfix", "non_bool_if")
-                .matching("if"),
-        ],
         expect![[r#"
+            // extern ABI
+            value C-unwind
+              detail: extern ABI C-unwind
+              sort: 00-specialized:08:C-unwind
+              replace: 76..80
+
+            // macro fragment
+            value expr
+              detail: macro fragment expr
+              sort: 00-specialized:08:expr
+              replace: 133..135
+            value expr_2021
+              detail: macro fragment expr_2021
+              sort: 00-specialized:08:expr_2021
+              replace: 133..135
+
             // format local
             variable local_capture
               detail: format capture local_capture
@@ -86,22 +74,6 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
             value CARGO_BIN_NAME // Cargo option environment
             <none> // write destination is ordinary
             variable nested_capture // write format
-
-            // extern ABI
-            value C-unwind
-              detail: extern ABI C-unwind
-              sort: 00-specialized:08:C-unwind
-              replace: 76..80
-
-            // macro fragment
-            value expr
-              detail: macro fragment expr
-              sort: 00-specialized:08:expr
-              replace: 133..135
-            value expr_2021
-              detail: macro fragment expr_2021
-              sort: 00-specialized:08:expr_2021
-              replace: 133..135
 
             // postfix match
             postfix match
@@ -128,7 +100,7 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
 
 #[test]
 fn completes_attributes_lifetimes_labels_visibility_extern_and_const_sites() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -184,108 +156,52 @@ dependency = { path = "../dependency" }
 const LIMIT: usize = 8;
 static STATIC_LIMIT: usize = 16;
 
-#[der$attribute_path$]
+#[der$0] // complete_with_source("attribute path").in_lib("app").matching("derive")
 struct AttributePath;
 
-#[macros::tra$attribute_macro$]
+#[macros::tra$0] // complete_with_source("attribute proc macro").in_lib("app").matching("traced")
 struct AttributeMacro;
 
-#[derive(Debug, Cl$derive_builtin$)]
+#[derive(Debug, Cl$0)] // complete_with_source("builtin derive").in_lib("app").matching("Clone")
 struct BuiltinDerive;
 
-#[derive(macros::Sto$derive_macro$)]
+#[derive(macros::Sto$0)] // complete_with_source("derive proc macro").in_lib("app").matching("Stored")
 struct MacroDerive;
 
-#[allow(dead$lint$)]
-#[repr(tra$repr$)]
-#[cfg(tar$cfg_key$)]
-#[cfg(feature = "serde-$cfg_feature$")]
-#[diagnostic::on_unimplemented(mes$diagnostic$)]
-#[deprecated(si$compatibility$)]
+#[allow(dead$0)] // complete_with_source("lint input").in_lib("app").matching("dead_code")
+#[repr(tra$0)] // complete_with_source("repr input").in_lib("app").matching("transparent")
+#[cfg(tar$0)] // complete_with_source("cfg key").in_lib("app").matching("target_arch")
+#[cfg(feature = "serde-$0")] // complete_verbose_with_source("cfg Cargo feature").in_lib("app").matching("serde-support")
+#[diagnostic::on_unimplemented(mes$0)] // complete_with_source("diagnostic input").in_lib("app").matching("message")
+#[deprecated(si$0)] // complete_with_source("compatibility input").in_lib("app").matching("since")
 struct AttributeInputs;
 
 pub mod outer {
     pub mod inner {
-        pub(in crate::outer::in$visibility_module$) struct Restricted;
+        pub(in crate::outer::in$0) struct Restricted; // complete_with_source("visibility module").in_lib("app").matching("inner")
     }
 }
 
-extern crate dep$extern_crate$;
+extern crate dep$0; // complete_with_source("extern crate").in_lib("app").matching("dependency")
 
-struct Buffer<const N: usize = LIM$const_default$>([u8; N]);
-struct Array([u8; LIM$array_length$]);
+struct Buffer<const N: usize = LIM$0>([u8; N]); // complete_with_source("const default").in_lib("app").matching("LIMIT")
+struct Array([u8; LIM$0]); // complete_with_source("array length").in_lib("app").matching("LIMIT")
 
-fn signature_lifetime<'outer>(value: &'outer u8) -> &'out$lifetime$ u8 {
+fn signature_lifetime<'outer>(value: &'outer u8) -> &'out$0 u8 { // complete_with_source("lifetime").in_lib("app").matching("'outer")
     value
 }
 
 fn const_body<const N: usize>() {
-    let _: [u8; N$const_param$];
-    let _: Buffer<{ LIM$const_arg$ }>;
+    let _: [u8; N$0]; // complete_with_source("const parameter").in_lib("app").matching("N")
+    let _: Buffer<{ LIM$0 }>; // complete_with_source("braced const argument").in_lib("app").matching("LIMIT")
 
     'outer: loop {
         'inner: loop {
-            break 'inn$label$;
+            break 'inn$0; // complete_with_source("loop label").in_lib("app").matching("'inner")
         }
     }
 }
 "#,
-        &[
-            AnalysisQuery::complete_with_source("attribute path", "attribute_path")
-                .in_lib("app")
-                .matching("derive"),
-            AnalysisQuery::complete_with_source("attribute proc macro", "attribute_macro")
-                .in_lib("app")
-                .matching("traced"),
-            AnalysisQuery::complete_with_source("builtin derive", "derive_builtin")
-                .in_lib("app")
-                .matching("Clone"),
-            AnalysisQuery::complete_with_source("derive proc macro", "derive_macro")
-                .in_lib("app")
-                .matching("Stored"),
-            AnalysisQuery::complete_with_source("lint input", "lint")
-                .in_lib("app")
-                .matching("dead_code"),
-            AnalysisQuery::complete_with_source("repr input", "repr")
-                .in_lib("app")
-                .matching("transparent"),
-            AnalysisQuery::complete_with_source("cfg key", "cfg_key")
-                .in_lib("app")
-                .matching("target_arch"),
-            AnalysisQuery::complete_verbose_with_source("cfg Cargo feature", "cfg_feature")
-                .in_lib("app")
-                .matching("serde-support"),
-            AnalysisQuery::complete_with_source("diagnostic input", "diagnostic")
-                .in_lib("app")
-                .matching("message"),
-            AnalysisQuery::complete_with_source("compatibility input", "compatibility")
-                .in_lib("app")
-                .matching("since"),
-            AnalysisQuery::complete_with_source("visibility module", "visibility_module")
-                .in_lib("app")
-                .matching("inner"),
-            AnalysisQuery::complete_with_source("extern crate", "extern_crate")
-                .in_lib("app")
-                .matching("dependency"),
-            AnalysisQuery::complete_with_source("const default", "const_default")
-                .in_lib("app")
-                .matching("LIMIT"),
-            AnalysisQuery::complete_with_source("array length", "array_length")
-                .in_lib("app")
-                .matching("LIMIT"),
-            AnalysisQuery::complete_with_source("lifetime", "lifetime")
-                .in_lib("app")
-                .matching("'outer"),
-            AnalysisQuery::complete_with_source("const parameter", "const_param")
-                .in_lib("app")
-                .matching("N"),
-            AnalysisQuery::complete_with_source("braced const argument", "const_arg")
-                .in_lib("app")
-                .matching("LIMIT"),
-            AnalysisQuery::complete_with_source("loop label", "label")
-                .in_lib("app")
-                .matching("'inner"),
-        ],
         expect![[r#"
             attribute derive // attribute path
             macro traced // attribute proc macro
@@ -317,7 +233,7 @@ fn const_body<const N: usize>() {
 
 #[test]
 fn completes_missing_trait_impl_members_with_instantiated_stubs() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -345,13 +261,9 @@ impl Service<u8> for Worker {
     type Output = u16;
     fn defaulted(&self) -> u8 { 0 }
 
-    req$missing_members$
+    req$0 // complete_verbose_with_source("missing trait members")
 }
 "#,
-        &[AnalysisQuery::complete_verbose_with_source(
-            "missing trait members",
-            "missing_members",
-        )],
         expect![[r#"
             // missing trait members
             const REQUIRED
@@ -383,7 +295,7 @@ impl Service<u8> for Worker {
 
 #[test]
 fn trait_impl_member_introducers_filter_and_replace_the_whole_prefix() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -400,24 +312,19 @@ trait Service {
 
 struct FunctionWorker;
 impl Service for FunctionWorker {
-    fn re$function$
+    fn re$0 // complete_verbose_with_source("function trait member prefix")
 }
 
 struct TypeWorker;
 impl Service for TypeWorker {
-    type Ou$type_alias$
+    type Ou$0 // complete_verbose_with_source("type trait member prefix")
 }
 
 struct ConstWorker;
 impl Service for ConstWorker {
-    const LI$const$
+    const LI$0 // complete_verbose_with_source("const trait member prefix")
 }
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source("function trait member prefix", "function"),
-            AnalysisQuery::complete_verbose_with_source("type trait member prefix", "type_alias"),
-            AnalysisQuery::complete_verbose_with_source("const trait member prefix", "const"),
-        ],
         expect![[r#"
             // function trait member prefix
             fn required
@@ -450,7 +357,7 @@ impl Service for ConstWorker {
 
 #[test]
 fn completes_module_scope_macro_invocations_only() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -473,19 +380,9 @@ mod tools {
     pub(crate) use nested_item;
 }
 
-local_i$unqualified_macro$!();
-tools::nested_i$qualified_macro$!();
+local_i$0!(); // complete_verbose_with_source("unqualified module macro")
+tools::nested_i$0!(); // complete_verbose_with_source("qualified module macro")
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source(
-                "unqualified module macro",
-                "unqualified_macro",
-            ),
-            AnalysisQuery::complete_verbose_with_source(
-                "qualified module macro",
-                "qualified_macro",
-            ),
-        ],
         expect![[r#"
             // unqualified module macro
             macro local_item
@@ -504,7 +401,7 @@ tools::nested_i$qualified_macro$!();
 
 #[test]
 fn completes_conventional_out_of_line_module_names() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -514,12 +411,12 @@ edition = "2024"
 
 //- /src/lib.rs
 mod already;
-mod pars$root_module$;
+mod pars$0; // complete_verbose_with_source("root module declaration")
 #[path = "custom.rs"]
-mod cust$path_module$;
+mod cust$0; // complete_verbose_with_source("path-attributed module declaration")
 
 mod inner {
-    mod chi$inline_module$;
+    mod chi$0; // complete_verbose_with_source("inline module declaration")
 }
 
 //- /src/already.rs
@@ -540,17 +437,6 @@ pub struct InvalidName;
 //- /src/inner/child.rs
 pub struct Child;
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source("root module declaration", "root_module"),
-            AnalysisQuery::complete_verbose_with_source(
-                "path-attributed module declaration",
-                "path_module",
-            ),
-            AnalysisQuery::complete_verbose_with_source(
-                "inline module declaration",
-                "inline_module",
-            ),
-        ],
         expect![[r#"
             // root module declaration
             module parser
@@ -575,7 +461,7 @@ pub struct Child;
 
 #[test]
 fn completes_modules_from_semantic_file_contexts() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -595,7 +481,7 @@ path = "src/tool.rs"
 mod implementation;
 
 //- /src/custom_imp.rs
-mod bes$path_selected_file$;
+mod bes$0; // complete_verbose_with_source("path-selected definition file").matching("beside")
 
 //- /src/beside.rs
 pub struct Beside;
@@ -604,7 +490,7 @@ pub struct Beside;
 pub struct Below;
 
 //- /src/tool.rs
-mod roo$custom_target_root$;
+mod roo$0; // complete_verbose_with_source("custom target root").in_bin("semantic_module_context_completions").matching("root_child")
 
 //- /src/root_child.rs
 pub struct RootChild;
@@ -612,16 +498,6 @@ pub struct RootChild;
 //- /src/tool/wrong_child.rs
 pub struct WrongChild;
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source(
-                "path-selected definition file",
-                "path_selected_file",
-            )
-            .matching("beside"),
-            AnalysisQuery::complete_verbose_with_source("custom target root", "custom_target_root")
-                .in_bin("semantic_module_context_completions")
-                .matching("root_child"),
-        ],
         expect![[r#"
             // path-selected definition file
             module beside
@@ -640,7 +516,7 @@ pub struct WrongChild;
 
 #[test]
 fn completes_qualified_and_unqualified_body_macros() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -669,17 +545,10 @@ pub fn exported_function() -> u8 {
 }
 
 pub fn use_it() {
-    let _plain = make$plain_macro_prefix$;
-    let _qualified = crate::exported$qualified_prefix$;
+    let _plain = make$0; // complete_verbose("macro from value prefix")
+    let _qualified = crate::exported$0; // complete_verbose("qualified macro from value prefix")
 }
 "#,
-        &[
-            AnalysisQuery::complete_verbose("macro from value prefix", "plain_macro_prefix"),
-            AnalysisQuery::complete_verbose(
-                "qualified macro from value prefix",
-                "qualified_prefix",
-            ),
-        ],
         expect![[r#"
             // macro from value prefix
             fn exported_function
@@ -740,7 +609,7 @@ pub fn use_it() {
 
 #[test]
 fn proc_macro_completions_keep_export_identity_and_hide_implementation_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -802,77 +671,33 @@ pub mod unqualified;
 use completion_proc_macros::emit;
 
 fn use_macro() {
-    let _ = em$unqualified_proc_macro_eof$
+    let _ = em$0 // complete_verbose_with_source("unqualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
 
 //- /app/src/already_invoked.rs
 use completion_proc_macros::emit;
 
 fn use_macro() {
-    let _ = em$already_invoked_proc_macro$!();
+    let _ = em$0!(); // complete_verbose_with_source("function-like proc macro with invocation already typed").in_lib("completion_proc_macro_app").matching("emit")
 }
 
 //- /app/src/qualified.rs
 fn use_macro() {
-    let _ = completion_proc_macros::em$qualified_proc_macro_eof$
+    let _ = completion_proc_macros::em$0 // complete_verbose_with_source("qualified function-like proc macro at EOF").in_lib("completion_proc_macro_app").matching("emit")
 
 //- /app/src/attribute.rs
-#[completion_proc_macros::tra$attribute_proc_macro_eof$
+#[completion_proc_macros::tra$0 // complete_verbose_with_source("attribute proc macro keeps macro detail").in_lib("completion_proc_macro_app").matching("traced")
 
 //- /app/src/derive.rs
-#[derive(completion_proc_macros::Sto$derive_proc_macro_eof$
+#[derive(completion_proc_macros::Sto$0 // complete_verbose_with_source("derive proc macro keeps export name and macro detail").in_lib("completion_proc_macro_app").matching("Stored")
 
 //- /app/src/implementation.rs
 fn cannot_call_implementation() {
-    let _ = completion_proc_macros::sto$proc_macro_implementation_eof$
+    let _ = completion_proc_macros::sto$0 // complete_with_source("implementation function is hidden downstream").in_lib("completion_proc_macro_app").matching("stored")
 
 //- /app/src/leaked.rs
 fn cannot_name_other_exports() {
-    let _ = completion_proc_macros::Lea$proc_macro_leak_eof$
+    let _ = completion_proc_macros::Lea$0 // complete_with_source("ordinary proc-macro crate exports are hidden downstream").in_lib("completion_proc_macro_app").matching("Leaked")
 "#,
-        &[
-            AnalysisQuery::complete_verbose_with_source(
-                "unqualified function-like proc macro at EOF",
-                "unqualified_proc_macro_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("emit"),
-            AnalysisQuery::complete_verbose_with_source(
-                "function-like proc macro with invocation already typed",
-                "already_invoked_proc_macro",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("emit"),
-            AnalysisQuery::complete_verbose_with_source(
-                "qualified function-like proc macro at EOF",
-                "qualified_proc_macro_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("emit"),
-            AnalysisQuery::complete_verbose_with_source(
-                "attribute proc macro keeps macro detail",
-                "attribute_proc_macro_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("traced"),
-            AnalysisQuery::complete_verbose_with_source(
-                "derive proc macro keeps export name and macro detail",
-                "derive_proc_macro_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("Stored"),
-            AnalysisQuery::complete_with_source(
-                "implementation function is hidden downstream",
-                "proc_macro_implementation_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("stored"),
-            AnalysisQuery::complete_with_source(
-                "ordinary proc-macro crate exports are hidden downstream",
-                "proc_macro_leak_eof",
-            )
-            .in_lib("completion_proc_macro_app")
-            .matching("Leaked"),
-        ],
         expect![[r#"
             // unqualified function-like proc macro at EOF
             macro emit

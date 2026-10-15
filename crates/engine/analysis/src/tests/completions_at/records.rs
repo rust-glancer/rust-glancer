@@ -1,9 +1,9 @@
 use expect_test::expect;
 
-use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
+use crate::tests::utils::check_analysis;
 #[test]
 fn completes_record_constructor_paths() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -35,21 +35,12 @@ pub fn use_it() {
         Start { id: u8 },
     }
 
-    let _local = Local$local_ctor$ { id: 0 };
-    let _local_variant = LocalAction::Sta$local_variant_ctor$ { id: 0 };
-    let _record = api::Us$record_ctor$ { id: 0 };
-    let _variant = api::Action::Sta$variant_ctor$ { id: 0 };
+    let _local = Local$0 { id: 0 }; // complete("unqualified record constructor completions")
+    let _local_variant = LocalAction::Sta$0 { id: 0 }; // complete("body-local record variant constructor completions")
+    let _record = api::Us$0 { id: 0 }; // complete("qualified record constructor completions")
+    let _variant = api::Action::Sta$0 { id: 0 }; // complete("record variant constructor completions")
 }
 "#,
-        &[
-            AnalysisQuery::complete("unqualified record constructor completions", "local_ctor"),
-            AnalysisQuery::complete(
-                "body-local record variant constructor completions",
-                "local_variant_ctor",
-            ),
-            AnalysisQuery::complete("qualified record constructor completions", "record_ctor"),
-            AnalysisQuery::complete("record variant constructor completions", "variant_ctor"),
-        ],
         expect![[r#"
             // unqualified record constructor completions
             struct LocalUser
@@ -69,7 +60,7 @@ pub fn use_it() {
 
 #[test]
 fn completes_record_fields_for_semantic_and_body_local_enum_variants() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -83,22 +74,16 @@ pub enum Action {
 }
 
 pub fn inspect(action: Action) {
-    let _ = Action::Named { co$semantic_expr$: 1, message: String::new() };
-    let Action::Named { me$semantic_pat$: _, code: _ } = action;
+    let _ = Action::Named { co$0: 1, message: String::new() }; // complete("semantic variant expression fields")
+    let Action::Named { me$0: _, code: _ } = action; // complete("semantic variant pattern fields")
 
     enum Local {
         Named { alpha: u8, beta: u8 },
     }
-    let local = Local::Named { al$local_expr$: 1, beta: 2 };
-    let Local::Named { be$local_pat$: _, alpha: _ } = local;
+    let local = Local::Named { al$0: 1, beta: 2 }; // complete("local variant expression fields")
+    let Local::Named { be$0: _, alpha: _ } = local; // complete("local variant pattern fields")
 }
 "#,
-        &[
-            AnalysisQuery::complete("semantic variant expression fields", "semantic_expr"),
-            AnalysisQuery::complete("semantic variant pattern fields", "semantic_pat"),
-            AnalysisQuery::complete("local variant expression fields", "local_expr"),
-            AnalysisQuery::complete("local variant pattern fields", "local_pat"),
-        ],
         expect![[r#"
             field code // semantic variant expression fields
             field message // semantic variant pattern fields
@@ -110,7 +95,7 @@ pub fn inspect(action: Action) {
 
 #[test]
 fn completes_record_fields_across_literal_and_pattern_contexts() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -128,30 +113,20 @@ pub struct User {
 pub struct Users;
 
 pub fn use_it(id: u8, user: User, users: Users) {
-    let _with_prefix = User { id, na$literal_prefix$ };
-    let _empty = User { id, $literal_empty$ };
-    let _defaults = User { ..$literal_defaults$ };
+    let _with_prefix = User { id, na$0 }; // complete("record literal prefix completions")
+    let _empty = User { id, $0 }; // complete("record literal empty completions")
+    let _defaults = User { ..$0 }; // complete("record literal defaults completions")
 
-    let User { id, na$pattern_prefix$ } = user;
-    let User { ..$pattern_rest$ } = user;
+    let User { id, na$0 } = user; // complete("record pattern prefix completions")
+    let User { ..$0 } = user; // complete("record pattern rest completions")
 
-    if let User { id, na$if_field$ } = user {}
+    if let User { id, na$0 } = user {} // complete("if let record pattern fields")
 
-    while let User { ac$while_field$ } = user {}
+    while let User { ac$0 } = user {} // complete("while let record pattern fields")
 
-    for User { id, na$for_field$ } in users {}
+    for User { id, na$0 } in users {} // complete("for record pattern fields")
 }
 "#,
-        &[
-            AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
-            AnalysisQuery::complete("record literal empty completions", "literal_empty"),
-            AnalysisQuery::complete("record literal defaults completions", "literal_defaults"),
-            AnalysisQuery::complete("record pattern prefix completions", "pattern_prefix"),
-            AnalysisQuery::complete("record pattern rest completions", "pattern_rest"),
-            AnalysisQuery::complete("if let record pattern fields", "if_field"),
-            AnalysisQuery::complete("while let record pattern fields", "while_field"),
-            AnalysisQuery::complete("for record pattern fields", "for_field"),
-        ],
         expect![[r#"
             // record literal prefix completions
             field active
@@ -187,7 +162,7 @@ pub fn use_it(id: u8, user: User, users: Users) {
 
 #[test]
 fn completes_body_local_record_literal_fields() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -202,13 +177,9 @@ pub fn use_it() {
         right: u8,
     }
 
-    let _value = Local { $0 };
+    let _value = Local { $0 }; // complete("body-local record literal completions")
 }
 "#,
-        &[AnalysisQuery::complete(
-            "body-local record literal completions",
-            "0",
-        )],
         expect![[r#"
             // body-local record literal completions
             field left
@@ -219,7 +190,7 @@ pub fn use_it() {
 
 #[test]
 fn keeps_record_field_value_positions_as_value_completions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -234,13 +205,9 @@ pub struct User {
 }
 
 pub fn use_it(user_value: u8) {
-    let _value = User { id: us$0, name: 0 };
+    let _value = User { id: us$0, name: 0 }; // complete("record field value completions")
 }
 "#,
-        &[AnalysisQuery::complete(
-            "record field value completions",
-            "0",
-        )],
         expect![[r#"
             // record field value completions
             struct User

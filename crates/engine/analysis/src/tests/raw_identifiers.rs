@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
 fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
@@ -115,7 +115,7 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
 
 #[test]
 fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
-    check_analysis_queries(
+    check_analysis(
         r#"
         //- /Cargo.toml
         [package]
@@ -126,14 +126,10 @@ fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
         //- /src/lib.rs
         pub struct gen;
 
-        pub fn inspect(value: g$gen_hover$en) {
-            let _: ge$gen_completion$ = value;
+        pub fn inspect(value: g$0en) { // hover("hover 2021 identifier")
+            let _: ge$0 = value; // complete("complete 2021 identifier")
         }
         "#,
-        &[
-            AnalysisQuery::hover("hover 2021 identifier", "gen_hover"),
-            AnalysisQuery::complete("complete 2021 identifier", "gen_completion"),
-        ],
         expect![[r#"
             // hover 2021 identifier
             range: 3:23-3:26
@@ -150,7 +146,7 @@ fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
 
 #[test]
 fn prepare_rename_preserves_the_selected_occurrence_edition() {
-    check_analysis_queries(
+    check_analysis(
         r#"
         //- /Cargo.toml
         [workspace]
@@ -176,12 +172,8 @@ fn prepare_rename_preserves_the_selected_occurrence_edition() {
         dep = { path = "../dep" }
 
         //- /crates/app/src/lib.rs
-        pub fn inspect(_: dep::r#g$cross_edition_use$en) {}
+        pub fn inspect(_: dep::r#g$0en) {} // prepare_rename("prepare cross-edition raw use").in_lib("app")
         "#,
-        &[
-            AnalysisQuery::prepare_rename("prepare cross-edition raw use", "cross_edition_use")
-                .in_lib("app"),
-        ],
         expect![[r#"
             `r#gen` @ app/src/lib.rs:1:24-1:29 // prepare cross-edition raw use
         "#]],
@@ -190,7 +182,7 @@ fn prepare_rename_preserves_the_selected_occurrence_edition() {
 
 #[test]
 fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
-    check_analysis_queries(
+    check_analysis(
         r#"
         //- /Cargo.toml
         [package]
@@ -207,12 +199,8 @@ fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
             Borrowed { value }
         }
 
-        pub fn inspect(value: Borr$raw_lifetime_hover$owed<'static>) {}
+        pub fn inspect(value: Borr$0owed<'static>) {} // hover("hover signature with raw lifetime")
         "#,
-        &[AnalysisQuery::hover(
-            "hover signature with raw lifetime",
-            "raw_lifetime_hover",
-        )],
         expect![[r#"
             // hover signature with raw lifetime
             range: 9:23-9:31
@@ -229,7 +217,7 @@ fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
 
 #[test]
 fn rename_treats_raw_syntax_as_presentation_of_one_semantic_name() {
-    check_analysis_queries(
+    check_analysis(
         r#"
         //- /Cargo.toml
         [package]
@@ -238,24 +226,20 @@ fn rename_treats_raw_syntax_as_presentation_of_one_semantic_name() {
         edition = "2024"
 
         //- /src/lib.rs
-        pub struct r#ty$raw_decl$pe;
+        pub struct r#ty$0pe; // rename("rename raw identifier to keyword", "match")
 
-        pub fn identity(value: r#ty$raw_use$pe) -> r#type {
+        pub fn identity(value: r#ty$0pe) -> r#type { // prepare_rename("prepare raw rename")
             value
         }
         "#,
-        &[
-            AnalysisQuery::prepare_rename("prepare raw rename", "raw_use"),
-            AnalysisQuery::rename("rename raw identifier to keyword", "raw_decl", "match"),
-        ],
         expect![[r#"
-            `r#type` @ src/lib.rs:3:24-3:30 // prepare raw rename
-
             // rename raw identifier to keyword
             target `r#type` @ src/lib.rs:1:12-1:18
             `r#type` -> `r#match` @ src/lib.rs:1:12-1:18
             `r#type` -> `r#match` @ src/lib.rs:3:24-3:30
             `r#type` -> `r#match` @ src/lib.rs:3:35-3:41
+
+            `r#type` @ src/lib.rs:3:24-3:30 // prepare raw rename
         "#]],
     );
 }

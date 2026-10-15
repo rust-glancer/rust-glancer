@@ -1,12 +1,10 @@
 use expect_test::expect;
 
-use super::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
-};
+use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
 fn implements_required_trait_members_with_concrete_substitution() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -28,13 +26,9 @@ trait Service<T> {
 
 struct Worker;
 
-impl Service$action$<u8> for Worker {
+impl Service$0<u8> for Worker { // code_actions("implement missing members")
 }
 "#,
-        &[AnalysisQuery::code_actions(
-            "implement missing members",
-            "action",
-        )],
         expect![[r#"
             // implement missing members
             quickfix Implement missing trait members
@@ -71,7 +65,7 @@ fn trait_member_action_for_signature_types_that_need_imports() {
     // Qualification can make large generated impls noisy, while inserting imports can conflict
     // with the surrounding module. Until there is a policy for that tradeoff, the action keeps the
     // name as written in the trait and leaves any required qualification or import to the user.
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -90,13 +84,9 @@ mod protocol {
 
 struct Worker;
 
-impl protocol::Service for Worker {$action$
+impl protocol::Service for Worker {$0 // code_actions("out-of-scope signature type")
 }
 "#,
-        &[AnalysisQuery::code_actions(
-            "out-of-scope signature type",
-            "action",
-        )],
         expect![[r#"
             // out-of-scope signature type
             quickfix Implement missing trait members
@@ -123,7 +113,7 @@ impl protocol::Service for Worker {$action$
 
 #[test]
 fn complete_and_inherent_impls_have_no_trait_member_action() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -139,16 +129,12 @@ trait Service {
 struct Worker;
 
 impl Service for Worker {
-    fn required(&self) {$complete$}
+    fn required(&self) {$0} // code_actions("complete trait impl")
 }
 
-impl Worker {$inherent$
+impl Worker {$0 // code_actions("inherent impl")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("complete trait impl", "complete"),
-            AnalysisQuery::code_actions("inherent impl", "inherent"),
-        ],
         expect![[r#"
             // complete trait impl
             // inherent impl
@@ -158,7 +144,7 @@ impl Worker {$inherent$
 
 #[test]
 fn imports_exact_unresolved_type_and_value_names() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -179,16 +165,11 @@ mod models {
 }
 
 fn load() {
-    let _: User$type_action$;
-    let _ = make_user$value_action$();
-    let _ = Client$qualified_root_action$::new();
+    let _: User$0; // code_actions("unresolved type")
+    let _ = make_user$0(); // code_actions("unresolved value")
+    let _ = Client$0::new(); // code_actions("unresolved qualified root")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("unresolved type", "type_action"),
-            AnalysisQuery::code_actions("unresolved value", "value_action"),
-            AnalysisQuery::code_actions("unresolved qualified root", "qualified_root_action"),
-        ],
         expect![[r#"
             // unresolved type
             quickfix Import `crate::models::User`
@@ -264,7 +245,7 @@ fn load() {
 
 #[test]
 fn imports_std_type_used_as_qualified_path_root() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -274,13 +255,9 @@ edition = "2024"
 
 //- /src/lib.rs
 fn load() {
-    let _ = Arc$action$::new(1);
+    let _ = Arc$0::new(1); // code_actions("unresolved std path root").in_lib("analysis_std_import_actions")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("unresolved std path root", "action")
-                .in_lib("analysis_std_import_actions"),
-        ],
         expect![[r#"
             // unresolved std path root
             quickfix Import `alloc::sync::Arc`
@@ -297,7 +274,7 @@ fn load() {
 
 #[test]
 fn import_action_distinguishes_private_imports_from_reexports() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -331,18 +308,14 @@ pub(crate) use catalog::collections::BTreeMap;
 
 mod nested {
     fn load_private_import() {
-        let _ = HashMap$private$::new();
+        let _ = HashMap$0::new(); // code_actions("private parent import").in_lib("app")
     }
 
     fn load_reexport() {
-        let _ = BTreeMap$reexport$::new();
+        let _ = BTreeMap$0::new(); // code_actions("crate re-export").in_lib("app")
     }
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("private parent import", "private").in_lib("app"),
-            AnalysisQuery::code_actions("crate re-export", "reexport").in_lib("app"),
-        ],
         expect![[r#"
             // private parent import
             quickfix Import `catalog::collections::HashMap`
@@ -387,7 +360,7 @@ mod nested {
 
 #[test]
 fn import_actions_preserve_ambiguity_and_require_explicit_invocation() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -400,14 +373,10 @@ mod alpha { pub struct User; }
 mod beta { pub struct User; }
 
 fn load() {
-    let _: User$invoked$;
-    let _: User$automatic$;
+    let _: User$0; // code_actions("explicit import discovery")
+    let _: User$0; // automatic_code_actions("automatic discovery")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("explicit import discovery", "invoked"),
-            AnalysisQuery::automatic_code_actions("automatic discovery", "automatic"),
-        ],
         expect![[r#"
             // explicit import discovery
             quickfix Import `crate::alpha::User`
@@ -443,7 +412,7 @@ fn load() {
 
 #[test]
 fn import_action_is_absent_for_a_resolved_name() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -455,10 +424,9 @@ edition = "2024"
 struct User;
 
 fn load() {
-    let _: User$resolved$;
+    let _: User$0; // code_actions("resolved type")
 }
 "#,
-        &[AnalysisQuery::code_actions("resolved type", "resolved")],
         expect![[r#"
             // resolved type
         "#]],
@@ -467,7 +435,7 @@ fn load() {
 
 #[test]
 fn replaces_resolved_qualified_paths_with_imports() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -483,14 +451,10 @@ mod models {
 }
 
 fn load() {
-    let _: crate::models::User$type_action$<u8>;
-    let _ = crate::models::make_user$value_action$();
+    let _: crate::models::User$0<u8>; // code_actions("qualified type")
+    let _ = crate::models::make_user$0(); // code_actions("qualified value")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("qualified type", "type_action"),
-            AnalysisQuery::code_actions("qualified value", "value_action"),
-        ],
         expect![[r#"
             // qualified type
             refactor.rewrite Replace qualified path with `use`
@@ -531,7 +495,7 @@ fn load() {
 
 #[test]
 fn qualified_path_reuses_an_existing_import() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -544,10 +508,9 @@ mod models { pub struct User; }
 use crate::models::User;
 
 fn load() {
-    let _: crate::models::User$action$;
+    let _: crate::models::User$0; // code_actions("existing import")
 }
 "#,
-        &[AnalysisQuery::code_actions("existing import", "action")],
         expect![[r#"
             // existing import
             refactor.rewrite Replace qualified path with `use`
@@ -565,7 +528,7 @@ fn load() {
 
 #[test]
 fn qualified_path_declines_conflicts_and_associated_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -582,9 +545,9 @@ mod models {
 
 fn load() {
     struct User;
-    let _: crate::models::User$conflict$;
-    let _ = crate::models::User::new$associated$();
-    let _ = crate::models::State::Ready$variant$;
+    let _: crate::models::User$0; // code_actions("short-name conflict")
+    let _ = crate::models::User::new$0(); // code_actions("associated item")
+    let _ = crate::models::State::Ready$0; // code_actions("enum variant")
 }
 
 struct Worker;
@@ -593,28 +556,20 @@ impl Worker {
     fn new() -> Self { Self }
 
     fn self_path() {
-        let _ = Self::new$self_type$();
+        let _ = Self::new$0(); // code_actions("Self path")
     }
 }
 
 trait Named { type Output; }
 impl Named for Worker { type Output = (); }
 
-fn anchored(_: <Worker as Named>::Output$anchor$) {}
+fn anchored(_: <Worker as Named>::Output$0) {} // code_actions("qualified type anchor")
 
 fn body_local() {
     mod local { pub struct User; }
-    let _: local::User$body_local$;
+    let _: local::User$0; // code_actions("body-local module")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("short-name conflict", "conflict"),
-            AnalysisQuery::code_actions("associated item", "associated"),
-            AnalysisQuery::code_actions("enum variant", "variant"),
-            AnalysisQuery::code_actions("Self path", "self_type"),
-            AnalysisQuery::code_actions("qualified type anchor", "anchor"),
-            AnalysisQuery::code_actions("body-local module", "body_local"),
-        ],
         expect![[r#"
             // short-name conflict
             // associated item
@@ -628,7 +583,7 @@ fn body_local() {
 
 #[test]
 fn trait_member_action_formats_a_nested_one_line_impl_and_skips_unresolved_traits() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -645,15 +600,11 @@ trait Service {
 struct Worker;
 
 mod nested {
-    impl super::Service for super::Worker {$nested$}
+    impl super::Service for super::Worker {$0} // code_actions("nested one-line impl")
 }
 
-impl Unknown for Worker {$unresolved$}
+impl Unknown for Worker {$0} // code_actions("unresolved trait")
 "#,
-        &[
-            AnalysisQuery::code_actions("nested one-line impl", "nested"),
-            AnalysisQuery::code_actions("unresolved trait", "unresolved"),
-        ],
         expect![[r#"
             // nested one-line impl
             quickfix Implement missing trait members
@@ -685,7 +636,7 @@ impl Unknown for Worker {$unresolved$}
 
 #[test]
 fn imports_one_character_and_reexported_names_into_the_innermost_module() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -704,15 +655,11 @@ mod exports {
 }
 
 mod nested {
-    fn one_character(_: X$one$) {}
+    fn one_character(_: X$0) {} // code_actions("one-character nested import")
 }
 
-fn reexport(_: PublicUser$reexport$) {}
+fn reexport(_: PublicUser$0) {} // code_actions("re-export import")
 "#,
-        &[
-            AnalysisQuery::code_actions("one-character nested import", "one"),
-            AnalysisQuery::code_actions("re-export import", "reexport"),
-        ],
         expect![[r#"
             // one-character nested import
             quickfix Import `crate::models::X`
@@ -761,7 +708,7 @@ fn reexport(_: PublicUser$reexport$) {}
 
 #[test]
 fn import_action_excludes_private_items_and_macro_call_syntax() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -780,18 +727,12 @@ mod values {
 
 macro_rules! build { () => {}; }
 
-fn load(_: Secret$private$) {
-    build$macro_call$!();
-    let _ = Ready$variant$;
-    let _: Disabled$cfg_disabled$;
+fn load(_: Secret$0) { // code_actions("private item")
+    build$0!(); // code_actions("macro call")
+    let _ = Ready$0; // code_actions("enum variant")
+    let _: Disabled$0; // code_actions("cfg-disabled item")
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("private item", "private"),
-            AnalysisQuery::code_actions("macro call", "macro_call"),
-            AnalysisQuery::code_actions("enum variant", "variant"),
-            AnalysisQuery::code_actions("cfg-disabled item", "cfg_disabled"),
-        ],
         expect![[r#"
             // private item
             // macro call
@@ -803,7 +744,7 @@ fn load(_: Secret$private$) {
 
 #[test]
 fn qualified_path_supports_self_and_super_roots_but_not_use_items() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -816,23 +757,16 @@ mod outer {
     pub struct Local;
     pub mod models { pub struct User; }
 
-    fn local(_: self::Local$self_root$) {}
+    fn local(_: self::Local$0) {} // code_actions("same-module target")
 
     mod nested {
-        use super::models::User$use_item$;
+        use super::models::User$0; // code_actions("use item")
 
-        fn user(_: super::models::User$super_root$) {}
+        fn user(_: super::models::User$0) {} // code_actions("super-root target")
     }
 }
 "#,
-        &[
-            AnalysisQuery::code_actions("use item", "use_item"),
-            AnalysisQuery::code_actions("same-module target", "self_root"),
-            AnalysisQuery::code_actions("super-root target", "super_root"),
-        ],
         expect![[r#"
-            // use item
-
             // same-module target
             refactor.rewrite Replace qualified path with `use`
               preferred: false
@@ -849,6 +783,8 @@ mod outer {
                         fn user(_: super::models::User) {}
                     }
                 }
+
+            // use item
 
             // super-root target
             refactor.rewrite Replace qualified path with `use`
@@ -872,7 +808,7 @@ mod outer {
 
 #[test]
 fn qualified_path_supports_external_crate_roots() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -898,9 +834,8 @@ edition = "2024"
 catalog = { path = "../catalog" }
 
 //- /app/src/lib.rs
-fn load(_: catalog::External$action$) {}
+fn load(_: catalog::External$0) {} // code_actions("external path").in_lib("app")
 "#,
-        &[AnalysisQuery::code_actions("external path", "action").in_lib("app")],
         expect![[r#"
             // external path
             refactor.rewrite Replace qualified path with `use`
@@ -915,7 +850,7 @@ fn load(_: catalog::External$action$) {}
 
 #[test]
 fn qualified_path_supports_std_roots() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -924,10 +859,8 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-fn load(_: std::sync::Arc$action$<u8>) {}
+fn load(_: std::sync::Arc$0<u8>) {} // code_actions("std path").in_lib("analysis_std_qualified_path_actions")
 "#,
-        &[AnalysisQuery::code_actions("std path", "action")
-            .in_lib("analysis_std_qualified_path_actions")],
         expect![[r#"
             // std path
             refactor.rewrite Replace qualified path with `use`
@@ -942,7 +875,7 @@ fn load(_: std::sync::Arc$action$<u8>) {}
 
 #[test]
 fn orders_independent_actions_stably_at_the_same_position() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -959,10 +892,9 @@ struct Worker;
 mod models { pub struct User; }
 
 impl Service for Worker {
-    fn helper(_: User$action$) {}
+    fn helper(_: User$0) {} // code_actions("combined actions")
 }
 "#,
-        &[AnalysisQuery::code_actions("combined actions", "action")],
         expect![[r#"
             // combined actions
             quickfix Implement missing trait members

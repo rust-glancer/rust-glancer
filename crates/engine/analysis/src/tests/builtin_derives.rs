@@ -1,10 +1,10 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries_with_fake_sysroot};
+use super::utils::check_analysis_with_fake_sysroot;
 
 #[test]
 fn builtin_derives_expose_methods_and_satisfy_trait_bounds() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -24,23 +24,14 @@ impl<T: Clone + Copy + core::fmt::Debug + Default + core::hash::Hash + PartialEq
 }
 
 pub fn use_it() {
-    let key = Key::default()$default$;
-    let copy = key.clone()$clone$;
-    let same = key.eq(&copy)$eq$;
-    let order = key.cmp(&copy)$ord$;
-    let usable = key.usable()$usable$;
-    key.cl$complete_clone$;
+    let key = Key::default()$0; // ty("derived default").in_lib("builtin_derives")
+    let copy = key.clone()$0; // ty("derived clone").in_lib("builtin_derives")
+    let same = key.eq(&copy)$0; // ty("derived comparison").in_lib("builtin_derives")
+    let order = key.cmp(&copy)$0; // ty("derived ordering").in_lib("builtin_derives")
+    let usable = key.usable()$0; // ty("all nine bounds").in_lib("builtin_derives")
+    key.cl$0; // complete("clone completion").matching("clone").in_lib("builtin_derives")
 }
 "#,
-        &[
-            AnalysisQuery::ty("derived default", "default"),
-            AnalysisQuery::ty("derived clone", "clone"),
-            AnalysisQuery::ty("derived comparison", "eq"),
-            AnalysisQuery::ty("derived ordering", "ord"),
-            AnalysisQuery::ty("all nine bounds", "usable"),
-            AnalysisQuery::complete("clone completion", "complete_clone").matching("clone"),
-        ]
-        .map(|query| query.in_lib("builtin_derives")),
         expect![[r#"
             nominal struct builtin_derives[lib]::crate::Key // derived default
             nominal struct builtin_derives[lib]::crate::Key // derived clone
@@ -57,7 +48,7 @@ pub fn use_it() {
 
 #[test]
 fn builtin_derives_handle_aliases_cfg_generics_and_macro_output() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -91,17 +82,11 @@ macro_rules! declare {
 declare!(Generated);
 
 pub fn use_it(original: Wrapper<Value>) {
-    let wrapped = original.clone()$wrapper$;
-    let choice = Choice::<NoDefault>::default()$choice$;
-    let generated = Generated.clone()$generated$;
+    let wrapped = original.clone()$0; // ty("generic aliased derive").in_lib("derive_generics")
+    let choice = Choice::<NoDefault>::default()$0; // ty("unit default needs no T bound").in_lib("derive_generics")
+    let generated = Generated.clone()$0; // ty("derive in macro output").in_lib("derive_generics")
 }
 "#,
-        &[
-            AnalysisQuery::ty("generic aliased derive", "wrapper"),
-            AnalysisQuery::ty("unit default needs no T bound", "choice"),
-            AnalysisQuery::ty("derive in macro output", "generated"),
-        ]
-        .map(|query| query.in_lib("derive_generics")),
         expect![[r#"
             nominal struct derive_generics[lib]::crate::Wrapper<nominal struct derive_generics[lib]::crate::Value> // generic aliased derive
             nominal enum derive_generics[lib]::crate::Choice<nominal struct derive_generics[lib]::crate::NoDefault> // unit default needs no T bound
@@ -112,7 +97,7 @@ pub fn use_it(original: Wrapper<Value>) {
 
 #[test]
 fn builtin_derives_keep_rename_edits_on_written_type_names() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -122,11 +107,10 @@ edition = "2024"
 
 //- /src/lib.rs
 #[derive(Clone)]
-pub struct Fo$type$o;
+pub struct Fo$0o; // rename("rename derived type", "Bar").in_lib("derive_rename")
 
 pub type Alias = Foo;
 "#,
-        &[AnalysisQuery::rename("rename derived type", "type", "Bar").in_lib("derive_rename")],
         expect![[r#"
             // rename derived type
             target `Foo` @ derive_rename/src/lib.rs:2:12-2:15
@@ -138,7 +122,7 @@ pub type Alias = Foo;
 
 #[test]
 fn builtin_derives_resolve_dollar_crate_in_exported_macro_output() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -178,15 +162,10 @@ mod nested {
 }
 
 pub fn use_it() {
-    let generated = nested::Generated.clone()$struct$;
-    let choice = nested::Choice::Empty.clone()$enum$;
+    let generated = nested::Generated.clone()$0; // ty("derived struct clone").in_lib("derive_app")
+    let choice = nested::Choice::Empty.clone()$0; // ty("derived enum clone").in_lib("derive_app")
 }
 "#,
-        &[
-            AnalysisQuery::ty("derived struct clone", "struct"),
-            AnalysisQuery::ty("derived enum clone", "enum"),
-        ]
-        .map(|query| query.in_lib("derive_app")),
         expect![[r#"
             nominal struct derive_app[lib]::crate::nested::Generated // derived struct clone
             nominal enum derive_app[lib]::crate::nested::Choice // derived enum clone
@@ -196,7 +175,7 @@ pub fn use_it() {
 
 #[test]
 fn builtin_derives_allow_clone_with_a_qualified_non_clone_projection() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -221,13 +200,9 @@ impl<T> Clone for Marker<T> {
 pub struct Wrap<T: Family>(Marker<<T as Family>::Item>);
 
 pub fn use_it(value: Wrap<Owner>) {
-    let cloned = value.clone()$clone$;
+    let cloned = value.clone()$0; // ty("clone with a non-Clone associated type").in_lib("derive_projection")
 }
 "#,
-        &[
-            AnalysisQuery::ty("clone with a non-Clone associated type", "clone")
-                .in_lib("derive_projection"),
-        ],
         expect![[r#"
             nominal struct derive_projection[lib]::crate::Wrap<nominal struct derive_projection[lib]::crate::Owner> // clone with a non-Clone associated type
         "#]],

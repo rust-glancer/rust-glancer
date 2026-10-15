@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
 fn prepares_and_renames_common_symbol_subjects() {
@@ -70,7 +70,7 @@ pub fn use_it() {
 
 #[test]
 fn rename_respects_local_binding_shadowing_same_name_function() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -80,19 +80,15 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn bar(baz: u8) -> u8 {
-    fo$fn_ref$o(baz)
+    fo$0o(baz) // rename("rename function", "qux")
 }
 
 fn foo(baz: u8) -> u8 {
-    let fo$local_ref$o: Option<u8> = Some(baz);
+    let fo$0o: Option<u8> = Some(baz); // rename("rename local", "maybe")
     foo.map(|baba| baba + baba);
     baz
 }
 "#,
-        &[
-            AnalysisQuery::rename("rename function", "fn_ref", "qux"),
-            AnalysisQuery::rename("rename local", "local_ref", "maybe"),
-        ],
         expect![[r#"
             // rename function
             target `foo` @ src/lib.rs:2:5-2:8
@@ -109,7 +105,7 @@ fn foo(baz: u8) -> u8 {
 
 #[test]
 fn renames_supported_item_kinds_from_representative_uses() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -142,38 +138,28 @@ impl User {
     }
 }
 
-impl Ser$trait_type_ref$vice for User {}
+impl Ser$0vice for User {} // rename("rename trait", "Renderable")
 
-pub fn use_it(user: User, status: Sta$enum_type_ref$tus, packet: Pac$union_type_ref$ket) -> Han$alias_type_ref$dle {
-    let _status = Status::Rea$variant_use$dy;
+pub fn use_it(user: User, status: Sta$0tus, packet: Pac$1ket) -> Han$2dle { // rename("rename enum", "Phase"), rename("rename union", "PacketData"), rename("rename type alias", "Output")
+    let _status = Status::Rea$0dy; // rename("rename enum variant", "Active")
     let _packet: Packet = packet;
-    let _limit = LI$const_use$MIT;
-    let _current = CU$static_use$RRENT;
-    let _rendered = user.ren$method_use$der();
+    let _limit = LI$0MIT; // rename("rename const", "MAX")
+    let _current = CU$0RRENT; // rename("rename static", "GLOBAL")
+    let _rendered = user.ren$0der(); // rename("rename method", "draw")
     user.render()
 }
 "#,
-        &[
-            AnalysisQuery::rename("rename enum", "enum_type_ref", "Phase"),
-            AnalysisQuery::rename("rename enum variant", "variant_use", "Active"),
-            AnalysisQuery::rename("rename union", "union_type_ref", "PacketData"),
-            AnalysisQuery::rename("rename trait", "trait_type_ref", "Renderable"),
-            AnalysisQuery::rename("rename type alias", "alias_type_ref", "Output"),
-            AnalysisQuery::rename("rename const", "const_use", "MAX"),
-            AnalysisQuery::rename("rename static", "static_use", "GLOBAL"),
-            AnalysisQuery::rename("rename method", "method_use", "draw"),
-        ],
         expect![[r#"
+            // rename trait
+            target `Service` @ src/lib.rs:25:6-25:13
+            `Service` -> `Renderable` @ src/lib.rs:12:11-12:18
+            `Service` -> `Renderable` @ src/lib.rs:25:6-25:13
+
             // rename enum
             target `Status` @ src/lib.rs:27:35-27:41
             `Status` -> `Phase` @ src/lib.rs:3:10-3:16
             `Status` -> `Phase` @ src/lib.rs:27:35-27:41
             `Status` -> `Phase` @ src/lib.rs:28:19-28:25
-
-            // rename enum variant
-            target `Ready` @ src/lib.rs:28:27-28:32
-            `Ready` -> `Active` @ src/lib.rs:4:5-4:10
-            `Ready` -> `Active` @ src/lib.rs:28:27-28:32
 
             // rename union
             target `Packet` @ src/lib.rs:27:51-27:57
@@ -181,15 +167,15 @@ pub fn use_it(user: User, status: Sta$enum_type_ref$tus, packet: Pac$union_type_
             `Packet` -> `PacketData` @ src/lib.rs:27:51-27:57
             `Packet` -> `PacketData` @ src/lib.rs:29:18-29:24
 
-            // rename trait
-            target `Service` @ src/lib.rs:25:6-25:13
-            `Service` -> `Renderable` @ src/lib.rs:12:11-12:18
-            `Service` -> `Renderable` @ src/lib.rs:25:6-25:13
-
             // rename type alias
             target `Handle` @ src/lib.rs:27:62-27:68
             `Handle` -> `Output` @ src/lib.rs:14:10-14:16
             `Handle` -> `Output` @ src/lib.rs:27:62-27:68
+
+            // rename enum variant
+            target `Ready` @ src/lib.rs:28:27-28:32
+            `Ready` -> `Active` @ src/lib.rs:4:5-4:10
+            `Ready` -> `Active` @ src/lib.rs:28:27-28:32
 
             // rename const
             target `LIMIT` @ src/lib.rs:30:18-30:23
@@ -214,7 +200,7 @@ pub fn use_it(user: User, status: Sta$enum_type_ref$tus, packet: Pac$union_type_
 
 #[test]
 fn rename_edits_multiple_modules_and_use_paths() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -242,17 +228,12 @@ pub fn clone_user(user: User) -> User {
 }
 
 //- /src/use_sites.rs
-use crate::model::Us$multi_use_path$er;
+use crate::model::Us$0er; // rename("rename use-path type across modules", "Account")
 
 pub fn wrap(user: User) -> crate::model::User {
     crate::model::clone_user(user)
 }
 "#,
-        &[AnalysisQuery::rename(
-            "rename use-path type across modules",
-            "multi_use_path",
-            "Account",
-        )],
         expect![[r#"
             // rename use-path type across modules
             target `User` @ src/use_sites.rs:1:19-1:23
@@ -271,7 +252,7 @@ pub fn wrap(user: User) -> crate::model::User {
 
 #[test]
 fn rename_skips_import_alias_reference_spelling() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -281,8 +262,8 @@ edition = "2024"
 
 //- /src/lib.rs
 pub mod api {
-    pub struct Us$type_decl$er;
-    pub fn ma$fn_decl$ke(value: User) -> User { value }
+    pub struct Us$0er; // rename("rename type with import alias references", "Person")
+    pub fn ma$0ke(value: User) -> User { value } // rename("rename function with import alias references", "create")
 }
 
 use api::User as Account;
@@ -297,18 +278,6 @@ pub fn use_fn(account: Account) -> api::User {
     api::make(account)
 }
 "#,
-        &[
-            AnalysisQuery::rename(
-                "rename type with import alias references",
-                "type_decl",
-                "Person",
-            ),
-            AnalysisQuery::rename(
-                "rename function with import alias references",
-                "fn_decl",
-                "create",
-            ),
-        ],
         expect![[r#"
             // rename type with import alias references
             target `User` @ src/lib.rs:2:16-2:20
@@ -410,7 +379,7 @@ pub fn make(value: u8) {
 
 #[test]
 fn rename_respects_nested_body_shadowing() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -426,15 +395,15 @@ pub fn make() -> Value {
         Value
     }
 
-    let _first = tar$outer_fn_use$get();
+    let _first = tar$0get(); // rename("rename outer function", "compute")
 
     {
-        let tar$inner_let_decl$get = Some(Value);
-        let _mapped = target.map(|tar$closure_param_decl$get| target);
+        let tar$0get = Some(Value); // rename("rename inner local", "maybe")
+        let _mapped = target.map(|tar$0get| target); // rename("rename closure parameter", "item")
     }
 
     {
-        fn tar$inner_fn_decl$get() -> Value {
+        fn tar$0get() -> Value { // rename("rename inner function", "local_compute")
             Value
         }
         let _value = target();
@@ -444,12 +413,6 @@ pub fn make() -> Value {
     Value
 }
 "#,
-        &[
-            AnalysisQuery::rename("rename outer function", "outer_fn_use", "compute"),
-            AnalysisQuery::rename("rename inner local", "inner_let_decl", "maybe"),
-            AnalysisQuery::rename("rename closure parameter", "closure_param_decl", "item"),
-            AnalysisQuery::rename("rename inner function", "inner_fn_decl", "local_compute"),
-        ],
         expect![[r#"
             // rename outer function
             target `target` @ src/lib.rs:8:18-8:24
@@ -477,7 +440,7 @@ pub fn make() -> Value {
 
 #[test]
 fn renames_parent_body_local_const_from_nested_body_owners() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -493,31 +456,14 @@ pub fn make() {
     const SEED: Local = Local;
 
     fn helper() -> Local {
-        SE$nested_const_use$ED
+        SE$0ED // rename("rename parent const from nested body", "FALLBACK")
     }
 
-    const AGAIN: Local = SE$const_initializer_use$ED;
-    static LAST: Local = SE$static_initializer_use$ED;
+    const AGAIN: Local = SE$0ED; // rename("rename parent const from nested const initializer", "FALLBACK")
+    static LAST: Local = SE$0ED; // rename("rename parent const from nested static initializer", "FALLBACK")
     let _direct = SEED;
 }
 "#,
-        &[
-            AnalysisQuery::rename(
-                "rename parent const from nested body",
-                "nested_const_use",
-                "FALLBACK",
-            ),
-            AnalysisQuery::rename(
-                "rename parent const from nested const initializer",
-                "const_initializer_use",
-                "FALLBACK",
-            ),
-            AnalysisQuery::rename(
-                "rename parent const from nested static initializer",
-                "static_initializer_use",
-                "FALLBACK",
-            ),
-        ],
         expect![[r#"
             // rename parent const from nested body
             target `SEED` @ src/lib.rs:8:9-8:13
@@ -836,7 +782,7 @@ pub fn use_it(source: User, na$param_decl$me: u8, age: u8) -> u8 {
 
 #[test]
 fn rename_preserves_record_pattern_shorthand_syntax() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -851,31 +797,21 @@ pub enum Option<T> {
 }
 
 pub struct User {
-    pub na$field_decl$me: Option<u8>,
+    pub na$0me: Option<u8>, // rename("rename field through complex shorthand", "title")
 }
 
 pub fn use_it(by_ref_source: User, by_mut_source: User, by_at_source: User) -> u8 {
-    let User { ref na$ref_binding$me } = by_ref_source;
+    let User { ref na$0me } = by_ref_source; // rename("rename ref shorthand binding", "borrowed")
     let by_ref = name.as_ref().map(|value| *value).unwrap_or(0);
-    let User { mut na$mut_binding$me } = by_mut_source;
+    let User { mut na$0me } = by_mut_source; // rename("rename mut shorthand binding", "editable")
     name = Some(by_ref);
     let by_at = match by_at_source {
-        User { name: ali$at_binding$as @ Some(_) } => alias.unwrap_or(0),
+        User { name: ali$0as @ Some(_) } => alias.unwrap_or(0), // rename("rename explicit at binding", "matched")
         User { name: None } => 0,
     };
     by_ref + by_at
 }
 "#,
-        &[
-            AnalysisQuery::rename(
-                "rename field through complex shorthand",
-                "field_decl",
-                "title",
-            ),
-            AnalysisQuery::rename("rename ref shorthand binding", "ref_binding", "borrowed"),
-            AnalysisQuery::rename("rename mut shorthand binding", "mut_binding", "editable"),
-            AnalysisQuery::rename("rename explicit at binding", "at_binding", "matched"),
-        ],
         expect![[r#"
             // rename field through complex shorthand
             target `name` @ src/lib.rs:7:9-7:13
@@ -984,7 +920,7 @@ pub fn use_it(input: u64) {
 
 #[test]
 fn rejects_unsupported_rename_targets() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -993,18 +929,14 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-mod us$module_ref$er {
+mod us$0er { // prepare_rename("reject module rename")
     pub struct User;
 }
 
-use user::User as Acc$alias_ref$ount;
+use user::User as Acc$0ount; // prepare_rename("reject alias rename")
 
 pub fn use_it(_account: Account) {}
 "#,
-        &[
-            AnalysisQuery::prepare_rename("reject module rename", "module_ref"),
-            AnalysisQuery::prepare_rename("reject alias rename", "alias_ref"),
-        ],
         expect![[r#"
             <none> // reject module rename
             <none> // reject alias rename

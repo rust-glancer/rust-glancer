@@ -1,10 +1,10 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
 fn resolves_type_trait_and_trait_method_implementations() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -17,18 +17,18 @@ pub struct User;
 pub struct Account;
 pub struct UserName;
 
-pub trait Na$impl_trait$med {
-    fn na$impl_trait_method$me(&self) -> UserName;
+pub trait Na$0med { // goto_impl("goto implementations of trait")
+    fn na$0me(&self) -> UserName; // goto_impl("goto implementations of trait method")
 }
 
-impl Us$impl_type$er {
-    pub fn n$impl_inherent$ew() -> Self {
+impl Us$0er { // goto_impl("goto implementations of type")
+    pub fn n$0ew() -> Self { // goto_impl("goto inherent implementation")
         User
     }
 }
 
 impl Named for User {
-    fn na$impl_method$me(&self) -> UserName {
+    fn na$0me(&self) -> UserName { // goto_impl("goto implementations from impl method")
         missing()
     }
 }
@@ -40,36 +40,16 @@ impl Named for Account {
 }
 
 pub fn use_it(user: User) {
-    let _again: User = User::n$impl_inherent_use$ew();
-    let _name = user.na$impl_trait_call$me();
+    let _again: User = User::n$0ew(); // goto_impl("goto inherent implementation use")
+    let _name = user.na$0me(); // goto_impl("goto trait implementation from call")
     let shared: &&User = &&user;
-    let _ref_name = shared.na$impl_trait_ref_call$me();
-    let _ = User::na$associated$me(&user);
-    let _ = <User as Named>::na$qualified$me(&user);
-    let _method = User::na$path$me;
+    let _ref_name = shared.na$0me(); // goto_impl("goto trait implementation from reference call")
+    let _ = User::na$0me(&user); // goto_impl("goto implementations from associated call")
+    let _ = <User as Named>::na$0me(&user); // goto_impl("goto implementations from qualified call")
+    let _method = User::na$0me; // goto_impl("goto implementations from method path")
 }
 "#,
-        &[
-            AnalysisQuery::goto_impl("goto implementations of type", "impl_type"),
-            AnalysisQuery::goto_impl("goto implementations of trait", "impl_trait"),
-            AnalysisQuery::goto_impl("goto implementations of trait method", "impl_trait_method"),
-            AnalysisQuery::goto_impl("goto implementations from impl method", "impl_method"),
-            AnalysisQuery::goto_impl("goto implementations from associated call", "associated"),
-            AnalysisQuery::goto_impl("goto implementations from qualified call", "qualified"),
-            AnalysisQuery::goto_impl("goto implementations from method path", "path"),
-            AnalysisQuery::goto_impl("goto inherent implementation", "impl_inherent"),
-            AnalysisQuery::goto_impl("goto inherent implementation use", "impl_inherent_use"),
-            AnalysisQuery::goto_impl("goto trait implementation from call", "impl_trait_call"),
-            AnalysisQuery::goto_impl(
-                "goto trait implementation from reference call",
-                "impl_trait_ref_call",
-            ),
-        ],
         expect![[r#"
-            // goto implementations of type
-            impl Named for User @ 15:1-19:2
-            impl User @ 9:1-13:2
-
             // goto implementations of trait
             impl Named for Account @ 21:1-25:2
             impl Named for User @ 15:1-19:2
@@ -78,7 +58,23 @@ pub fn use_it(user: User) {
             fn name @ 16:8-16:12
             fn name @ 22:8-22:12
 
+            // goto implementations of type
+            impl Named for User @ 15:1-19:2
+            impl User @ 9:1-13:2
+
+            fn new @ 10:12-10:15 // goto inherent implementation
+
             // goto implementations from impl method
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
+
+            fn new @ 10:12-10:15 // goto inherent implementation use
+
+            // goto trait implementation from call
+            fn name @ 16:8-16:12
+            fn name @ 22:8-22:12
+
+            // goto trait implementation from reference call
             fn name @ 16:8-16:12
             fn name @ 22:8-22:12
 
@@ -93,24 +89,13 @@ pub fn use_it(user: User) {
             // goto implementations from method path
             fn name @ 16:8-16:12
             fn name @ 22:8-22:12
-
-            fn new @ 10:12-10:15 // goto inherent implementation
-            fn new @ 10:12-10:15 // goto inherent implementation use
-
-            // goto trait implementation from call
-            fn name @ 16:8-16:12
-            fn name @ 22:8-22:12
-
-            // goto trait implementation from reference call
-            fn name @ 16:8-16:12
-            fn name @ 22:8-22:12
         "#]],
     );
 }
 
 #[test]
 fn resolves_body_local_type_implementations() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -120,25 +105,15 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn use_it() {
-    struct Us$impl_local_type$er;
+    struct Us$0er; // goto_impl("goto body-local implementations from type")
 
     impl User {
         fn id(&self) {}
     }
 
-    let us$impl_local_binding$er: User;
+    let us$0er: User; // goto_impl("goto body-local implementations from binding")
 }
 "#,
-        &[
-            AnalysisQuery::goto_impl(
-                "goto body-local implementations from type",
-                "impl_local_type",
-            ),
-            AnalysisQuery::goto_impl(
-                "goto body-local implementations from binding",
-                "impl_local_binding",
-            ),
-        ],
         expect![[r#"
             impl User @ 4:5-6:6 // goto body-local implementations from type
             impl User @ 4:5-6:6 // goto body-local implementations from binding
@@ -148,7 +123,7 @@ pub fn use_it() {
 
 #[test]
 fn finds_trait_method_implementations_across_receiver_generic_args() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -174,13 +149,9 @@ impl Named for Wrapper<Account> {
 }
 
 pub fn use_it(account: Wrapper<Account>) {
-    account.na$impl_account_call$me();
+    account.na$0me(); // goto_impl("goto trait implementation from generic receiver call")
 }
 "#,
-        &[AnalysisQuery::goto_impl(
-            "goto trait implementation from generic receiver call",
-            "impl_account_call",
-        )],
         expect![[r#"
             // goto trait implementation from generic receiver call
             fn name @ 10:8-10:12
@@ -191,7 +162,7 @@ pub fn use_it(account: Wrapper<Account>) {
 
 #[test]
 fn shares_body_local_impl_discovery_between_traits_and_methods() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -205,31 +176,21 @@ pub struct Service;
 impl Global for Service { fn run(&self) {} }
 
 pub fn use_it() {
-    trait Lo$local_trait$cal { fn ru$local_method$n(&self); }
+    trait Lo$0cal { fn ru$1n(&self); } // goto_impl("local trait impl blocks"), goto_impl("local trait method")
     struct User;
     struct Account;
-    impl Local for User { fn ru$local_impl_method$n(&self) {} }
+    impl Local for User { fn ru$0n(&self) {} } // goto_impl("local impl method")
     impl Local for Account { fn run(&self) {} }
-    impl Glo$global_trait$bal for User { fn ru$global_impl_method$n(&self) {} }
+    impl Glo$0bal for User { fn ru$1n(&self) {} } // goto_impl("global trait in local impl header"), goto_impl("global trait local impl method")
     impl Global for Account { fn run(&self) {} }
 
     fn nested(user: User) {
-        <User as Local>::ru$local_call$n(&user);
-        <User as Global>::ru$global_call$n(&user);
-        let _method = Service::ru$global_path$n;
+        <User as Local>::ru$0n(&user); // goto_impl("local trait from nested body")
+        <User as Global>::ru$0n(&user); // goto_impl("global trait from nested body")
+        let _method = Service::ru$0n; // goto_impl("global trait standalone method path")
     }
 }
 "#,
-        &[
-            AnalysisQuery::goto_impl("local trait impl blocks", "local_trait"),
-            AnalysisQuery::goto_impl("local trait method", "local_method"),
-            AnalysisQuery::goto_impl("local impl method", "local_impl_method"),
-            AnalysisQuery::goto_impl("local trait from nested body", "local_call"),
-            AnalysisQuery::goto_impl("global trait in local impl header", "global_trait"),
-            AnalysisQuery::goto_impl("global trait local impl method", "global_impl_method"),
-            AnalysisQuery::goto_impl("global trait from nested body", "global_call"),
-            AnalysisQuery::goto_impl("global trait standalone method path", "global_path"),
-        ],
         expect![[r#"
             // local trait impl blocks
             impl Local for Account @ 10:5-10:48
@@ -243,10 +204,6 @@ pub fn use_it() {
             fn run @ 9:30-9:33
             fn run @ 10:33-10:36
 
-            // local trait from nested body
-            fn run @ 9:30-9:33
-            fn run @ 10:33-10:36
-
             // global trait in local impl header
             impl Global for Account @ 12:5-12:49
             impl Global for Service @ 3:1-3:45
@@ -256,6 +213,10 @@ pub fn use_it() {
             fn run @ 3:30-3:33
             fn run @ 11:31-11:34
             fn run @ 12:34-12:37
+
+            // local trait from nested body
+            fn run @ 9:30-9:33
+            fn run @ 10:33-10:36
 
             // global trait from nested body
             fn run @ 3:30-3:33
@@ -272,7 +233,7 @@ pub fn use_it() {
 
 #[test]
 fn expands_supertrait_methods_across_receiver_forms() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -281,7 +242,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub trait Parent { fn ru$declaration$n(&self); }
+pub trait Parent { fn ru$0n(&self); } // goto_impl("parent method")
 pub trait Child: Parent {}
 pub struct User;
 pub struct Wrapper<T>(T);
@@ -293,21 +254,13 @@ impl Parent for u8 { fn run(&self) {} }
 impl Parent for [u8] { fn run(&self) {} }
 
 pub fn use_it<T: Child>(value: T, wrapped: Wrapper<User>, number: u8, slice: &[u8]) {
-    value.ru$supertrait$n();
-    wrapped.ru$blanket$n();
-    number.ru$primitive$n();
-    slice.ru$reference$n();
-    <[u8] as Parent>::ru$structural$n(slice);
+    value.ru$0n(); // goto_impl("method through supertrait bound")
+    wrapped.ru$0n(); // goto_impl("blanket receiver call")
+    number.ru$0n(); // goto_impl("primitive receiver call")
+    slice.ru$0n(); // goto_impl("reference receiver call")
+    <[u8] as Parent>::ru$0n(slice); // goto_impl("structural receiver call")
 }
 "#,
-        &[
-            AnalysisQuery::goto_impl("parent method", "declaration"),
-            AnalysisQuery::goto_impl("method through supertrait bound", "supertrait"),
-            AnalysisQuery::goto_impl("blanket receiver call", "blanket"),
-            AnalysisQuery::goto_impl("primitive receiver call", "primitive"),
-            AnalysisQuery::goto_impl("reference receiver call", "reference"),
-            AnalysisQuery::goto_impl("structural receiver call", "structural"),
-        ],
         expect![[r#"
             // parent method
             fn run @ 5:27-5:30

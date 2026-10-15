@@ -7,12 +7,13 @@
 use expect_test::expect;
 
 use super::utils::{
-    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    AnalysisQuery, check_analysis, check_analysis_queries,
+    check_analysis_queries_with_fake_sysroot, check_analysis_with_fake_sysroot,
 };
 
 #[test]
 fn infers_auto_traits_from_aggregate_fields() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -35,14 +36,10 @@ impl<T: Send + Sync> Inspect for T {
 pub fn check(record: Record<u8>, choice: Choice<bool>, bits: Bits, node: Node<'_>, blocked: Record<Blocked>) {
     let array = [0u8; 3];
     let tuple = (0u8, true);
-    let $result$result = (record.inspect(), choice.inspect(), bits.inspect(), node.inspect(), array.inspect(), tuple.inspect());
-    blocked.inspect()$blocked$;
+    let $0result = (record.inspect(), choice.inspect(), bits.inspect(), node.inspect(), array.inspect(), tuple.inspect()); // ty("aggregate methods")
+    blocked.inspect()$0; // ty("negative field impl")
 }
 "#,
-        &[
-            AnalysisQuery::ty("aggregate methods", "result"),
-            AnalysisQuery::ty("negative field impl", "blocked"),
-        ],
         expect![[r#"
             (u16, u16, u16, u16, u16, u16) // aggregate methods
             <unknown> // negative field impl
@@ -52,7 +49,7 @@ pub fn check(record: Record<u8>, choice: Choice<bool>, bits: Bits, node: Node<'_
 
 #[test]
 fn preserves_auto_traits_on_boxed_trait_objects() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -74,7 +71,7 @@ pub fn make<T>() -> Source<T> { loop {} }
 pub fn id<T>(value: T) -> T { value }
 pub fn object() -> Box<dyn Stream<Item = u8> + Send + Sync> {
     let source = make();
-    id(Box::new(source$source$))
+    id(Box::new(source$0)) // ty("constructor input").in_lib("auto_trait_objects")
 }
 pub fn item<T>(value: Box<dyn Stream<Item = T> + Sync + Send>) -> T { loop {} }
 pub trait Inspect { fn inspect(&self) -> u16; }
@@ -83,22 +80,16 @@ impl<T: Send + Sync> Inspect for T {
 }
 pub fn check() {
     let object = id(object());
-    let $result$result = (object.peek(), object.inspect(), item(id(object)));
+    let $0result = (object.peek(), object.inspect(), item(id(object))); // ty("object methods").in_lib("auto_trait_objects")
 }
 pub fn borrowed(value: &(dyn Stream<Item = u8> + Send + Sync)) {
-    value.inspect()$borrowed$;
+    value.inspect()$0; // ty("borrowed object bounds").in_lib("auto_trait_objects")
 }
 pub fn reordered<T>(first: &Box<dyn Stream<Item = T> + Send + Sync>, second: &Box<dyn Sync + Stream<Item = T> + Send>) {
     let value = if true { first } else { second };
-    value.peek()$reordered$;
+    value.peek()$0; // ty("reordered bounds").in_lib("auto_trait_objects")
 }
 "#,
-        &[
-            AnalysisQuery::ty("constructor input", "source").in_lib("auto_trait_objects"),
-            AnalysisQuery::ty("object methods", "result").in_lib("auto_trait_objects"),
-            AnalysisQuery::ty("borrowed object bounds", "borrowed").in_lib("auto_trait_objects"),
-            AnalysisQuery::ty("reordered bounds", "reordered").in_lib("auto_trait_objects"),
-        ],
         expect![[r#"
             nominal struct auto_trait_objects[lib]::crate::Source<u8> // constructor input
             (u8, u16, u8) // object methods
@@ -110,7 +101,7 @@ pub fn reordered<T>(first: &Box<dyn Stream<Item = T> + Send + Sync>, second: &Bo
 
 #[test]
 fn converts_references_to_trait_objects_without_erasing_the_source() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -136,13 +127,9 @@ pub fn check() {
     let object: &dyn Stream<Item = u8> = &source;
     let mut mutable = make();
     let mutable_object: &mut dyn Stream<Item = u16> = &mut mutable;
-    let $result$result = (object.peek(), mutable_object.next(), source.value, mutable.value);
+    let $0result = (object.peek(), mutable_object.next(), source.value, mutable.value); // ty("object results and concrete source items")
 }
 "#,
-        &[AnalysisQuery::ty(
-            "object results and concrete source items",
-            "result",
-        )],
         expect![[r#"
             (u8, u16, u8, u16) // object results and concrete source items
         "#]],
@@ -199,7 +186,7 @@ pub fn check() {
 
 #[test]
 fn infers_references_to_trait_objects() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -212,39 +199,29 @@ pub type Borrowed<'a, T: ?Sized> = &'a T;
 pub fn make<T: 'static>() -> &'static T { loop {} }
 
 impl dyn Opaque {
-    pub fn inspect(&self) { self$self_shared$; }
-    pub fn inspect_mut(&mut self) { self$self_mutable$; }
+    pub fn inspect(&self) { self$0; } // ty("shared self")
+    pub fn inspect_mut(&mut self) { self$0; } // ty("mutable self")
 }
 
 pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: &&mut dyn Opaque) {
-    shared$shared$;
-    mutable$mutable$;
-    nested$nested$;
+    shared$0; // ty("shared referent")
+    mutable$0; // ty("mutable referent")
+    nested$0; // ty("nested referent")
     let copied = shared;
-    copied$copied$;
+    copied$0; // ty("copied reference")
     let borrowed = &shared;
-    borrowed$borrowed$;
+    borrowed$0; // ty("borrowed reference")
     let annotated: &dyn Opaque = shared;
-    annotated$annotated$;
+    annotated$0; // ty("annotated reference")
     let alias: Borrowed<'a, dyn Opaque> = shared;
-    alias$alias$;
+    alias$0; // ty("alias reference")
     let returned = make();
-    returned$returned$;
+    returned$0; // ty("finalized generic reference")
 }
 "#,
-        &[
-            AnalysisQuery::ty("shared referent", "shared"),
-            AnalysisQuery::ty("mutable referent", "mutable"),
-            AnalysisQuery::ty("nested referent", "nested"),
-            AnalysisQuery::ty("copied reference", "copied"),
-            AnalysisQuery::ty("borrowed reference", "borrowed"),
-            AnalysisQuery::ty("annotated reference", "annotated"),
-            AnalysisQuery::ty("alias reference", "alias"),
-            AnalysisQuery::ty("finalized generic reference", "returned"),
-            AnalysisQuery::ty("shared self", "self_shared"),
-            AnalysisQuery::ty("mutable self", "self_mutable"),
-        ],
         expect![[r#"
+            &dyn trait analysis_trait_object_references[lib]::crate::Opaque // shared self
+            &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // mutable self
             &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // shared referent
             &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // mutable referent
             &&mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // nested referent
@@ -253,15 +230,13 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
             &dyn trait analysis_trait_object_references[lib]::crate::Opaque // annotated reference
             &'_ dyn trait analysis_trait_object_references[lib]::crate::Opaque // alias reference
             &'static <unknown> // finalized generic reference
-            &dyn trait analysis_trait_object_references[lib]::crate::Opaque // shared self
-            &mut dyn trait analysis_trait_object_references[lib]::crate::Opaque // mutable self
         "#]],
     );
 }
 
 #[test]
 fn infers_bindings_from_reference_patterns() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -272,37 +247,24 @@ edition = "2024"
 pub trait Opaque {}
 pub struct Holder { pub value: dyn Opaque }
 
-pub fn peeled(&value: &u8) { value$peeled$; }
-pub fn borrowed(ref value: u8) { value$borrowed$; }
-pub fn borrowed_mut(ref mut value: u8) { value$borrowed_mut$; }
-pub fn peeled_trait_object(&value: &&dyn Opaque) { value$peeled_trait_object$; }
-pub fn borrowed_trait_object(ref value: &dyn Opaque) { value$borrowed_trait_object$; }
-pub fn tuple((value,): (&dyn Opaque,)) { value$tuple$; }
-pub fn record(Holder { value }: &Holder) { value$record$; }
-pub fn record_mut(Holder { value }: &mut Holder) { value$record_mut$; }
+pub fn peeled(&value: &u8) { value$0; } // ty("peeled parameter")
+pub fn borrowed(ref value: u8) { value$0; } // ty("borrowed parameter")
+pub fn borrowed_mut(ref mut value: u8) { value$0; } // ty("mutably borrowed parameter")
+pub fn peeled_trait_object(&value: &&dyn Opaque) { value$0; } // ty("peeled trait object parameter")
+pub fn borrowed_trait_object(ref value: &dyn Opaque) { value$0; } // ty("borrowed trait object parameter")
+pub fn tuple((value,): (&dyn Opaque,)) { value$0; } // ty("tuple parameter")
+pub fn record(Holder { value }: &Holder) { value$0; } // ty("record parameter")
+pub fn record_mut(Holder { value }: &mut Holder) { value$0; } // ty("mutable record parameter")
 
 pub fn fields(holder: &mut Holder) {
     let Holder { value: implicit } = &*holder;
-    implicit$implicit$;
+    implicit$0; // ty("implicitly borrowed field")
     let Holder { value: ref explicit } = *holder;
-    explicit$explicit$;
+    explicit$0; // ty("explicitly borrowed field")
     let Holder { value: ref mut mutable } = *holder;
-    mutable$mutable$;
+    mutable$0; // ty("mutably borrowed field")
 }
 "#,
-        &[
-            AnalysisQuery::ty("peeled parameter", "peeled"),
-            AnalysisQuery::ty("borrowed parameter", "borrowed"),
-            AnalysisQuery::ty("mutably borrowed parameter", "borrowed_mut"),
-            AnalysisQuery::ty("peeled trait object parameter", "peeled_trait_object"),
-            AnalysisQuery::ty("borrowed trait object parameter", "borrowed_trait_object"),
-            AnalysisQuery::ty("tuple parameter", "tuple"),
-            AnalysisQuery::ty("record parameter", "record"),
-            AnalysisQuery::ty("mutable record parameter", "record_mut"),
-            AnalysisQuery::ty("implicitly borrowed field", "implicit"),
-            AnalysisQuery::ty("explicitly borrowed field", "explicit"),
-            AnalysisQuery::ty("mutably borrowed field", "mutable"),
-        ],
         expect![[r#"
             u8 // peeled parameter
             &u8 // borrowed parameter
@@ -321,7 +283,7 @@ pub fn fields(holder: &mut Holder) {
 
 #[test]
 fn selects_trait_methods_for_reference_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -344,10 +306,9 @@ impl Kind for u8 {
 }
 pub fn inspect(value: &dyn Opaque) {
     let result = value.kind();
-    result$result$;
+    result$0; // ty("reference method result")
 }
 "#,
-        &[AnalysisQuery::ty("reference method result", "result")],
         expect![[r#"
             u16 // reference method result
         "#]],
@@ -356,7 +317,7 @@ pub fn inspect(value: &dyn Opaque) {
 
 #[test]
 fn infers_types_from_const_expressions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -373,49 +334,28 @@ pub struct Buffer<const N: usize = { 12 / 3 }>;
 pub struct Small<const N: u8 = { 2 + 2 }>;
 
 pub fn use_it(annotated: [u16; 2 + 2], argument: Buffer<{ 2 + 2 }>, defaulted: Buffer, small: Small) {
-    let rep$repeat_hover$eated = [0u8; 2 + 2]$repeat$;
-    let precedence = [0u8; (2 + 3) * 4]$precedence$;
-    let bases = [0u8; 0x10 + 0o10 + 0b10]$bases$;
-    let shifted = [0u8; 1 << (2 + 2)]$shifted$;
-    let masked = [0u8; (0b1010 | 0b0101) & !(1 << 3) ^ (8 >> 1)]$masked$;
-    let declaration = annotated$annotation$;
-    let generic_arg = argument$generic_arg$;
-    let generic_default = defaulted$generic_default$;
-    let other_integer = small$other_integer$;
-    let named = [0u8; SIZE]$named$;
-    let named_operand = [0u8; 2 + SIZE]$named_operand$;
-    let associated = [0u8; 2 + Holder::SIZE]$associated$;
-    let called = [0u8; 2 + size()]$called$;
-    let statements = [0u8; { let n = 2; n + 2 }]$statements$;
+    let rep$0eated = [0u8; 2 + 2]$1; // hover("hover array repeat"), ty("array repeat")
+    let precedence = [0u8; (2 + 3) * 4]$0; // ty("parenthesized arithmetic")
+    let bases = [0u8; 0x10 + 0o10 + 0b10]$0; // ty("integer bases")
+    let shifted = [0u8; 1 << (2 + 2)]$0; // ty("shifted array length")
+    let masked = [0u8; (0b1010 | 0b0101) & !(1 << 3) ^ (8 >> 1)]$0; // ty("bitwise array length")
+    let declaration = annotated$0; // ty("array type annotation")
+    let generic_arg = argument$0; // ty("const generic argument")
+    let generic_default = defaulted$0; // ty("const generic default")
+    let other_integer = small$0; // ty("u8 const generic default")
+    let named = [0u8; SIZE]$0; // ty("named const")
+    let named_operand = [0u8; 2 + SIZE]$0; // ty("named operand")
+    let associated = [0u8; 2 + Holder::SIZE]$0; // ty("associated const")
+    let called = [0u8; 2 + size()]$0; // ty("const function")
+    let statements = [0u8; { let n = 2; n + 2 }]$0; // ty("block with statements")
 }
 
 pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>) {
-    annotated$bit_annotation$;
-    argument$bit_generic_arg$;
+    annotated$0; // ty("bitwise array type annotation")
+    argument$0; // ty("shifted const generic argument")
 }
 "#,
-        &[
-            AnalysisQuery::ty("array repeat", "repeat"),
-            AnalysisQuery::hover("hover array repeat", "repeat_hover"),
-            AnalysisQuery::ty("parenthesized arithmetic", "precedence"),
-            AnalysisQuery::ty("integer bases", "bases"),
-            AnalysisQuery::ty("shifted array length", "shifted"),
-            AnalysisQuery::ty("bitwise array length", "masked"),
-            AnalysisQuery::ty("bitwise array type annotation", "bit_annotation"),
-            AnalysisQuery::ty("shifted const generic argument", "bit_generic_arg"),
-            AnalysisQuery::ty("array type annotation", "annotation"),
-            AnalysisQuery::ty("const generic argument", "generic_arg"),
-            AnalysisQuery::ty("const generic default", "generic_default"),
-            AnalysisQuery::ty("u8 const generic default", "other_integer"),
-            AnalysisQuery::ty("named const", "named"),
-            AnalysisQuery::ty("named operand", "named_operand"),
-            AnalysisQuery::ty("associated const", "associated"),
-            AnalysisQuery::ty("const function", "called"),
-            AnalysisQuery::ty("block with statements", "statements"),
-        ],
         expect![[r#"
-            [u8; 4] // array repeat
-
             // hover array repeat
             range: 9:9-9:17
             block:
@@ -423,12 +363,11 @@ pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>)
               signature:
                 let repeated: [u8; 4]
 
+            [u8; 4] // array repeat
             [u8; 20] // parenthesized arithmetic
             [u8; 26] // integer bases
             [u8; 16] // shifted array length
             [u8; 3] // bitwise array length
-            [u16; 9] // bitwise array type annotation
-            nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // shifted const generic argument
             [u16; 4] // array type annotation
             nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // const generic argument
             nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // const generic default
@@ -438,13 +377,15 @@ pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>)
             [u8; _] // associated const
             [u8; _] // const function
             [u8; _] // block with statements
+            [u16; 9] // bitwise array type annotation
+            nominal struct analysis_const_arithmetic[lib]::crate::Buffer<4> // shifted const generic argument
         "#]],
     );
 }
 
 #[test]
 fn infers_default_calls_alongside_unresolved_impl_receivers() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -462,18 +403,12 @@ type Bytes = Vec<u8>;
 impl Default for AnotherMissingType { fn default() -> Self {} }
 
 pub fn use_it() {
-    let inferred = Vec::default()$inferred$;
-    let explicit = Vec::<u8>::default()$explicit$;
-    let qualified = <Vec<u8> as Default>::default()$qualified$;
-    let alias = Bytes::default()$alias$;
+    let inferred = Vec::default()$0; // ty("omitted element type")
+    let explicit = Vec::<u8>::default()$0; // ty("explicit element type")
+    let qualified = <Vec<u8> as Default>::default()$0; // ty("qualified trait call")
+    let alias = Bytes::default()$0; // ty("type alias receiver")
 }
 "#,
-        &[
-            AnalysisQuery::ty("omitted element type", "inferred"),
-            AnalysisQuery::ty("explicit element type", "explicit"),
-            AnalysisQuery::ty("qualified trait call", "qualified"),
-            AnalysisQuery::ty("type alias receiver", "alias"),
-        ],
         expect![[r#"
             nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<<unknown>> // omitted element type
             nominal struct analysis_default_with_unresolved_impl[lib]::crate::Vec<u8> // explicit element type
@@ -485,7 +420,7 @@ pub fn use_it() {
 
 #[test]
 fn infers_inherent_impl_bounds_from_constructor_arguments() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -503,16 +438,10 @@ impl<T: Marker> Wrapper<T> {
 }
 
 pub fn use_it() {
-    let wrapper = Wrapper::new(User)$type_wrapper$;
-    let value = wrapper.value$type_value$;
+    let wrapper = Wrapper::new(User)$0; // ty("constructor result").in_lib("analysis_inherent_constructor_bounds")
+    let value = wrapper.value$0; // ty("inferred member").in_lib("analysis_inherent_constructor_bounds")
 }
 "#,
-        &[
-            AnalysisQuery::ty("constructor result", "type_wrapper")
-                .in_lib("analysis_inherent_constructor_bounds"),
-            AnalysisQuery::ty("inferred member", "type_value")
-                .in_lib("analysis_inherent_constructor_bounds"),
-        ],
         expect![[r#"
             nominal struct analysis_inherent_constructor_bounds[lib]::crate::Wrapper<nominal struct analysis_inherent_constructor_bounds[lib]::crate::User> // constructor result
             nominal struct analysis_inherent_constructor_bounds[lib]::crate::User // inferred member
@@ -522,7 +451,7 @@ pub fn use_it() {
 
 #[test]
 fn refines_unsuffixed_numeric_literals_from_let_annotations() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -532,28 +461,17 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn use_it() {
-    let default_int = 1$type_default_int$;
-    let annotated_int: u64 = 1$type_u64$;
-    let default_float = 1.0$type_default_float$;
-    let annotated_float: f32 = 1.0$type_f32$;
-    let annotated_half: f16 = 1.0$type_f16$;
-    let annotated_quad: f128 = 1.0$type_f128$;
-    let suffixed_half = 1.0f16$type_suffix_f16$;
-    let suffixed_quad = 1.0f128$type_suffix_f128$;
-    let mismatch: bool = 1$type_mismatch$;
+    let default_int = 1$0; // ty("default integer literal")
+    let annotated_int: u64 = 1$0; // ty("annotated integer literal")
+    let default_float = 1.0$0; // ty("default float literal")
+    let annotated_float: f32 = 1.0$0; // ty("annotated float literal")
+    let annotated_half: f16 = 1.0$0; // ty("annotated half float literal")
+    let annotated_quad: f128 = 1.0$0; // ty("annotated quad float literal")
+    let suffixed_half = 1.0f16$0; // ty("suffixed half float literal")
+    let suffixed_quad = 1.0f128$0; // ty("suffixed quad float literal")
+    let mismatch: bool = 1$0; // ty("mismatched numeric literal")
 }
 "#,
-        &[
-            AnalysisQuery::ty("default integer literal", "type_default_int"),
-            AnalysisQuery::ty("annotated integer literal", "type_u64"),
-            AnalysisQuery::ty("default float literal", "type_default_float"),
-            AnalysisQuery::ty("annotated float literal", "type_f32"),
-            AnalysisQuery::ty("annotated half float literal", "type_f16"),
-            AnalysisQuery::ty("annotated quad float literal", "type_f128"),
-            AnalysisQuery::ty("suffixed half float literal", "type_suffix_f16"),
-            AnalysisQuery::ty("suffixed quad float literal", "type_suffix_f128"),
-            AnalysisQuery::ty("mismatched numeric literal", "type_mismatch"),
-        ],
         expect![[r#"
             i32 // default integer literal
             u64 // annotated integer literal
@@ -570,7 +488,7 @@ pub fn use_it() {
 
 #[test]
 fn infers_clones_with_extended_float_impls() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -588,19 +506,12 @@ impl Clone for Manual {
 pub struct Derived;
 
 pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
-    let half_copy = half.clone()$half$;
-    let quad_copy = quad.clone()$quad$;
-    let manual_copy = manual.clone()$manual$;
-    let derived_copy = derived.clone()$derived$;
+    let half_copy = half.clone()$0; // ty("half float clone").in_lib("analysis_float_clone")
+    let quad_copy = quad.clone()$0; // ty("quad float clone").in_lib("analysis_float_clone")
+    let manual_copy = manual.clone()$0; // ty("handwritten clone").in_lib("analysis_float_clone")
+    let derived_copy = derived.clone()$0; // ty("derived clone").in_lib("analysis_float_clone")
 }
 "#,
-        &[
-            AnalysisQuery::ty("half float clone", "half"),
-            AnalysisQuery::ty("quad float clone", "quad"),
-            AnalysisQuery::ty("handwritten clone", "manual"),
-            AnalysisQuery::ty("derived clone", "derived"),
-        ]
-        .map(|query| query.in_lib("analysis_float_clone")),
         expect![[r#"
             f16 // half float clone
             f128 // quad float clone
@@ -612,8 +523,7 @@ pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
 
 #[test]
 fn infers_standard_range_forms_and_shared_endpoints() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_ranges");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -623,34 +533,23 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn use_it(end: u16) {
-    let exclusive = (1$start$..end)$exclusive$;
-    let from = (2u32..)$from$;
-    let to = (..3)$to$;
-    let inclusive = ('a'..='z')$inclusive$;
-    let to_inclusive = (..=4u64)$to_inclusive$;
-    let full = (..)$full$;
-    let reversed = (end..5$end$)$reversed$;
+    let exclusive = (1$0..end)$1; // ty("start refined by end").in_lib("analysis_ranges"), ty("exclusive range").in_lib("analysis_ranges")
+    let from = (2u32..)$0; // ty("range from").in_lib("analysis_ranges")
+    let to = (..3)$0; // ty("range to with numeric fallback").in_lib("analysis_ranges")
+    let inclusive = ('a'..='z')$0; // ty("inclusive character range").in_lib("analysis_ranges")
+    let to_inclusive = (..=4u64)$0; // ty("inclusive range to").in_lib("analysis_ranges")
+    let full = (..)$0; // ty("full range").in_lib("analysis_ranges")
+    let reversed = (end..5$0)$1; // ty("end refined by start").in_lib("analysis_ranges"), ty("range with typed start").in_lib("analysis_ranges")
 }
 "#,
-        &[
-            ty("exclusive range", "exclusive"),
-            ty("range from", "from"),
-            ty("range to with numeric fallback", "to"),
-            ty("inclusive character range", "inclusive"),
-            ty("inclusive range to", "to_inclusive"),
-            ty("full range", "full"),
-            ty("start refined by end", "start"),
-            ty("end refined by start", "end"),
-            ty("range with typed start", "reversed"),
-        ],
         expect![[r#"
+            u16 // start refined by end
             nominal struct core[lib]::crate::ops::Range<u16> // exclusive range
             nominal struct core[lib]::crate::ops::RangeFrom<u32> // range from
             nominal struct core[lib]::crate::ops::RangeTo<i32> // range to with numeric fallback
             nominal struct core[lib]::crate::ops::RangeInclusive<char> // inclusive character range
             nominal struct core[lib]::crate::ops::RangeToInclusive<u64> // inclusive range to
             nominal struct core[lib]::crate::ops::RangeFull // full range
-            u16 // start refined by end
             u16 // end refined by start
             nominal struct core[lib]::crate::ops::Range<u16> // range with typed start
         "#]],
@@ -659,8 +558,7 @@ pub fn use_it(end: u16) {
 
 #[test]
 fn range_expectations_and_later_uses_refine_endpoints() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_range_evidence");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -677,49 +575,33 @@ pub fn take_inclusive(value: RangeInclusive<u64>) {}
 pub fn stop() -> ! { loop {} }
 
 pub fn use_it() {
-    let expected: Range<u32> = (make()$expected_start$..make()$expected_end$)$expected$;
-    let aliased: Inclusive = (make()$alias_start$..=1)$alias$;
+    let expected: Range<u32> = (make()$0..make()$1)$2; // ty("expected start").in_lib("analysis_range_evidence"), ty("expected end").in_lib("analysis_range_evidence"), ty("annotated range").in_lib("analysis_range_evidence")
+    let aliased: Inclusive = (make()$0..=1)$1; // ty("endpoint under alias expectation").in_lib("analysis_range_evidence"), ty("alias expectation").in_lib("analysis_range_evidence")
 
-    let endpoint = 1$number$;
-    let bounds$refined_binding$ = (endpoint$local_endpoint$..)$local_range$;
+    let endpoint = 1$0; // ty("literal refined through range local").in_lib("analysis_range_evidence")
+    let bounds$0 = (endpoint$1..)$2; // ty("refined range binding").in_lib("analysis_range_evidence"), ty("endpoint local").in_lib("analysis_range_evidence"), ty("range before later use").in_lib("analysis_range_evidence")
     take_from(bounds);
 
     let start = make();
     let end = make();
-    let generic = (start..=end)$generic_range$;
+    let generic = (start..=end)$0; // ty("generic range before later use").in_lib("analysis_range_evidence")
     take_inclusive(generic);
-    start$generic_start$;
-    end$generic_end$;
+    start$0; // ty("generic start after later use").in_lib("analysis_range_evidence")
+    end$0; // ty("generic end after later use").in_lib("analysis_range_evidence")
 
-    let diverging: Range<u8> = (stop()$never_endpoint$..1)$never_range$;
+    let diverging: Range<u8> = (stop()$0..1)$1; // ty("diverging endpoint").in_lib("analysis_range_evidence"), ty("range with diverging endpoint").in_lib("analysis_range_evidence")
 }
 "#,
-        &[
-            ty("annotated range", "expected"),
-            ty("expected start", "expected_start"),
-            ty("expected end", "expected_end"),
-            ty("alias expectation", "alias"),
-            ty("endpoint under alias expectation", "alias_start"),
-            ty("literal refined through range local", "number"),
-            ty("endpoint local", "local_endpoint"),
-            ty("range before later use", "local_range"),
-            ty("refined range binding", "refined_binding"),
-            ty("generic range before later use", "generic_range"),
-            ty("generic start after later use", "generic_start"),
-            ty("generic end after later use", "generic_end"),
-            ty("diverging endpoint", "never_endpoint"),
-            ty("range with diverging endpoint", "never_range"),
-        ],
         expect![[r#"
-            nominal struct core[lib]::crate::ops::Range<u32> // annotated range
             u32 // expected start
             u32 // expected end
-            nominal struct core[lib]::crate::ops::RangeInclusive<u8> // alias expectation
+            nominal struct core[lib]::crate::ops::Range<u32> // annotated range
             u8 // endpoint under alias expectation
+            nominal struct core[lib]::crate::ops::RangeInclusive<u8> // alias expectation
             usize // literal refined through range local
+            nominal struct core[lib]::crate::ops::RangeFrom<usize> // refined range binding
             usize // endpoint local
             nominal struct core[lib]::crate::ops::RangeFrom<usize> // range before later use
-            nominal struct core[lib]::crate::ops::RangeFrom<usize> // refined range binding
             nominal struct core[lib]::crate::ops::RangeInclusive<u64> // generic range before later use
             u64 // generic start after later use
             u64 // generic end after later use
@@ -731,7 +613,7 @@ pub fn use_it() {
 
 #[test]
 fn identifies_range_by_language_item_instead_of_name() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -744,14 +626,10 @@ edition = "2024"
 pub struct Interval<T> { pub start: T, pub end: T }
 
 pub fn use_it() {
-    let interval = (1u8..2)$range$;
-    interval.end$field$;
+    let interval = (1u8..2)$0; // ty("renamed range declaration")
+    interval.end$0; // ty("field on renamed range")
 }
 "#,
-        &[
-            AnalysisQuery::ty("renamed range declaration", "range"),
-            AnalysisQuery::ty("field on renamed range", "field"),
-        ],
         expect![[r#"
             nominal struct analysis_range_identity[lib]::crate::Interval<u8> // renamed range declaration
             u8 // field on renamed range
@@ -761,8 +639,7 @@ pub fn use_it() {
 
 #[test]
 fn infers_standard_index_outputs_from_the_index_type() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_outputs");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -773,47 +650,36 @@ edition = "2024"
 //- /src/lib.rs
 pub const LENGTH: usize = 4;
 pub fn symbolic_lengths<const N: usize>() {
-    let named = [1_u8; LENGTH][0$named_length_index$]$named_length_output$;
-    let generic = [1_u16; N][0$generic_length_index$]$generic_length_output$;
+    let named = [1_u8; LENGTH][0$0]$1; // ty("named array length index").in_lib("analysis_index_outputs"), ty("named array length output").in_lib("analysis_index_outputs")
+    let generic = [1_u16; N][0$0]$1; // ty("generic array length index").in_lib("analysis_index_outputs"), ty("generic array length output").in_lib("analysis_index_outputs")
 }
 
 pub fn use_it(mut bytes: [u8; 4], slice: &[u16], text: &str) {
-    let index = 1$scalar_index$;
-    let element = (&bytes[index])$element$;
+    let index = 1$0; // ty("scalar index").in_lib("analysis_index_outputs")
+    let element = (&bytes[index])$0; // ty("element reference").in_lib("analysis_index_outputs")
     let array_ranges = (
         &bytes[1..3], &bytes[1..], &bytes[..3],
         &bytes[1..=2], &bytes[..=2], &bytes[..],
-    )$array_ranges$;
+    )$0; // ty("all array range forms").in_lib("analysis_index_outputs")
     let slice_ranges = (
         &slice[1..3], &slice[1..], &slice[..3],
         &slice[1..=2], &slice[..=2], &slice[..],
-    )$slice_ranges$;
+    )$0; // ty("all slice range forms").in_lib("analysis_index_outputs")
     let string_ranges = (
         &text[1..3], &text[1..], &text[..3],
         &text[1..=2], &text[..=2], &text[..],
-    )$string_ranges$;
-    let mutable = (&mut bytes[1..])$mutable$;
-    let start = 1$endpoint$;
-    let bounds = (start..)$bounds$;
-    let indirect = (&slice[bounds])$indirect$;
+    )$0; // ty("all string range forms").in_lib("analysis_index_outputs")
+    let mutable = (&mut bytes[1..])$0; // ty("mutable slice reference").in_lib("analysis_index_outputs")
+    let start = 1$0; // ty("endpoint inferred from indexing").in_lib("analysis_index_outputs")
+    let bounds = (start..)$0; // ty("stored range").in_lib("analysis_index_outputs")
+    let indirect = (&slice[bounds])$0; // ty("indexing with stored range").in_lib("analysis_index_outputs")
 }
 "#,
-        &[
-            ty("scalar index", "scalar_index"),
-            ty("element reference", "element"),
-            ty("all array range forms", "array_ranges"),
-            ty("all slice range forms", "slice_ranges"),
-            ty("all string range forms", "string_ranges"),
-            ty("mutable slice reference", "mutable"),
-            ty("endpoint inferred from indexing", "endpoint"),
-            ty("stored range", "bounds"),
-            ty("indexing with stored range", "indirect"),
-            ty("named array length output", "named_length_output"),
-            ty("named array length index", "named_length_index"),
-            ty("generic array length output", "generic_length_output"),
-            ty("generic array length index", "generic_length_index"),
-        ],
         expect![[r#"
+            usize // named array length index
+            u8 // named array length output
+            usize // generic array length index
+            u16 // generic array length output
             usize // scalar index
             &u8 // element reference
             (&[u8], &[u8], &[u8], &[u8], &[u8], &[u8]) // all array range forms
@@ -823,18 +689,13 @@ pub fn use_it(mut bytes: [u8; 4], slice: &[u16], text: &str) {
             usize // endpoint inferred from indexing
             nominal struct core[lib]::crate::ops::RangeFrom<usize> // stored range
             &[u16] // indexing with stored range
-            u8 // named array length output
-            usize // named array length index
-            u16 // generic array length output
-            usize // generic array length index
         "#]],
     );
 }
 
 #[test]
 fn selects_index_receivers_with_isolated_live_evidence() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_receivers");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -866,29 +727,20 @@ impl<T> Deref for Conditional<T> { type Target = Bytes; }
 pub fn make<T>() -> T { loop {} }
 
 pub fn use_it(store: Store<u8>, wrapper: Wrapper<u8>, preferred: Preferred<u8>, conditional: Conditional<u8>) {
-    let direct = store[Key]$direct$;
-    let dereferenced = wrapper[Key]$deref$;
-    let preferred = preferred[Key]$preferred$;
+    let direct = store[Key]$0; // ty("custom index type").in_lib("analysis_index_receivers")
+    let dereferenced = wrapper[Key]$0; // ty("index through Deref").in_lib("analysis_index_receivers")
+    let preferred = preferred[Key]$0; // ty("direct Index before Deref").in_lib("analysis_index_receivers")
     let index = make();
-    let fallback = conditional[index]$fallback$;
-    index$index$;
+    let fallback = conditional[index]$0; // ty("Deref after rejected Index bound").in_lib("analysis_index_receivers")
+    index$0; // ty("index unaffected by rejected receiver").in_lib("analysis_index_receivers")
 }
 pub fn generic<C: Index<I, Output = T>, I, T>(container: C, index: I) -> T {
-    container[index]$generic$
+    container[index]$0 // ty("generic Index bound").in_lib("analysis_index_receivers")
 }
 pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
-    pointer[Key]$deref_bound$;
+    pointer[Key]$0; // ty("generic Deref bound").in_lib("analysis_index_receivers")
 }
 "#,
-        &[
-            ty("custom index type", "direct"),
-            ty("index through Deref", "deref"),
-            ty("direct Index before Deref", "preferred"),
-            ty("Deref after rejected Index bound", "fallback"),
-            ty("index unaffected by rejected receiver", "index"),
-            ty("generic Index bound", "generic"),
-            ty("generic Deref bound", "deref_bound"),
-        ],
         expect![[r#"
             u8 // custom index type
             u8 // index through Deref
@@ -903,8 +755,7 @@ pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
 
 #[test]
 fn coerces_index_arguments_without_changing_their_source_types() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_coercions");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -927,48 +778,33 @@ pub fn make<T>() -> T { loop {} }
 
 pub fn use_it(text: TextStore, mut string: String, preferred: Preferred, mutable: MutableStore) {
     let key = &string;
-    let from_string = text[key$string_key$]$string_output$;
-    let from_mutable = text[&mut string]$mutable_string_output$;
-    let preferred = preferred[&string]$preferred_output$;
+    let from_string = text[key$0]$1; // ty("original string reference").in_lib("analysis_index_coercions"), ty("string index").in_lib("analysis_index_coercions")
+    let from_mutable = text[&mut string]$0; // ty("mutable string reborrow").in_lib("analysis_index_coercions")
+    let preferred = preferred[&string]$0; // ty("exact argument before coercion").in_lib("analysis_index_coercions")
     let key = &[1_u8, 2];
-    let from_array = SliceStore(1_u8)[key$array_key$]$array_output$;
-    let from_mutable_array = mutable[&mut [1_u8, 2]]$mutable_array_output$;
+    let from_array = SliceStore(1_u8)[key$0]$1; // ty("original array reference").in_lib("analysis_index_coercions"), ty("array index").in_lib("analysis_index_coercions")
+    let from_mutable_array = mutable[&mut [1_u8, 2]]$0; // ty("mutable array unsizing").in_lib("analysis_index_coercions")
 }
 pub fn from_bound<P: Deref<Target = str>>(text: TextStore, pointer: P) {
-    let value = text[&pointer]$bound_output$;
+    let value = text[&pointer]$0; // ty("generic Deref argument").in_lib("analysis_index_coercions")
 }
 pub fn later_output() {
-    let store = make::<SliceStore<_>>()$store$;
-    let key = (&[make(), make()])$key$;
-    let value: u8 = store[key]$inferred_output$;
+    let store = make::<SliceStore<_>>()$0; // ty("receiver refined by output").in_lib("analysis_index_coercions")
+    let key = (&[make(), make()])$0; // ty("array elements refined by output").in_lib("analysis_index_coercions")
+    let value: u8 = store[key]$0; // ty("output expectation").in_lib("analysis_index_coercions")
 }
 pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> {
-    let value = text[key?$pending_key$]$pending_output$;
+    let value = text[key?$0]$1; // ty("argument supplied by a pending projection").in_lib("analysis_index_coercions"), ty("indexing after the argument projection").in_lib("analysis_index_coercions")
     Result::Ok(())
 }
 "#,
-        &[
-            ty("string index", "string_output"),
-            ty("original string reference", "string_key"),
-            ty("mutable string reborrow", "mutable_string_output"),
-            ty("exact argument before coercion", "preferred_output"),
-            ty("array index", "array_output"),
-            ty("original array reference", "array_key"),
-            ty("mutable array unsizing", "mutable_array_output"),
-            ty("generic Deref argument", "bound_output"),
-            ty("receiver refined by output", "store"),
-            ty("array elements refined by output", "key"),
-            ty("output expectation", "inferred_output"),
-            ty("argument supplied by a pending projection", "pending_key"),
-            ty("indexing after the argument projection", "pending_output"),
-        ],
         expect![[r#"
-            u32 // string index
             &nominal struct alloc[lib]::crate::string::String // original string reference
+            u32 // string index
             u32 // mutable string reborrow
             u8 // exact argument before coercion
-            u8 // array index
             &[u8; 2] // original array reference
+            u8 // array index
             u16 // mutable array unsizing
             u32 // generic Deref argument
             nominal struct analysis_index_coercions[lib]::crate::SliceStore<u8> // receiver refined by output
@@ -984,7 +820,7 @@ pub fn pending_key(text: TextStore, key: Result<&String, ()>) -> Result<(), ()> 
 fn indexes_arrays_through_slice_impls_of_the_identified_trait() {
     // Only the slice implements the operator here, so this exercises the unsizing alternative
     // independently of core's blanket array impl. The renamed trait checks language identity.
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -997,24 +833,19 @@ edition = "2024"
 pub trait Project<I> { type Output; }
 impl<T> Project<usize> for [T] { type Output = T; }
 pub fn use_it(array: [u8; 3]) {
-    let value = array[0$index$]$output$;
+    let value = array[0$0]$1; // ty("index argument"), ty("array through slice implementation")
 }
 "#,
-        &[
-            AnalysisQuery::ty("array through slice implementation", "output"),
-            AnalysisQuery::ty("index argument", "index"),
-        ],
         expect![[r#"
-            u8 // array through slice implementation
             usize // index argument
+            u8 // array through slice implementation
         "#]],
     );
 }
 
 #[test]
 fn refines_indexing_from_later_operand_and_output_evidence() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_index_evidence");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1047,60 +878,35 @@ pub fn require_stop(base: &Stop) {}
 
 pub fn later_index(store: Store) {
     let index = make();
-    let user = &store[index]$index_output$;
-    let field = user.id$field$;
-    let method = user.id()$method$;
-    let consumed = consume(user)$obligation$;
+    let user = &store[index]$0; // ty("output after later index evidence").in_lib("analysis_index_evidence")
+    let field = user.id$0; // ty("dependent field").in_lib("analysis_index_evidence")
+    let method = user.id()$0; // ty("dependent method").in_lib("analysis_index_evidence")
+    let consumed = consume(user)$0; // ty("dependent trait obligation").in_lib("analysis_index_evidence")
     require_index(index);
-    index$index$;
+    index$0; // ty("refined index").in_lib("analysis_index_evidence")
 }
 pub fn later_base() {
-    let base = make()$base$;
-    let user = &base[true]$base_output$;
+    let base = make()$0; // ty("refined base").in_lib("analysis_index_evidence")
+    let user = &base[true]$0; // ty("output after later base evidence").in_lib("analysis_index_evidence")
     require_base(&base);
 }
 pub fn later_output(user: User) {
-    let mut array = [Vec::new()]$array_initializer$;
-    array[0]$array_output$.push(user);
-    array$array$;
+    let mut array = [Vec::new()]$0; // ty("array initializer refined by output use").in_lib("analysis_index_evidence")
+    array[0]$0.push(user); // ty("indexed collection refined by method argument").in_lib("analysis_index_evidence")
+    array$0; // ty("refined array binding").in_lib("analysis_index_evidence")
 }
 pub fn later_never() {
     let base = make();
-    let value$value$: u8 = base[0]$never$;
+    let value$0: u8 = base[0]$1; // ty("coerced binding").in_lib("analysis_index_evidence"), ty("diverging output").in_lib("analysis_index_evidence")
     require_stop(&base);
 }
 pub fn output_drives_bound() {
-    let bag$bag$ = Bag(make());
-    let value: u8 = bag[0$bound_index$]$bound_output$;
-    let via_method$method_bag$ = Bag(make());
-    let value: &u8 = via_method.index(0)$method_output$;
+    let bag$0 = Bag(make()); // ty("receiver refined through pending bound").in_lib("analysis_index_evidence")
+    let value: u8 = bag[0$0]$1; // ty("index refined through pending bound").in_lib("analysis_index_evidence"), ty("output refining pending bound").in_lib("analysis_index_evidence")
+    let via_method$0 = Bag(make()); // ty("equivalent method receiver").in_lib("analysis_index_evidence")
+    let value: &u8 = via_method.index(0)$0; // ty("equivalent method output").in_lib("analysis_index_evidence")
 }
 "#,
-        &[
-            ty("output after later index evidence", "index_output"),
-            ty("dependent field", "field"),
-            ty("dependent method", "method"),
-            ty("dependent trait obligation", "obligation"),
-            ty("refined index", "index"),
-            ty("refined base", "base"),
-            ty("output after later base evidence", "base_output"),
-            ty(
-                "array initializer refined by output use",
-                "array_initializer",
-            ),
-            ty(
-                "indexed collection refined by method argument",
-                "array_output",
-            ),
-            ty("refined array binding", "array"),
-            ty("diverging output", "never"),
-            ty("coerced binding", "value"),
-            ty("receiver refined through pending bound", "bag"),
-            ty("index refined through pending bound", "bound_index"),
-            ty("output refining pending bound", "bound_output"),
-            ty("equivalent method receiver", "method_bag"),
-            ty("equivalent method output", "method_output"),
-        ],
         expect![[r#"
             nominal struct analysis_index_evidence[lib]::crate::User // output after later index evidence
             u32 // dependent field
@@ -1112,8 +918,8 @@ pub fn output_drives_bound() {
             [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1] // array initializer refined by output use
             nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global> // indexed collection refined by method argument
             [nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_index_evidence[lib]::crate::User, nominal struct alloc[lib]::crate::vec::Global>; 1] // refined array binding
-            ! // diverging output
             u8 // coerced binding
+            ! // diverging output
             nominal struct analysis_index_evidence[lib]::crate::Bag<u8> // receiver refined through pending bound
             usize // index refined through pending bound
             u8 // output refining pending bound
@@ -1174,7 +980,7 @@ pub fn use_it() {
 
 #[test]
 fn propagates_expected_types_through_transparent_and_array_expressions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1188,36 +994,17 @@ pub struct User;
 pub fn missing<T>() -> T {}
 
 pub fn use_it() {
-    let paren: User = (missing()$type_paren_inner$)$type_paren$;
-    let shared: &u64 = &1$type_ref_inner$;
-    let values: [u64; 2] = [1$type_array_left$, 2$type_array_right$]$type_array$;
-    let repeated: [u64; 2] = [1$type_repeat_inner$; 2]$type_repeat$;
-    let users: [User; 1] = [missing()$type_array_user$]$type_array_generic$;
-    let unit = ()$type_unit$;
-    let deferred = [missing()$type_late_call$, 1$type_late_integer$]$type_late_array$;
+    let paren: User = (missing()$0)$1; // ty("paren generic call inner"), ty("paren generic call expression")
+    let shared: &u64 = &1$0; // ty("reference integer inner")
+    let values: [u64; 2] = [1$0, 2$1]$2; // ty("array left integer"), ty("array right integer"), ty("array expression")
+    let repeated: [u64; 2] = [1$0; 2]$1; // ty("repeat array integer"), ty("repeat array expression")
+    let users: [User; 1] = [missing()$0]$1; // ty("array generic call"), ty("array generic expression")
+    let unit = ()$0; // ty("empty tuple expression")
+    let deferred = [missing()$0, 1$1]$2; // ty("array call with later evidence"), ty("array integer with later evidence"), ty("array linked through later branch evidence")
     let selected = if true { deferred } else { [2, 3] };
     let _: [u64; 2] = selected;
 }
 "#,
-        &[
-            AnalysisQuery::ty("paren generic call inner", "type_paren_inner"),
-            AnalysisQuery::ty("paren generic call expression", "type_paren"),
-            AnalysisQuery::ty("reference integer inner", "type_ref_inner"),
-            AnalysisQuery::ty("array left integer", "type_array_left"),
-            AnalysisQuery::ty("array right integer", "type_array_right"),
-            AnalysisQuery::ty("array expression", "type_array"),
-            AnalysisQuery::ty("repeat array integer", "type_repeat_inner"),
-            AnalysisQuery::ty("repeat array expression", "type_repeat"),
-            AnalysisQuery::ty("array generic call", "type_array_user"),
-            AnalysisQuery::ty("array generic expression", "type_array_generic"),
-            AnalysisQuery::ty("empty tuple expression", "type_unit"),
-            AnalysisQuery::ty("array call with later evidence", "type_late_call"),
-            AnalysisQuery::ty("array integer with later evidence", "type_late_integer"),
-            AnalysisQuery::ty(
-                "array linked through later branch evidence",
-                "type_late_array",
-            ),
-        ],
         expect![[r#"
             nominal struct analysis_shape_expected_type_inference[lib]::crate::User // paren generic call inner
             nominal struct analysis_shape_expected_type_inference[lib]::crate::User // paren generic call expression
@@ -1239,7 +1026,7 @@ pub fn use_it() {
 
 #[test]
 fn propagates_function_return_expected_types() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1249,33 +1036,24 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn int_tail() -> u64 {
-    1$type_int_tail$
+    1$0 // ty("integer tail return")
 }
 
 pub fn float_tail() -> f32 {
-    1.0$type_float_tail$
+    1.0$0 // ty("float tail return")
 }
 
 pub fn tuple_tail() -> (u64, f32) {
-    (1$type_tuple_int$, 1.0$type_tuple_float$)$type_tuple_tail$
+    (1$0, 1.0$1)$2 // ty("tuple return integer field"), ty("tuple return float field"), ty("tuple tail return")
 }
 
 pub fn explicit_return(flag: bool) -> u64 {
     if flag {
-        return 1$type_return$;
+        return 1$0; // ty("explicit return expression")
     }
-    2$type_final_tail$
+    2$0 // ty("final tail return")
 }
 "#,
-        &[
-            AnalysisQuery::ty("integer tail return", "type_int_tail"),
-            AnalysisQuery::ty("float tail return", "type_float_tail"),
-            AnalysisQuery::ty("tuple return integer field", "type_tuple_int"),
-            AnalysisQuery::ty("tuple return float field", "type_tuple_float"),
-            AnalysisQuery::ty("tuple tail return", "type_tuple_tail"),
-            AnalysisQuery::ty("explicit return expression", "type_return"),
-            AnalysisQuery::ty("final tail return", "type_final_tail"),
-        ],
         expect![[r#"
             u64 // integer tail return
             f32 // float tail return
@@ -1290,7 +1068,7 @@ pub fn explicit_return(flag: bool) -> u64 {
 
 #[test]
 fn propagates_function_call_argument_expected_types() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1306,18 +1084,11 @@ pub fn takes_f32(value: f32) {}
 pub fn takes_pair(value: (u64, f32)) {}
 
 pub fn use_it() {
-    takes_u64(1$type_u64$);
-    takes_f32(1.0$type_f32$);
-    takes_pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+    takes_u64(1$0); // ty("integer call argument")
+    takes_f32(1.0$0); // ty("float call argument")
+    takes_pair((1$0, 1.0$1)$2); // ty("tuple call integer field"), ty("tuple call float field"), ty("tuple call argument")
 }
 "#,
-        &[
-            AnalysisQuery::ty("integer call argument", "type_u64"),
-            AnalysisQuery::ty("float call argument", "type_f32"),
-            AnalysisQuery::ty("tuple call integer field", "type_pair_int"),
-            AnalysisQuery::ty("tuple call float field", "type_pair_float"),
-            AnalysisQuery::ty("tuple call argument", "type_pair"),
-        ],
         expect![[r#"
             u64 // integer call argument
             f32 // float call argument
@@ -1330,7 +1101,7 @@ pub fn use_it() {
 
 #[test]
 fn propagates_method_call_argument_expected_types() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1360,34 +1131,14 @@ impl<T> GenericSink<T> {
 }
 
 pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
-    sink.put_u64(1$type_u64$);
-    sink.put_f32(1.0$type_f32$);
-    sink.put_pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+    sink.put_u64(1$0); // ty("integer method argument")
+    sink.put_f32(1.0$0); // ty("float method argument")
+    sink.put_pair((1$0, 1.0$1)$2); // ty("tuple method integer field"), ty("tuple method float field"), ty("tuple method argument")
 
-    generic_sink.put(1$type_generic$);
-    generic_sink.put_pair((1$type_generic_pair_int$, 1.0$type_generic_pair_float$)$type_generic_pair$);
+    generic_sink.put(1$0); // ty("generic receiver method argument")
+    generic_sink.put_pair((1$0, 1.0$1)$2); // ty("generic receiver tuple method integer field"), ty("generic receiver tuple method float field"), ty("generic receiver tuple method argument")
 }
 "#,
-        &[
-            AnalysisQuery::ty("integer method argument", "type_u64"),
-            AnalysisQuery::ty("float method argument", "type_f32"),
-            AnalysisQuery::ty("tuple method integer field", "type_pair_int"),
-            AnalysisQuery::ty("tuple method float field", "type_pair_float"),
-            AnalysisQuery::ty("tuple method argument", "type_pair"),
-            AnalysisQuery::ty("generic receiver method argument", "type_generic"),
-            AnalysisQuery::ty(
-                "generic receiver tuple method integer field",
-                "type_generic_pair_int",
-            ),
-            AnalysisQuery::ty(
-                "generic receiver tuple method float field",
-                "type_generic_pair_float",
-            ),
-            AnalysisQuery::ty(
-                "generic receiver tuple method argument",
-                "type_generic_pair",
-            ),
-        ],
         expect![[r#"
             u64 // integer method argument
             f32 // float method argument
@@ -1404,7 +1155,7 @@ pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
 
 #[test]
 fn propagates_expected_types_into_generic_call_results() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1434,24 +1185,14 @@ impl Builder {
 }
 
 pub fn use_it(builder: Builder) {
-    let annotated: User = id(missing())$type_annotated$;
-    takes_user(id(missing())$type_arg$);
-    let pair: (User, bool) = (id(missing())$type_pair_user$, true$type_pair_bool$)$type_pair$;
-    let associated: User = Factory::make()$type_associated$;
-    let method: User = builder.build()$type_method$;
-    let unconstrained = id(missing())$type_unconstrained$;
+    let annotated: User = id(missing())$0; // ty("annotated generic call result")
+    takes_user(id(missing())$0); // ty("function argument generic call result")
+    let pair: (User, bool) = (id(missing())$0, true$1)$2; // ty("tuple generic call field"), ty("tuple bool field"), ty("tuple containing generic call")
+    let associated: User = Factory::make()$0; // ty("associated function generic call result")
+    let method: User = builder.build()$0; // ty("method generic call result")
+    let unconstrained = id(missing())$0; // ty("unconstrained generic call result")
 }
 "#,
-        &[
-            AnalysisQuery::ty("annotated generic call result", "type_annotated"),
-            AnalysisQuery::ty("function argument generic call result", "type_arg"),
-            AnalysisQuery::ty("tuple generic call field", "type_pair_user"),
-            AnalysisQuery::ty("tuple bool field", "type_pair_bool"),
-            AnalysisQuery::ty("tuple containing generic call", "type_pair"),
-            AnalysisQuery::ty("associated function generic call result", "type_associated"),
-            AnalysisQuery::ty("method generic call result", "type_method"),
-            AnalysisQuery::ty("unconstrained generic call result", "type_unconstrained"),
-        ],
         expect![[r#"
             nominal struct analysis_generic_call_result_inference[lib]::crate::User // annotated generic call result
             nominal struct analysis_generic_call_result_inference[lib]::crate::User // function argument generic call result
@@ -1467,7 +1208,7 @@ pub fn use_it(builder: Builder) {
 
 #[test]
 fn propagates_expected_types_into_generic_call_result_shapes() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1509,25 +1250,14 @@ impl Builder {
 }
 
 pub fn use_it(builder: Builder) {
-    let free: Vec<User> = make_vec()$type_free$;
-    let associated: Vec<User> = Factory::make_vec()$type_associated$;
-    let method: Vec<User> = builder.build_vec()$type_method$;
-    let option: Option<User> = make_option()$type_option$;
-    let result: Result<User, Error> = make_result()$type_result$;
-    let unconstrained = make_vec()$type_unconstrained$;
+    let free: Vec<User> = make_vec()$0; // ty("free function generic return shape")
+    let associated: Vec<User> = Factory::make_vec()$0; // ty("associated function generic return shape")
+    let method: Vec<User> = builder.build_vec()$0; // ty("method generic return shape")
+    let option: Option<User> = make_option()$0; // ty("single-param generic return shape")
+    let result: Result<User, Error> = make_result()$0; // ty("multi-param generic return shape")
+    let unconstrained = make_vec()$0; // ty("unconstrained generic return shape")
 }
 "#,
-        &[
-            AnalysisQuery::ty("free function generic return shape", "type_free"),
-            AnalysisQuery::ty(
-                "associated function generic return shape",
-                "type_associated",
-            ),
-            AnalysisQuery::ty("method generic return shape", "type_method"),
-            AnalysisQuery::ty("single-param generic return shape", "type_option"),
-            AnalysisQuery::ty("multi-param generic return shape", "type_result"),
-            AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
-        ],
         expect![[r#"
             nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // free function generic return shape
             nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User> // associated function generic return shape
@@ -1541,7 +1271,7 @@ pub fn use_it(builder: Builder) {
 
 #[test]
 fn preserves_live_receiver_self_when_instantiating_method_return() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -1569,10 +1299,9 @@ impl<T> Iter<T> {
 pub fn make_iter<T>(value: T) -> Iter<T> {}
 
 pub fn use_it(user: User, name: Name) {
-    let pair = make_iter(user).pair(name)$type_pair$;
+    let pair = make_iter(user).pair(name)$0; // ty("method Self return")
 }
 "#,
-        &[AnalysisQuery::ty("method Self return", "type_pair")],
         expect![[r#"
             nominal struct analysis_method_self_return_inference[lib]::crate::Pair<nominal struct analysis_method_self_return_inference[lib]::crate::Iter<nominal struct analysis_method_self_return_inference[lib]::crate::User>, nominal struct analysis_method_self_return_inference[lib]::crate::Name> // method Self return
         "#]],
@@ -1581,7 +1310,7 @@ pub fn use_it(user: User, name: Name) {
 
 #[test]
 fn infers_collect_destination_through_trait_obligations() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1641,29 +1370,20 @@ where
 {}
 
 pub fn explicit_destination(def_map: &DefMap) {
-    let imports = def_map.imports().iter().collect::<Vec<_>>()$type_explicit$;
+    let imports = def_map.imports().iter().collect::<Vec<_>>()$0; // ty("explicit collect destination").in_lib("app")
     imports;
 }
 
 pub fn expected_destination(def_map: &DefMap) {
-    let imports: Vec<_> = def_map.imports().iter().collect()$type_expected$;
+    let imports: Vec<_> = def_map.imports().iter().collect()$0; // ty("expected collect destination").in_lib("app")
     imports;
 }
 
 pub fn associated_equality_destination(stream: UserStream) {
-    let users = stream.collect_users::<Vec<_>>()$type_assoc_equality$;
+    let users = stream.collect_users::<Vec<_>>()$0; // ty("associated equality collect destination").in_lib("app")
     users;
 }
 "#,
-        &[
-            AnalysisQuery::ty("explicit collect destination", "type_explicit").in_lib("app"),
-            AnalysisQuery::ty("expected collect destination", "type_expected").in_lib("app"),
-            AnalysisQuery::ty(
-                "associated equality collect destination",
-                "type_assoc_equality",
-            )
-            .in_lib("app"),
-        ],
         expect![[r#"
             nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> // explicit collect destination
             nominal struct alloc[lib]::crate::vec::Vec<&nominal struct storage[lib]::crate::ImportData, nominal struct alloc[lib]::crate::vec::Global> // expected collect destination
@@ -1674,7 +1394,7 @@ pub fn associated_equality_destination(stream: UserStream) {
 
 #[test]
 fn projects_custom_iterator_collect_targets_and_ignores_same_name_methods() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -1732,19 +1452,12 @@ pub fn pairs() -> PairIter {
 pub fn missing<T>() -> T {}
 
 pub fn use_it(users: &[User], same_name: SameNameMap) {
-    let direct_lookup = pairs().collect::<HashMap<_, _>>()$type_direct_lookup$;
-    let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$type_lookup$;
-    let overlapping = pairs().collect::<OverlappingMap<_, _>>()$type_overlapping$;
-    same_name.map(|value| value$type_same_name_map_param$);
+    let direct_lookup = pairs().collect::<HashMap<_, _>>()$0; // ty("direct HashMap collect result").in_lib("app")
+    let lookup = users.iter().map(|user| (user.key(), user.value())).collect::<HashMap<_, _>>()$0; // ty("mapped HashMap collect result").in_lib("app")
+    let overlapping = pairs().collect::<OverlappingMap<_, _>>()$0; // ty("overlapping impl shared guidance").in_lib("app")
+    same_name.map(|value| value$0); // ty("same-name map closure param").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::ty("direct HashMap collect result", "type_direct_lookup").in_lib("app"),
-            AnalysisQuery::ty("mapped HashMap collect result", "type_lookup").in_lib("app"),
-            AnalysisQuery::ty("overlapping impl shared guidance", "type_overlapping").in_lib("app"),
-            AnalysisQuery::ty("same-name map closure param", "type_same_name_map_param")
-                .in_lib("app"),
-        ],
         expect![[r#"
             nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value> // direct HashMap collect result
             nominal struct app[lib]::crate::HashMap<nominal struct app[lib]::crate::Key, nominal struct app[lib]::crate::Value> // mapped HashMap collect result
@@ -1932,9 +1645,7 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
 
 #[test]
 fn explicit_closure_returns_use_their_own_output_types() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("closure_returns");
-
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -1947,39 +1658,25 @@ pub fn output<F: FnOnce() -> R, R>(callback: F) -> R { loop {} }
 pub fn make<T>() -> T { loop {} }
 
 pub fn outer(flag: bool) -> u64 {
-    let number = output(|| return 42)$number$;
-    let unit = output(|| return)$unit$;
+    let number = output(|| return 42)$0; // ty("inferred closure output").in_lib("closure_returns")
+    let unit = output(|| return)$0; // ty("bare closure return").in_lib("closure_returns")
     let mixed = output(|| {
-        if flag { return 1$mixed_return$; }
+        if flag { return 1$0; } // ty("explicit return follows the tail type").in_lib("closure_returns")
         2u16
-    })$mixed$;
+    })$0; // ty("mixed closure output").in_lib("closure_returns")
     let nested = output(|| {
-        let inner = output(|| return true)$inner$;
+        let inner = output(|| return true)$0; // ty("nested closure output").in_lib("closure_returns")
         return 3u8;
-    })$nested$;
+    })$0; // ty("enclosing closure output").in_lib("closure_returns")
     let annotated = output(|| -> f32 {
         let value = 1.0;
-        return value$annotated_return$;
+        return value$0; // ty("annotated closure return").in_lib("closure_returns")
     });
-    let contextual: u16 = output(|| return make()$contextual_return$);
+    let contextual: u16 = output(|| return make()$0); // ty("callable bound constrains returned call").in_lib("closure_returns")
     let restored = 4;
-    return restored$outer_return$;
+    return restored$0; // ty("enclosing function return").in_lib("closure_returns")
 }
 "#,
-        &[
-            ty("inferred closure output", "number"),
-            ty("bare closure return", "unit"),
-            ty("explicit return follows the tail type", "mixed_return"),
-            ty("mixed closure output", "mixed"),
-            ty("nested closure output", "inner"),
-            ty("enclosing closure output", "nested"),
-            ty("annotated closure return", "annotated_return"),
-            ty(
-                "callable bound constrains returned call",
-                "contextual_return",
-            ),
-            ty("enclosing function return", "outer_return"),
-        ],
         expect![[r#"
             i32 // inferred closure output
             () // bare closure return
@@ -1996,11 +1693,7 @@ pub fn outer(flag: bool) -> u64 {
 
 #[test]
 fn infers_closure_params_and_returns_from_callable_bounds() {
-    let ty = |title, marker| {
-        AnalysisQuery::ty(title, marker).in_lib("analysis_callable_closure_bound_inference")
-    };
-
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -2048,57 +1741,28 @@ pub fn make_user(id: Id) -> User {}
 pub fn make_name(id: Id) -> Name {}
 
 pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
-    with_attrs(|attrs| attrs$type_direct_param$.push(attr)$type_direct_param_call$);
-    Factory::with_id(|id| id$type_inherent_assoc$);
-    with_user(|| id(missing())$type_direct_return_body$);
+    with_attrs(|attrs| attrs$0.push(attr)$1); // ty("direct callable closure param").in_lib("analysis_callable_closure_bound_inference"), ty("direct callable closure method call").in_lib("analysis_callable_closure_bound_inference")
+    Factory::with_id(|id| id$0); // ty("direct closure inherent associated param").in_lib("analysis_callable_closure_bound_inference")
+    with_user(|| id(missing())$0); // ty("direct callable closure return body").in_lib("analysis_callable_closure_bound_inference")
 
     visit(user, |user| {
-        user$type_generic_inline_param$.name()$type_generic_inline_call$;
+        user$0.name()$1; // ty("inline generic closure param").in_lib("analysis_callable_closure_bound_inference"), ty("inline generic closure method call").in_lib("analysis_callable_closure_bound_inference")
     });
     visit_all(users, |user| {
-        user$type_generic_where_param$.name()$type_generic_where_call$;
+        user$0.name()$1; // ty("where generic closure param").in_lib("analysis_callable_closure_bound_inference"), ty("where generic closure method call").in_lib("analysis_callable_closure_bound_inference")
     });
 
-    let applied = apply(seed, |id| make_user(id))$type_generic_result$;
+    let applied = apply(seed, |id| make_user(id))$0; // ty("generic closure return result").in_lib("analysis_callable_closure_bound_inference")
     let stored_f = |id| make_user(id);
-    let stored = apply(seed, stored_f)$type_stored_result$;
-    let maybe = try_apply(seed, |id| Option::Some(make_user(id)))$type_nested_result$;
+    let stored = apply(seed, stored_f)$0; // ty("stored generic closure return result").in_lib("analysis_callable_closure_bound_inference")
+    let maybe = try_apply(seed, |id| Option::Some(make_user(id)))$0; // ty("nested generic closure return result").in_lib("analysis_callable_closure_bound_inference")
     let conflict = apply(seed, |id| if flag {
         make_user(id)
     } else {
         make_name(id)
-    })$type_conflict$;
+    })$0; // ty("conflicting generic closure return result").in_lib("analysis_callable_closure_bound_inference")
 }
 "#,
-        &[
-            ty("direct callable closure param", "type_direct_param"),
-            ty(
-                "direct callable closure method call",
-                "type_direct_param_call",
-            ),
-            ty(
-                "direct closure inherent associated param",
-                "type_inherent_assoc",
-            ),
-            ty(
-                "direct callable closure return body",
-                "type_direct_return_body",
-            ),
-            ty("inline generic closure param", "type_generic_inline_param"),
-            ty(
-                "inline generic closure method call",
-                "type_generic_inline_call",
-            ),
-            ty("where generic closure param", "type_generic_where_param"),
-            ty(
-                "where generic closure method call",
-                "type_generic_where_call",
-            ),
-            ty("generic closure return result", "type_generic_result"),
-            ty("stored generic closure return result", "type_stored_result"),
-            ty("nested generic closure return result", "type_nested_result"),
-            ty("conflicting generic closure return result", "type_conflict"),
-        ],
         expect![[r#"
             &mut nominal struct alloc[lib]::crate::vec::Vec<nominal struct analysis_callable_closure_bound_inference[lib]::crate::Attr, nominal struct alloc[lib]::crate::vec::Global> // direct callable closure param
             () // direct callable closure method call
@@ -2118,7 +1782,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 
 #[test]
 fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -2159,25 +1823,13 @@ pub fn id<T>(value: T) -> T {}
 pub fn missing<T>() -> T {}
 
 pub fn use_it(users: &[User], searcher: Searcher) {
-    let mapped = users.iter().map(|user| user$type_map_param$.name()$type_map_call$);
-    let filtered = users.iter().filter(|user| user$type_filter_param$.is_active()$type_filter_call$);
-    users.iter().find(|user| user$type_find_param$.is_active()$type_find_call$);
-    users.iter().produce(|| id(missing())$type_produce_body$);
-    searcher.find(|value| value$type_same_name_find_param$);
+    let mapped = users.iter().map(|user| user$0.name()$1); // ty("iterator map closure param").in_lib("app"), ty("iterator map closure method call").in_lib("app")
+    let filtered = users.iter().filter(|user| user$0.is_active()$1); // ty("iterator filter closure param").in_lib("app"), ty("iterator filter closure method call").in_lib("app")
+    users.iter().find(|user| user$0.is_active()$1); // ty("iterator find closure param").in_lib("app"), ty("iterator find closure method call").in_lib("app")
+    users.iter().produce(|| id(missing())$0); // ty("iterator callable return body").in_lib("app")
+    searcher.find(|value| value$0); // ty("same-name find closure param").in_lib("app")
 }
 "#,
-        &[
-            AnalysisQuery::ty("iterator map closure param", "type_map_param").in_lib("app"),
-            AnalysisQuery::ty("iterator map closure method call", "type_map_call").in_lib("app"),
-            AnalysisQuery::ty("iterator filter closure param", "type_filter_param").in_lib("app"),
-            AnalysisQuery::ty("iterator filter closure method call", "type_filter_call")
-                .in_lib("app"),
-            AnalysisQuery::ty("iterator find closure param", "type_find_param").in_lib("app"),
-            AnalysisQuery::ty("iterator find closure method call", "type_find_call").in_lib("app"),
-            AnalysisQuery::ty("iterator callable return body", "type_produce_body").in_lib("app"),
-            AnalysisQuery::ty("same-name find closure param", "type_same_name_find_param")
-                .in_lib("app"),
-        ],
         expect![[r#"
             &nominal struct app[lib]::crate::User // iterator map closure param
             nominal struct app[lib]::crate::Name // iterator map closure method call
@@ -2193,7 +1845,7 @@ pub fn use_it(users: &[User], searcher: Searcher) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -2226,16 +1878,10 @@ pub fn adapter<F>(f: F) -> Adapter<F> {}
 pub fn make_name() -> Name {}
 
 pub fn use_it(not_callable: NotCallable) {
-    let produced = adapter(|| make_name()).produce()$type_produced$;
-    let unknown = adapter(not_callable).produce()$type_unknown$;
+    let produced = adapter(|| make_name()).produce()$0; // ty("callable impl where projection").in_lib("analysis_callable_impl_where_projection")
+    let unknown = adapter(not_callable).produce()$0; // ty("non-callable impl where projection").in_lib("analysis_callable_impl_where_projection")
 }
 "#,
-        &[
-            AnalysisQuery::ty("callable impl where projection", "type_produced")
-                .in_lib("analysis_callable_impl_where_projection"),
-            AnalysisQuery::ty("non-callable impl where projection", "type_unknown")
-                .in_lib("analysis_callable_impl_where_projection"),
-        ],
         expect![[r#"
             nominal struct analysis_callable_impl_where_projection[lib]::crate::Name // callable impl where projection
             <unknown> // non-callable impl where projection
@@ -2245,7 +1891,7 @@ pub fn use_it(not_callable: NotCallable) {
 
 #[test]
 fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -2330,25 +1976,11 @@ where
 }
 
 pub fn use_it(source: Source<User>) {
-    let mapped = source.map(|user| user.name()).get()$type_mapped$;
-    let ref_mapped = source.map_ref(|user| user.name()).get()$type_ref_mapped$;
-    let marked = source.map_marked(|user| user.name()).get()$type_marked$;
+    let mapped = source.map(|user| user.name()).get()$0; // ty("callable impl where associated input projection").in_lib("analysis_callable_impl_where_assoc_input_projection")
+    let ref_mapped = source.map_ref(|user| user.name()).get()$0; // ty("callable impl where referenced associated input projection").in_lib("analysis_callable_impl_where_assoc_input_projection")
+    let marked = source.map_marked(|user| user.name()).get()$0; // ty("unsupported impl where projection").in_lib("analysis_callable_impl_where_assoc_input_projection")
 }
 "#,
-        &[
-            AnalysisQuery::ty(
-                "callable impl where associated input projection",
-                "type_mapped",
-            )
-            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
-            AnalysisQuery::ty(
-                "callable impl where referenced associated input projection",
-                "type_ref_mapped",
-            )
-            .in_lib("analysis_callable_impl_where_assoc_input_projection"),
-            AnalysisQuery::ty("unsupported impl where projection", "type_marked")
-                .in_lib("analysis_callable_impl_where_assoc_input_projection"),
-        ],
         expect![[r#"
             nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name // callable impl where associated input projection
             nominal struct analysis_callable_impl_where_assoc_input_projection[lib]::crate::Name // callable impl where referenced associated input projection
@@ -2359,7 +1991,7 @@ pub fn use_it(source: Source<User>) {
 
 #[test]
 fn propagates_expected_types_through_result_expressions() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2380,28 +2012,18 @@ pub fn id<T>(value: T) -> T {}
 pub fn missing<T>() -> T {}
 
 pub fn use_it(flag: bool, kind: Kind, user: User) {
-    let block_user: User = { id(missing())$type_block_inner$ }$type_block$;
+    let block_user: User = { id(missing())$0 }$1; // ty("block generic call result"), ty("block expression")
     let if_user: User = if flag {
-        id(missing())$type_if_then$
+        id(missing())$0 // ty("if then generic call result")
     } else {
-        user$type_if_else$
-    }$type_if$;
+        user$0 // ty("if else result")
+    }$0; // ty("if expression")
     let match_user: User = match kind {
-        Kind::A => id(missing())$type_match_a$,
-        Kind::B => user$type_match_b$,
-    }$type_match$;
+        Kind::A => id(missing())$0, // ty("match arm generic call result")
+        Kind::B => user$0, // ty("match arm known result")
+    }$0; // ty("match expression")
 }
 "#,
-        &[
-            AnalysisQuery::ty("block generic call result", "type_block_inner"),
-            AnalysisQuery::ty("block expression", "type_block"),
-            AnalysisQuery::ty("if then generic call result", "type_if_then"),
-            AnalysisQuery::ty("if else result", "type_if_else"),
-            AnalysisQuery::ty("if expression", "type_if"),
-            AnalysisQuery::ty("match arm generic call result", "type_match_a"),
-            AnalysisQuery::ty("match arm known result", "type_match_b"),
-            AnalysisQuery::ty("match expression", "type_match"),
-        ],
         expect![[r#"
             nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // block generic call result
             nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User // block expression
@@ -2417,7 +2039,7 @@ pub fn use_it(flag: bool, kind: Kind, user: User) {
 
 #[test]
 fn treats_explicit_call_wildcard_generics_as_inference_variables() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2439,30 +2061,14 @@ impl<T> Vec<T> {
 pub fn make<T>() -> T {}
 
 pub fn use_it(user: User) {
-    let concrete = make::<Vec<User>>()$type_concrete$;
-    let direct: User = make::<_>()$type_direct$;
-    let annotated: Vec<User> = make::<Vec<_>>()$type_annotated$;
-    let mut later = make::<Vec<_>>()$type_later_initializer$;
+    let concrete = make::<Vec<User>>()$0; // ty("explicit concrete generic arg")
+    let direct: User = make::<_>()$0; // ty("explicit root wildcard constrained by annotation")
+    let annotated: Vec<User> = make::<Vec<_>>()$0; // ty("explicit wildcard constrained by annotation")
+    let mut later = make::<Vec<_>>()$0; // ty("explicit wildcard initializer")
     later.push(user);
-    later$type_later_read$;
+    later$0; // ty("explicit wildcard read after method evidence")
 }
 "#,
-        &[
-            AnalysisQuery::ty("explicit concrete generic arg", "type_concrete"),
-            AnalysisQuery::ty(
-                "explicit root wildcard constrained by annotation",
-                "type_direct",
-            ),
-            AnalysisQuery::ty(
-                "explicit wildcard constrained by annotation",
-                "type_annotated",
-            ),
-            AnalysisQuery::ty("explicit wildcard initializer", "type_later_initializer"),
-            AnalysisQuery::ty(
-                "explicit wildcard read after method evidence",
-                "type_later_read",
-            ),
-        ],
         expect![[r#"
             nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User> // explicit concrete generic arg
             nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User // explicit root wildcard constrained by annotation
@@ -2475,7 +2081,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn uses_call_arguments_as_function_generic_evidence() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2498,37 +2104,18 @@ pub fn missing<T>() -> T {}
 pub fn takes_vec(value: Vec<User>) {}
 
 pub fn use_it(user: User) {
-    let direct = id(user)$type_direct$;
-    let from_call = id(make_user())$type_from_call$;
-    let wrapped = wrap(user)$type_wrapped$;
-    let explicit = wrap::<_>(user)$type_explicit$;
-    let byte = id(1u8)$type_byte$;
-    let flag = id(true)$type_flag$;
-    let array = array([true; 3])$type_array$;
+    let direct = id(user)$0; // ty("direct generic arg")
+    let from_call = id(make_user())$0; // ty("generic arg from call result")
+    let wrapped = wrap(user)$0; // ty("wrapped generic arg")
+    let explicit = wrap::<_>(user)$0; // ty("explicit wildcard generic arg")
+    let byte = id(1u8)$0; // ty("independent byte call")
+    let flag = id(true)$0; // ty("independent bool call")
+    let array = array([true; 3])$0; // ty("inferred array element and length")
 
-    let from_return: User = id(missing()$type_inner_from_return$)$type_outer_from_return$;
-    takes_vec(wrap::<_>(missing()$type_inner_from_arg$)$type_outer_arg$);
+    let from_return: User = id(missing()$0)$1; // ty("inner generic call solved from return"), ty("outer generic call solved from return")
+    takes_vec(wrap::<_>(missing()$0)$1); // ty("inner generic call solved from arg"), ty("outer generic call solved from arg")
 }
 "#,
-        &[
-            AnalysisQuery::ty("direct generic arg", "type_direct"),
-            AnalysisQuery::ty("generic arg from call result", "type_from_call"),
-            AnalysisQuery::ty("wrapped generic arg", "type_wrapped"),
-            AnalysisQuery::ty("explicit wildcard generic arg", "type_explicit"),
-            AnalysisQuery::ty("independent byte call", "type_byte"),
-            AnalysisQuery::ty("independent bool call", "type_flag"),
-            AnalysisQuery::ty("inferred array element and length", "type_array"),
-            AnalysisQuery::ty(
-                "inner generic call solved from return",
-                "type_inner_from_return",
-            ),
-            AnalysisQuery::ty(
-                "outer generic call solved from return",
-                "type_outer_from_return",
-            ),
-            AnalysisQuery::ty("inner generic call solved from arg", "type_inner_from_arg"),
-            AnalysisQuery::ty("outer generic call solved from arg", "type_outer_arg"),
-        ],
         expect![[r#"
             nominal struct analysis_call_argument_generic_inference[lib]::crate::User // direct generic arg
             nominal struct analysis_call_argument_generic_inference[lib]::crate::User // generic arg from call result
@@ -2547,7 +2134,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn alias_placeholders_share_later_evidence_between_components() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2561,15 +2148,11 @@ fn missing<T>() -> T { loop {} }
 fn require(_: u16) {}
 
 pub fn use_it() {
-    let $pair$pair: Pair<_> = missing();
-    let $right$right = pair.1;
+    let $0pair: Pair<_> = missing(); // ty("alias shares its inferred argument")
+    let $0right = pair.1; // ty("second component learns from the first")
     require(pair.0);
 }
 "#,
-        &[
-            AnalysisQuery::ty("alias shares its inferred argument", "pair"),
-            AnalysisQuery::ty("second component learns from the first", "right"),
-        ],
         expect![[r#"
             (u16, u16) // alias shares its inferred argument
             u16 // second component learns from the first
@@ -2579,7 +2162,7 @@ pub fn use_it() {
 
 #[test]
 fn propagates_associated_function_prefix_generics() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2625,59 +2208,17 @@ impl<'value> Label for Guard<'value> {
 }
 
 pub fn use_it(user: User) {
-    let inferred: Vec<User> = Vec::new()$type_inferred$;
-    let explicit = Vec::<User>::new()$type_explicit$;
-    let wildcard = Vec::<_>::new()$type_wildcard$;
-    let singleton = Vec::singleton(user)$type_singleton$;
-    let borrowed: Borrowed<User> = Borrowed::ne$hover_lifetime_new$w(&user)$type_lifetime_constructor$;
-    let explicit_borrowed = Borrowed::<User>::new(&user)$type_lifetime_explicit_prefix$;
-    let chained = Borrowed::new(&user).into_$hover_lifetime_method$value();
-    let guard = Guard::new(&user)$type_lifetime_only_constructor$;
-    let label = Guard::new(&user).label()$type_lifetime_trait_method$;
+    let inferred: Vec<User> = Vec::new()$0; // ty("associated function inferred prefix generic")
+    let explicit = Vec::<User>::new()$0; // ty("associated function explicit prefix generic")
+    let wildcard = Vec::<_>::new()$0; // ty("associated function wildcard prefix generic")
+    let singleton = Vec::singleton(user)$0; // ty("associated function impl generic argument")
+    let borrowed: Borrowed<User> = Borrowed::ne$0w(&user)$1; // hover("hover lifetime generic associated constructor"), ty("lifetime generic associated constructor result")
+    let explicit_borrowed = Borrowed::<User>::new(&user)$0; // ty("lifetime generic explicit prefix constructor result")
+    let chained = Borrowed::new(&user).into_$0value(); // hover("hover method after lifetime generic constructor")
+    let guard = Guard::new(&user)$0; // ty("lifetime-only associated constructor result")
+    let label = Guard::new(&user).label()$0; // ty("trait method after lifetime-only constructor result")
 }
 "#,
-        &[
-            AnalysisQuery::ty(
-                "associated function inferred prefix generic",
-                "type_inferred",
-            ),
-            AnalysisQuery::ty(
-                "associated function explicit prefix generic",
-                "type_explicit",
-            ),
-            AnalysisQuery::ty(
-                "associated function wildcard prefix generic",
-                "type_wildcard",
-            ),
-            AnalysisQuery::ty(
-                "associated function impl generic argument",
-                "type_singleton",
-            ),
-            AnalysisQuery::hover(
-                "hover lifetime generic associated constructor",
-                "hover_lifetime_new",
-            ),
-            AnalysisQuery::ty(
-                "lifetime generic associated constructor result",
-                "type_lifetime_constructor",
-            ),
-            AnalysisQuery::ty(
-                "lifetime generic explicit prefix constructor result",
-                "type_lifetime_explicit_prefix",
-            ),
-            AnalysisQuery::hover(
-                "hover method after lifetime generic constructor",
-                "hover_lifetime_method",
-            ),
-            AnalysisQuery::ty(
-                "lifetime-only associated constructor result",
-                "type_lifetime_only_constructor",
-            ),
-            AnalysisQuery::ty(
-                "trait method after lifetime-only constructor result",
-                "type_lifetime_trait_method",
-            ),
-        ],
         expect![[r#"
             nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // associated function inferred prefix generic
             nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User> // associated function explicit prefix generic
@@ -2711,7 +2252,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn carries_generic_variables_through_simple_bindings() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2731,28 +2272,14 @@ impl<T> Vec<T> {
 }
 
 pub fn use_it() {
-    let values = Vec::new()$type_initializer$;
-    let typed: Vec<User> = values$type_constrained_read$;
-    let alias = values$type_alias_read$;
-    let later: Vec<User> = alias$type_alias_constrained_read$;
-    let wrapped = (Vec::new(),)$type_wrapped_initializer$;
-    let wrapped_later: (Vec<User>,) = wrapped$type_wrapped_read$;
+    let values = Vec::new()$0; // ty("binding initializer generic result")
+    let typed: Vec<User> = values$0; // ty("binding read constrained by annotation")
+    let alias = values$0; // ty("binding read through alias")
+    let later: Vec<User> = alias$0; // ty("alias read constrained by annotation")
+    let wrapped = (Vec::new(),)$0; // ty("wrapped binding initializer")
+    let wrapped_later: (Vec<User>,) = wrapped$0; // ty("wrapped binding read")
 }
 "#,
-        &[
-            AnalysisQuery::ty("binding initializer generic result", "type_initializer"),
-            AnalysisQuery::ty(
-                "binding read constrained by annotation",
-                "type_constrained_read",
-            ),
-            AnalysisQuery::ty("binding read through alias", "type_alias_read"),
-            AnalysisQuery::ty(
-                "alias read constrained by annotation",
-                "type_alias_constrained_read",
-            ),
-            AnalysisQuery::ty("wrapped binding initializer", "type_wrapped_initializer"),
-            AnalysisQuery::ty("wrapped binding read", "type_wrapped_read"),
-        ],
         expect![[r#"
             nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // binding initializer generic result
             nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User> // binding read constrained by annotation
@@ -2766,7 +2293,7 @@ pub fn use_it() {
 
 #[test]
 fn constrains_receiver_generic_variables_from_method_arguments() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2799,52 +2326,36 @@ impl Wrapper<User> {
 }
 
 pub fn user_value(user: User) {
-    let mut values = Vec::new()$type_user_initializer$;
+    let mut values = Vec::new()$0; // ty("user receiver initializer")
     values.push(user);
-    values$type_user_read$;
+    values$0; // ty("user receiver read")
 }
 
 pub fn suffixed_integer() {
-    let mut values = Vec::new()$type_u64_initializer$;
+    let mut values = Vec::new()$0; // ty("u64 receiver initializer")
     values.push(10u64);
-    values$type_u64_read$;
+    values$0; // ty("u64 receiver read")
 }
 
 pub fn unsuffixed_integer() {
-    let mut values = Vec::new()$type_i32_initializer$;
+    let mut values = Vec::new()$0; // ty("i32 receiver initializer")
     values.push(10);
-    values$type_i32_read$;
+    values$0; // ty("i32 receiver read")
 }
 
 pub fn conflicting() {
-    let mut values = Vec::new()$type_conflict_initializer$;
+    let mut values = Vec::new()$0; // ty("conflicting receiver initializer")
     values.push(10u64);
-    values.push(false$type_conflict_arg$);
-    values$type_conflict_read$;
+    values.push(false$0); // ty("conflicting receiver argument")
+    values$0; // ty("conflicting receiver read")
 }
 
 pub fn selected_inherent_receiver() {
-    let wrapper = Wrapper::new()$type_wrapper_initializer$;
+    let wrapper = Wrapper::new()$0; // ty("selected receiver initializer")
     wrapper.touch();
-    wrapper$type_wrapper_read$;
+    wrapper$0; // ty("selected receiver read")
 }
 "#,
-        &[
-            AnalysisQuery::ty("user receiver initializer", "type_user_initializer"),
-            AnalysisQuery::ty("user receiver read", "type_user_read"),
-            AnalysisQuery::ty("u64 receiver initializer", "type_u64_initializer"),
-            AnalysisQuery::ty("u64 receiver read", "type_u64_read"),
-            AnalysisQuery::ty("i32 receiver initializer", "type_i32_initializer"),
-            AnalysisQuery::ty("i32 receiver read", "type_i32_read"),
-            AnalysisQuery::ty(
-                "conflicting receiver initializer",
-                "type_conflict_initializer",
-            ),
-            AnalysisQuery::ty("conflicting receiver argument", "type_conflict_arg"),
-            AnalysisQuery::ty("conflicting receiver read", "type_conflict_read"),
-            AnalysisQuery::ty("selected receiver initializer", "type_wrapper_initializer"),
-            AnalysisQuery::ty("selected receiver read", "type_wrapper_read"),
-        ],
         expect![[r#"
             nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // user receiver initializer
             nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User> // user receiver read
@@ -2863,7 +2374,7 @@ pub fn selected_inherent_receiver() {
 
 #[test]
 fn carries_generic_variables_through_member_projections() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2892,37 +2403,23 @@ impl<T> Vec<T> {
 }
 
 pub fn declared_field() {
-    let boxed = Boxed::new()$type_boxed_initializer$;
-    let _typed: User = boxed.value$type_boxed_field$;
-    boxed$type_boxed_read$;
+    let boxed = Boxed::new()$0; // ty("declared field owner initializer")
+    let _typed: User = boxed.value$0; // ty("declared field projection")
+    boxed$0; // ty("declared field owner read")
 }
 
 pub fn declared_field_through_ref() {
-    let boxed = Boxed::new()$type_ref_boxed_initializer$;
-    let _typed: User = (&boxed).value$type_ref_boxed_field$;
-    boxed$type_ref_boxed_read$;
+    let boxed = Boxed::new()$0; // ty("reference field owner initializer")
+    let _typed: User = (&boxed).value$0; // ty("reference field projection")
+    boxed$0; // ty("reference field owner read")
 }
 
 pub fn tuple_field(user: User) {
-    let pair = (Vec::new(),)$type_pair_initializer$;
-    pair.0$type_pair_field$.push(user);
-    pair$type_pair_read$;
+    let pair = (Vec::new(),)$0; // ty("tuple owner initializer")
+    pair.0$0.push(user); // ty("tuple field projection")
+    pair$0; // ty("tuple owner read")
 }
 "#,
-        &[
-            AnalysisQuery::ty("declared field owner initializer", "type_boxed_initializer"),
-            AnalysisQuery::ty("declared field projection", "type_boxed_field"),
-            AnalysisQuery::ty("declared field owner read", "type_boxed_read"),
-            AnalysisQuery::ty(
-                "reference field owner initializer",
-                "type_ref_boxed_initializer",
-            ),
-            AnalysisQuery::ty("reference field projection", "type_ref_boxed_field"),
-            AnalysisQuery::ty("reference field owner read", "type_ref_boxed_read"),
-            AnalysisQuery::ty("tuple owner initializer", "type_pair_initializer"),
-            AnalysisQuery::ty("tuple field projection", "type_pair_field"),
-            AnalysisQuery::ty("tuple owner read", "type_pair_read"),
-        ],
         expect![[r#"
             nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User> // declared field owner initializer
             nominal struct analysis_member_projection_generic_inference[lib]::crate::User // declared field projection
@@ -2939,7 +2436,7 @@ pub fn tuple_field(user: User) {
 
 #[test]
 fn carries_generic_variables_through_structural_patterns() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -2960,34 +2457,23 @@ impl<T> Vec<T> {
 }
 
 pub fn tuple_pattern(user: User) {
-    let (values,) = (Vec::new(),)$type_tuple_initializer$;
+    let (values,) = (Vec::new(),)$0; // ty("tuple pattern initializer")
     values.push(user);
-    values$type_tuple_read$;
+    values$0; // ty("tuple pattern binding read")
 }
 
 pub fn reference_pattern(user: User) {
-    let &(values,) = (&(Vec::new(),))$type_reference_initializer$;
+    let &(values,) = (&(Vec::new(),))$0; // ty("reference pattern initializer")
     values.push(user);
-    values$type_reference_read$;
+    values$0; // ty("reference pattern binding read")
 }
 
 pub fn slice_pattern(user: User) {
-    let [values, ..] = [Vec::new()]$type_slice_initializer$;
+    let [values, ..] = [Vec::new()]$0; // ty("slice pattern initializer")
     values.push(user);
-    values$type_slice_read$;
+    values$0; // ty("slice pattern binding read")
 }
 "#,
-        &[
-            AnalysisQuery::ty("tuple pattern initializer", "type_tuple_initializer"),
-            AnalysisQuery::ty("tuple pattern binding read", "type_tuple_read"),
-            AnalysisQuery::ty(
-                "reference pattern initializer",
-                "type_reference_initializer",
-            ),
-            AnalysisQuery::ty("reference pattern binding read", "type_reference_read"),
-            AnalysisQuery::ty("slice pattern initializer", "type_slice_initializer"),
-            AnalysisQuery::ty("slice pattern binding read", "type_slice_read"),
-        ],
         expect![[r#"
             (nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,) // tuple pattern initializer
             nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User> // tuple pattern binding read
@@ -3001,9 +2487,7 @@ pub fn slice_pattern(user: User) {
 
 #[test]
 fn projects_borrowed_patterns_through_live_type_variables() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_borrowed_patterns");
-
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3018,11 +2502,11 @@ pub struct Holder { pub account: Account<User>, pub optional: Option<User> }
 
 pub fn borrowed(holder: &Holder) {
     let Account { user } = &&holder.account;
-    user$type_record_binding$;
-    user.count$type_record_field$;
+    user$0; // ty("borrowed record binding").in_lib("analysis_borrowed_patterns")
+    user.count$0; // ty("borrowed record field").in_lib("analysis_borrowed_patterns")
     if let Some(user) = &holder.optional {
-        user$type_variant_binding$;
-        user.count$type_variant_field$;
+        user$0; // ty("borrowed variant binding").in_lib("analysis_borrowed_patterns")
+        user.count$0; // ty("borrowed variant field").in_lib("analysis_borrowed_patterns")
     }
 }
 
@@ -3030,11 +2514,11 @@ pub fn apply<F: FnOnce(Holder)>(f: F) {}
 pub fn deferred() {
     apply((|holder| {
         let Account { user } = &holder.account;
-        user$type_deferred_record_binding$;
-        user.count$type_deferred_record_field$;
+        user$0; // ty("deferred borrowed record binding").in_lib("analysis_borrowed_patterns")
+        user.count$0; // ty("deferred borrowed record field").in_lib("analysis_borrowed_patterns")
         if let Some(user) = &holder.optional {
-            user$type_deferred_variant_binding$;
-            user.count$type_deferred_variant_field$;
+            user$0; // ty("deferred borrowed variant binding").in_lib("analysis_borrowed_patterns")
+            user.count$0; // ty("deferred borrowed variant field").in_lib("analysis_borrowed_patterns")
         }
     }));
 }
@@ -3042,44 +2526,18 @@ pub fn deferred() {
 pub fn account<T>() -> Account<T> { loop {} }
 pub fn accept(user: &User) {}
 pub fn inferred_field() {
-    let Account { user } = (&account())$type_generic_initializer$;
+    let Account { user } = (&account())$0; // ty("inferred borrowed initializer").in_lib("analysis_borrowed_patterns")
     accept(user);
-    user.count$type_generic_field$;
+    user.count$0; // ty("inferred borrowed field").in_lib("analysis_borrowed_patterns")
 }
 
 pub fn borrowed_mut(holder: &mut Holder) {
     let Account { user } = &mut holder.account;
-    user$type_mutable_binding$;
+    user$0; // ty("mutable borrowed binding").in_lib("analysis_borrowed_patterns")
     let Account { user } = &&mut holder.account;
-    user$type_shared_binding$;
+    user$0; // ty("shared borrow of mutable reference").in_lib("analysis_borrowed_patterns")
 }
 "#,
-        &[
-            ty("borrowed record binding", "type_record_binding"),
-            ty("borrowed record field", "type_record_field"),
-            ty("borrowed variant binding", "type_variant_binding"),
-            ty("borrowed variant field", "type_variant_field"),
-            ty(
-                "deferred borrowed record binding",
-                "type_deferred_record_binding",
-            ),
-            ty(
-                "deferred borrowed record field",
-                "type_deferred_record_field",
-            ),
-            ty(
-                "deferred borrowed variant binding",
-                "type_deferred_variant_binding",
-            ),
-            ty(
-                "deferred borrowed variant field",
-                "type_deferred_variant_field",
-            ),
-            ty("inferred borrowed initializer", "type_generic_initializer"),
-            ty("inferred borrowed field", "type_generic_field"),
-            ty("mutable borrowed binding", "type_mutable_binding"),
-            ty("shared borrow of mutable reference", "type_shared_binding"),
-        ],
         expect![[r#"
             &nominal struct analysis_borrowed_patterns[lib]::crate::User // borrowed record binding
             u64 // borrowed record field
@@ -3099,7 +2557,7 @@ pub fn borrowed_mut(holder: &mut Holder) {
 
 #[test]
 fn uses_simple_assignments_as_equality_evidence() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3114,16 +2572,11 @@ pub fn missing<T>() -> T {}
 pub fn id<T>(value: T) -> T {}
 
 pub fn use_it(user: User) {
-    let mut value = id(missing()$type_missing$)$type_initializer$;
+    let mut value = id(missing()$0)$1; // ty("assignment missing argument"), ty("assignment initializer")
     value = user;
-    value$type_read$;
+    value$0; // ty("assignment binding read")
 }
 "#,
-        &[
-            AnalysisQuery::ty("assignment missing argument", "type_missing"),
-            AnalysisQuery::ty("assignment initializer", "type_initializer"),
-            AnalysisQuery::ty("assignment binding read", "type_read"),
-        ],
         expect![[r#"
             nominal struct analysis_assignment_generic_inference[lib]::crate::User // assignment missing argument
             nominal struct analysis_assignment_generic_inference[lib]::crate::User // assignment initializer
@@ -3134,7 +2587,7 @@ pub fn use_it(user: User) {
 
 #[test]
 fn infers_enum_variant_payload_generics_bidirectionally() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3171,31 +2624,16 @@ pub enum Borrowed<'a, T, const N: usize> {
 use Borrowed::Array;
 
 pub fn use_it(user: User, error: Error) {
-    let slot = Slot::<u64>::Put(1$type_payload$)$type_slot$;
+    let slot = Slot::<u64>::Put(1$0)$1; // ty("enum variant explicit generic payload"), ty("enum variant explicit generic result")
 
-    let maybe = Option::Some(user)$type_maybe$;
-    let result = Result::Ok(error)$type_result$;
+    let maybe = Option::Some(user)$0; // ty("option generic variant result")
+    let result = Result::Ok(error)$0; // ty("result generic variant result")
 
-    let _action = Action::Set(1$type_action_int$, 1.0$type_action_float$);
-    let _pair = Action::Pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
-    let borrowed = Array(&[user; 3])$type_imported_variant$;
+    let _action = Action::Set(1$0, 1.0$1); // ty("enum variant integer payload"), ty("enum variant float payload")
+    let _pair = Action::Pair((1$0, 1.0$1)$2); // ty("enum variant tuple integer field"), ty("enum variant tuple float field"), ty("enum variant tuple payload")
+    let borrowed = Array(&[user; 3])$0; // ty("imported variant retains all generic kinds")
 }
 "#,
-        &[
-            AnalysisQuery::ty("enum variant explicit generic payload", "type_payload"),
-            AnalysisQuery::ty("enum variant explicit generic result", "type_slot"),
-            AnalysisQuery::ty("option generic variant result", "type_maybe"),
-            AnalysisQuery::ty("result generic variant result", "type_result"),
-            AnalysisQuery::ty("enum variant integer payload", "type_action_int"),
-            AnalysisQuery::ty("enum variant float payload", "type_action_float"),
-            AnalysisQuery::ty("enum variant tuple integer field", "type_pair_int"),
-            AnalysisQuery::ty("enum variant tuple float field", "type_pair_float"),
-            AnalysisQuery::ty("enum variant tuple payload", "type_pair"),
-            AnalysisQuery::ty(
-                "imported variant retains all generic kinds",
-                "type_imported_variant",
-            ),
-        ],
         expect![[r#"
             u64 // enum variant explicit generic payload
             nominal enum analysis_enum_payload_inference[lib]::crate::Slot<u64> // enum variant explicit generic result
@@ -3213,7 +2651,7 @@ pub fn use_it(user: User, error: Error) {
 
 #[test]
 fn infers_record_fields_bidirectionally() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3253,32 +2691,20 @@ pub fn id<T>(value: T) -> T {}
 
 pub fn use_it(user: User, error: Error) {
     let _primitive = PrimitiveFields {
-        left: 1$type_left$,
-        right: 1.0$type_right$,
-        nested: (1$type_nested_int$, 1.0$type_nested_float$)$type_nested$,
+        left: 1$0, // ty("record integer field initializer")
+        right: 1.0$0, // ty("record float field initializer")
+        nested: (1$0, 1.0$1)$2, // ty("record tuple integer field"), ty("record tuple float field"), ty("record tuple field initializer")
     };
     let _user_pair = UserPair {
-        left: id(user)$type_user_field$,
+        left: id(user)$0, // ty("record generic call field initializer")
     };
 
-    let pair = Pair { left: user }$type_pair$;
-    let pair2 = Pair2 { left: user, right: error }$type_pair2$;
-    let explicit = Pair::<_> { left: error }$type_explicit$;
-    let conflict = Same { left: user, right: error }$type_conflict$;
+    let pair = Pair { left: user }$0; // ty("record generic field result")
+    let pair2 = Pair2 { left: user, right: error }$0; // ty("record two generic field result")
+    let explicit = Pair::<_> { left: error }$0; // ty("record wildcard generic field result")
+    let conflict = Same { left: user, right: error }$0; // ty("record conflicting generic field result")
 }
 "#,
-        &[
-            AnalysisQuery::ty("record integer field initializer", "type_left"),
-            AnalysisQuery::ty("record float field initializer", "type_right"),
-            AnalysisQuery::ty("record tuple integer field", "type_nested_int"),
-            AnalysisQuery::ty("record tuple float field", "type_nested_float"),
-            AnalysisQuery::ty("record tuple field initializer", "type_nested"),
-            AnalysisQuery::ty("record generic call field initializer", "type_user_field"),
-            AnalysisQuery::ty("record generic field result", "type_pair"),
-            AnalysisQuery::ty("record two generic field result", "type_pair2"),
-            AnalysisQuery::ty("record wildcard generic field result", "type_explicit"),
-            AnalysisQuery::ty("record conflicting generic field result", "type_conflict"),
-        ],
         expect![[r#"
             u64 // record integer field initializer
             f32 // record float field initializer
@@ -3296,7 +2722,7 @@ pub fn use_it(user: User, error: Error) {
 
 #[test]
 fn late_associated_type_evidence_reaches_destructured_bindings_and_members() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3317,19 +2743,13 @@ impl User { pub fn name(&self) -> Name {} }
 
 pub fn use_it() {
     let source = missing();
-    let (user,) = wrap(source)$type_wrapped$;
-    let field = user.name$type_field$;
-    let method = user.name()$type_method$;
+    let (user,) = wrap(source)$0; // ty("associated result")
+    let field = user.name$0; // ty("field after pending projection")
+    let method = user.name()$0; // ty("method after pending projection")
     require_source(source);
-    user$type_user$;
+    user$0; // ty("destructured binding")
 }
 "#,
-        &[
-            AnalysisQuery::ty("associated result", "type_wrapped"),
-            AnalysisQuery::ty("field after pending projection", "type_field"),
-            AnalysisQuery::ty("method after pending projection", "type_method"),
-            AnalysisQuery::ty("destructured binding", "type_user"),
-        ],
         expect![[r#"
             (nominal struct analysis_late_projection[lib]::crate::User,) // associated result
             nominal struct analysis_late_projection[lib]::crate::Name // field after pending projection
@@ -3341,7 +2761,7 @@ pub fn use_it() {
 
 #[test]
 fn infers_try_output_with_a_residual_default_in_its_supertrait() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3363,14 +2783,10 @@ impl<T> Extract for Fallible<T> {
 impl<T> FromResidual<()> for Fallible<T> {}
 
 pub fn use_it(input: Fallible<u16>) -> Fallible<()> {
-    let output = input?$output$;
+    let output = input?$0; // ty("output through residual supertrait")
     Fallible(())
 }
 "#,
-        &[AnalysisQuery::ty(
-            "output through residual supertrait",
-            "output",
-        )],
         expect![[r#"
             u16 // output through residual supertrait
         "#]],
@@ -3379,8 +2795,7 @@ pub fn use_it(input: Fallible<u16>) -> Fallible<()> {
 
 #[test]
 fn infers_try_outputs_from_trait_implementations_and_bounds() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_try_outputs");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3399,49 +2814,36 @@ pub fn alias<T>() -> Alias<T> { loop {} }
 pub fn packet<T>() -> Packet<Error, T> { loop {} }
 
 pub fn use_result() -> Result<(), Error> {
-    let value: u16 = result()$result_operand$?$result_output$;
-    let aliased: u16 = alias()$alias_operand$?$alias_output$;
-    let wildcard: u16 = alias::<_>()$wildcard_alias_operand$?$wildcard_alias_output$;
+    let value: u16 = result()$0?$1; // ty("Result operand").in_lib("analysis_try_outputs"), ty("Result output").in_lib("analysis_try_outputs")
+    let aliased: u16 = alias()$0?$1; // ty("alias operand").in_lib("analysis_try_outputs"), ty("alias output").in_lib("analysis_try_outputs")
+    let wildcard: u16 = alias::<_>()$0?$1; // ty("explicit wildcard alias operand").in_lib("analysis_try_outputs"), ty("explicit wildcard alias output").in_lib("analysis_try_outputs")
     Result::Ok(())
 }
 
 pub fn use_option() -> Option<()> {
-    let value: u16 = option()$option_operand$?$option_output$;
+    let value: u16 = option()$0?$1; // ty("Option operand").in_lib("analysis_try_outputs"), ty("Option output").in_lib("analysis_try_outputs")
     Option::Some(())
 }
 
 pub fn use_custom() -> Packet<Error, ()> {
-    let value: u16 = packet()$custom_operand$?$custom_output$;
+    let value: u16 = packet()$0?$1; // ty("custom operand").in_lib("analysis_try_outputs"), ty("custom output").in_lib("analysis_try_outputs")
     Packet(Error, ())
 }
 
 pub fn generic<T: core::ops::Try<Output = U>, U>(value: T) -> T {
-    let output = value?$generic_output$;
+    let output = value?$0; // ty("output under generic bound").in_lib("analysis_try_outputs")
     loop {}
 }
 "#,
-        &[
-            ty("Result operand", "result_operand"),
-            ty("Result output", "result_output"),
-            ty("Option operand", "option_operand"),
-            ty("Option output", "option_output"),
-            ty("alias operand", "alias_operand"),
-            ty("alias output", "alias_output"),
-            ty("explicit wildcard alias operand", "wildcard_alias_operand"),
-            ty("explicit wildcard alias output", "wildcard_alias_output"),
-            ty("custom operand", "custom_operand"),
-            ty("custom output", "custom_output"),
-            ty("output under generic bound", "generic_output"),
-        ],
         expect![[r#"
             nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // Result operand
             u16 // Result output
-            nominal enum core[lib]::crate::option::Option<u16> // Option operand
-            u16 // Option output
             nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // alias operand
             u16 // alias output
             nominal enum core[lib]::crate::result::Result<u16, nominal struct analysis_try_outputs[lib]::crate::Error> // explicit wildcard alias operand
             u16 // explicit wildcard alias output
+            nominal enum core[lib]::crate::option::Option<u16> // Option operand
+            u16 // Option output
             nominal struct analysis_try_outputs[lib]::crate::Packet<nominal struct analysis_try_outputs[lib]::crate::Error, u16> // custom operand
             u16 // custom output
             param U // output under generic bound
@@ -3451,8 +2853,7 @@ pub fn generic<T: core::ops::Try<Output = U>, U>(value: T) -> T {
 
 #[test]
 fn late_try_operand_evidence_reaches_output_members_and_obligations() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_late_try_operand");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3476,22 +2877,15 @@ pub fn consume<T: Marker>(value: T) -> T { value }
 
 pub fn use_it() -> Carrier<UserSource> {
     let source = make();
-    let user = source?$output$;
-    let field = user.id$field$;
-    let method = user.id()$method$;
-    let consumed = consume(user)$consumed$;
+    let user = source?$0; // ty("output after later operand evidence").in_lib("analysis_late_try_operand")
+    let field = user.id$0; // ty("field on pending output").in_lib("analysis_late_try_operand")
+    let method = user.id()$0; // ty("method on pending output").in_lib("analysis_late_try_operand")
+    let consumed = consume(user)$0; // ty("dependent trait obligation").in_lib("analysis_late_try_operand")
     require_source(source);
-    source$operand$;
+    source$0; // ty("refined operand").in_lib("analysis_late_try_operand")
     loop {}
 }
 "#,
-        &[
-            ty("output after later operand evidence", "output"),
-            ty("field on pending output", "field"),
-            ty("method on pending output", "method"),
-            ty("dependent trait obligation", "consumed"),
-            ty("refined operand", "operand"),
-        ],
         expect![[r#"
             nominal struct analysis_late_try_operand[lib]::crate::User // output after later operand evidence
             u32 // field on pending output
@@ -3504,8 +2898,7 @@ pub fn use_it() -> Carrier<UserSource> {
 
 #[test]
 fn coerces_try_output_after_later_evidence_reveals_never() {
-    let ty = |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_try_never");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3521,18 +2914,13 @@ pub fn require_stop(value: Stop) {}
 
 pub fn use_it() -> Stop {
     let source = make();
-    let value: u8 = source?$output$;
+    let value: u8 = source?$0; // ty("diverging try output").in_lib("analysis_try_never")
     require_stop(source);
-    value$binding$;
-    source$operand$;
+    value$0; // ty("coerced binding").in_lib("analysis_try_never")
+    source$0; // ty("refined operand").in_lib("analysis_try_never")
     loop {}
 }
 "#,
-        &[
-            ty("diverging try output", "output"),
-            ty("coerced binding", "binding"),
-            ty("refined operand", "operand"),
-        ],
         expect![[r#"
             ! // diverging try output
             u8 // coerced binding
@@ -3543,10 +2931,7 @@ pub fn use_it() -> Stop {
 
 #[test]
 fn retains_late_expectations_for_ambiguous_conversion_results() {
-    let ty =
-        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_conversion_expectation");
-
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3569,14 +2954,10 @@ impl FromNumber for u64 {}
 impl<T: FromNumber> Convert<T> for usize {}
 
 pub fn convert_later(number: usize) -> Option<u32> {
-    let size = number.convert().ok()?$type_initializer$;
-    Option::Some(size$type_read$)
+    let size = number.convert().ok()?$0; // ty("conversion initializer").in_lib("analysis_conversion_expectation")
+    Option::Some(size$0) // ty("conversion binding read").in_lib("analysis_conversion_expectation")
 }
 "#,
-        &[
-            ty("conversion initializer", "type_initializer"),
-            ty("conversion binding read", "type_read"),
-        ],
         expect![[r#"
             u32 // conversion initializer
             u32 // conversion binding read
@@ -3586,10 +2967,7 @@ pub fn convert_later(number: usize) -> Option<u32> {
 
 #[test]
 fn coerces_deferred_branch_results() {
-    let ty =
-        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_deferred_never_branches");
-
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3611,53 +2989,36 @@ pub fn project<S: Source>(source: S) -> S::Item { loop {} }
 
 pub fn use_it(flag: bool) {
     let numeric = apply((|user| if flag {
-        user.abort()$type_numeric_abort$
+        user.abort()$0 // ty("deferred diverging branch").in_lib("analysis_deferred_never_branches")
     } else {
-        1$type_numeric_value$
-    }))$type_numeric_result$;
+        1$0 // ty("numeric alternate branch").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("numeric call result").in_lib("analysis_deferred_never_branches")
     let generic = apply((|user| if flag {
         user.abort()
     } else {
-        make()$type_generic_value$
-    }))$type_generic_result$;
+        make()$0 // ty("unconstrained generic branch").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("unconstrained generic call result").in_lib("analysis_deferred_never_branches")
     let annotated: u64 = apply((|user| if flag {
-        user.abort()$type_annotated_abort$
+        user.abort()$0 // ty("annotated diverging branch").in_lib("analysis_deferred_never_branches")
     } else {
-        make()$type_annotated_value$
-    }))$type_annotated_result$;
+        make()$0 // ty("annotated generic branch").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("annotated call result").in_lib("analysis_deferred_never_branches")
     let matched = apply((|user| match flag {
-        true => user.abort()$type_match_abort$,
-        false => 1$type_match_value$,
-    }))$type_match_result$;
+        true => user.abort()$0, // ty("deferred diverging match arm").in_lib("analysis_deferred_never_branches")
+        false => 1$0, // ty("numeric alternate match arm").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("match call result").in_lib("analysis_deferred_never_branches")
     let selected = apply((|user| if flag {
         1
     } else {
-        user.value()$type_selected_value$
-    }))$type_selected_result$;
+        user.value()$0 // ty("deferred generic branch").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("deferred generic call result").in_lib("analysis_deferred_never_branches")
     let projected = apply((|user| if flag {
         1
     } else {
-        project(user)$type_projected_never$
-    }))$type_projected_result$;
+        project(user)$0 // ty("deferred diverging projection").in_lib("analysis_deferred_never_branches")
+    }))$0; // ty("projected call result").in_lib("analysis_deferred_never_branches")
 }
 "#,
-        &[
-            ty("deferred diverging branch", "type_numeric_abort"),
-            ty("numeric alternate branch", "type_numeric_value"),
-            ty("numeric call result", "type_numeric_result"),
-            ty("unconstrained generic branch", "type_generic_value"),
-            ty("unconstrained generic call result", "type_generic_result"),
-            ty("annotated diverging branch", "type_annotated_abort"),
-            ty("annotated generic branch", "type_annotated_value"),
-            ty("annotated call result", "type_annotated_result"),
-            ty("deferred diverging match arm", "type_match_abort"),
-            ty("numeric alternate match arm", "type_match_value"),
-            ty("match call result", "type_match_result"),
-            ty("deferred generic branch", "type_selected_value"),
-            ty("deferred generic call result", "type_selected_result"),
-            ty("deferred diverging projection", "type_projected_never"),
-            ty("projected call result", "type_projected_result"),
-        ],
         expect![[r#"
             ! // deferred diverging branch
             i32 // numeric alternate branch
@@ -3680,7 +3041,7 @@ pub fn use_it(flag: bool) {
 
 #[test]
 fn generic_body_projection_feeds_a_dependent_call_obligation() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3696,17 +3057,10 @@ pub trait Produce {
 pub trait Marker {}
 pub fn consume<T: Marker>(value: T) -> T { value }
 pub fn relay<I: Produce<Item = T>, T: Marker>(input: I) -> T {
-    let item = input.get()$projected_item$;
-    consume(item)$consumed_item$
+    let item = input.get()$0; // ty("projection under generic assumptions")
+    consume(item)$0 // ty("dependent obligation under generic assumptions")
 }
 "#,
-        &[
-            AnalysisQuery::ty("projection under generic assumptions", "projected_item"),
-            AnalysisQuery::ty(
-                "dependent obligation under generic assumptions",
-                "consumed_item",
-            ),
-        ],
         expect![[r#"
             param T // projection under generic assumptions
             param T // dependent obligation under generic assumptions
@@ -3716,7 +3070,7 @@ pub fn relay<I: Produce<Item = T>, T: Marker>(input: I) -> T {
 
 #[test]
 fn infers_iterator_items_with_unrelated_reference_impls() {
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -3736,12 +3090,10 @@ pub struct User { pub id: u64 }
 pub fn run() {
     let items = Items { value: User { id: 7 } };
     for item in items.into_iter() {
-        item.id$iterator_field$;
+        item.id$0; // ty("iterator item field").in_lib("analysis_iterator_impl_shapes")
     }
 }
 "#,
-        &[AnalysisQuery::ty("iterator item field", "iterator_field")
-            .in_lib("analysis_iterator_impl_shapes")],
         expect![[r#"
             u64 // iterator item field
         "#]],
@@ -3750,7 +3102,7 @@ pub fn run() {
 
 #[test]
 fn infers_trait_arguments_from_a_unique_methods_signature() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3769,10 +3121,9 @@ impl<T: Marker> Convert<T> for Handler {
 
 pub fn run() {
     let user = Handler.convert(User { id: 7 });
-    user.id$converted_field$;
+    user.id$0; // ty("converted field")
 }
 "#,
-        &[AnalysisQuery::ty("converted field", "converted_field")],
         expect![[r#"
             u64 // converted field
         "#]],
@@ -3781,7 +3132,7 @@ pub fn run() {
 
 #[test]
 fn infers_projection_after_numeric_receiver_becomes_known() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3797,18 +3148,13 @@ impl Produce for u32 { type Item = User; }
 pub fn produce<T: Produce>(value: T) -> T::Item { loop {} }
 pub fn run() {
     let number = 0;
-    let item = produce(number)$produced$;
+    let item = produce(number)$0; // ty("projection after numeric evidence")
     let other = User { id: 1 };
-    other.id$independent_field$;
+    other.id$0; // ty("independent field")
     let _: u32 = number;
-    item.id$projected_field$;
+    item.id$0; // ty("projected field")
 }
 "#,
-        &[
-            AnalysisQuery::ty("projection after numeric evidence", "produced"),
-            AnalysisQuery::ty("independent field", "independent_field"),
-            AnalysisQuery::ty("projected field", "projected_field"),
-        ],
         expect![[r#"
             nominal struct analysis_deferred_numeric_projection[lib]::crate::User // projection after numeric evidence
             u64 // independent field
@@ -3819,7 +3165,7 @@ pub fn run() {
 
 #[test]
 fn resolves_impl_bound_aliases_before_checking_applicability() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3839,8 +3185,8 @@ impl<T> Factory<T> where Self::Item: Marker {
 }
 
 pub fn saved() {
-    let good = Factory { value: Good }.get()$saved_good$;
-    let other = Factory { value: Other }.get()$saved_other$;
+    let good = Factory { value: Good }.get()$0; // ty("saved alias with satisfied bound")
+    let other = Factory { value: Other }.get()$0; // ty("saved alias with unsatisfied bound")
 }
 
 pub fn lexical() {
@@ -3849,7 +3195,7 @@ pub fn lexical() {
         type Item = Good;
         fn get(self) -> Self::Item { Good }
     }
-    let value = Local.get()$local_good$;
+    let value = Local.get()$0; // ty("body-local alias in its own bound")
 }
 
 pub struct Guard;
@@ -3857,15 +3203,9 @@ impl Guard where Other: Marker {
     pub fn requires_parent_bound(self) -> bool { true }
 }
 pub fn check_parent() {
-    let result = Guard.requires_parent_bound()$parent_bound$;
+    let result = Guard.requires_parent_bound()$0; // ty("nongeneric enclosing impl requirement")
 }
 "#,
-        &[
-            AnalysisQuery::ty("saved alias with satisfied bound", "saved_good"),
-            AnalysisQuery::ty("saved alias with unsatisfied bound", "saved_other"),
-            AnalysisQuery::ty("body-local alias in its own bound", "local_good"),
-            AnalysisQuery::ty("nongeneric enclosing impl requirement", "parent_bound"),
-        ],
         expect![[r#"
             nominal struct analysis_impl_bound_aliases[lib]::crate::Good // saved alias with satisfied bound
             <unknown> // saved alias with unsatisfied bound
@@ -3877,7 +3217,7 @@ pub fn check_parent() {
 
 #[test]
 fn infers_inherited_associated_equalities_and_displays_their_bounds() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3896,22 +3236,16 @@ pub trait Further<T>: Derived<Option<T>> {}
 pub trait Other<T> { type Item; }
 
 pub fn direct<V: Derived<u8, Item = u64>>(value: V) {
-    let result = value.item()$direct$;
+    let result = value.item()$0; // ty("inherited equality")
 }
 pub fn further<V: Further<u8, Item = bool>>(value: V) {
-    let result = value.item()$further$;
+    let result = value.item()$0; // ty("two supertrait substitutions")
 }
 pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
-    let saved = value$bounds$;
-    let result = saved.item()$display_result$;
+    let saved = value$0; // ty("bindings stay with their trait")
+    let result = saved.item()$0; // ty("argument impl Trait equality")
 }
 "#,
-        &[
-            AnalysisQuery::ty("inherited equality", "direct"),
-            AnalysisQuery::ty("two supertrait substitutions", "further"),
-            AnalysisQuery::ty("bindings stay with their trait", "bounds"),
-            AnalysisQuery::ty("argument impl Trait equality", "display_result"),
-        ],
         expect![[r#"
             u64 // inherited equality
             bool // two supertrait substitutions
@@ -3923,7 +3257,7 @@ pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
 
 #[test]
 fn infers_labeled_block_exit_values() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3933,38 +3267,26 @@ edition = "2024"
 
 //- /src/lib.rs
 pub fn use_it(flag: bool) {
-    let semicolon = 'done: { break 'done 1u64; }$type_semicolon$;
-    let tail = 'done: { break 'done 2u64 }$type_tail$;
-    let nested = 'done: { { break 'done 3u64; } }$type_nested$;
-    let initializer = 'done: { let _ = break 'done 3u64; }$type_initializer$;
+    let semicolon = 'done: { break 'done 1u64; }$0; // ty("break statement")
+    let tail = 'done: { break 'done 2u64 }$0; // ty("break tail")
+    let nested = 'done: { { break 'done 3u64; } }$0; // ty("break through ordinary block")
+    let initializer = 'done: { let _ = break 'done 3u64; }$0; // ty("break in let initializer")
     let branches = 'done: {
         if flag { break 'done 4u64; } else { break 'done 5u64; }
-    }$type_branches$;
+    }$0; // ty("both branches break")
     let fallthrough = 'done: {
         if flag { break 'done 6u64; }
         7u64
-    }$type_fallthrough$;
+    }$0; // ty("break and normal tail")
     let return_branch = 'done: {
         if flag { return; }
         break 'done 8u64;
-    }$type_return_branch$;
-    let unit_break = 'done: { break 'done; }$type_unit_break$;
-    let unit_fallthrough = 'done: { if flag { break 'done; } }$type_unit_fallthrough$;
-    let empty = 'done: {}$type_empty$;
+    }$0; // ty("return and break")
+    let unit_break = 'done: { break 'done; }$0; // ty("unit break")
+    let unit_fallthrough = 'done: { if flag { break 'done; } }$0; // ty("unit fallthrough")
+    let empty = 'done: {}$0; // ty("empty labeled block")
 }
 "#,
-        &[
-            AnalysisQuery::ty("break statement", "type_semicolon"),
-            AnalysisQuery::ty("break tail", "type_tail"),
-            AnalysisQuery::ty("break through ordinary block", "type_nested"),
-            AnalysisQuery::ty("break in let initializer", "type_initializer"),
-            AnalysisQuery::ty("both branches break", "type_branches"),
-            AnalysisQuery::ty("break and normal tail", "type_fallthrough"),
-            AnalysisQuery::ty("return and break", "type_return_branch"),
-            AnalysisQuery::ty("unit break", "type_unit_break"),
-            AnalysisQuery::ty("unit fallthrough", "type_unit_fallthrough"),
-            AnalysisQuery::ty("empty labeled block", "type_empty"),
-        ],
         expect![[r#"
             u64 // break statement
             u64 // break tail
@@ -3982,7 +3304,7 @@ pub fn use_it(flag: bool) {
 
 #[test]
 fn routes_labeled_block_breaks_to_their_lexical_targets() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -3993,38 +3315,27 @@ edition = "2024"
 //- /src/lib.rs
 pub fn use_it(flag: bool) {
     let outer = 'done: {
-        let inner = 'done: { break 'done true; }$type_shadowed_block$;
+        let inner = 'done: { break 'done true; }$0; // ty("shadowed block label")
         let inner_loop = 'done: loop { break 'done 1u8; };
         let loop_value = loop { break 2u16; };
         while flag { break; }
         break 'done 3u64;
-    }$type_outer$;
-    let from_loop = 'done: { loop { break 'done 4u64; } }$type_from_loop$;
+    }$0; // ty("outer block result")
+    let from_loop = 'done: { loop { break 'done 4u64; } }$0; // ty("block exit through loop")
     let from_nested_label = 'outer: {
         'inner: { break 'outer 5u64; }
-    }$type_from_nested_label$;
+    }$0; // ty("block exit through another label")
     let closure = 'done: {
-        let f = || 'done: { break 'done true; }$type_closure_block$;
+        let f = || 'done: { break 'done true; }$0; // ty("closure block result")
         break 'done 6u64;
-    }$type_closure_outer$;
+    }$0; // ty("block containing closure")
     let asynchronous = 'done: {
-        let f = async { 'done: { break 'done true; }$type_async_block$ };
+        let f = async { 'done: { break 'done true; }$0 }; // ty("async inner block result")
         break 'done 7u64;
-    }$type_async_outer$;
-    let raw = 'r#break: { break 'r#break 8u64; }$type_raw$;
+    }$0; // ty("block containing async block")
+    let raw = 'r#break: { break 'r#break 8u64; }$0; // ty("raw label")
 }
 "#,
-        &[
-            AnalysisQuery::ty("shadowed block label", "type_shadowed_block"),
-            AnalysisQuery::ty("outer block result", "type_outer"),
-            AnalysisQuery::ty("block exit through loop", "type_from_loop"),
-            AnalysisQuery::ty("block exit through another label", "type_from_nested_label"),
-            AnalysisQuery::ty("closure block result", "type_closure_block"),
-            AnalysisQuery::ty("block containing closure", "type_closure_outer"),
-            AnalysisQuery::ty("async inner block result", "type_async_block"),
-            AnalysisQuery::ty("block containing async block", "type_async_outer"),
-            AnalysisQuery::ty("raw label", "type_raw"),
-        ],
         expect![[r#"
             bool // shadowed block label
             u64 // outer block result
@@ -4041,9 +3352,7 @@ pub fn use_it(flag: bool) {
 
 #[test]
 fn propagates_labeled_block_expectations_and_deferred_results() {
-    let ty =
-        |title, marker| AnalysisQuery::ty(title, marker).in_lib("analysis_labeled_block_inference");
-    check_analysis_queries_with_fake_sysroot(
+    check_analysis_with_fake_sysroot(
         r#"
 //- /Cargo.toml
 [package]
@@ -4062,42 +3371,26 @@ pub fn consume(value: u64) {}
 pub fn make<T>() -> T { loop {} }
 
 pub fn use_it(flag: bool) {
-    let annotated: u64 = 'done: { break 'done 1$type_annotated_literal$; }$type_annotated_block$;
-    let later = 'done: { break 'done make()$type_generic_payload$; }$type_later_block$;
+    let annotated: u64 = 'done: { break 'done 1$0; }$1; // ty("expected break literal").in_lib("analysis_labeled_block_inference"), ty("annotated block").in_lib("analysis_labeled_block_inference")
+    let later = 'done: { break 'done make()$0; }$1; // ty("generic break payload").in_lib("analysis_labeled_block_inference"), ty("block constrained by later use").in_lib("analysis_labeled_block_inference")
     consume(later);
     let payload = apply((|user| 'done: {
-        break 'done user.value()$type_deferred_payload$;
-    }))$type_payload_result$;
+        break 'done user.value()$0; // ty("deferred break payload").in_lib("analysis_labeled_block_inference")
+    }))$0; // ty("deferred payload result").in_lib("analysis_labeled_block_inference")
     let diverging_payload = apply((|user| 'done: {
-        if flag { break 'done user.abort()$type_diverging_payload$; }
+        if flag { break 'done user.abort()$0; } // ty("diverging break payload").in_lib("analysis_labeled_block_inference")
         break 'done 2u64;
-    }))$type_diverging_result$;
+    }))$0; // ty("surviving break result").in_lib("analysis_labeled_block_inference")
     let diverging_statement = apply((|user| 'done: {
         if flag { break 'done 3u64; }
-        user.abort()$type_diverging_statement$;
-    }))$type_statement_result$;
+        user.abort()$0; // ty("diverging final statement").in_lib("analysis_labeled_block_inference")
+    }))$0; // ty("deferred statement result").in_lib("analysis_labeled_block_inference")
     let ordinary_statement = apply((|user| 'done: {
         user.value();
         4u64
-    }))$type_fallthrough_result$;
+    }))$0; // ty("deferred statement with normal tail").in_lib("analysis_labeled_block_inference")
 }
 "#,
-        &[
-            ty("expected break literal", "type_annotated_literal"),
-            ty("annotated block", "type_annotated_block"),
-            ty("generic break payload", "type_generic_payload"),
-            ty("block constrained by later use", "type_later_block"),
-            ty("deferred break payload", "type_deferred_payload"),
-            ty("deferred payload result", "type_payload_result"),
-            ty("diverging break payload", "type_diverging_payload"),
-            ty("surviving break result", "type_diverging_result"),
-            ty("diverging final statement", "type_diverging_statement"),
-            ty("deferred statement result", "type_statement_result"),
-            ty(
-                "deferred statement with normal tail",
-                "type_fallthrough_result",
-            ),
-        ],
         expect![[r#"
             u64 // expected break literal
             u64 // annotated block
@@ -4116,7 +3409,7 @@ pub fn use_it(flag: bool) {
 
 #[test]
 fn infers_loop_exit_values() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -4127,65 +3420,47 @@ edition = "2024"
 //- /src/lib.rs
 pub fn use_it(flag: bool) {
     let bare = loop { break; };
-    bare$type_bare$;
+    bare$0; // ty("bare break")
     let explicit_unit = loop { break (); };
-    explicit_unit$type_explicit_unit$;
+    explicit_unit$0; // ty("explicit unit payload")
     let single = loop { break 1u64; };
-    single$type_single$;
+    single$0; // ty("single value break")
     let branches = loop {
-        if flag { break 2$type_branch_literal$; }
+        if flag { break 2$0; } // ty("literal constrained by another break")
         break 3u64;
     };
-    branches$type_branches$;
+    branches$0; // ty("multiple break values")
     let outer = 'done: loop {
         let inner = loop { break true; };
-        inner$type_inner$;
+        inner$0; // ty("inner loop result")
         let shadowed_block = 'done: { break 'done 4u8; };
-        shadowed_block$type_shadowed_block$;
+        shadowed_block$0; // ty("block shadowing a loop label")
         let shadowed_loop = 'done: loop { break 'done 5u16; };
-        shadowed_loop$type_shadowed_loop$;
+        shadowed_loop$0; // ty("loop shadowing a loop label")
         loop {
             if flag { break 'done 6u64; }
             break;
         }
         break 'done 7u64;
     };
-    outer$type_outer$;
+    outer$0; // ty("outer loop result")
     let nested_payload = loop { break loop { break 8u32; }; };
-    nested_payload$type_nested_payload$;
+    nested_payload$0; // ty("loop used as break payload")
 }
 
 pub fn exit_to_block() {
     let value = 'done: {
         let inner = loop { break 'done 9u64; };
-        inner$type_outer_exit_loop$;
+        inner$0; // ty("loop exiting to outer block")
     };
-    value$type_outer_exit_block$;
+    value$0; // ty("block receiving loop exit")
 }
 
 pub fn spin() {
     let value = loop {};
-    value$type_infinite$;
+    value$0; // ty("loop without exits")
 }
 "#,
-        &[
-            AnalysisQuery::ty("bare break", "type_bare"),
-            AnalysisQuery::ty("explicit unit payload", "type_explicit_unit"),
-            AnalysisQuery::ty("single value break", "type_single"),
-            AnalysisQuery::ty(
-                "literal constrained by another break",
-                "type_branch_literal",
-            ),
-            AnalysisQuery::ty("multiple break values", "type_branches"),
-            AnalysisQuery::ty("inner loop result", "type_inner"),
-            AnalysisQuery::ty("block shadowing a loop label", "type_shadowed_block"),
-            AnalysisQuery::ty("loop shadowing a loop label", "type_shadowed_loop"),
-            AnalysisQuery::ty("outer loop result", "type_outer"),
-            AnalysisQuery::ty("loop used as break payload", "type_nested_payload"),
-            AnalysisQuery::ty("loop exiting to outer block", "type_outer_exit_loop"),
-            AnalysisQuery::ty("block receiving loop exit", "type_outer_exit_block"),
-            AnalysisQuery::ty("loop without exits", "type_infinite"),
-        ],
         expect![[r#"
             () // bare break
             () // explicit unit payload
@@ -4206,7 +3481,7 @@ pub fn spin() {
 
 #[test]
 fn propagates_loop_expectations_and_deferred_results() {
-    check_analysis_queries(
+    check_analysis(
         r#"
 //- /Cargo.toml
 [package]
@@ -4225,37 +3500,27 @@ pub fn consume(_: u64) {}
 pub fn require_source(_: &Source) {}
 
 pub fn use_it(flag: bool) {
-    let annotated: u64 = loop { break 1$type_annotated_literal$; };
-    let later = loop { break make()$type_generic_payload$; };
+    let annotated: u64 = loop { break 1$0; }; // ty("expected break literal")
+    let later = loop { break make()$0; }; // ty("generic break payload")
     consume(later);
-    later$type_later_result$;
+    later$0; // ty("loop constrained by later use")
 
     let source = make();
     let result = loop {
-        if flag { break source.abort()$type_diverging_payload$; }
-        break source.value()$type_value_payload$;
+        if flag { break source.abort()$0; } // ty("deferred diverging payload")
+        break source.value()$0; // ty("deferred value payload")
     };
     require_source(&source);
-    result$type_deferred_result$;
+    result$0; // ty("deferred loop result")
 }
 
 pub fn all_diverging() {
     let source = make();
-    let result = loop { break source.abort()$type_only_payload$; };
+    let result = loop { break source.abort()$0; }; // ty("only payload diverges")
     require_source(&source);
-    result$type_diverging_result$;
+    result$0; // ty("all break payloads diverge")
 }
 "#,
-        &[
-            AnalysisQuery::ty("expected break literal", "type_annotated_literal"),
-            AnalysisQuery::ty("generic break payload", "type_generic_payload"),
-            AnalysisQuery::ty("loop constrained by later use", "type_later_result"),
-            AnalysisQuery::ty("deferred diverging payload", "type_diverging_payload"),
-            AnalysisQuery::ty("deferred value payload", "type_value_payload"),
-            AnalysisQuery::ty("deferred loop result", "type_deferred_result"),
-            AnalysisQuery::ty("only payload diverges", "type_only_payload"),
-            AnalysisQuery::ty("all break payloads diverge", "type_diverging_result"),
-        ],
         expect![[r#"
             u64 // expected break literal
             u64 // generic break payload
