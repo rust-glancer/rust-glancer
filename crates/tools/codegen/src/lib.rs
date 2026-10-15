@@ -1,26 +1,31 @@
+//! Generates checked-in parser and syntax files for repository maintenance.
+
 mod codegen;
 mod util;
 
 use std::{fmt, path::PathBuf};
 
-use anyhow::Result;
-use clap::{Parser, ValueEnum};
-
-#[derive(Parser)]
-struct Args {
-    #[arg(value_enum, default_value_t = CodegenCommand::All)]
-    command: CodegenCommand,
-
-    #[arg(long, global = true)]
-    check: bool,
-}
+use clap::ValueEnum;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
-enum CodegenCommand {
+pub enum CodegenCommand {
     #[default]
     All,
     Grammar,
     ParserTests,
+}
+
+impl CodegenCommand {
+    pub fn run(self, check: bool) {
+        match self {
+            Self::All => {
+                codegen::grammar::generate(check);
+                codegen::parser_inline_tests::generate(check);
+            }
+            Self::Grammar => codegen::grammar::generate(check),
+            Self::ParserTests => codegen::parser_inline_tests::generate(check),
+        }
+    }
 }
 
 impl fmt::Display for CodegenCommand {
@@ -31,12 +36,6 @@ impl fmt::Display for CodegenCommand {
             CodegenCommand::ParserTests => f.write_str("parser-tests"),
         }
     }
-}
-
-fn main() -> Result<()> {
-    let args = Args::parse();
-    codegen::run(args.command, args.check);
-    Ok(())
 }
 
 fn project_root() -> PathBuf {

@@ -77,6 +77,14 @@ enum Command {
         #[clap(long, value_enum, default_value = "text")]
         format: self::compare_lsp::OutputFormat,
     },
+    /// Regenerate checked-in parser and syntax files.
+    Codegen {
+        #[arg(value_enum, default_value_t = rg_codegen::CodegenCommand::All)]
+        command: rg_codegen::CodegenCommand,
+        /// Verify generated files without writing changes.
+        #[arg(long)]
+        check: bool,
+    },
     /// Start the language server over stdio.
     Lsp,
     /// Start one analysis engine subprocess.
@@ -133,6 +141,10 @@ fn main() -> anyhow::Result<()> {
                 .build()
                 .context("while attempting to build LSP comparison Tokio runtime")?;
             runtime.block_on(compare_lsp::run(fixture, path, format))
+        }
+        Command::Codegen { command, check } => {
+            command.run(check);
+            Ok(())
         }
         Command::Lsp => start_server::start_server(),
         Command::LspEngine {

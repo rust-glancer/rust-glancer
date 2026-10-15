@@ -31,6 +31,7 @@ futures.workspace = true
 libmimalloc-sys = { workspace = true, optional = true }
 gen-lsp-types = { workspace = true, features = ["url"] }
 mimalloc = { workspace = true, optional = true }
+rg_codegen.workspace = true
 rg_std.workspace = true
 rg_project.workspace = true
 rg_profile.workspace = true

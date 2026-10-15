@@ -14,20 +14,20 @@ lint: (fmt "--check")
     DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all --workspace -- --all-targets
 
 codegen:
-    cargo run -p rg_codegen -- all
+    cargo run --release -- codegen all
 
 codegen-check:
-    cargo run -p rg_codegen -- all --check
+    cargo run --release -- codegen all --check
 
 [positional-arguments]
 agent-debug *args:
     exec python3 tools/agent-debug.py "$@"
 
 analyze *args:
-    cargo run --release -p rust-glancer -- analyze {{args}}
+    cargo run --release -- analyze {{args}}
 
 compare-lsp fixture="rust_analyzer" *args:
-    cargo run --release -p rust-glancer -- compare-lsp {{fixture}} {{args}}
+    cargo run --release -- compare-lsp {{fixture}} {{args}}
 
 lsp-query query_file *args:
     python3 tools/lsp-query.py --query-file '{{query_file}}' {{args}}

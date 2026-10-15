@@ -2238,6 +2238,7 @@ dependencies = [
  "gen-lsp-types",
  "libmimalloc-sys",
  "mimalloc",
+ "rg_codegen",
  "rg_lsp_engine",
  "rg_lsp_proto",
  "rg_lsp_server",
