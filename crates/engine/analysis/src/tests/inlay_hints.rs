@@ -464,6 +464,32 @@ pub fn use_it(scope: u32, user: User, other: User, normal: User) {
     destructured((user, other), user, normal);
     missing(user);
 }
+
+impl User {
+    pub fn clone(&self) -> User { missing() }
+    pub fn as_ref(&self) -> &User { self }
+}
+
+pub struct Model { pub user: User }
+pub fn save(user: &User) {}
+pub fn set_timeout(timeout: u32) {}
+pub fn filter(predicate: fn(User) -> bool) {}
+pub fn find(user_id: u32) {}
+pub fn resize(width: u32, height: u32) {}
+pub fn compare(value: &User, other: &User) {}
+
+pub fn obvious(user: User, model: Model, local_user_id: u32) {
+    save(&user);
+    save(user.as_ref());
+    save(&user.clone());
+    save(&model.user);
+    set_timeout(30);
+    filter(|user: User| true);
+    find(local_user_id);
+
+    resize(800, 600);
+    compare(&user, &user);
+}
 "#,
         InlayHintsQuery::new("parameter hint policy", "/src/lib.rs"),
         expect![[r#"
@@ -474,6 +500,10 @@ pub fn use_it(scope: u32, user: User, other: User, normal: User) {
             `pending_tys:` @ 19:23-19:28
             `value:` @ 20:16-20:20
             `count:` @ 20:22-20:24
+            `width:` @ 49:12-49:15
+            `height:` @ 49:17-49:20
+            `value:` @ 50:13-50:18
+            `other:` @ 50:20-50:25
         "#]],
     );
 }

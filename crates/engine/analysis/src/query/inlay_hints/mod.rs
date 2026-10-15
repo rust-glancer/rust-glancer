@@ -10,8 +10,12 @@ use rg_ir_view::{
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::CurrentSource;
+use rg_parse::{CurrentSource, syntax_edition};
 use rg_std::UniqueVec;
+use rg_syntax::{
+    AstNode as _,
+    ast::{self, HasArgList as _},
+};
 
 use crate::{
     Analysis,
@@ -131,6 +135,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let members = MemberView::new(self.0.view_db());
+        let edition = syntax_edition(self.0.view_db().crate_edition(crate_ref)?);
         let mut hints = UniqueVec::new();
         for call in BodyView::new(self.0.view_db()).resolved_function_calls(crate_ref, file_id)? {
             let Some(function) = members
@@ -139,6 +144,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             else {
                 continue;
             };
+            let is_unary = function.parameters().len() == call.param_offset() + 1;
             for (arg_idx, arg) in call.args().iter().enumerate() {
                 rg_std::check_cancel!(self.0, "inlay hints");
                 let param_idx = arg_idx + call.param_offset();
@@ -148,12 +154,22 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 let Some(param_name) = Self::param_hint_name(param) else {
                     continue;
                 };
+
+                if is_unary && Self::is_obvious_param_name(function.name(), param_name) {
+                    continue;
+                }
                 let arg_span = arg.span();
                 if range.is_some_and(|range| !range.touches(arg_span.start)) {
                     continue;
                 }
                 let arg_text = source.text_for_span(call.file_id(), arg_span)?;
-                if arg_text.is_some_and(|arg_text| arg_text.trim() == param_name) {
+                let arg_name = arg_text
+                    .as_deref()
+                    .and_then(|text| Self::arg_hint_name(text, edition));
+                if arg_name
+                    .as_deref()
+                    .is_some_and(|arg_name| Self::arg_name_matches_param_name(arg_name, param_name))
+                {
                     continue;
                 }
 
@@ -179,7 +195,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         }
 
         let name = param.pattern();
-        if name == "_" {
+        if name.trim_matches('_').is_empty() {
             return None;
         }
         let mut chars = name.chars();
@@ -190,6 +206,64 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         chars
             .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
             .then_some(name)
+    }
+
+    // A single input is often explained by the function name (`set_timeout`) or
+    // has only a generic role (`value`, `predicate`). Keep these labels when there
+    // are several inputs, where they can help distinguish the argument positions.
+    fn is_obvious_param_name(function_name: &str, param_name: &str) -> bool {
+        let name = param_name.trim_matches('_');
+        function_name
+            .strip_suffix(name)
+            .is_some_and(|prefix| prefix.is_empty() || prefix.ends_with('_'))
+            || name.len() == 1
+            || ["predicate", "value", "pat", "rhs", "other", "msg", "op"].contains(&name)
+    }
+
+    // Recover the name already visible in `&user`, `user.clone()`, or `model.user`.
+    // Parse only this argument, so saved and edited text use the same rules without
+    // retaining syntax trees or adding presentation metadata to the IR.
+    fn arg_hint_name(text: &str, edition: rg_syntax::Edition) -> Option<String> {
+        let parsed = ast::Expr::parse(text, edition);
+        let mut expr = ast::Expr::cast(parsed.syntax_node())?;
+        loop {
+            expr = match expr {
+                ast::Expr::PathExpr(path) => {
+                    return Some(path.path()?.segment()?.name_ref()?.text().to_string());
+                }
+                ast::Expr::FieldExpr(field) => return Some(field.name_ref()?.text().to_string()),
+                ast::Expr::MethodCallExpr(method) => {
+                    let method_name = method.name_ref()?.text().to_string();
+                    if ["clone", "as_ref", "into"].contains(&method_name.as_str())
+                        && method.arg_list()?.args().next().is_none()
+                    {
+                        method.receiver()?
+                    } else {
+                        return Some(method_name);
+                    }
+                }
+                ast::Expr::RefExpr(reference) => reference.expr()?,
+                ast::Expr::ParenExpr(paren) => paren.expr()?,
+                ast::Expr::CallExpr(call) => call.expr()?,
+                _ => return None,
+            };
+        }
+    }
+
+    // Names such as `local_user` and `user_id` already expose a `user` parameter's role.
+    fn arg_name_matches_param_name(arg_name: &str, param_name: &str) -> bool {
+        let name = param_name.trim_matches('_');
+        let arg_name = arg_name
+            .strip_prefix("r#")
+            .unwrap_or(arg_name)
+            .trim_matches('_');
+        arg_name.eq_ignore_ascii_case(name)
+            || arg_name
+                .strip_prefix(name)
+                .is_some_and(|rest| rest.starts_with('_'))
+            || arg_name
+                .strip_suffix(name)
+                .is_some_and(|rest| rest.ends_with('_'))
     }
 
     fn should_show_method_chain_expr_hint(

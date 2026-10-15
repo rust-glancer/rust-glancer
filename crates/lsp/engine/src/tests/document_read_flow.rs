@@ -28,6 +28,8 @@ async fn document_reads_combine_current_locals_with_saved_global_semantics() {
         pub fn untouched() {
             let saved = make_user();
         }
+
+        pub fn keep(user: &User, count: u32) {}
         "#,
     )
     .await;
@@ -55,11 +57,14 @@ $range_start$pub fn inspect() {
     let _copy = ali$definition$as;
     let _highlight = al$highlight$ias;
     let _ = |closure_user| -> User { closure_user };
+    keep(&user, 1);
 }$range_end$
 
 pub fn untouched(_changed: usize) {
     let unrelated = make_user();
 }
+
+pub fn keep(user: &User, count: u32) {}
 "#,
         )
         .await;
@@ -103,6 +108,7 @@ pub fn untouched(_changed: usize) {
                 `: User` type @ 15:13
                 `: User` type @ 16:18
                 `: User` type @ 17:25
+                `count:` parameter @ 18:16
             "#]],
         )
         .await;
