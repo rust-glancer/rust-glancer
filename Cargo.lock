@@ -1962,6 +1962,7 @@ name = "rg_lsp_server"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "expect-test",
  "futures",
  "ignore",
  "notify-debouncer-full",
