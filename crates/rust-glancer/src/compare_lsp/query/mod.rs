@@ -65,6 +65,8 @@ crates/ide/src/references.rs:230:14 # references/function: find_defs
 crates/stdx/src/non_empty_vec.rs:3:11 # references/generic-type: NonEmptyVec
 crates/vfs/src/file_set.rs:14:11 # references/derived-type: FileSet
 crates/stdx/src/macros.rs:20:13 # references/declarative-macro: format_to_acc
+crates/stdx/src/lib.rs:11:10 # references/module: non_empty_vec
+crates/ide/src/lib.rs:21:6 # references/module: call_hierarchy
 crates/syntax/src/ast/expr_ext.rs:60:27 # references/macro-binding: match_ast block
 crates/syntax/src/ast/make.rs:344:51 # references/closure-local: formatting accumulator
 crates/stdx/src/lib.rs:108:12 # references/captured-local: snake-case words

@@ -237,6 +237,41 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         })
     }
 
+    /// Spellings to search for before resolving module references.
+    ///
+    /// `mod outer` can be referenced as `outer`, `self` inside `outer`, or `super` inside a child.
+    /// A crate root also uses its crate name and `crate`. Each occurrence still needs resolution:
+    /// `self` in an unrelated module does not refer to `outer`.
+    ///
+    /// An empty list tells the caller to leave the search unrestricted. This is used for synthetic
+    /// body scopes with no source name, and when module data is missing.
+    pub fn module_search_names(&self, module_ref: ModuleRef) -> anyhow::Result<Vec<String>> {
+        let Some(module) = self.db.module_data(module_ref)? else {
+            return Ok(Vec::new());
+        };
+        let mut names = match module.origin {
+            ModuleOrigin::Root { .. } => {
+                let Some(crate_data) = self
+                    .db
+                    .def_map
+                    .crate_data(module_ref.origin.origin_crate())?
+                else {
+                    return Ok(Vec::new());
+                };
+                vec![crate_data.name().to_string(), "crate".to_string()]
+            }
+            ModuleOrigin::Inline { .. } | ModuleOrigin::OutOfLine { .. } => {
+                let Some(name) = &module.name else {
+                    return Ok(Vec::new());
+                };
+                vec![name.to_string()]
+            }
+            ModuleOrigin::Synthetic { .. } => return Ok(Vec::new()),
+        };
+        names.extend(["self".to_string(), "super".to_string()]);
+        Ok(names)
+    }
+
     /// Return declaration facts for an inline or out-of-line module declaration.
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
         let Some(module) = self.db.module_data(module_ref)? else {
