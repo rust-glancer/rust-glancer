@@ -28,32 +28,32 @@ async fn external_source_change_refreshes_saved_project() {
     .await;
 
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::completion("complete field before external change", "complete"),
                 LspQuery::hover("hover field before external change", "hover"),
                 LspQuery::document_symbol("document symbols before external change", "src/lib.rs"),
             ],
             expect![[r#"
-                complete field before external change
-                - old_field Field
+                // complete field before external change
+                old_field Field
                   detail: pub old_field: OldName
                   edit: /src/lib.rs:7:27-7:31 -> old_field
 
-                hover field before external change
-                - range: /src/lib.rs:8:22-8:31
-                - markdown:
+                // hover field before external change
+                range: /src/lib.rs:8:22-8:31
+                markdown:
                   ```rust
                   lsp_external_flow::ExternalUser
 
                   pub old_field: OldName
                   ```
 
-                document symbols before external change
-                - Struct ExternalUser 0:11-0:23
-                  - Field old_field 1:8-1:17
-                - Struct OldName 4:11-4:18
-                - Function demo 6:7-6:11
+                // document symbols before external change
+                Struct ExternalUser 0:11-0:23
+                  Field old_field 1:8-1:17
+                Struct OldName 4:11-4:18
+                Function demo 6:7-6:11
             "#]],
         )
         .await;
@@ -76,39 +76,38 @@ pub fn demo(user: ExternalUser) {
         .await;
 
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::completion("complete field after external change", "complete"),
                 LspQuery::hover("hover field after external change", "hover"),
                 LspQuery::document_symbol("document symbols after external change", "src/lib.rs"),
             ],
             expect![[r#"
-                complete field after external change
-                - new_field Field
+                // complete field after external change
+                new_field Field
                   detail: pub new_field: NewName
                   edit: /src/lib.rs:7:27-7:31 -> new_field
 
-                hover field after external change
-                - range: /src/lib.rs:8:22-8:31
-                - markdown:
+                // hover field after external change
+                range: /src/lib.rs:8:22-8:31
+                markdown:
                   ```rust
                   lsp_external_flow::ExternalUser
 
                   pub new_field: NewName
                   ```
 
-                document symbols after external change
-                - Struct ExternalUser 0:11-0:23
-                  - Field new_field 1:8-1:17
-                - Struct NewName 4:11-4:18
-                - Function demo 6:7-6:11
+                // document symbols after external change
+                Struct ExternalUser 0:11-0:23
+                  Field new_field 1:8-1:17
+                Struct NewName 4:11-4:18
+                Function demo 6:7-6:11
             "#]],
         )
         .await;
 
     fixture.check_notification_effects(expect![[r#"
-        notifications
-        - inlay hint refresh
+        inlay hint refresh // notifications
     "#]]);
 
     fixture.shutdown().await;
@@ -148,7 +147,7 @@ pub struct GeneratedName;
         .await;
 
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::completion("complete field after external module creation", "complete"),
                 LspQuery::hover("hover field after external module creation", "hover"),
@@ -158,31 +157,30 @@ pub struct GeneratedName;
                 ),
             ],
             expect![[r#"
-                complete field after external module creation
-                - generated_field Field
+                // complete field after external module creation
+                generated_field Field
                   detail: pub generated_field: GeneratedName
                   edit: /src/lib.rs:3:27-3:37 -> generated_field
 
-                hover field after external module creation
-                - range: /src/lib.rs:4:22-4:37
-                - markdown:
+                // hover field after external module creation
+                range: /src/lib.rs:4:22-4:37
+                markdown:
                   ```rust
                   lsp_external_created::generated::GeneratedUser
 
                   pub generated_field: GeneratedName
                   ```
 
-                document symbols after external module creation
-                - Struct GeneratedUser 0:11-0:24
-                  - Field generated_field 1:8-1:23
-                - Struct GeneratedName 4:11-4:24
+                // document symbols after external module creation
+                Struct GeneratedUser 0:11-0:24
+                  Field generated_field 1:8-1:23
+                Struct GeneratedName 4:11-4:24
             "#]],
         )
         .await;
 
     fixture.check_notification_effects(expect![[r#"
-        notifications
-        - inlay hint refresh
+        inlay hint refresh // notifications
     "#]]);
 
     fixture.shutdown().await;
@@ -223,21 +221,19 @@ path = "src/tool.rs"
         .await;
 
     fixture
-        .check(
+        .check_queries(
             &[LspQuery::document_symbol(
                 "document symbols after external manifest change",
                 "src/tool.rs",
             )],
             expect![[r#"
-                document symbols after external manifest change
-                - Struct ToolCommand 0:11-0:22
+                Struct ToolCommand 0:11-0:22 // document symbols after external manifest change
             "#]],
         )
         .await;
 
     fixture.check_notification_effects(expect![[r#"
-        notifications
-        - inlay hint refresh
+        inlay hint refresh // notifications
     "#]]);
 
     fixture.shutdown().await;

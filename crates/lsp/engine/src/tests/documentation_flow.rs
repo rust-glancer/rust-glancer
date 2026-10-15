@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -62,7 +61,7 @@ async fn source_documentation_tokens_cover_links_and_rust_examples() {
     )
     .await;
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::semantic_tokens("documentation tokens", "src/lib.rs", None),
                 LspQuery::semantic_tokens(
@@ -72,62 +71,61 @@ async fn source_documentation_tokens_cover_links_and_rust_examples() {
                 ),
             ],
             expect![[r##"
-                documentation tokens
-                - 0:8-0:19 struct.documentation "[`Profile`]"
-                - 2:7-2:24 struct.documentation "[profile][target]"
-                - 2:29-2:41 property.documentation "[`Self::id`]"
-                - 7:6-7:9 keyword.documentation "let"
-                - 7:10-7:16 variable.documentation "hidden"
-                - 7:17-7:18 operator.documentation "="
-                - 7:19-7:20 number.documentation "1"
-                - 7:20-7:21 operator.documentation ";"
-                - 8:4-8:7 keyword.documentation "let"
-                - 8:8-8:12 variable.documentation "café"
-                - 8:13-8:14 operator.documentation "="
-                - 8:15-8:19 string.documentation "\"🦀\""
-                - 8:19-8:20 operator.documentation ";"
-                - 9:4-9:8 variable.documentation "café"
-                - 9:8-9:9 operator.documentation "."
-                - 9:9-9:12 method.documentation "len"
-                - 9:12-9:13 operator.documentation "("
-                - 9:13-9:14 operator.documentation ")"
-                - 9:14-9:15 operator.documentation ";"
-                - 12:8-12:19 struct.documentation "[`Profile`]"
-                - 16:0-16:6 keyword.documentation "struct"
-                - 16:7-16:14 struct.documentation "Example"
-                - 16:14-16:15 operator.documentation "<"
-                - 16:15-16:16 typeParameter.documentation "T"
-                - 16:16-16:17 operator.documentation ">"
-                - 16:18-16:19 operator.documentation "{"
-                - 16:20-16:25 property.documentation "value"
-                - 16:25-16:26 operator.documentation ":"
-                - 16:27-16:28 type.documentation "T"
-                - 16:29-16:30 operator.documentation "}"
-                - 19:8-19:23 enumMember.documentation "[`Self::Ready`]"
-                - 22:14-22:17 keyword.documentation "let"
-                - 22:18-22:19 variable.documentation "n"
-                - 22:20-22:21 operator.documentation "="
-                - 22:22-22:24 number.documentation "12"
-                - 22:24-22:25 operator.documentation ";"
-                - 25:1-25:2 operator.documentation "#"
-                - 25:2-25:3 operator.documentation "["
-                - 25:3-25:9 variable.documentation "derive"
-                - 25:9-25:10 operator.documentation "("
-                - 25:10-25:15 variable.documentation "Clone"
-                - 25:15-25:16 operator.documentation ")"
-                - 25:16-25:17 operator.documentation "]"
-                - 26:0-26:6 keyword.documentation "struct"
-                - 26:7-26:14 struct.documentation "Example"
-                - 26:14-26:15 operator.documentation ";"
-                - 29:4-29:12 struct.documentation "[profile"
-                - 30:4-30:18 struct.documentation "name](Profile)"
-                - 32:4-32:21 struct.documentation "[profile][target]"
-                - 38:12-38:23 struct.documentation "[`Profile`]"
-                - 41:16-41:27 struct.documentation "[`Profile`]"
-                - 43:23-43:31 struct.documentation "[`Self`]"
+                // documentation tokens
+                0:8-0:19 struct.documentation "[`Profile`]"
+                2:7-2:24 struct.documentation "[profile][target]"
+                2:29-2:41 property.documentation "[`Self::id`]"
+                7:6-7:9 keyword.documentation "let"
+                7:10-7:16 variable.documentation "hidden"
+                7:17-7:18 operator.documentation "="
+                7:19-7:20 number.documentation "1"
+                7:20-7:21 operator.documentation ";"
+                8:4-8:7 keyword.documentation "let"
+                8:8-8:12 variable.documentation "café"
+                8:13-8:14 operator.documentation "="
+                8:15-8:19 string.documentation "\"🦀\""
+                8:19-8:20 operator.documentation ";"
+                9:4-9:8 variable.documentation "café"
+                9:8-9:9 operator.documentation "."
+                9:9-9:12 method.documentation "len"
+                9:12-9:13 operator.documentation "("
+                9:13-9:14 operator.documentation ")"
+                9:14-9:15 operator.documentation ";"
+                12:8-12:19 struct.documentation "[`Profile`]"
+                16:0-16:6 keyword.documentation "struct"
+                16:7-16:14 struct.documentation "Example"
+                16:14-16:15 operator.documentation "<"
+                16:15-16:16 typeParameter.documentation "T"
+                16:16-16:17 operator.documentation ">"
+                16:18-16:19 operator.documentation "{"
+                16:20-16:25 property.documentation "value"
+                16:25-16:26 operator.documentation ":"
+                16:27-16:28 type.documentation "T"
+                16:29-16:30 operator.documentation "}"
+                19:8-19:23 enumMember.documentation "[`Self::Ready`]"
+                22:14-22:17 keyword.documentation "let"
+                22:18-22:19 variable.documentation "n"
+                22:20-22:21 operator.documentation "="
+                22:22-22:24 number.documentation "12"
+                22:24-22:25 operator.documentation ";"
+                25:1-25:2 operator.documentation "#"
+                25:2-25:3 operator.documentation "["
+                25:3-25:9 variable.documentation "derive"
+                25:9-25:10 operator.documentation "("
+                25:10-25:15 variable.documentation "Clone"
+                25:15-25:16 operator.documentation ")"
+                25:16-25:17 operator.documentation "]"
+                26:0-26:6 keyword.documentation "struct"
+                26:7-26:14 struct.documentation "Example"
+                26:14-26:15 operator.documentation ";"
+                29:4-29:12 struct.documentation "[profile"
+                30:4-30:18 struct.documentation "name](Profile)"
+                32:4-32:21 struct.documentation "[profile][target]"
+                38:12-38:23 struct.documentation "[`Profile`]"
+                41:16-41:27 struct.documentation "[`Profile`]"
+                43:23-43:31 struct.documentation "[`Self`]"
 
-                range with external reference definition
-                - 32:4-32:21 struct.documentation "[profile][target]"
+                32:4-32:21 struct.documentation "[profile][target]" // range with external reference definition
             "##]],
         )
         .await;
@@ -159,7 +157,7 @@ async fn documentation_ranges_keep_reference_definitions_in_the_other_module_fil
     )
     .await;
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::semantic_tokens(
                     "outer link with inner reference definition",
@@ -173,11 +171,8 @@ async fn documentation_ranges_keep_reference_definitions_in_the_other_module_fil
                 ),
             ],
             expect![[r#"
-                outer link with inner reference definition
-                - 1:4-1:27 struct.documentation "[profile][inner-target]"
-
-                inner link with outer reference definition
-                - 0:4-0:27 struct.documentation "[profile][outer-target]"
+                1:4-1:27 struct.documentation "[profile][inner-target]" // outer link with inner reference definition
+                0:4-0:27 struct.documentation "[profile][outer-target]" // inner link with outer reference definition
             "#]],
         )
         .await;
@@ -211,8 +206,7 @@ async fn source_documentation_tracks_unsaved_comments_and_attributes() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                &r#"
+            &r#"
 // An edit moves every declaration and lengthens the module's outer docs.
 pub struct Profile;
 /// Longer outer docs select [`Pro$outer$file`] in the enclosing module.
@@ -226,12 +220,11 @@ pub mod api {
 /// ```
 pub struct User;
 "#
-                .replace('\n', "\r\n"),
-            ),
+            .replace('\n', "\r\n"),
         )
         .await;
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &current,
             &[
                 LspQuery::goto_definition("edited outer scope", "outer"),
@@ -241,33 +234,28 @@ pub struct User;
                 LspQuery::semantic_tokens("edited documentation tokens", "src/lib.rs", None),
             ],
             expect![[r#"
-                edited outer scope
-                - /src/lib.rs:2:11-2:18
+                /src/lib.rs:2:11-2:18 // edited outer scope
+                /src/lib.rs:6:15-6:22 // edited inner scope
+                /src/lib.rs:2:11-2:18 // edited attribute owner
 
-                edited inner scope
-                - /src/lib.rs:6:15-6:22
-
-                edited attribute owner
-                - /src/lib.rs:2:11-2:18
-
-                edited attribute hover
-                - range: /src/lib.rs:8:12-8:28
-                - markdown:
+                // edited attribute hover
+                range: /src/lib.rs:8:12-8:28
+                markdown:
                   ```rust
                   doc_edits::Profile
 
                   pub struct Profile
                   ```
 
-                edited documentation tokens
-                - 3:29-3:40 struct.documentation "[`Profile`]"
-                - 5:8-5:19 struct.documentation "[`Profile`]"
-                - 8:12-8:28 struct.documentation "[`Pr\\u{6f}file`]"
-                - 10:4-10:7 keyword.documentation "let"
-                - 10:8-10:13 variable.documentation "value"
-                - 10:14-10:15 operator.documentation "="
-                - 10:16-10:20 string.documentation "\"🦀\""
-                - 10:20-10:21 operator.documentation ";"
+                // edited documentation tokens
+                3:29-3:40 struct.documentation "[`Profile`]"
+                5:8-5:19 struct.documentation "[`Profile`]"
+                8:12-8:28 struct.documentation "[`Pr\\u{6f}file`]"
+                10:4-10:7 keyword.documentation "let"
+                10:8-10:13 variable.documentation "value"
+                10:14-10:15 operator.documentation "="
+                10:16-10:20 string.documentation "\"🦀\""
+                10:20-10:21 operator.documentation ";"
             "#]],
         )
         .await;

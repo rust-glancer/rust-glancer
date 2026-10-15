@@ -2617,6 +2617,8 @@ name = "test_fixture"
 version = "0.0.0"
 dependencies = [
  "cargo_metadata",
+ "rg_syntax",
+ "syn 2.0.117",
  "tempfile",
 ]
 

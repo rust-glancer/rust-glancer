@@ -73,7 +73,7 @@ pub(super) fn check_document_symbol_queries(
     let fixture = fixture_crate(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
-    let actual = render_analysis_responses(
+    let actual = test_fixture::testonly::render_responses(
         queries
             .iter()
             .map(|query| (query.title, renderer.render_document_symbols(query))),
@@ -86,8 +86,10 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
     let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let title = format!("workspace symbols `{query}`");
-    let actual =
-        render_analysis_responses([(title.as_str(), renderer.render_workspace_symbols(query))]);
+    let actual = test_fixture::testonly::render_responses([(
+        title.as_str(),
+        renderer.render_workspace_symbols(query),
+    )]);
     expect.assert_eq(&actual);
 }
 
@@ -108,34 +110,11 @@ pub(super) fn check_inlay_hints_with_fake_sysroot(
 
 fn assert_inlay_hints(db: &AnalysisFixtureDb, query: &InlayHintsQuery, expect: Expect) {
     let renderer = AnalysisSymbolSnapshot::new(db);
-    let actual = render_analysis_responses([(query.title, renderer.render_inlay_hints(query))]);
+    let actual = test_fixture::testonly::render_responses([(
+        query.title,
+        renderer.render_inlay_hints(query),
+    )]);
     expect.assert_eq(&actual);
-}
-
-fn render_analysis_responses<'a>(responses: impl IntoIterator<Item = (&'a str, String)>) -> String {
-    let mut dump = String::new();
-    let mut previous_multiline = false;
-
-    // Keep short answers together, but leave space around lists and structured responses so
-    // their titles and indented details are easy to follow.
-    for (title, response) in responses {
-        let response = response.trim_end();
-        let multiline = response.contains('\n');
-        if !dump.is_empty() && (previous_multiline || multiline) {
-            writeln!(dump).expect("string writes should not fail");
-        }
-
-        if response.is_empty() {
-            writeln!(dump, "// {title}").expect("string writes should not fail");
-        } else if multiline {
-            writeln!(dump, "// {title}\n{response}").expect("string writes should not fail");
-        } else {
-            writeln!(dump, "{response} // {title}").expect("string writes should not fail");
-        }
-        previous_multiline = multiline;
-    }
-
-    dump
 }
 
 pub(super) struct AnalysisQuery {
@@ -631,7 +610,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        render_analysis_responses(
+        test_fixture::testonly::render_responses(
             self.queries
                 .iter()
                 .map(|query| (query.title.as_str(), self.render_query(query))),

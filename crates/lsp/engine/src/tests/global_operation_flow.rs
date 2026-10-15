@@ -2,7 +2,7 @@
 
 use expect_test::expect;
 
-use super::utils::{LspEngineFixture, LspQuery};
+use super::utils::LspEngineFixture;
 
 #[tokio::test]
 async fn goto_implementation_uses_the_saved_global_index() {
@@ -15,7 +15,7 @@ async fn goto_implementation_uses_the_saved_global_index() {
         edition = "2024"
 
         //- /src/lib.rs
-        pub trait A$api$pi {}
+        pub trait A$0pi {} // goto_impl("implementations from saved semantics")
 
         pub struct Service;
 
@@ -25,16 +25,9 @@ async fn goto_implementation_uses_the_saved_global_index() {
     .await;
 
     fixture
-        .check(
-            &[LspQuery::goto_implementation(
-                "implementations from saved semantics",
-                "api",
-            )],
-            expect![[r#"
-                implementations from saved semantics
-                - /src/lib.rs:4:0-4:23
-            "#]],
-        )
+        .check(expect![[r#"
+            /src/lib.rs:4:0-4:23 // implementations from saved semantics
+        "#]])
         .await;
 
     fixture.shutdown().await;
@@ -54,11 +47,11 @@ async fn goto_implementation_returns_trait_methods_across_saved_files() {
         mod account;
         mod user;
         pub trait Named { fn name(&self); }
-        pub fn use_it(user: user::User) { user.na$call$me(); }
+        pub fn use_it(user: user::User) { user.na$0me(); } // goto_impl("all methods from call")
 
         //- /src/user.rs
         pub struct User;
-        impl crate::Named for User { fn na$method$me(&self) {} }
+        impl crate::Named for User { fn na$0me(&self) {} } // goto_impl("all methods from impl declaration")
 
         //- /src/account.rs
         pub struct Account;
@@ -68,21 +61,15 @@ async fn goto_implementation_returns_trait_methods_across_saved_files() {
     .await;
 
     fixture
-        .check(
-            &[
-                LspQuery::goto_implementation("all methods from call", "call"),
-                LspQuery::goto_implementation("all methods from impl declaration", "method"),
-            ],
-            expect![[r#"
-                all methods from call
-                - /src/account.rs:1:35-1:39
-                - /src/user.rs:1:32-1:36
+        .check(expect![[r#"
+            // all methods from call
+            /src/account.rs:1:35-1:39
+            /src/user.rs:1:32-1:36
 
-                all methods from impl declaration
-                - /src/account.rs:1:35-1:39
-                - /src/user.rs:1:32-1:36
-            "#]],
-        )
+            // all methods from impl declaration
+            /src/account.rs:1:35-1:39
+            /src/user.rs:1:32-1:36
+        "#]])
         .await;
 
     fixture.shutdown().await;

@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -38,8 +37,7 @@ async fn document_reads_combine_current_locals_with_saved_global_semantics() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct Name;
 
 pub struct User {
@@ -62,12 +60,11 @@ pub fn untouched(_changed: usize) {
     let unrelated = make_user();
 }
 "#,
-            ),
         )
         .await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &current,
             &[
                 LspQuery::hover("hover through a current local", "hover"),
@@ -81,30 +78,29 @@ pub fn untouched(_changed: usize) {
                 ),
             ],
             expect![[r#"
-                hover through a current local
-                - range: /src/lib.rs:14:23-14:27
-                - markdown:
+                // hover through a current local
+                range: /src/lib.rs:14:23-14:27
+                markdown:
                   ```rust
                   lsp_current_document_reads::User
 
                   pub name: Name
                   ```
 
-                navigate to a current local
-                - /src/lib.rs:13:8-13:13
+                /src/lib.rs:13:8-13:13 // navigate to a current local
 
-                highlight a current local
-                - read 13:8-13:13
-                - read 14:17-14:22
-                - read 15:16-15:21
-                - read 16:21-16:26
+                // highlight a current local
+                read 13:8-13:13
+                read 14:17-14:22
+                read 15:16-15:21
+                read 16:21-16:26
 
-                hints for the selected current body
-                - `: User` type @ 12:12
-                - `: User` type @ 13:13
-                - `: Name` type @ 14:14
-                - `: User` type @ 15:13
-                - `: User` type @ 16:18
+                // hints for the selected current body
+                `: User` type @ 12:12
+                `: User` type @ 13:13
+                `: Name` type @ 14:14
+                `: User` type @ 15:13
+                `: User` type @ 16:18
             "#]],
         )
         .await;
@@ -123,9 +119,9 @@ async fn document_highlights_saved_items_when_editor_source_is_exact() {
         edition = "2024"
 
         //- /src/lib.rs
-        pub trait Serv$trait$ice {}
+        pub trait Serv$0ice {} // highlight("highlight an exact trait item")
 
-        pub fn insp$function$ect() {}
+        pub fn insp$0ect() {} // highlight("highlight an exact function item")
 
         pub fn use_items<T: Service>() {
             inspect();
@@ -136,21 +132,15 @@ async fn document_highlights_saved_items_when_editor_source_is_exact() {
 
     fixture.did_open_saved("src/lib.rs", 1).await;
     fixture
-        .check(
-            &[
-                LspQuery::document_highlight("highlight an exact trait item", "trait"),
-                LspQuery::document_highlight("highlight an exact function item", "function"),
-            ],
-            expect![[r#"
-                highlight an exact trait item
-                - read 0:10-0:17
-                - read 4:20-4:27
+        .check(expect![[r#"
+            // highlight an exact trait item
+            read 0:10-0:17
+            read 4:20-4:27
 
-                highlight an exact function item
-                - read 2:7-2:14
-                - read 5:4-5:11
-            "#]],
-        )
+            // highlight an exact function item
+            read 2:7-2:14
+            read 5:4-5:11
+        "#]])
         .await;
 
     fixture.shutdown().await;
@@ -181,7 +171,7 @@ async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
     .await;
 
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::inlay_hint(
                     "saved inlay hints skip a trait method",
@@ -192,12 +182,11 @@ async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
                 LspQuery::hover("engine remains available after saved inlay hints", "hover"),
             ],
             expect![[r#"
-                saved inlay hints skip a trait method
-                - `: Value` type @ 7:13
+                `: Value` type @ 7:13 // saved inlay hints skip a trait method
 
-                engine remains available after saved inlay hints
-                - range: /src/lib.rs:4:11-4:16
-                - markdown:
+                // engine remains available after saved inlay hints
+                range: /src/lib.rs:4:11-4:16
+                markdown:
                   ```rust
                   lsp_bodyless_inlay::Value
 
@@ -212,8 +201,7 @@ async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub trait Service {
     fn required(&self);
 }
@@ -226,12 +214,11 @@ $range_start$pub fn inspect() {
 
 fn unfinished
 "#,
-            ),
         )
         .await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::inlay_hint(
@@ -243,12 +230,11 @@ fn unfinished
                 LspQuery::hover("engine remains available after dirty inlay hints", "hover"),
             ],
             expect![[r#"
-                dirty inlay hints skip bodyless and unfinished items
-                - `: Value` type @ 8:13
+                `: Value` type @ 8:13 // dirty inlay hints skip bodyless and unfinished items
 
-                engine remains available after dirty inlay hints
-                - range: /src/lib.rs:5:11-5:16
-                - markdown:
+                // engine remains available after dirty inlay hints
+                range: /src/lib.rs:5:11-5:16
+                markdown:
                   ```rust
                   lsp_bodyless_inlay::Value
 

@@ -25,8 +25,12 @@ use rg_lsp_proto::{
 use rg_parse::LineIndex;
 use tarpc::context;
 use test_fixture::{
-    CrateFixture, FixtureMarkers, fixture_crate_with_markers, fixture_path_for_snapshot,
-    testonly::MarkedText,
+    CrateFixture, FixtureMarkers, fixture_path_for_snapshot,
+    testonly::{
+        MarkedText,
+        inline::{InlineArgument, InlineCall, InlineFixture, InlineSource},
+        render_responses,
+    },
 };
 
 use crate::{
@@ -36,6 +40,7 @@ use crate::{
 pub(super) struct LspEngineFixture {
     fixture: CrateFixture,
     markers: FixtureMarkers,
+    queries: Vec<LspQuery>,
     service: Service,
     notifications: RecordingNotifications,
     documents: Mutex<HashMap<PathBuf, TestDocument>>,
@@ -65,7 +70,14 @@ impl LspEngineFixture {
     }
 
     fn new(fixture: &str) -> Self {
-        let (fixture, markers) = fixture_crate_with_markers(fixture);
+        let parsed = InlineFixture::parse(fixture, LspQuery::INLINE_NAMES);
+        let queries = parsed
+            .queries
+            .iter()
+            .map(|query| LspQuery::inline(&query.call, &query.marker))
+            .collect();
+        let fixture = CrateFixture::from_files(parsed.files);
+        let markers = parsed.markers;
         let notifications = RecordingNotifications::default();
         let service = Service::spawn(
             Arc::new(()) as Arc<dyn MemoryControl>,
@@ -75,6 +87,7 @@ impl LspEngineFixture {
         Self {
             fixture,
             markers,
+            queries,
             service,
             notifications,
             documents: Mutex::default(),
@@ -115,12 +128,29 @@ impl LspEngineFixture {
         }
     }
 
-    pub(super) async fn check(&self, queries: &[LspQuery], expect: Expect) {
+    pub(super) async fn check(&self, expect: Expect) {
+        assert!(
+            !self.queries.is_empty(),
+            "fixture should contain inline LSP queries"
+        );
+        self.check_queries(&self.queries, expect).await;
+    }
+
+    pub(super) async fn check_dirty(&self, dirty: &DirtyDocument, expect: Expect) {
+        assert!(
+            !dirty.queries.is_empty(),
+            "dirty document should contain inline LSP queries"
+        );
+        self.check_dirty_queries(dirty, &dirty.queries, expect)
+            .await;
+    }
+
+    pub(super) async fn check_queries(&self, queries: &[LspQuery], expect: Expect) {
         self.check_with_markers(QueryMarkers::Saved, queries, expect)
             .await;
     }
 
-    pub(super) async fn check_dirty(
+    pub(super) async fn check_dirty_queries(
         &self,
         dirty: &DirtyDocument,
         queries: &[LspQuery],
@@ -136,17 +166,13 @@ impl LspEngineFixture {
         queries: &[LspQuery],
         expect: Expect,
     ) {
-        let mut rendered = String::new();
-
-        for (idx, query) in queries.iter().enumerate() {
-            if idx > 0 {
-                rendered.push('\n');
-            }
-
-            self.render_query(&mut rendered, markers, query).await;
+        let mut responses = Vec::new();
+        for query in queries {
+            let mut response = String::new();
+            self.render_query(&mut response, markers, query).await;
+            responses.push((query.title(), response));
         }
-
-        expect.assert_eq(&rendered);
+        expect.assert_eq(&render_responses(responses));
     }
 
     pub(super) async fn did_open_saved(&self, path: &str, version: i32) {
@@ -159,30 +185,35 @@ impl LspEngineFixture {
         &self,
         path: &'static str,
         version: i32,
-        text: MarkedText,
+        text: &str,
     ) -> DirtyDocument {
+        let parsed = InlineSource::parse(path, text, LspQuery::INLINE_NAMES);
+        let queries = parsed
+            .queries
+            .iter()
+            .map(|query| LspQuery::inline(&query.call, &query.marker))
+            .collect();
+        let text = parsed.text;
         self.record_document(
             self.fixture.path(path),
             Some(version),
             text.text().to_string(),
         );
 
-        DirtyDocument { path, text }
+        DirtyDocument {
+            path,
+            text,
+            queries,
+        }
     }
 
     pub(super) async fn did_change_full(
         &self,
         path: &'static str,
         version: i32,
-        text: MarkedText,
+        text: &str,
     ) -> DirtyDocument {
-        self.record_document(
-            self.fixture.path(path),
-            Some(version),
-            text.text().to_string(),
-        );
-
-        DirtyDocument { path, text }
+        self.did_open_dirty(path, version, text).await
     }
 
     fn record_document(&self, path: PathBuf, version: Option<i32>, text: String) {
@@ -326,7 +357,6 @@ impl LspEngineFixture {
 
     pub(super) fn check_notification_effects(&self, expect: Expect) {
         let mut rendered = String::new();
-        writeln!(rendered, "notifications").expect("snapshot should be writable");
 
         let mut rendered_any_notification = false;
         let mut rendered_inlay_hint_refresh = false;
@@ -340,7 +370,7 @@ impl LspEngineFixture {
                     rendered_any_notification = true;
                     writeln!(
                         rendered,
-                        "- publish diagnostics {} saved-text-len {:?} count {}",
+                        "publish diagnostics {} saved-text-len {:?} count {}",
                         self.render_path(path.as_path()),
                         saved_text.as_ref().map(String::len),
                         diagnostics.len(),
@@ -355,7 +385,7 @@ impl LspEngineFixture {
                     rendered_any_notification = true;
                     writeln!(
                         rendered,
-                        "- begin progress {token:?}: {title}{}",
+                        "begin progress {token:?}: {title}{}",
                         message
                             .as_deref()
                             .map(|message| format!(" ({message})"))
@@ -367,7 +397,7 @@ impl LspEngineFixture {
                     rendered_any_notification = true;
                     writeln!(
                         rendered,
-                        "- end progress {token:?}{}",
+                        "end progress {token:?}{}",
                         message
                             .as_deref()
                             .map(|message| format!(" ({message})"))
@@ -381,7 +411,7 @@ impl LspEngineFixture {
                     // duplicate invalidations are intentionally collapsed.
                     if !rendered_inlay_hint_refresh {
                         rendered_any_notification = true;
-                        writeln!(rendered, "- inlay hint refresh")
+                        writeln!(rendered, "inlay hint refresh")
                             .expect("snapshot should be writable");
                         rendered_inlay_hint_refresh = true;
                     }
@@ -396,16 +426,16 @@ impl LspEngineFixture {
                 }
                 ServiceNotification::LogMessage { level, message } => {
                     rendered_any_notification = true;
-                    writeln!(rendered, "- log {level:?}: {message}")
+                    writeln!(rendered, "log {level:?}: {message}")
                         .expect("snapshot should be writable");
                 }
             }
         }
         if !rendered_any_notification {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
         }
 
-        expect.assert_eq(&rendered);
+        expect.assert_eq(&render_responses([("notifications", rendered)]));
     }
 
     pub(super) async fn check_rename(
@@ -510,12 +540,11 @@ impl LspEngineFixture {
         let edit = outcome.into_value();
 
         let mut rendered = String::new();
-        writeln!(rendered, "{title}").expect("snapshot should be writable");
         match edit {
             Some(edit) => self.render_workspace_edit(&mut rendered, &edit),
-            None => writeln!(rendered, "- none").expect("snapshot should be writable"),
+            None => writeln!(rendered, "none").expect("snapshot should be writable"),
         }
-        expect.assert_eq(&rendered);
+        expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
     pub(super) async fn check_rename_error(
@@ -554,9 +583,8 @@ impl LspEngineFixture {
         let edits = outcome.into_value();
 
         let mut rendered = String::new();
-        writeln!(rendered, "{title}").expect("snapshot should be writable");
         self.render_formatting_edits(&mut rendered, path, edits.as_deref());
-        expect.assert_eq(&rendered);
+        expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
     pub(super) async fn check_folding(
@@ -579,9 +607,8 @@ impl LspEngineFixture {
         let ranges = outcome.into_value();
 
         let mut rendered = String::new();
-        writeln!(rendered, "{title}").expect("snapshot should be writable");
         Self::render_folding_ranges(&mut rendered, &ranges);
-        expect.assert_eq(&rendered);
+        expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
     pub(super) async fn shutdown(&self) {
@@ -599,7 +626,7 @@ impl LspEngineFixture {
         query: &LspQuery,
     ) {
         match query {
-            LspQuery::GotoDefinition { title, marker } => {
+            LspQuery::GotoDefinition { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let input = self.global_position_snapshot(path, position);
@@ -611,10 +638,9 @@ impl LspEngineFixture {
                     .expect("goto definition query should succeed");
                 let locations = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
             }
-            LspQuery::GotoTypeDefinition { title, marker } => {
+            LspQuery::GotoTypeDefinition { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let input = self.global_position_snapshot(path, position);
@@ -626,10 +652,9 @@ impl LspEngineFixture {
                     .expect("goto type definition query should succeed");
                 let locations = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
             }
-            LspQuery::GotoImplementation { title, marker } => {
+            LspQuery::GotoImplementation { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let input = self.global_position_snapshot(path, position);
@@ -641,13 +666,12 @@ impl LspEngineFixture {
                     .expect("goto implementation query should succeed");
                 let locations = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
             }
             LspQuery::References {
-                title,
                 marker,
                 include_declaration,
+                ..
             } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
@@ -660,10 +684,9 @@ impl LspEngineFixture {
                     .expect("references query should succeed");
                 let locations = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_locations(rendered, &locations);
             }
-            LspQuery::Hover { title, marker } => {
+            LspQuery::Hover { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let input = self.global_position_snapshot(path.clone(), position);
@@ -675,10 +698,9 @@ impl LspEngineFixture {
                     .expect("hover query should succeed");
                 let hover = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_hover(rendered, path.as_path(), hover.as_ref());
             }
-            LspQuery::DocumentHighlight { title, marker } => {
+            LspQuery::DocumentHighlight { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let input = self.document_snapshot(path).with_position(position);
@@ -690,10 +712,9 @@ impl LspEngineFixture {
                     .expect("document highlight query should succeed");
                 let highlights = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 Self::render_document_highlights(rendered, &highlights);
             }
-            LspQuery::Completion { title, marker } => {
+            LspQuery::Completion { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let document = self.document_snapshot(path.clone());
@@ -712,14 +733,13 @@ impl LspEngineFixture {
                 let completions = outcome.into_value();
                 Self::assert_completion_edits_fit_source(&current_text, &completions);
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_completions(rendered, path.as_path(), &completions);
             }
             LspQuery::CodeAction {
-                title,
                 marker,
                 only,
                 automatic,
+                ..
             } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
@@ -747,10 +767,9 @@ impl LspEngineFixture {
                     .expect("code action query should succeed");
                 let actions = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_code_actions(rendered, path.as_path(), &current_text, &actions);
             }
-            LspQuery::DocumentSymbol { title, path } => {
+            LspQuery::DocumentSymbol { path, .. } => {
                 let document = self.document_snapshot(self.fixture.path(path));
                 let outcome = self
                     .service
@@ -760,10 +779,9 @@ impl LspEngineFixture {
                     .expect("document symbol query should succeed");
                 let symbols = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 self.render_document_symbols(rendered, &symbols, 0);
             }
-            LspQuery::SemanticTokens { title, path, range } => {
+            LspQuery::SemanticTokens { path, range, .. } => {
                 let document = self.document_snapshot(self.fixture.path(path));
                 let range = range.map(|(start, end)| {
                     Range::new(
@@ -782,7 +800,6 @@ impl LspEngineFixture {
                 let index = LineIndex::new(document.text());
                 let mut position = Position::default();
                 let mut previous_end = Position::default();
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 for token in tokens.data {
                     position = Position::new(
                         position.line + token.delta_line,
@@ -819,7 +836,7 @@ impl LspEngineFixture {
                         .collect::<String>();
                     writeln!(
                         rendered,
-                        "- {}:{}-{}:{} {}{} {:?}",
+                        "{}:{}-{}:{} {}{} {:?}",
                         position.line,
                         position.character,
                         end.line,
@@ -832,10 +849,7 @@ impl LspEngineFixture {
                 }
             }
             LspQuery::InlayHint {
-                title,
-                path,
-                start,
-                end,
+                path, start, end, ..
             } => {
                 let path = self.fixture.path(path);
                 let range = Range::new(
@@ -851,7 +865,6 @@ impl LspEngineFixture {
                     .expect("inlay hint query should succeed");
                 let hints = outcome.into_value();
 
-                writeln!(rendered, "{title}").expect("snapshot should be writable");
                 Self::render_inlay_hints(rendered, &hints);
             }
         }
@@ -887,33 +900,33 @@ impl LspEngineFixture {
 
     fn render_locations(&self, rendered: &mut String, locations: &[Location]) {
         if locations.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
         for location in locations {
-            writeln!(rendered, "- {}", self.render_location(location))
+            writeln!(rendered, "{}", self.render_location(location))
                 .expect("snapshot should be writable");
         }
     }
 
     fn render_hover(&self, rendered: &mut String, path: &Path, hover: Option<&Hover>) {
         let Some(hover) = hover else {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         };
 
         if let Some(range) = hover.range {
             writeln!(
                 rendered,
-                "- range: {}:{}",
+                "range: {}:{}",
                 self.render_path(path),
                 Self::render_range(range),
             )
             .expect("snapshot should be writable");
         }
 
-        writeln!(rendered, "- markdown:").expect("snapshot should be writable");
+        writeln!(rendered, "markdown:").expect("snapshot should be writable");
         match &hover.contents {
             Contents::MarkupContent(markup) => {
                 // Open-document paths and Cargo's saved paths can differ through symlinks.
@@ -939,7 +952,7 @@ impl LspEngineFixture {
 
     fn render_document_highlights(rendered: &mut String, highlights: &[DocumentHighlight]) {
         if highlights.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -950,14 +963,14 @@ impl LspEngineFixture {
                 Some(DocumentHighlightKind::Text) | None => "text",
                 Some(_) => "unknown",
             };
-            writeln!(rendered, "- {kind} {}", Self::render_range(highlight.range))
+            writeln!(rendered, "{kind} {}", Self::render_range(highlight.range))
                 .expect("snapshot should be writable");
         }
     }
 
     fn render_inlay_hints(rendered: &mut String, hints: &[InlayHint]) {
         if hints.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -975,7 +988,7 @@ impl LspEngineFixture {
             };
             writeln!(
                 rendered,
-                "- `{label}` {kind} @ {}:{}",
+                "`{label}` {kind} @ {}:{}",
                 hint.position.line, hint.position.character
             )
             .expect("snapshot should be writable");
@@ -989,7 +1002,7 @@ impl LspEngineFixture {
         completions: &[CompletionItem],
     ) {
         if completions.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -998,8 +1011,7 @@ impl LspEngineFixture {
                 .kind
                 .map(|kind| format!("{kind:?}"))
                 .unwrap_or_else(|| "Unknown".to_string());
-            writeln!(rendered, "- {} {kind}", completion.label)
-                .expect("snapshot should be writable");
+            writeln!(rendered, "{} {kind}", completion.label).expect("snapshot should be writable");
 
             if let Some(detail) = &completion.detail {
                 writeln!(rendered, "  detail: {detail}").expect("snapshot should be writable");
@@ -1034,7 +1046,7 @@ impl LspEngineFixture {
         actions: &[CodeAction],
     ) {
         if actions.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -1044,7 +1056,7 @@ impl LspEngineFixture {
                 .kind
                 .as_ref()
                 .map_or("<none>", gen_lsp_types::CodeActionKind::as_str);
-            writeln!(rendered, "- {kind} {}", action.title).expect("snapshot should be writable");
+            writeln!(rendered, "{kind} {}", action.title).expect("snapshot should be writable");
             writeln!(
                 rendered,
                 "  preferred: {}",
@@ -1217,7 +1229,7 @@ impl LspEngineFixture {
         depth: usize,
     ) {
         if symbols.is_empty() && depth == 0 {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -1225,7 +1237,7 @@ impl LspEngineFixture {
         for symbol in symbols {
             writeln!(
                 rendered,
-                "{indent}- {:?} {} {}",
+                "{indent}{:?} {} {}",
                 symbol.kind,
                 symbol.name,
                 Self::render_range(symbol.selection_range),
@@ -1240,7 +1252,7 @@ impl LspEngineFixture {
 
     fn render_folding_ranges(rendered: &mut String, ranges: &[FoldingRange]) {
         if ranges.is_empty() {
-            writeln!(rendered, "- none").expect("snapshot should be writable");
+            writeln!(rendered, "none").expect("snapshot should be writable");
             return;
         }
 
@@ -1261,7 +1273,7 @@ impl LspEngineFixture {
                 .unwrap_or_else(|| "*".to_string());
             writeln!(
                 rendered,
-                "- {kind} {}:{start_character}-{}:{end_character}",
+                "{kind} {}:{start_character}-{}:{end_character}",
                 range.start_line, range.end_line,
             )
             .expect("snapshot should be writable");
@@ -1278,7 +1290,7 @@ impl LspEngineFixture {
 
     fn render_workspace_edit(&self, rendered: &mut String, edit: &WorkspaceEdit) {
         let Some(changes) = &edit.changes else {
-            writeln!(rendered, "- no changes").expect("snapshot should be writable");
+            writeln!(rendered, "no changes").expect("snapshot should be writable");
             return;
         };
 
@@ -1286,12 +1298,12 @@ impl LspEngineFixture {
         changes.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
 
         for (uri, edits) in changes {
-            writeln!(rendered, "- {}", self.render_uri_path(uri))
+            writeln!(rendered, "{}", self.render_uri_path(uri))
                 .expect("snapshot should be writable");
             for edit in edits {
                 writeln!(
                     rendered,
-                    "  - {} -> {}",
+                    "  {} -> {}",
                     Self::render_range(edit.range),
                     Self::render_text(&edit.new_text),
                 )
@@ -1307,18 +1319,18 @@ impl LspEngineFixture {
         edits: Option<&[TextEdit]>,
     ) {
         let Some(edits) = edits else {
-            writeln!(rendered, "- no response").expect("snapshot should be writable");
+            writeln!(rendered, "no response").expect("snapshot should be writable");
             return;
         };
         if edits.is_empty() {
-            writeln!(rendered, "- no edits").expect("snapshot should be writable");
+            writeln!(rendered, "no edits").expect("snapshot should be writable");
             return;
         }
 
         for edit in edits {
             writeln!(
                 rendered,
-                "- {}:{} -> {}",
+                "{}:{} -> {}",
                 self.render_path(self.fixture.path(path).as_path()),
                 Self::render_range(edit.range),
                 Self::render_text(&edit.new_text),
@@ -1384,6 +1396,7 @@ struct TestDocument {
 pub(super) struct DirtyDocument {
     path: &'static str,
     text: MarkedText,
+    queries: Vec<LspQuery>,
 }
 
 #[derive(Clone, Copy)]
@@ -1394,51 +1407,51 @@ enum QueryMarkers<'a> {
 
 pub(super) enum LspQuery {
     GotoDefinition {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     GotoTypeDefinition {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     GotoImplementation {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     References {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
         include_declaration: bool,
     },
     Hover {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     DocumentHighlight {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     Completion {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
     },
     CodeAction {
-        title: &'static str,
-        marker: &'static str,
+        title: String,
+        marker: String,
         only: Option<gen_lsp_types::CodeActionKind>,
         automatic: bool,
     },
     DocumentSymbol {
-        title: &'static str,
+        title: String,
         path: &'static str,
     },
     SemanticTokens {
-        title: &'static str,
+        title: String,
         path: &'static str,
         range: Option<(&'static str, &'static str)>,
     },
     InlayHint {
-        title: &'static str,
+        title: String,
         path: &'static str,
         start: &'static str,
         end: &'static str,
@@ -1446,93 +1459,184 @@ pub(super) enum LspQuery {
 }
 
 impl LspQuery {
-    pub(super) fn goto_definition(title: &'static str, marker: &'static str) -> Self {
-        Self::GotoDefinition { title, marker }
+    const INLINE_NAMES: &'static [&'static str] = &[
+        "goto",
+        "goto_type",
+        "goto_impl",
+        "references",
+        "hover",
+        "highlight",
+        "complete",
+        "code_actions",
+        "automatic_code_actions",
+    ];
+
+    fn title(&self) -> &str {
+        match self {
+            Self::GotoDefinition { title, .. }
+            | Self::GotoTypeDefinition { title, .. }
+            | Self::GotoImplementation { title, .. }
+            | Self::References { title, .. }
+            | Self::Hover { title, .. }
+            | Self::DocumentHighlight { title, .. }
+            | Self::Completion { title, .. }
+            | Self::CodeAction { title, .. }
+            | Self::DocumentSymbol { title, .. }
+            | Self::SemanticTokens { title, .. }
+            | Self::InlayHint { title, .. } => title,
+        }
     }
 
-    pub(super) fn goto_type_definition(title: &'static str, marker: &'static str) -> Self {
-        Self::GotoTypeDefinition { title, marker }
+    fn inline(call: &InlineCall, marker: &str) -> Self {
+        use InlineArgument::{Bool, String};
+        let constructor = match call.name.as_str() {
+            "goto" => Self::goto_definition,
+            "goto_type" => Self::goto_type_definition,
+            "goto_impl" => Self::goto_implementation,
+            "hover" => Self::hover,
+            "highlight" => Self::document_highlight,
+            "complete" => Self::completion,
+            "code_actions" => Self::code_action,
+            "automatic_code_actions" => Self::automatic_code_action,
+            "references" => {
+                let [String(title), Bool(include_declaration)] = call.arguments.as_slice() else {
+                    panic!("expected references(\"title\", include_declaration)");
+                };
+                assert!(
+                    call.modifiers.is_empty(),
+                    "reference queries do not take modifiers"
+                );
+                return Self::references(title, marker, *include_declaration);
+            }
+            name => panic!("unknown inline LSP query `{name}`"),
+        };
+        let [String(title)] = call.arguments.as_slice() else {
+            panic!("inline LSP query takes one title string");
+        };
+        let mut query = constructor(title, marker);
+        for modifier in &call.modifiers {
+            match (
+                &mut query,
+                modifier.name.as_str(),
+                modifier.arguments.as_slice(),
+            ) {
+                (Self::CodeAction { only, .. }, "only", [String(kind)]) => {
+                    *only = Some(gen_lsp_types::CodeActionKind::from(kind.clone()));
+                }
+                _ => panic!("inline code actions support .only(\"kind\")"),
+            }
+        }
+        query
     }
 
-    pub(super) fn goto_implementation(title: &'static str, marker: &'static str) -> Self {
-        Self::GotoImplementation { title, marker }
+    pub(super) fn goto_definition(title: &str, marker: &str) -> Self {
+        Self::GotoDefinition {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
     }
 
-    pub(super) fn references(
-        title: &'static str,
-        marker: &'static str,
-        include_declaration: bool,
-    ) -> Self {
+    pub(super) fn goto_type_definition(title: &str, marker: &str) -> Self {
+        Self::GotoTypeDefinition {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
+    }
+
+    pub(super) fn goto_implementation(title: &str, marker: &str) -> Self {
+        Self::GotoImplementation {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
+    }
+
+    pub(super) fn references(title: &str, marker: &str, include_declaration: bool) -> Self {
         Self::References {
-            title,
-            marker,
+            title: title.to_string(),
+            marker: marker.to_string(),
             include_declaration,
         }
     }
 
-    pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
-        Self::Hover { title, marker }
+    pub(super) fn hover(title: &str, marker: &str) -> Self {
+        Self::Hover {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
     }
 
-    pub(super) fn document_highlight(title: &'static str, marker: &'static str) -> Self {
-        Self::DocumentHighlight { title, marker }
+    pub(super) fn document_highlight(title: &str, marker: &str) -> Self {
+        Self::DocumentHighlight {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
     }
 
-    pub(super) fn completion(title: &'static str, marker: &'static str) -> Self {
-        Self::Completion { title, marker }
+    pub(super) fn completion(title: &str, marker: &str) -> Self {
+        Self::Completion {
+            title: title.to_string(),
+            marker: marker.to_string(),
+        }
     }
 
-    pub(super) fn code_action(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn code_action(title: &str, marker: &str) -> Self {
         Self::CodeAction {
-            title,
-            marker,
+            title: title.to_string(),
+            marker: marker.to_string(),
             only: None,
             automatic: false,
         }
     }
 
     pub(super) fn code_action_only(
-        title: &'static str,
-        marker: &'static str,
+        title: &str,
+        marker: &str,
         only: gen_lsp_types::CodeActionKind,
     ) -> Self {
         Self::CodeAction {
-            title,
-            marker,
+            title: title.to_string(),
+            marker: marker.to_string(),
             only: Some(only),
             automatic: false,
         }
     }
 
-    pub(super) fn automatic_code_action(title: &'static str, marker: &'static str) -> Self {
+    pub(super) fn automatic_code_action(title: &str, marker: &str) -> Self {
         Self::CodeAction {
-            title,
-            marker,
+            title: title.to_string(),
+            marker: marker.to_string(),
             only: None,
             automatic: true,
         }
     }
 
-    pub(super) fn document_symbol(title: &'static str, path: &'static str) -> Self {
-        Self::DocumentSymbol { title, path }
+    pub(super) fn document_symbol(title: &str, path: &'static str) -> Self {
+        Self::DocumentSymbol {
+            title: title.to_string(),
+            path,
+        }
     }
 
     pub(super) fn semantic_tokens(
-        title: &'static str,
+        title: &str,
         path: &'static str,
         range: Option<(&'static str, &'static str)>,
     ) -> Self {
-        Self::SemanticTokens { title, path, range }
+        Self::SemanticTokens {
+            title: title.to_string(),
+            path,
+            range,
+        }
     }
 
     pub(super) fn inlay_hint(
-        title: &'static str,
+        title: &str,
         path: &'static str,
         start: &'static str,
         end: &'static str,
     ) -> Self {
         Self::InlayHint {
-            title,
+            title: title.to_string(),
             path,
             start,
             end,

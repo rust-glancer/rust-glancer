@@ -11,6 +11,8 @@ description.workspace = true
 
 [dependencies]
 cargo_metadata.workspace = true
+rg_syntax.workspace = true
+syn = { workspace = true, features = ["full", "parsing"] }
 tempfile.workspace = true
 
 [lints]

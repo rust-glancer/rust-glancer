@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::LspEngineFixture;
 
@@ -38,11 +37,7 @@ async fn formatting_uses_saved_unchanged_and_dirty_document_text() {
     fixture.did_open_saved("src/unchanged.rs", 1).await;
     fixture.did_open_saved("src/dirty.rs", 1).await;
     fixture
-        .did_change_full(
-            "src/dirty.rs",
-            2,
-            MarkedText::parse(r#"pub fn dirty(){println!("dirty");}"#),
-        )
+        .did_change_full("src/dirty.rs", 2, r#"pub fn dirty(){println!("dirty");}"#)
         .await;
 
     fixture
@@ -50,11 +45,11 @@ async fn formatting_uses_saved_unchanged_and_dirty_document_text() {
             "format saved document",
             "src/changed.rs",
             expect![[r#"
-                format saved document
-                - /src/changed.rs:0:13-0:14 -> ""
-                - /src/changed.rs:0:14-0:14 -> " {\n    "
-                - /src/changed.rs:0:29-0:30 -> ""
-                - /src/changed.rs:1:0-1:0 -> }
+                // format saved document
+                /src/changed.rs:0:13-0:14 -> ""
+                /src/changed.rs:0:14-0:14 -> " {\n    "
+                /src/changed.rs:0:29-0:30 -> ""
+                /src/changed.rs:1:0-1:0 -> }
             "#]],
         )
         .await;
@@ -63,8 +58,7 @@ async fn formatting_uses_saved_unchanged_and_dirty_document_text() {
             "format unchanged document",
             "src/unchanged.rs",
             expect![[r#"
-                format unchanged document
-                - no edits
+                no edits // format unchanged document
             "#]],
         )
         .await;
@@ -73,11 +67,11 @@ async fn formatting_uses_saved_unchanged_and_dirty_document_text() {
             "format dirty document",
             "src/dirty.rs",
             expect![[r#"
-                format dirty document
-                - /src/dirty.rs:0:14-0:15 -> ""
-                - /src/dirty.rs:0:15-0:15 -> " {\n    "
-                - /src/dirty.rs:0:33-0:34 -> ""
-                - /src/dirty.rs:0:34-0:34 -> "\n}\n"
+                // format dirty document
+                /src/dirty.rs:0:14-0:15 -> ""
+                /src/dirty.rs:0:15-0:15 -> " {\n    "
+                /src/dirty.rs:0:33-0:34 -> ""
+                /src/dirty.rs:0:34-0:34 -> "\n}\n"
             "#]],
         )
         .await;

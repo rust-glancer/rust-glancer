@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::LspEngineFixture;
 
@@ -34,10 +33,10 @@ async fn returns_typed_comments_without_losing_other_folds() {
             "src/lib.rs",
             true,
             expect![[r#"
-                fold saved document
-                - imports 0:*-1:*
-                - comment 3:*-4:*
-                - code 6:*-8:*
+                // fold saved document
+                imports 0:*-1:*
+                comment 3:*-4:*
+                code 6:*-8:*
             "#]],
         )
         .await;
@@ -66,7 +65,7 @@ async fn folding_uses_dirty_live_text() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse("// dirty one\n// dirty two\npub fn saved() {}\n"),
+            "// dirty one\n// dirty two\npub fn saved() {}\n",
         )
         .await;
     fixture
@@ -75,8 +74,7 @@ async fn folding_uses_dirty_live_text() {
             "src/lib.rs",
             true,
             expect![[r#"
-                fold dirty document
-                - comment 0:*-1:*
+                comment 0:*-1:* // fold dirty document
             "#]],
         )
         .await;

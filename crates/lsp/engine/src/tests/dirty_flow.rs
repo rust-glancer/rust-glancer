@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -32,8 +31,7 @@ async fn unsaved_global_declarations_are_syntax_only_until_save() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct DirtyUser {
     /// Field that exists only in the unsaved buffer.
     pub dirty_field: DirtyName,
@@ -46,12 +44,11 @@ pub fn demo(user: DirtyUser) {
     let _hover = user.dirty_$hover$field;
 }
 "#,
-            ),
         )
         .await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::completion("complete dirty field", "complete"),
@@ -59,17 +56,14 @@ pub fn demo(user: DirtyUser) {
                 LspQuery::document_symbol("dirty document symbols", "src/lib.rs"),
             ],
             expect![[r#"
-                complete dirty field
-                - none
+                none // complete dirty field
+                none // hover dirty field
 
-                hover dirty field
-                - none
-
-                dirty document symbols
-                - Struct DirtyUser 1:11-1:20
-                  - Field dirty_field 3:8-3:19
-                - Struct DirtyName 6:11-6:20
-                - Function demo 8:7-8:11
+                // dirty document symbols
+                Struct DirtyUser 1:11-1:20
+                  Field dirty_field 3:8-3:19
+                Struct DirtyName 6:11-6:20
+                Function demo 8:7-8:11
             "#]],
         )
         .await;
@@ -112,8 +106,7 @@ async fn dirty_imports_and_unchanged_item_headers_use_saved_semantics() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 use ap$root_import$;
 use crate::api::On$qualified_import$;
 
@@ -133,12 +126,11 @@ impl F$impl$oo {
     }
 }
 "#,
-            ),
         )
         .await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::completion("complete newly typed import root", "root_import"),
@@ -151,51 +143,44 @@ impl F$impl$oo {
                 LspQuery::document_highlight("highlight moved field type", "type"),
             ],
             expect![[r#"
-                complete newly typed import root
-                - Foo Struct
+                // complete newly typed import root
+                Foo Struct
                   detail: struct Foo
                   edit: /src/lib.rs:1:4-1:6 -> Foo
-                - Wrapper Struct
+                Wrapper Struct
                   detail: struct Wrapper
                   edit: /src/lib.rs:1:4-1:6 -> Wrapper
-                - api Module
+                api Module
                   detail: mod api
                   edit: /src/lib.rs:1:4-1:6 -> api
 
-                complete newly typed qualified import
-                - Only Struct
+                // complete newly typed qualified import
+                Only Struct
                   detail: struct Only
                   edit: /src/lib.rs:2:16-2:18 -> Only
 
-                hover moved impl type
-                - range: /src/lib.rs:14:5-14:8
-                - markdown:
+                // hover moved impl type
+                range: /src/lib.rs:14:5-14:8
+                markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo
 
                   pub struct Foo
                   ```
 
-                hover method with a dirty body
-                - range: /src/lib.rs:15:11-15:14
-                - markdown:
+                // hover method with a dirty body
+                range: /src/lib.rs:15:11-15:14
+                markdown:
                   ```rust
                   lsp_dirty_item_surface::Foo::new
 
                   pub fn new()
                   ```
 
-                define moved impl type
-                - /src/lib.rs:8:11-8:14
-
-                type of moved field
-                - /src/lib.rs:8:11-8:14
-
-                highlight moved method
-                - read 15:11-15:14
-
-                highlight moved field type
-                - read 11:15-11:18
+                /src/lib.rs:8:11-8:14 // define moved impl type
+                /src/lib.rs:8:11-8:14 // type of moved field
+                read 15:11-15:14 // highlight moved method
+                read 11:15-11:18 // highlight moved field type
             "#]],
         )
         .await;
@@ -233,8 +218,7 @@ async fn dirty_module_use_paths_resolve_in_saved_module_scope() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 // An unrelated edit moves every saved import span.
 pub mod api {
     pub mod nested {
@@ -244,32 +228,26 @@ pub mod api {
 }
 
 pub mod exports {
-    pub use crate::api::{nested::Us$user_hover$er, nested::Account as Public$alias_definition$Account};
+    pub use crate::api::{nested::Us$0er, nested::Account as Public$1Account}; // hover("hover a moved re-export path"), goto("define a moved re-export alias")
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[
-                LspQuery::hover("hover a moved re-export path", "user_hover"),
-                LspQuery::goto_definition("define a moved re-export alias", "alias_definition"),
-            ],
             expect![[r#"
-                hover a moved re-export path
-                - range: /src/lib.rs:10:33-10:37
-                - markdown:
+                // hover a moved re-export path
+                range: /src/lib.rs:10:33-10:37
+                markdown:
                   ```rust
                   lsp_dirty_use_paths::api::nested::User
 
                   pub struct User
                   ```
 
-                define a moved re-export alias
-                - /src/lib.rs:5:19-5:26
+                /src/lib.rs:5:19-5:26 // define a moved re-export alias
             "#]],
         )
         .await;
@@ -302,30 +280,24 @@ async fn dirty_associated_header_type_definition_lowers_transparent_aliases() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 // Move the unchanged signature away from every saved offset.
 pub struct Wrapper<T>(pub T);
 pub struct User;
 pub type Alias<T> = Wrapper<T>;
 
-pub fn inspect(_: Ali$alias_type$as<User>) {}
+pub fn inspect(_: Ali$0as<User>) {} // goto_type("type of an alias in a moved header")
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::goto_type_definition(
-                "type of an alias in a moved header",
-                "alias_type",
-            )],
             expect![[r#"
-                type of an alias in a moved header
-                - /src/lib.rs:2:11-2:18
-                - /src/lib.rs:3:11-3:15
+                // type of an alias in a moved header
+                /src/lib.rs:2:11-2:18
+                /src/lib.rs:3:11-3:15
             "#]],
         )
         .await;
@@ -366,8 +338,7 @@ async fn completion_ignores_unsaved_changes_to_a_sibling_declaration() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 mod consumer;
 
 pub struct SavedUser {
@@ -376,41 +347,33 @@ pub struct SavedUser {
     pub editor_field: usize,
 }
 "#,
-            ),
         )
         .await;
     let consumer = fixture
         .did_change_full(
             "src/consumer.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 use crate::SavedUser;
 
 pub fn inspect(user: SavedUser) {
-    let _ = user.editor_$complete$;
-    let _: Saved$definition$User = user;
+    let _ = user.editor_$0; // complete("complete from saved sibling semantics")
+    let _: Saved$0User = user; // goto("navigate to the saved declaration")
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &consumer,
-            &[
-                LspQuery::completion("complete from saved sibling semantics", "complete"),
-                LspQuery::goto_definition("navigate to the saved declaration", "definition"),
-            ],
             expect![[r#"
-                complete from saved sibling semantics
-                - saved_field Field
+                // complete from saved sibling semantics
+                saved_field Field
                   detail: pub saved_field: usize
                   edit: /src/consumer.rs:4:17-4:24 -> saved_field
 
-                navigate to the saved declaration
-                - /src/lib.rs:3:11-3:20
+                /src/lib.rs:3:11-3:20 // navigate to the saved declaration
             "#]],
         )
         .await;
@@ -459,8 +422,7 @@ async fn trait_call_definition_uses_current_body_and_maps_the_impl_destination()
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 // Move the implementation without changing its declaration.
 // Its saved span must be mapped into this editor text.
 mod consumer;
@@ -476,35 +438,27 @@ impl Named for Account {
     fn name(&self) {}
 }
 "#,
-            ),
         )
         .await;
     let consumer = fixture
         .did_change_full(
             "src/consumer.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 use crate::{Account, Named, User};
 
 pub fn inspect(user: User, account: Account) {
     let value = account;
-    value.na$definition$me();
+    value.na$0me(); // goto("navigate using the current receiver and destination text")
 }
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &consumer,
-            &[LspQuery::goto_definition(
-                "navigate using the current receiver and destination text",
-                "definition",
-            )],
             expect![[r#"
-                navigate using the current receiver and destination text
-                - /src/lib.rs:13:7-13:11
+                /src/lib.rs:13:7-13:11 // navigate using the current receiver and destination text
             "#]],
         )
         .await;
@@ -546,8 +500,7 @@ async fn definition_maps_a_saved_target_into_its_dirty_open_document() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 // Unsaved lines move the declaration away from its saved byte range.
 // Navigation must use the captured destination instead.
 mod consumer;
@@ -555,26 +508,20 @@ mod unrelated;
 
 pub struct SavedUser;
 "#,
-            ),
         )
         .await;
     fixture
-        .did_change_full(
-            "src/unrelated.rs",
-            2,
-            MarkedText::parse("pub struct DifferentUnrelated;\n"),
-        )
+        .did_change_full("src/unrelated.rs", 2, "pub struct DifferentUnrelated;\n")
         .await;
 
     fixture
-        .check(
+        .check_queries(
             &[LspQuery::goto_definition(
                 "map a saved target into current destination text",
                 "definition",
             )],
             expect![[r#"
-                map a saved target into current destination text
-                - /src/lib.rs:6:11-6:20
+                /src/lib.rs:6:11-6:20 // map a saved target into current destination text
             "#]],
         )
         .await;
@@ -585,25 +532,22 @@ pub struct SavedUser;
         .did_change_full(
             "src/lib.rs",
             3,
-            MarkedText::parse(
-                r#"
+            r#"
 mod consumer;
 mod unrelated;
 
 pub struct CurrentUser;
 "#,
-            ),
         )
         .await;
     fixture
-        .check(
+        .check_queries(
             &[LspQuery::goto_definition(
                 "omit an unprovable dirty destination",
                 "definition",
             )],
             expect![[r#"
-                omit an unprovable dirty destination
-                - none
+                none // omit an unprovable dirty destination
             "#]],
         )
         .await;
@@ -636,20 +580,18 @@ async fn definition_does_not_treat_an_overlapping_saved_range_as_current() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn inspect() {
     let _: Saved$definition$Target = todo!();
 }
 "#,
-            ),
         )
         .await;
 
     // The saved declaration's old numeric range now falls inside the current function body. It
     // is still a saved declaration, and there is no current declaration to map it to.
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::goto_definition(
@@ -659,11 +601,8 @@ pub fn inspect() {
                 LspQuery::document_highlight("highlight only the current reference", "definition"),
             ],
             expect![[r#"
-                omit a saved declaration removed from current text
-                - none
-
-                highlight only the current reference
-                - read 2:11-2:22
+                none // omit a saved declaration removed from current text
+                read 2:11-2:22 // highlight only the current reference
             "#]],
         )
         .await;
@@ -707,15 +646,13 @@ async fn completion_does_not_depend_on_an_unrelated_open_source() {
         .did_open_dirty(
             "src/entry.rs",
             1,
-            MarkedText::parse(
-                r#"
+            r#"
 use crate::User;
 
 pub fn inspect(user: User) {
-    let _ = user.fi$complete$;
+    let _ = user.fi$0; // complete("completion survives a removed open sibling")
 }
 "#,
-            ),
         )
         .await;
     fixture.remove_file_without_notification("src/removed.rs");
@@ -723,13 +660,9 @@ pub fn inspect(user: User) {
     fixture
         .check_dirty(
             &entry,
-            &[LspQuery::completion(
-                "completion survives a removed open sibling",
-                "complete",
-            )],
             expect![[r#"
-                completion survives a removed open sibling
-                - field Field
+                // completion survives a removed open sibling
+                field Field
                   detail: pub field: usize
                   edit: /src/entry.rs:4:17-4:19 -> field
             "#]],
@@ -760,42 +693,35 @@ async fn dirty_completion_preserves_specialized_and_postfix_edit_ranges() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn demo(local_capture: usize, condition: bool) {
-    let _ = format!("{loc$format$}");
-    let _ = env!("CARGO_MAN$environment$");
-    let _ = condition.i$postfix$;
+    let _ = format!("{loc$0}"); // complete("complete dirty format capture")
+    let _ = env!("CARGO_MAN$0"); // complete("complete dirty Cargo environment")
+    let _ = condition.i$0; // complete("complete dirty boolean postfix")
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[
-                LspQuery::completion("complete dirty format capture", "format"),
-                LspQuery::completion("complete dirty Cargo environment", "environment"),
-                LspQuery::completion("complete dirty boolean postfix", "postfix"),
-            ],
             expect![[r#"
-                complete dirty format capture
-                - local_capture Variable
+                // complete dirty format capture
+                local_capture Variable
                   detail: format capture local_capture
                   edit: /src/lib.rs:2:22-2:25 -> local_capture
 
-                complete dirty Cargo environment
-                - CARGO_MANIFEST_DIR Value
+                // complete dirty Cargo environment
+                CARGO_MANIFEST_DIR Value
                   detail: directory containing this package manifest
                   edit: /src/lib.rs:3:18-3:27 -> CARGO_MANIFEST_DIR
-                - CARGO_MANIFEST_PATH Value
+                CARGO_MANIFEST_PATH Value
                   detail: path to this package manifest
                   edit: /src/lib.rs:3:18-3:27 -> CARGO_MANIFEST_PATH
 
-                complete dirty boolean postfix
-                - if Snippet
+                // complete dirty boolean postfix
+                if Snippet
                   detail: postfix if expr
                   edit: /src/lib.rs:4:12-4:23 -> "if condition {\n}"
             "#]],
@@ -826,27 +752,21 @@ async fn dirty_completion_uses_saved_semantics_for_changed_incomplete_signature(
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct DirtyFixture;
 pub struct Wrapper<T>(T);
 
-pub fn demo<T, const N: usize>(value: Wrapper<Dirty$signature$
+pub fn demo<T, const N: usize>(value: Wrapper<Dirty$0 // complete("dirty incomplete signature completion")
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::completion(
-                "dirty incomplete signature completion",
-                "signature",
-            )],
             expect![[r#"
-                dirty incomplete signature completion
-                - Saved Struct
+                // dirty incomplete signature completion
+                Saved Struct
                   detail: struct Saved
                   edit: /src/lib.rs:4:46-4:51 -> Saved
             "#]],
@@ -879,28 +799,22 @@ async fn dirty_moved_body_keeps_its_associated_generic_scope() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 use std::fmt::Debug;
 
 pub fn inspect<SessionGeneric: Default>() {
-    let _: SessionG$generic$ = SessionGeneric::default();
+    let _: SessionG$0 = SessionGeneric::default(); // complete("complete a generic from a moved saved owner")
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::completion(
-                "complete a generic from a moved saved owner",
-                "generic",
-            )],
             expect![[r#"
-                complete a generic from a moved saved owner
-                - SessionGeneric TypeParameter
+                // complete a generic from a moved saved owner
+                SessionGeneric TypeParameter
                   detail: type parameter SessionGeneric
                   edit: /src/lib.rs:4:11-4:19 -> SessionGeneric
             "#]],
@@ -934,22 +848,22 @@ async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() 
 
     fixture.did_open_saved("src/lib.rs", 1).await;
     let dirty = fixture
-        .did_change_full("src/lib.rs", 2, MarkedText::parse("impl Syn$completion$"))
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            r#"impl Syn$0 // complete("dirty impl header completion")"#,
+        )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::completion(
-                "dirty impl header completion",
-                "completion",
-            )],
             expect![[r#"
-                dirty impl header completion
-                - SyntaxDocumentSymbolCollector Struct
+                // dirty impl header completion
+                SyntaxDocumentSymbolCollector Struct
                   detail: struct SyntaxDocumentSymbolCollector
                   edit: /src/lib.rs:0:5-0:8 -> SyntaxDocumentSymbolCollector
-                - nested Module
+                nested Module
                   detail: mod nested
                   edit: /src/lib.rs:0:5-0:8 -> nested
             "#]],
@@ -962,23 +876,17 @@ async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() 
         .did_change_full(
             "src/lib.rs",
             3,
-            MarkedText::parse(
-                r#"mod nested {
-    impl Nes$nested$
+            r#"mod nested {
+    impl Nes$0 // complete("dirty nested impl header completion")
 }"#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &nested,
-            &[LspQuery::completion(
-                "dirty nested impl header completion",
-                "nested",
-            )],
             expect![[r#"
-                dirty nested impl header completion
-                - NestedSaved Struct
+                // dirty nested impl header completion
+                NestedSaved Struct
                   detail: struct NestedSaved
                   edit: /src/lib.rs:1:9-1:12 -> NestedSaved
             "#]],
@@ -1019,8 +927,7 @@ async fn dirty_completion_handles_associated_paths_at_incomplete_file_end() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct Widget<T>(T);
 
 impl<T: Default> Widget<T> {
@@ -1030,31 +937,26 @@ impl<T: Default> Widget<T> {
 }
 
 pub fn edit_in_place() {
-    let _ = Widget::<u8>::ne$edit$();
+    let _ = Widget::<u8>::ne$0(); // complete("dirty associated edit-in-place")
 }
 
 pub fn unfinished_at_eof() {
-    let _ = Widget::<u8>::ne$eof$
+    let _ = Widget::<u8>::ne$0 // complete("dirty associated path at EOF")
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[
-                LspQuery::completion("dirty associated edit-in-place", "edit"),
-                LspQuery::completion("dirty associated path at EOF", "eof"),
-            ],
             expect![[r#"
-                dirty associated edit-in-place
-                - new Function
+                // dirty associated edit-in-place
+                new Function
                   detail: pub fn new() -> Self
                   edit: /src/lib.rs:10:26-10:28 -> new
 
-                dirty associated path at EOF
-                - new Function
+                // dirty associated path at EOF
+                new Function
                   detail: pub fn new() -> Self
                   edit: /src/lib.rs:14:26-14:28 -> new
             "#]],
@@ -1132,43 +1034,37 @@ async fn dirty_completion_handles_realistic_incomplete_typing_states() {
         .did_change_full(
             "src/typed.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn macro_run() {
-    let _ = crate::local_m$macro_edit$!();
+    let _ = crate::local_m$0!(); // complete("dirty macro edit keeps existing invocation")
 }
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &macro_edit,
-            &[LspQuery::completion(
-                "dirty macro edit keeps existing invocation",
-                "macro_edit",
-            )],
             expect![[r#"
-                dirty macro edit keeps existing invocation
-                - Event Enum
+                // dirty macro edit keeps existing invocation
+                Event Enum
                   detail: enum Event
                   edit: /src/typed.rs:2:19-2:26 -> Event
-                - Record Struct
+                Record Struct
                   detail: struct Record
                   edit: /src/typed.rs:2:19-2:26 -> Record
-                - Service Interface
+                Service Interface
                   detail: trait Service
                   edit: /src/typed.rs:2:19-2:26 -> Service
-                - Widget Struct
+                Widget Struct
                   detail: struct Widget
                   edit: /src/typed.rs:2:19-2:26 -> Widget
-                - Worker Struct
+                Worker Struct
                   detail: struct Worker
                   edit: /src/typed.rs:2:19-2:26 -> Worker
-                - local_macro Function
+                local_macro Function
                   detail: macro local_macro
                   edit: /src/typed.rs:2:19-2:26 -> local_macro
-                - typed Module
+                typed Module
                   detail: mod typed
                   edit: /src/typed.rs:2:19-2:26 -> typed
             "#]],
@@ -1179,37 +1075,25 @@ pub fn macro_run() {
         .did_change_full(
             "src/typed.rs",
             3,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn pattern_run(event: crate::Event) {
-    let crate::Event::Dat$tuple_pattern$(_) = event;
-    let crate::Event::Sto$record_pattern$ { code: _ } = event;
+    let crate::Event::Dat$0(_) = event; // complete("dirty tuple pattern keeps existing delimiters")
+    let crate::Event::Sto$0 { code: _ } = event; // complete("dirty record pattern keeps existing delimiters")
 }
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &pattern_edits,
-            &[
-                LspQuery::completion(
-                    "dirty tuple pattern keeps existing delimiters",
-                    "tuple_pattern",
-                ),
-                LspQuery::completion(
-                    "dirty record pattern keeps existing delimiters",
-                    "record_pattern",
-                ),
-            ],
             expect![[r#"
-                dirty tuple pattern keeps existing delimiters
-                - Data EnumMember
+                // dirty tuple pattern keeps existing delimiters
+                Data EnumMember
                   detail: variant Data
                   edit: /src/typed.rs:2:22-2:25 -> Data
 
-                dirty record pattern keeps existing delimiters
-                - Stop EnumMember
+                // dirty record pattern keeps existing delimiters
+                Stop EnumMember
                   detail: variant Stop
                   edit: /src/typed.rs:3:22-3:25 -> Stop
             "#]],
@@ -1220,24 +1104,18 @@ pub fn pattern_run(event: crate::Event) {
         .did_change_full(
             "src/typed.rs",
             4,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn associated_run() {
-    let _ = crate::Widget::<u8>::$associated$
+    let _ = crate::Widget::<u8>::$0 // complete("dirty empty associated path at EOF")
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &associated,
-            &[LspQuery::completion(
-                "dirty empty associated path at EOF",
-                "associated",
-            )],
             expect![[r#"
-                dirty empty associated path at EOF
-                - new Function
+                // dirty empty associated path at EOF
+                new Function
                   detail: pub fn new() -> Self
                   edit: /src/typed.rs:2:33-2:33 -> new
             "#]],
@@ -1248,24 +1126,18 @@ pub fn associated_run() {
         .did_change_full(
             "src/typed.rs",
             5,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn record_run() {
-    let _ = crate::Record { $record$
+    let _ = crate::Record { $0 // complete("dirty empty record field at EOF")
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &record,
-            &[LspQuery::completion(
-                "dirty empty record field at EOF",
-                "record",
-            )],
             expect![[r#"
-                dirty empty record field at EOF
-                - record_field Field
+                // dirty empty record field at EOF
+                record_field Field
                   detail: pub record_field: u8
                   edit: /src/typed.rs:2:28-2:28 -> record_field
             "#]],
@@ -1276,42 +1148,36 @@ pub fn record_run() {
         .did_change_full(
             "src/typed.rs",
             6,
-            MarkedText::parse(
-                r#"
+            r#"
 impl crate::Service for crate::Worker {
-    $trait_impl$
+    $0 // complete("dirty empty trait impl at EOF")
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &trait_impl,
-            &[LspQuery::completion(
-                "dirty empty trait impl at EOF",
-                "trait_impl",
-            )],
             expect![[r#"
-                dirty empty trait impl at EOF
-                - unsafe Keyword
+                // dirty empty trait impl at EOF
+                unsafe Keyword
                   detail: keyword unsafe
                   edit: /src/typed.rs:2:4-2:4 -> unsafe
-                - async Keyword
+                async Keyword
                   detail: keyword async
                   edit: /src/typed.rs:2:4-2:4 -> async
-                - extern Keyword
+                extern Keyword
                   detail: keyword extern
                   edit: /src/typed.rs:2:4-2:4 -> extern
-                - fn Keyword
+                fn Keyword
                   detail: keyword fn
                   edit: /src/typed.rs:2:4-2:4 -> fn
-                - const Keyword
+                const Keyword
                   detail: keyword const
                   edit: /src/typed.rs:2:4-2:4 -> const
-                - type Keyword
+                type Keyword
                   detail: keyword type
                   edit: /src/typed.rs:2:4-2:4 -> type
-                - required Function
+                required Function
                   detail: required trait member: fn required(&self)
                   edit: /src/typed.rs:2:4-2:4 -> "fn required(&self) {\n    todo!()\n}"
             "#]],
@@ -1322,24 +1188,22 @@ impl crate::Service for crate::Worker {
         .did_change_full(
             "src/typed.rs",
             7,
-            MarkedText::parse(
-                r#"
+            r#"
 pub fn format_run(local_capture: usize) {
     let _ = format!("{$format_capture$
 "#,
-            ),
         )
         .await;
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &format_capture,
             &[LspQuery::completion(
                 "dirty empty format capture at EOF",
                 "format_capture",
             )],
             expect![[r#"
-                dirty empty format capture at EOF
-                - local_capture Variable
+                // dirty empty format capture at EOF
+                local_capture Variable
                   detail: format capture local_capture
                   edit: /src/typed.rs:2:22-2:22 -> local_capture
             "#]],
@@ -1350,23 +1214,17 @@ pub fn format_run(local_capture: usize) {
         .did_change_full(
             "src/typed.rs",
             8,
-            MarkedText::parse(
-                r#"
-mod $module$
+            r#"
+mod $0 // complete("dirty empty module declaration at EOF")
 "#,
-            ),
         )
         .await;
     fixture
         .check_dirty(
             &module,
-            &[LspQuery::completion(
-                "dirty empty module declaration at EOF",
-                "module",
-            )],
             expect![[r#"
-                dirty empty module declaration at EOF
-                - parser Module
+                // dirty empty module declaration at EOF
+                parser Module
                   detail: mod parser
                   edit: /src/typed.rs:1:4-1:4 -> parser
             "#]],
@@ -1396,8 +1254,7 @@ async fn restored_unsaved_open_keeps_exact_syntax_without_new_global_semantics()
         .did_open_dirty(
             "src/lib.rs",
             1,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct Restored {
     /// Field that exists only in the restored editor buffer.
     pub restored_field: RestoredName,
@@ -1409,26 +1266,24 @@ pub fn demo(value: Restored) {
     let _hover = value.restored_$hover$field;
 }
 "#,
-            ),
         )
         .await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::hover("hover restored field", "hover"),
                 LspQuery::document_symbol("restored document symbols", "src/lib.rs"),
             ],
             expect![[r#"
-                hover restored field
-                - none
+                none // hover restored field
 
-                restored document symbols
-                - Struct Restored 1:11-1:19
-                  - Field restored_field 3:8-3:22
-                - Struct RestoredName 6:11-6:23
-                - Function demo 8:7-8:11
+                // restored document symbols
+                Struct Restored 1:11-1:19
+                  Field restored_field 3:8-3:22
+                Struct RestoredName 6:11-6:23
+                Function demo 8:7-8:11
             "#]],
         )
         .await;

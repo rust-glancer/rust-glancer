@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -32,8 +31,7 @@ async fn save_promotes_dirty_text_to_saved_project() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 pub struct SavedUser {
     pub renamed_field: SavedName,
 }
@@ -45,14 +43,13 @@ pub fn demo(user: SavedUser) {
     let _hover = user.renamed_$hover$field;
 }
 "#,
-            ),
         )
         .await;
 
     fixture.did_save_dirty(&dirty).await;
 
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &dirty,
             &[
                 LspQuery::completion("complete saved field after save", "complete"),
@@ -60,32 +57,31 @@ pub fn demo(user: SavedUser) {
                 LspQuery::document_symbol("saved document symbols after save", "src/lib.rs"),
             ],
             expect![[r#"
-                complete saved field after save
-                - renamed_field Field
+                // complete saved field after save
+                renamed_field Field
                   detail: pub renamed_field: SavedName
                   edit: /src/lib.rs:8:27-8:35 -> renamed_field
 
-                hover saved field after save
-                - range: /src/lib.rs:9:22-9:35
-                - markdown:
+                // hover saved field after save
+                range: /src/lib.rs:9:22-9:35
+                markdown:
                   ```rust
                   lsp_save_flow::SavedUser
 
                   pub renamed_field: SavedName
                   ```
 
-                saved document symbols after save
-                - Struct SavedUser 1:11-1:20
-                  - Field renamed_field 2:8-2:21
-                - Struct SavedName 5:11-5:20
-                - Function demo 7:7-7:11
+                // saved document symbols after save
+                Struct SavedUser 1:11-1:20
+                  Field renamed_field 2:8-2:21
+                Struct SavedName 5:11-5:20
+                Function demo 7:7-7:11
             "#]],
         )
         .await;
 
     fixture.check_notification_effects(expect![[r#"
-        notifications
-        - none
+        none // notifications
     "#]]);
 
     fixture.shutdown().await;
@@ -113,7 +109,7 @@ async fn failed_save_validation_preserves_the_published_generation() {
         .expect("unchanged saved source should return its published generation");
 
     fixture
-        .did_change_full("src/lib.rs", 2, MarkedText::parse("pub struct Proposed;\n"))
+        .did_change_full("src/lib.rs", 2, "pub struct Proposed;\n")
         .await;
     let error = fixture
         .did_save_current("src/lib.rs")
@@ -128,11 +124,7 @@ async fn failed_save_validation_preserves_the_published_generation() {
     // The rejected candidate never published. Returning the editor to the still-saved disk value
     // therefore returns the same generation, with no rollback operation.
     fixture
-        .did_change_full(
-            "src/lib.rs",
-            3,
-            MarkedText::parse("pub struct Published;\n"),
-        )
+        .did_change_full("src/lib.rs", 3, "pub struct Published;\n")
         .await;
     let after = fixture
         .did_save_current("src/lib.rs")
@@ -165,7 +157,7 @@ edition = "2024"
     .await;
     let invalid_manifest = "[package]\nname =\n";
     fixture
-        .did_open_dirty("Cargo.toml", 2, MarkedText::parse(invalid_manifest))
+        .did_open_dirty("Cargo.toml", 2, invalid_manifest)
         .await;
     fixture.write_file_without_notification("Cargo.toml", invalid_manifest);
 
@@ -176,14 +168,13 @@ edition = "2024"
     fixture.write_file_without_notification("Cargo.toml", MANIFEST);
 
     fixture
-        .check(
+        .check_queries(
             &[LspQuery::document_symbol(
                 "symbols after rejected manifest rebuild",
                 "src/lib.rs",
             )],
             expect![[r#"
-                symbols after rejected manifest rebuild
-                - Struct Published 0:11-0:20
+                Struct Published 0:11-0:20 // symbols after rejected manifest rebuild
             "#]],
         )
         .await;

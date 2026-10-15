@@ -2,9 +2,8 @@
 
 use expect_test::expect;
 use rg_lsp_proto::QueryError;
-use test_fixture::testonly::MarkedText;
 
-use super::utils::{LspEngineFixture, LspQuery};
+use super::utils::LspEngineFixture;
 
 #[tokio::test]
 async fn rename_returns_workspace_edit_for_clean_document() {
@@ -32,10 +31,10 @@ async fn rename_returns_workspace_edit_for_clean_document() {
             "rename",
             "Account",
             expect![[r#"
-                rename clean type
-                - /src/lib.rs
-                  - 0:11-0:15 -> Account
-                  - 3:15-3:19 -> Account
+                // rename clean type
+                /src/lib.rs
+                  0:11-0:15 -> Account
+                  3:15-3:19 -> Account
             "#]],
         )
         .await;
@@ -74,28 +73,24 @@ async fn rename_requires_save_before_using_changed_global_spans() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 mod consumer;
 
 pub struct EditorUser;
 "#,
-            ),
         )
         .await;
     let consumer = fixture
         .did_change_full(
             "src/consumer.rs",
             2,
-            MarkedText::parse(
-                r#"
+            r#"
 use crate::Editor$rename$User;
 
 pub fn make(user: EditorUser) -> EditorUser {
     user
 }
 "#,
-            ),
         )
         .await;
 
@@ -112,13 +107,13 @@ pub fn make(user: EditorUser) -> EditorUser {
             "rename",
             "Account",
             expect![[r#"
-                rename after publishing both files
-                - /src/consumer.rs
-                  - 1:11-1:21 -> Account
-                  - 3:18-3:28 -> Account
-                  - 3:33-3:43 -> Account
-                - /src/lib.rs
-                  - 3:11-3:21 -> Account
+                // rename after publishing both files
+                /src/consumer.rs
+                  1:11-1:21 -> Account
+                  3:18-3:28 -> Account
+                  3:33-3:43 -> Account
+                /src/lib.rs
+                  3:11-3:21 -> Account
             "#]],
         )
         .await;
@@ -139,12 +134,12 @@ async fn record_constructor_references_and_rename_flow_through_enabled_test_modu
         //- /src/lib.rs
         #[cfg(test)]
         mod tests {
-            pub struct Us$declaration$er<T> {
+            pub struct Us$0er<T> { // references("record constructor references from declaration", true)
                 pub value: T,
             }
 
             pub fn make(value: u8) {
-                let _user = Us$constructor$er::<u8> { value };
+                let _user = Us$constructor$er::<u8> { value }; // references("record constructor references from use without declaration", false)
             }
         }
         "#,
@@ -153,28 +148,13 @@ async fn record_constructor_references_and_rename_flow_through_enabled_test_modu
     .await;
 
     fixture
-        .check(
-            &[
-                LspQuery::references(
-                    "record constructor references from declaration",
-                    "declaration",
-                    true,
-                ),
-                LspQuery::references(
-                    "record constructor references from use without declaration",
-                    "constructor",
-                    false,
-                ),
-            ],
-            expect![[r#"
-                record constructor references from declaration
-                - /src/lib.rs:2:15-2:19
-                - /src/lib.rs:7:20-7:24
+        .check(expect![[r#"
+            // record constructor references from declaration
+            /src/lib.rs:2:15-2:19
+            /src/lib.rs:7:20-7:24
 
-                record constructor references from use without declaration
-                - /src/lib.rs:7:20-7:24
-            "#]],
-        )
+            /src/lib.rs:7:20-7:24 // record constructor references from use without declaration
+        "#]])
         .await;
 
     fixture
@@ -183,10 +163,10 @@ async fn record_constructor_references_and_rename_flow_through_enabled_test_modu
             "constructor",
             "Account",
             expect![[r#"
-                rename record constructor from enabled test module
-                - /src/lib.rs
-                  - 2:15-2:19 -> Account
-                  - 7:20-7:24 -> Account
+                // rename record constructor from enabled test module
+                /src/lib.rs
+                  2:15-2:19 -> Account
+                  7:20-7:24 -> Account
             "#]],
         )
         .await;
@@ -236,13 +216,13 @@ async fn stale_source_query_returns_an_error_then_recovers_through_the_command_q
             "rename",
             "Entity",
             expect![[r#"
-                rename after queued source recovery
-                - /src/lib.rs
-                  - 2:11-2:15 -> Entity
-                - /src/usage.rs
-                  - 0:11-0:15 -> Entity
-                  - 2:16-2:20 -> Entity
-                  - 3:17-3:21 -> Entity
+                // rename after queued source recovery
+                /src/lib.rs
+                  2:11-2:15 -> Entity
+                /src/usage.rs
+                  0:11-0:15 -> Entity
+                  2:16-2:20 -> Entity
+                  3:17-3:21 -> Entity
             "#]],
         )
         .await;

@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -36,18 +35,17 @@ async fn hover_links_resolve_in_the_documented_items_scope() {
         mod consumer {
             struct Account;
             fn load() {}
-            pub fn demo(_: super::Us$hover$er) {}
+            pub fn demo(_: super::Us$0er) {} // hover("links from a re-exported item")
         }
         "#,
     )
     .await;
     fixture
         .check(
-            &[LspQuery::hover("links from a re-exported item", "hover")],
             expect![[r#"
-                links from a re-exported item
-                - range: /src/lib.rs:22:26-22:30
-                - markdown:
+                // links from a re-exported item
+                range: /src/lib.rs:22:26-22:30
+                markdown:
                   ```rust
                   hover_links::api::User
 
@@ -82,12 +80,12 @@ async fn hover_links_keep_outer_and_inner_module_scopes() {
         //- /src/lib.rs
         pub struct Profile;
         /// Outer [`Profile`].
-        pub mod in$inline$line {
+        pub mod in$0line { // hover("inline module documentation")
             //! Inner [`Profile`] and parent [`super::Profile`].
             pub struct Profile;
         }
         /// Outer [`Profile`].
-        pub mod out$outline$line;
+        pub mod out$0line; // hover("out-of-line module documentation")
 
         //- /src/outline.rs
         //! Inner [`Profile`] and parent [`super::Profile`].
@@ -97,14 +95,10 @@ async fn hover_links_keep_outer_and_inner_module_scopes() {
     .await;
     fixture
         .check(
-            &[
-                LspQuery::hover("inline module documentation", "inline"),
-                LspQuery::hover("out-of-line module documentation", "outline"),
-            ],
             expect![[r#"
-                inline module documentation
-                - range: /src/lib.rs:2:8-2:14
-                - markdown:
+                // inline module documentation
+                range: /src/lib.rs:2:8-2:14
+                markdown:
                   ```rust
                   hover_links::inline
 
@@ -114,9 +108,9 @@ async fn hover_links_keep_outer_and_inner_module_scopes() {
                   Outer [`Profile`](<file://$ROOT/src/lib.rs#L1,12>).
                   Inner [`Profile`](<file://$ROOT/src/lib.rs#L5,16>) and parent [`super::Profile`](<file://$ROOT/src/lib.rs#L1,12>).
 
-                out-of-line module documentation
-                - range: /src/lib.rs:7:8-7:15
-                - markdown:
+                // out-of-line module documentation
+                range: /src/lib.rs:7:8-7:15
+                markdown:
                   ```rust
                   hover_links::outline
 
@@ -143,10 +137,10 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
 
         //- /src/lib.rs
         /// [`Self`], [`Self::new()`], [`Self::name`], [`State::Ready`], and [`Factory::make`].
-        pub struct Us$user$er { pub name: u32 }
+        pub struct Us$0er { pub name: u32 } // hover("type and member links")
         impl User {
             /// [`Self`] and [`Self::name`].
-            pub fn n$method$ew() -> Self { User { name: 0 } }
+            pub fn n$0ew() -> Self { User { name: 0 } } // hover("impl Self links")
         }
         pub enum State { Ready }
         pub trait Factory { fn make(); }
@@ -154,24 +148,18 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
         pub fn Profile() {}
         macro_rules! profile { () => {} }
         /// [type](struct@Profile), [function](fn@Profile), and [`profile!`].
-        pub struct Acc$account$ount;
+        pub struct Acc$0ount; // hover("disambiguated item links")
         /// [`User::new`] and [`Factory::make`].
-        pub mod a$module$pi {}
+        pub mod a$0pi {} // hover("associated links in module docs")
         "#,
     )
     .await;
     fixture
         .check(
-            &[
-                LspQuery::hover("type and member links", "user"),
-                LspQuery::hover("impl Self links", "method"),
-                LspQuery::hover("disambiguated item links", "account"),
-                LspQuery::hover("associated links in module docs", "module"),
-            ],
             expect![[r#"
-                type and member links
-                - range: /src/lib.rs:1:11-1:15
-                - markdown:
+                // type and member links
+                range: /src/lib.rs:1:11-1:15
+                markdown:
                   ```rust
                   hover_links::User
 
@@ -182,9 +170,9 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
 
                   [`Self`](<file://$ROOT/src/lib.rs#L2,12>), [`Self::new()`](<file://$ROOT/src/lib.rs#L5,12>), [`Self::name`](<file://$ROOT/src/lib.rs#L2,23>), [`State::Ready`](<file://$ROOT/src/lib.rs#L7,18>), and [`Factory::make`](<file://$ROOT/src/lib.rs#L8,24>).
 
-                impl Self links
-                - range: /src/lib.rs:4:11-4:14
-                - markdown:
+                // impl Self links
+                range: /src/lib.rs:4:11-4:14
+                markdown:
                   ```rust
                   hover_links::User::new
 
@@ -193,9 +181,9 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
 
                   [`Self`](<file://$ROOT/src/lib.rs#L2,12>) and [`Self::name`](<file://$ROOT/src/lib.rs#L2,23>).
 
-                disambiguated item links
-                - range: /src/lib.rs:12:11-12:18
-                - markdown:
+                // disambiguated item links
+                range: /src/lib.rs:12:11-12:18
+                markdown:
                   ```rust
                   hover_links::Account
 
@@ -204,9 +192,9 @@ async fn hover_links_resolve_self_members_and_disambiguated_names() {
 
                   [type](<file://$ROOT/src/lib.rs#L9,12>), [function](<file://$ROOT/src/lib.rs#L10,8>), and [`profile!`](<file://$ROOT/src/lib.rs#L11,14>).
 
-                associated links in module docs
-                - range: /src/lib.rs:14:8-14:11
-                - markdown:
+                // associated links in module docs
+                range: /src/lib.rs:14:8-14:11
+                markdown:
                   ```rust
                   hover_links::api
 
@@ -233,36 +221,30 @@ async fn hover_self_links_preserve_their_owner_identity() {
         //- /src/lib.rs
         pub fn Profile() {}
         /// [`Self`], [`Self::name`], and [`Self::new`].
-        pub struct Pro$profile$file { pub name: u32 }
+        pub struct Pro$0file { pub name: u32 } // hover("struct Self despite a same-named function")
         impl Profile {
             pub fn new() -> Self { Profile { name: 0 } }
         }
 
         pub fn Factory() {}
         /// [`Self`] and [`Self::make`].
-        pub trait Fac$factory$tory {
+        pub trait Fac$0tory { // hover("trait Self despite a same-named function")
             /// [`Self`] and [`Self::make`].
-            fn ma$make$ke() -> Self;
+            fn ma$0ke() -> Self; // hover("Self on an associated trait item")
         }
 
         pub fn State() {}
         /// [`Self`] and [`Self::Ready`].
-        pub enum St$state$ate { Ready }
+        pub enum St$0ate { Ready } // hover("enum Self and its variant")
         "#,
     )
     .await;
     fixture
         .check(
-            &[
-                LspQuery::hover("struct Self despite a same-named function", "profile"),
-                LspQuery::hover("trait Self despite a same-named function", "factory"),
-                LspQuery::hover("Self on an associated trait item", "make"),
-                LspQuery::hover("enum Self and its variant", "state"),
-            ],
             expect![[r#"
-                struct Self despite a same-named function
-                - range: /src/lib.rs:2:11-2:18
-                - markdown:
+                // struct Self despite a same-named function
+                range: /src/lib.rs:2:11-2:18
+                markdown:
                   ```rust
                   hover_links::Profile
 
@@ -273,9 +255,9 @@ async fn hover_self_links_preserve_their_owner_identity() {
 
                   [`Self`](<file://$ROOT/src/lib.rs#L3,12>), [`Self::name`](<file://$ROOT/src/lib.rs#L3,26>), and [`Self::new`](<file://$ROOT/src/lib.rs#L5,12>).
 
-                trait Self despite a same-named function
-                - range: /src/lib.rs:9:10-9:17
-                - markdown:
+                // trait Self despite a same-named function
+                range: /src/lib.rs:9:10-9:17
+                markdown:
                   ```rust
                   hover_links::Factory
 
@@ -284,9 +266,9 @@ async fn hover_self_links_preserve_their_owner_identity() {
 
                   [`Self`](<file://$ROOT/src/lib.rs#L10,11>) and [`Self::make`](<file://$ROOT/src/lib.rs#L12,8>).
 
-                Self on an associated trait item
-                - range: /src/lib.rs:11:7-11:11
-                - markdown:
+                // Self on an associated trait item
+                range: /src/lib.rs:11:7-11:11
+                markdown:
                   ```rust
                   hover_links::Factory::make
 
@@ -295,9 +277,9 @@ async fn hover_self_links_preserve_their_owner_identity() {
 
                   [`Self`](<file://$ROOT/src/lib.rs#L10,11>) and [`Self::make`](<file://$ROOT/src/lib.rs#L12,8>).
 
-                enum Self and its variant
-                - range: /src/lib.rs:16:9-16:14
-                - markdown:
+                // enum Self and its variant
+                range: /src/lib.rs:16:9-16:14
+                markdown:
                   ```rust
                   hover_links::State
 
@@ -338,16 +320,16 @@ async fn hover_links_use_unsaved_destination_positions() {
         .did_change_full(
             "src/model.rs",
             2,
-            MarkedText::parse("// A comment inserted in the editor.\n\n    pub struct Profile;\n"),
+            "// A comment inserted in the editor.\n\n    pub struct Profile;\n",
         )
         .await;
     fixture
-        .check(
+        .check_queries(
             &[LspQuery::hover("link to a moved declaration", "hover")],
             expect![[r#"
-                link to a moved declaration
-                - range: /src/lib.rs:2:11-2:15
-                - markdown:
+                // link to a moved declaration
+                range: /src/lib.rs:2:11-2:15
+                markdown:
                   ```rust
                   hover_links::User
 
@@ -363,19 +345,17 @@ async fn hover_links_use_unsaved_destination_positions() {
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                "// Source and destination declarations have both moved.\n\npub mod model;\n/// [`model::Profile`] and [`Self`].\npub struct Us$hover$er;\n",
-            ),
+            "// Source and destination declarations have both moved.\n\npub mod model;\n/// [`model::Profile`] and [`Self`].\npub struct Us$hover$er;\n",
         )
         .await;
     fixture
-        .check_dirty(
+        .check_dirty_queries(
             &current,
             &[LspQuery::hover("links from a moved declaration", "hover")],
             expect![[r#"
-                links from a moved declaration
-                - range: /src/lib.rs:4:11-4:15
-                - markdown:
+                // links from a moved declaration
+                range: /src/lib.rs:4:11-4:15
+                markdown:
                   ```rust
                   hover_links::User
 
@@ -428,7 +408,7 @@ async fn source_doc_links_hover_and_navigate() {
     )
     .await;
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::hover("source member hover", "method"),
                 LspQuery::goto_definition("source member navigation", "method"),
@@ -441,38 +421,23 @@ async fn source_doc_links_hover_and_navigate() {
                 LspQuery::goto_definition("inner module scope", "inner"),
             ],
             expect![[r#"
-        source member hover
-        - range: /src/lib.rs:5:4-5:19
-        - markdown:
+        // source member hover
+        range: /src/lib.rs:5:4-5:19
+        markdown:
           ```rust
           source_docs::User::build
 
           pub fn build() -> Self
           ```
 
-        source member navigation
-        - /src/lib.rs:7:19-7:24
-
-        source field navigation
-        - /src/lib.rs:6:22-6:26
-
-        source attribute navigation
-        - /src/lib.rs:0:11-0:18
-
-        source raw attribute navigation
-        - /src/lib.rs:0:11-0:18
-
-        source block navigation
-        - /src/lib.rs:0:11-0:18
-
-        source disambiguator navigation
-        - /src/lib.rs:14:11-14:17
-
-        cross-file reference definition
-        - /src/lib.rs:0:11-0:18
-
-        inner module scope
-        - /src/api.rs:1:11-1:18
+        /src/lib.rs:7:19-7:24 // source member navigation
+        /src/lib.rs:6:22-6:26 // source field navigation
+        /src/lib.rs:0:11-0:18 // source attribute navigation
+        /src/lib.rs:0:11-0:18 // source raw attribute navigation
+        /src/lib.rs:0:11-0:18 // source block navigation
+        /src/lib.rs:14:11-14:17 // source disambiguator navigation
+        /src/lib.rs:0:11-0:18 // cross-file reference definition
+        /src/api.rs:1:11-1:18 // inner module scope
     "#]],
         )
         .await;

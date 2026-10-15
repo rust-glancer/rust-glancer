@@ -1,5 +1,4 @@
 use expect_test::expect;
-use test_fixture::testonly::MarkedText;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
@@ -50,29 +49,22 @@ async fn dirty_qualified_path_root_uses_the_type_namespace() {
         .did_change_full(
             "app/src/lib.rs",
             8,
-            MarkedText::parse(
-                r#"pub fn demo() {
+            r#"pub fn demo() {
     let before = 1;
     let HashMap = ();
-    let _ = HashMap$action$::new();
+    let _ = HashMap$0::new(); // code_actions("import qualified path root").only("quickfix")
     let after = 2;
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::code_action_only(
-                "import qualified path root",
-                "action",
-                gen_lsp_types::CodeActionKind::QuickFix,
-            )],
             expect![[r#"
-                import qualified path root
-                - quickfix Import `catalog::collections::HashMap`
+                // import qualified path root
+                quickfix Import `catalog::collections::HashMap`
                   preferred: true
                   document: /app/src/lib.rs version 8
                   edit: 0:0-0:0 -> "use catalog::collections::HashMap;\n\n"
@@ -120,8 +112,7 @@ async fn dirty_trait_impl_action_subtracts_newly_typed_members() {
         .did_change_full(
             "src/lib.rs",
             12,
-            MarkedText::parse(
-                r#"
+            r#"
 // Unsaved text moves the impl and adds one member before analysis rebuilds.
 trait Service {
     fn first(&self);
@@ -130,25 +121,19 @@ trait Service {
 
 struct Worker;
 
-impl Service for Worker {$action$
+impl Service for Worker {$0 // code_actions("implement dirty trait members").only("quickfix")
     fn first(&self) {}
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[LspQuery::code_action_only(
-                "implement dirty trait members",
-                "action",
-                gen_lsp_types::CodeActionKind::QuickFix,
-            )],
             expect![[r#"
-                implement dirty trait members
-                - quickfix Implement missing trait members
+                // implement dirty trait members
+                quickfix Implement missing trait members
                   preferred: true
                   document: /src/lib.rs version 12
                   edit: 10:22-11:0 -> "\n\n    fn second(&self) {\n        todo!()\n    }\n"
@@ -201,58 +186,25 @@ async fn new_dirty_generic_trait_impl_supports_completion_and_bulk_implementatio
         .did_change_full(
             "src/lib.rs",
             2,
-            MarkedText::parse(
-                r#"trait Service<T> {
+            r#"trait Service<T> {
     fn handle(&self, value: T);
 }
 
 struct Worker<T>(T);
 
-impl<T> Service<T> for Worker<T> {$action$
-    $completion$
+impl<T> Service<T> for Worker<T> {$0 // code_actions("implement new dirty trait impl").only("quickfix")
+    $0 // complete("complete new dirty trait impl")
 }
 "#,
-            ),
         )
         .await;
 
     fixture
         .check_dirty(
             &dirty,
-            &[
-                LspQuery::completion("complete new dirty trait impl", "completion"),
-                LspQuery::code_action_only(
-                    "implement new dirty trait impl",
-                    "action",
-                    gen_lsp_types::CodeActionKind::QuickFix,
-                ),
-            ],
             expect![[r#"
-                complete new dirty trait impl
-                - unsafe Keyword
-                  detail: keyword unsafe
-                  edit: /src/lib.rs:7:4-7:4 -> unsafe
-                - async Keyword
-                  detail: keyword async
-                  edit: /src/lib.rs:7:4-7:4 -> async
-                - extern Keyword
-                  detail: keyword extern
-                  edit: /src/lib.rs:7:4-7:4 -> extern
-                - fn Keyword
-                  detail: keyword fn
-                  edit: /src/lib.rs:7:4-7:4 -> fn
-                - const Keyword
-                  detail: keyword const
-                  edit: /src/lib.rs:7:4-7:4 -> const
-                - type Keyword
-                  detail: keyword type
-                  edit: /src/lib.rs:7:4-7:4 -> type
-                - handle Function
-                  detail: required trait member: fn handle(&self, value: T)
-                  edit: /src/lib.rs:7:4-7:4 -> "fn handle(&self, value: T) {\n    todo!()\n}"
-
-                implement new dirty trait impl
-                - quickfix Implement missing trait members
+                // implement new dirty trait impl
+                quickfix Implement missing trait members
                   preferred: true
                   document: /src/lib.rs version 2
                   edit: 6:34-8:0 -> "\n    fn handle(&self, value: T) {\n        todo!()\n    }\n"
@@ -268,6 +220,29 @@ impl<T> Service<T> for Worker<T> {$action$
                             todo!()
                         }
                     }
+
+                // complete new dirty trait impl
+                unsafe Keyword
+                  detail: keyword unsafe
+                  edit: /src/lib.rs:7:4-7:4 -> unsafe
+                async Keyword
+                  detail: keyword async
+                  edit: /src/lib.rs:7:4-7:4 -> async
+                extern Keyword
+                  detail: keyword extern
+                  edit: /src/lib.rs:7:4-7:4 -> extern
+                fn Keyword
+                  detail: keyword fn
+                  edit: /src/lib.rs:7:4-7:4 -> fn
+                const Keyword
+                  detail: keyword const
+                  edit: /src/lib.rs:7:4-7:4 -> const
+                type Keyword
+                  detail: keyword type
+                  edit: /src/lib.rs:7:4-7:4 -> type
+                handle Function
+                  detail: required trait member: fn handle(&self, value: T)
+                  edit: /src/lib.rs:7:4-7:4 -> "fn handle(&self, value: T) {\n    todo!()\n}"
             "#]],
         )
         .await;
@@ -297,7 +272,7 @@ async fn qualified_rewrite_uses_utf16_ranges_and_respects_request_context() {
     fixture.did_open_saved("src/lib.rs", 3).await;
 
     fixture
-        .check(
+        .check_queries(
             &[
                 LspQuery::code_action_only(
                     "qualified rewrite",
@@ -312,8 +287,8 @@ async fn qualified_rewrite_uses_utf16_ranges_and_respects_request_context() {
                 LspQuery::automatic_code_action("automatic discovery", "action"),
             ],
             expect![[r#"
-                qualified rewrite
-                - refactor.rewrite Replace qualified path with `use`
+                // qualified rewrite
+                refactor.rewrite Replace qualified path with `use`
                   preferred: unset
                   document: /src/lib.rs version 3
                   edit: 0:0-0:0 -> "use crate::models::User;\n\n"
@@ -327,11 +302,8 @@ async fn qualified_rewrite_uses_utf16_ranges_and_respects_request_context() {
                         let _emoji = "😀"; let _: User;
                     }
 
-                quick fixes only
-                - none
-
-                automatic discovery
-                - none
+                none // quick fixes only
+                none // automatic discovery
             "#]],
         )
         .await;
