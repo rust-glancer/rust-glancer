@@ -26,7 +26,7 @@ async fn goto_implementation_uses_the_saved_global_index() {
 
     fixture
         .check(expect![[r#"
-            /src/lib.rs:4:0-4:23 // implementations from saved semantics
+            /src/lib.rs:4:13-4:20 // implementations from saved semantics
         "#]])
         .await;
 

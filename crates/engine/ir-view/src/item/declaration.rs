@@ -3,7 +3,7 @@
 use std::{borrow::Cow, fmt};
 
 use anyhow::Context as _;
-use rg_def_map::{DefMapSource, ModuleOrigin};
+use rg_def_map::{DefMapSource, ItemSourceKind, ModuleOrigin};
 use rg_ir_model::{
     BodyBindingRef, CrateRef, EnumVariantRef, FieldKey, FieldRef, FileId, FunctionRef, ItemOwner,
     LocalDefRef, ModuleRef, SemanticItemKind, SemanticItemRef, Span, identity::DeclarationRef,
@@ -342,13 +342,47 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl) = self.db.local_impl_data(local_impl_ref)? else {
                     return Ok(None);
                 };
+
+                // Type paths keep their syntax ranges. Expansion ranges belong to generated
+                // text, so generated impls must keep their mapped invocation as the destination.
+                let is_written = match view.source().kind {
+                    ItemSourceKind::ItemTree(_) => true,
+                    ItemSourceKind::Body(source) => self
+                        .db
+                        .body_ir
+                        .body(source.body)?
+                        // Current declaration-only impls have no body and use written syntax.
+                        .is_none_or(|body| body.source_item_is_written(source.item)),
+                    ItemSourceKind::Generated(_) | ItemSourceKind::Synthetic(_) => false,
+                };
+                let mut selection_span = local_impl.span;
+                if is_written && let Some((mut self_ty, _)) = view.impl_header() {
+                    // In `&'a Wrapper<T>`, selecting `Wrapper<T>` is enough to focus the type.
+                    // Types without a single inner path, such as tuples, keep the whole impl.
+                    // Their punctuation ranges are not stored, so we cannot select them exactly.
+                    loop {
+                        match self_ty {
+                            TypeRef::Path(path) => {
+                                if local_impl.span.contains_span(path.source_span) {
+                                    selection_span = path.source_span;
+                                }
+                                break;
+                            }
+                            TypeRef::Reference { inner, .. }
+                            | TypeRef::RawPointer { inner, .. }
+                            | TypeRef::Slice(inner)
+                            | TypeRef::Array { inner, .. } => self_ty = inner,
+                            _ => break,
+                        }
+                    }
+                }
                 Ok(Some(Declaration {
                     crate_ref: item.origin().origin_crate(),
                     kind: SymbolKind::Impl,
                     label: DeclarationLabel::Impl(item),
                     file_id: local_impl.file_id,
                     span: local_impl.span,
-                    selection_span: local_impl.span,
+                    selection_span,
                 }))
             }
             SemanticItemKind::Function => match item {

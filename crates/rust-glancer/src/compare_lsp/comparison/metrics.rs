@@ -7,7 +7,7 @@ pub(crate) struct SetComparisonMetrics {
     pub(crate) rust_glancer_count: usize,
     pub(crate) rust_analyzer_count: usize,
     pub(crate) matched_count: usize,
-    /// Non-identical matches where rust-glancer was proven to retain at least the reference detail.
+    /// Non-identical responses accepted as equivalent for the operation.
     ///
     /// This is a subset of `matched_count`, not an additional result count.
     pub(crate) compatible_count: usize,

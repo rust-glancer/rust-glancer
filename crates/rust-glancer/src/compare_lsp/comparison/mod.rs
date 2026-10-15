@@ -114,6 +114,7 @@ impl QueryComparison {
                 ) => QueryComparisonResult::Locations(LocationComparison::new(
                     rust_glancer,
                     rust_analyzer,
+                    query.kind(),
                 )),
                 _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
                     rust_glancer,
@@ -212,14 +213,18 @@ impl QueryComparison {
         {
             match &result {
                 QueryComparisonResult::Locations(comparison)
-                    if !comparison.missing().is_empty() || !comparison.extra().is_empty() =>
+                    if !comparison.compatible().is_empty()
+                        || !comparison.missing().is_empty()
+                        || !comparison.extra().is_empty() =>
                 {
                     tracing::debug!(
                         target: "rust_glancer::compare_lsp::divergence",
                         query = query.label(),
                         method = query.kind().lsp_method(),
+                        compatible_count = comparison.compatible().len(),
                         missing_count = comparison.missing().len(),
                         extra_count = comparison.extra().len(),
+                        compatible = ?comparison.compatible(),
                         missing = ?comparison.missing(),
                         extra = ?comparison.extra(),
                         "compare-lsp location divergence"
@@ -643,6 +648,47 @@ mod tests {
             Some(25.0),
             "one non-comparable query halves the method's 50% set score",
         );
+    }
+
+    #[test]
+    fn accepts_implementation_selection_lengths_at_the_same_destination() {
+        let invocation = NormalizedRange::test_new(4, 0, 12, 1);
+        let macro_name = NormalizedRange::test_new(4, 0, 4, 10);
+        let shared = location("src/other.rs", 1);
+        let queries = [(invocation, macro_name), (macro_name, invocation)]
+            .into_iter()
+            .map(|(rust_glancer, rust_analyzer)| {
+                NormalizedQueryExecution::test_new(
+                    "implementation selection",
+                    QueryKind::Implementation,
+                    locations(vec![
+                        shared.clone(),
+                        NormalizedLocation::test_new("src/lib.rs", rust_glancer),
+                    ]),
+                    locations(vec![
+                        shared.clone(),
+                        NormalizedLocation::test_new("src/lib.rs", rust_analyzer),
+                    ]),
+                )
+            })
+            .collect();
+        let comparison =
+            ComparisonSummary::from_normalized(&NormalizedSummary::test_from_results(queries));
+
+        for query in comparison.queries() {
+            let QueryComparisonResult::Locations(locations) = query.result() else {
+                panic!("implementation query should compare locations");
+            };
+            let metrics = locations.metrics().set;
+            assert_eq!(metrics.matched_count, 2);
+            assert_eq!(metrics.compatible_count, 1);
+            assert_eq!(metrics.match_score_percent, 100.0);
+        }
+        let MethodAggregateData::Locations(aggregate) = &comparison.aggregates[0].data else {
+            panic!("implementations should use location aggregation");
+        };
+        assert_eq!(aggregate.metrics().set.compatible_count, 2);
+        assert_eq!(comparison.equivalence_score_percent(), Some(100.0));
     }
 
     #[test]

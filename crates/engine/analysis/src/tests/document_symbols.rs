@@ -119,11 +119,11 @@ pub fn make() {
               const KIND @ 22:5-22:30 selection 22:11-22:15
               type_alias Output @ 23:5-23:17 selection 23:10-23:16
               method name @ 24:5-24:36 selection 24:8-24:12
-            impl User @ 27:1-41:2
+            impl User @ 27:1-41:2 selection 27:6-27:10
               method new @ 28:5-40:6 selection 28:12-28:15
                 struct Local @ 29:9-31:10 selection 29:16-29:21
                   field inner @ 30:13-30:18
-                impl Local @ 33:9-37:10
+                impl Local @ 33:9-37:10 selection 33:14-33:19
                   method inner @ 34:13-36:14 selection 34:16-34:21
             fn make @ 43:1-47:2 selection 43:8-43:12
               struct Temp @ 44:5-46:6 selection 44:12-44:16
@@ -186,7 +186,7 @@ pub fn use_it() {
               const DEFAULT @ 13:5-13:37 selection 13:11-13:18
               static CURRENT @ 14:5-14:41 selection 14:12-14:19
               fn helper @ 15:5-17:6 selection 15:8-15:14
-              impl Action @ 19:5-25:6
+              impl Action @ 19:5-25:6 selection 19:10-19:16
                 const NAME @ 20:9-20:38 selection 20:15-20:19
                 type_alias Output @ 21:9-21:29 selection 21:14-21:20
                 method build @ 22:9-24:10 selection 22:12-22:17

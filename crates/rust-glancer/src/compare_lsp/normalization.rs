@@ -861,6 +861,12 @@ pub(crate) struct NormalizedLocation {
 }
 
 impl NormalizedLocation {
+    pub(crate) fn has_same_start_as(&self, reference: &Self) -> bool {
+        self.path == reference.path
+            && self.range.start_line == reference.range.start_line
+            && self.range.start_character == reference.range.start_character
+    }
+
     #[cfg(test)]
     pub(crate) fn test_new(path: &'static str, range: NormalizedRange) -> Self {
         Self {

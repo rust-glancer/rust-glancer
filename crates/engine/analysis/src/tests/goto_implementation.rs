@@ -3,6 +3,38 @@ use expect_test::expect;
 use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 
 #[test]
+fn selects_wrapped_self_type_paths_and_preserves_fallbacks() {
+    check_analysis(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_impl_self_type_spans"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub trait Ac$0tion {} // goto_impl("select implementation self types")
+pub struct Wrapper<T>(T);
+
+impl<'a, T> Action for &'a Wrapper<T> {}
+impl Action for (u8, bool) {}
+
+macro_rules! implement {
+    ($ty:ty) => { impl Action for $ty {} };
+}
+pub struct Generated<T>(T);
+implement!(Generated<()>);
+"#,
+        expect![[r#"
+            // select implementation self types
+            impl Action for &'a Wrapper<T> @ 4:28-4:38
+            impl Action for (u8, bool) @ 5:1-5:30
+            impl Action for Generated<()> @ 11:1-11:27
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_type_trait_and_trait_method_implementations() {
     check_analysis(
         r#"
@@ -51,16 +83,16 @@ pub fn use_it(user: User) {
 "#,
         expect![[r#"
             // goto implementations of trait
-            impl Named for Account @ 21:1-25:2
-            impl Named for User @ 15:1-19:2
+            impl Named for Account @ 21:16-21:23
+            impl Named for User @ 15:16-15:20
 
             // goto implementations of trait method
             fn name @ 16:8-16:12
             fn name @ 22:8-22:12
 
             // goto implementations of type
-            impl Named for User @ 15:1-19:2
-            impl User @ 9:1-13:2
+            impl Named for User @ 15:16-15:20
+            impl User @ 9:6-9:10
 
             fn new @ 10:12-10:15 // goto inherent implementation
 
@@ -115,8 +147,8 @@ pub fn use_it() {
 }
 "#,
         expect![[r#"
-            impl User @ 4:5-6:6 // goto body-local implementations from type
-            impl User @ 4:5-6:6 // goto body-local implementations from binding
+            impl User @ 4:10-4:14 // goto body-local implementations from type
+            impl User @ 4:10-4:14 // goto body-local implementations from binding
         "#]],
     );
 }
@@ -193,8 +225,8 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // local trait impl blocks
-            impl Local for Account @ 10:5-10:48
-            impl Local for User @ 9:5-9:45
+            impl Local for Account @ 10:20-10:27
+            impl Local for User @ 9:20-9:24
 
             // local trait method
             fn run @ 9:30-9:33
@@ -205,9 +237,9 @@ pub fn use_it() {
             fn run @ 10:33-10:36
 
             // global trait in local impl header
-            impl Global for Account @ 12:5-12:49
-            impl Global for Service @ 3:1-3:45
-            impl Global for User @ 11:5-11:46
+            impl Global for Account @ 12:21-12:28
+            impl Global for Service @ 3:17-3:24
+            impl Global for User @ 11:21-11:25
 
             // global trait local impl method
             fn run @ 3:30-3:33
