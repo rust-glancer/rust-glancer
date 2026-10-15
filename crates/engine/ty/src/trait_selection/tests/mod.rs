@@ -1,3 +1,8 @@
+//! Snapshot rows show `goal -> impl#N (yes|maybe)` for selection and
+//! `<Type as Trait>::Assoc -> value (yes|maybe)` for normalization. The parentheses give
+//! applicability; `empty`, `ambiguous`, and `none` remain distinct outcomes. Named inference
+//! variable bindings follow on indented lines, with the case description above the block.
+
 mod utils;
 
 use std::fmt::Write as _;
@@ -57,10 +62,7 @@ fn negative_impls_are_not_positive_selection_candidates() {
         "#,
         vec![TraitSelectionCase::probe("negative impl", "User: Marker")],
         expect![[r#"
-            negative impl
-              query: selection
-              goal: User: Marker
-              result: empty
+            User: Marker -> empty // negative impl
         "#]],
     );
 }
@@ -198,24 +200,12 @@ fn probe_matches_direct_generic_impl_evidence() {
             ),
         ],
         expect![[r#"
-            select direct impl
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
+            // select direct impl
+            Vec<?item>: FromIterator<User> -> impl#0 (yes)
+              ?item = User
 
-            reject mismatched self
-              query: selection
-              goal: OtherVec<?item>: FromIterator<User>
-              result: empty
-
-            reject conflicting repeated type param
-              query: selection
-              goal: Vec<User>: FromIterator<Other>
-              result: empty
+            OtherVec<?item>: FromIterator<User> -> empty // reject mismatched self
+            Vec<User>: FromIterator<Other> -> empty // reject conflicting repeated type param
         "#]],
     );
 }
@@ -246,21 +236,11 @@ fn normalizes_generic_associated_types_with_live_variables() {
             ),
         ],
         expect![[r#"
-            project concrete generic impl Item
-              query: selection
-              goal: <Iter<User> as Iterator>::Item
-              result: projected
-                final: User
-                applicability: yes
+            <Iter<User> as Iterator>::Item -> User (yes) // project concrete generic impl Item
 
-            preserve unresolved projection variable
-              query: selection
-              goal: <Iter<?item> as Iterator>::Item
-              result: projected
-                final: _
-                applicability: yes
-                vars
-                  ?item = _
+            // preserve unresolved projection variable
+            <Iter<?item> as Iterator>::Item -> _ (yes)
+              ?item = _
         "#]],
     );
 }
@@ -296,26 +276,12 @@ fn probe_checks_goal_associated_type_equality_constraints() {
             ),
         ],
         expect![[r#"
-            accept matching associated equality
-              query: selection
-              goal: Iter<User>: Iterator<Item = User>
-              result: one
-                impl: impl#0
-                applicability: yes
+            Iter<User>: Iterator<Item = User> -> impl#0 (yes) // accept matching associated equality
+            Iter<User>: Iterator<Item = Other> -> empty // reject mismatched associated equality
 
-            reject mismatched associated equality
-              query: selection
-              goal: Iter<User>: Iterator<Item = Other>
-              result: empty
-
-            solve receiver slot from associated equality
-              query: selection
-              goal: Iter<?item>: Iterator<Item = User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
+            // solve receiver slot from associated equality
+            Iter<?item>: Iterator<Item = User> -> impl#0 (yes)
+              ?item = User
         "#]],
     );
 }
@@ -362,36 +328,15 @@ fn inherited_equalities_preserve_supertrait_arguments() {
             ),
         ],
         expect![[r#"
-            inherited projection
-              query: selection
-              goal: <Producer<User> as Derived<User>>::Item
-              result: projected
-                final: User
-                applicability: yes
+            <Producer<User> as Derived<User>>::Item -> User (yes) // inherited projection
+            <Producer<Option<User>> as Further<User>>::Item -> Option<User> (yes) // two supertrait substitutions
 
-            two supertrait substitutions
-              query: selection
-              goal: <Producer<Option<User>> as Further<User>>::Item
-              result: projected
-                final: Option<User>
-                applicability: yes
+            // equality constrains live projection arguments
+            Producer<?item>: Further<?arg, Item = Option<User>> -> impl#2 (yes)
+              ?arg = User
+              ?item = Option<User>
 
-            equality constrains live projection arguments
-              query: selection
-              goal: Producer<?item>: Further<?arg, Item = Option<User>>
-              result: one
-                impl: impl#2
-                applicability: yes
-                vars
-                  ?arg = User
-                  ?item = Option<User>
-
-            opaque equality keeps transformed arguments
-              query: selection
-              goal: <impl Further<User, Item = Option<User>> as Base<Vec<Option<User>>>>::Item
-              result: projected
-                final: Option<User>
-                applicability: yes
+            <impl Further<User, Item = Option<User>> as Base<Vec<Option<User>>>>::Item -> Option<User> (yes) // opaque equality keeps transformed arguments
         "#]],
     );
 }
@@ -426,17 +371,8 @@ fn solver_resolves_impl_predicate_associated_type_equality_constraints() {
             ),
         ],
         expect![[r#"
-            prove matching impl predicate equality
-              query: selection
-              goal: Adapter<Iter<User>>: AcceptsUserIterator
-              result: one
-                impl: impl#1
-                applicability: yes
-
-            reject mismatched impl predicate equality
-              query: selection
-              goal: Adapter<Iter<Other>>: AcceptsUserIterator
-              result: empty
+            Adapter<Iter<User>>: AcceptsUserIterator -> impl#1 (yes) // prove matching impl predicate equality
+            Adapter<Iter<Other>>: AcceptsUserIterator -> empty // reject mismatched impl predicate equality
         "#]],
     );
 }
@@ -459,12 +395,7 @@ fn probe_prefers_definite_impl_over_maybe_headers() {
             "Iter<User>: Iterator",
         )],
         expect![[r#"
-            default selection
-              query: selection
-              goal: Iter<User>: Iterator
-              result: one
-                impl: impl#0
-                applicability: yes
+            Iter<User>: Iterator -> impl#0 (yes) // default selection
         "#]],
     );
 }
@@ -489,14 +420,9 @@ fn solver_commits_projection_answer_evidence_to_inference_table() {
             "<Vec<?item> as Indexed<User>>::Item",
         )],
         expect![[r#"
-            solver solves projection variable
-              query: selection
-              goal: <Vec<?item> as Indexed<User>>::Item
-              result: projected
-                final: User
-                applicability: yes
-                vars
-                  ?item = User
+            // solver solves projection variable
+            <Vec<?item> as Indexed<User>>::Item -> User (yes)
+              ?item = User
         "#]],
     );
 }
@@ -535,28 +461,12 @@ fn solver_raises_associated_type_constructor_shapes() {
             ),
         ],
         expect![[r#"
-            solver projects array value
-              query: selection
-              goal: <Holder<?item> as Shapes>::Array
-              result: projected
-                final: [_; 3]
-                applicability: yes
-                vars
-                  ?item = _
+            // solver projects array value
+            <Holder<?item> as Shapes>::Array -> [_; 3] (yes)
+              ?item = _
 
-            solver projects raw pointer
-              query: selection
-              goal: <Holder<User> as Shapes>::Pointer
-              result: projected
-                final: *const User
-                applicability: yes
-
-            solver projects function pointer
-              query: selection
-              goal: <Holder<User> as Shapes>::Callback
-              result: projected
-                final: fn(User) -> User
-                applicability: yes
+            <Holder<User> as Shapes>::Pointer -> *const User (yes) // solver projects raw pointer
+            <Holder<User> as Shapes>::Callback -> fn(User) -> User (yes) // solver projects function pointer
         "#]],
     );
 }
@@ -587,12 +497,7 @@ fn normalize_assoc_type_recurses_to_terminal_answer() {
             "<Skip<Iter<User>> as Iterator>::Item",
         )],
         expect![[r#"
-            project qualified impl Item
-              query: selection
-              goal: <Skip<Iter<User>> as Iterator>::Item
-              result: projected
-                final: User
-                applicability: yes
+            <Skip<Iter<User>> as Iterator>::Item -> User (yes) // project qualified impl Item
         "#]],
     );
 }
@@ -642,38 +547,11 @@ fn blanket_self_param_impl_and_source_opaque_bounds_are_proved() {
             ),
         ],
         expect![[r#"
-            prove blanket iterator impl
-              query: selection
-              goal: Iter<User>: IntoIterator
-              result: one
-                impl: impl#1
-                applicability: yes
-
-            project blanket IntoIterator Item
-              query: selection
-              goal: <Iter<User> as IntoIterator>::Item
-              result: projected
-                final: User
-                applicability: yes
-
-            prove blanket iterator impl for opaque iterator
-              query: selection
-              goal: impl Iterator<Item = User>: IntoIterator
-              result: one
-                impl: impl#1
-                applicability: yes
-
-            project blanket opaque IntoIterator Item
-              query: selection
-              goal: <impl Iterator<Item = User> as IntoIterator>::Item
-              result: projected
-                final: User
-                applicability: yes
-
-            reject unproved blanket iterator impl
-              query: selection
-              goal: NotIter: IntoIterator
-              result: empty
+            Iter<User>: IntoIterator -> impl#1 (yes) // prove blanket iterator impl
+            <Iter<User> as IntoIterator>::Item -> User (yes) // project blanket IntoIterator Item
+            impl Iterator<Item = User>: IntoIterator -> impl#1 (yes) // prove blanket iterator impl for opaque iterator
+            <impl Iterator<Item = User> as IntoIterator>::Item -> User (yes) // project blanket opaque IntoIterator Item
+            NotIter: IntoIterator -> empty // reject unproved blanket iterator impl
         "#]],
     );
 }
@@ -715,12 +593,7 @@ fn blanket_impl_proves_nested_adapter_with_dependent_associated_bound() {
             "Enumerate<Copied<Iter<User>>>: IntoIterator",
         )],
         expect![[r#"
-            prove nested adapter blanket impl
-              query: selection
-              goal: Enumerate<Copied<Iter<User>>>: IntoIterator
-              result: one
-                impl: impl#5
-                applicability: yes
+            Enumerate<Copied<Iter<User>>>: IntoIterator -> impl#5 (yes) // prove nested adapter blanket impl
         "#]],
     );
 }
@@ -742,10 +615,7 @@ fn probe_rejects_bare_inference_receiver_for_all_impl_shapes() {
             "?receiver: Marker",
         )],
         expect![[r#"
-            reject bare inference receiver
-              query: selection
-              goal: ?receiver: Marker
-              result: empty
+            ?receiver: Marker -> empty // reject bare inference receiver
         "#]],
     );
 }
@@ -769,10 +639,7 @@ fn probe_keeps_multiple_applicable_impls_as_separate_candidates() {
             "Vec<?item>: FromIterator<User>",
         )],
         expect![[r#"
-            keep multiple applicable impls ambiguous
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: ambiguous
+            Vec<?item>: FromIterator<User> -> ambiguous // keep multiple applicable impls ambiguous
         "#]],
     );
 }
@@ -803,19 +670,11 @@ fn impl_bounds_distinguish_proven_unproved_and_candidate_queries() {
             ),
         ],
         expect![[r#"
-            prove concrete Clone bound
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
+            // prove concrete Clone bound
+            Vec<?item>: FromIterator<User> -> impl#0 (yes)
+              ?item = User
 
-            reject unproved Clone bound
-              query: selection
-              goal: Vec<?item>: FromIterator<Other>
-              result: empty
+            Vec<?item>: FromIterator<Other> -> empty // reject unproved Clone bound
         "#]],
     );
 }
@@ -842,14 +701,9 @@ fn probe_does_not_infer_unconstrained_impl_parameter_from_visible_impls() {
             "Wrap<?item>: Target",
         )],
         expect![[r#"
-            leave open impl parameter ambiguous
-              query: selection
-              goal: Wrap<?item>: Target
-              result: one
-                impl: impl#1
-                applicability: maybe
-                vars
-                  ?item = _
+            // leave open impl parameter ambiguous
+            Wrap<?item>: Target -> impl#1 (maybe)
+              ?item = _
         "#]],
     );
 }
@@ -875,14 +729,9 @@ fn probe_handles_visible_trait_data_with_generic_bounds() {
             "Vec<?item>: FromIterator<User>",
         )],
         expect![[r#"
-            prove nested visible trait bounds
-              query: selection
-              goal: Vec<?item>: FromIterator<User>
-              result: one
-                impl: impl#0
-                applicability: yes
-                vars
-                  ?item = User
+            // prove nested visible trait bounds
+            Vec<?item>: FromIterator<User> -> impl#0 (yes)
+              ?item = User
         "#]],
     );
 }
@@ -908,10 +757,7 @@ fn probe_declines_predicate_with_unsupported_bounded_associated_type() {
             "User: UsesAdapter",
         )],
         expect![[r#"
-            decline unsupported bounded associated type
-              query: selection
-              goal: User: UsesAdapter
-              result: empty
+            User: UsesAdapter -> empty // decline unsupported bounded associated type
         "#]],
     );
 }

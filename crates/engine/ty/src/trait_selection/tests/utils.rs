@@ -1176,10 +1176,6 @@ impl TraitSelectionCase {
             kind: TraitSelectionCaseKind::NormalizeAssoc(goal.into()),
         }
     }
-
-    fn query_name(&self) -> &'static str {
-        "selection"
-    }
 }
 
 enum TraitSelectionCaseKind {
@@ -1196,8 +1192,7 @@ pub(super) fn check_trait_selection_queries(
         fixture: fixture.into(),
         cases,
     };
-    let actual = format!("{}\n", snapshot.render().trim_end());
-    expect.assert_eq(&actual);
+    expect.assert_eq(&snapshot.render());
 }
 
 /// Render shared solver operations while their tables are still alive, so cases can inspect
@@ -1211,24 +1206,34 @@ struct TraitSelectionSnapshot {
 impl TraitSelectionSnapshot {
     fn render(&self) -> String {
         let mut dump = String::new();
-        for (idx, case) in self.cases.iter().enumerate() {
-            if idx > 0 {
+        let mut previous_multiline = false;
+        for case in &self.cases {
+            let mut response = String::new();
+            match &case.kind {
+                TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(goal, &mut response),
+                TraitSelectionCaseKind::NormalizeAssoc(goal) => {
+                    self.render_normalize_case(goal, &mut response)
+                }
+            }
+
+            // Keep simple answers together. Bindings need their own block so named inference
+            // variables can be compared without squeezing them into the goal/result line.
+            let response = response.trim_end();
+            let multiline = response.contains('\n');
+            if !dump.is_empty() && (previous_multiline || multiline) {
                 writeln!(dump).expect("string writes should not fail");
             }
-            self.render_case(case, &mut dump);
+            if multiline {
+                writeln!(dump, "// {}\n{response}", case.title)
+                    .expect("string writes should not fail");
+            } else {
+                writeln!(dump, "{response} // {}", case.title)
+                    .expect("string writes should not fail");
+            }
+            previous_multiline = multiline;
         }
 
         dump
-    }
-
-    fn render_case(&self, case: &TraitSelectionCase, dump: &mut String) {
-        writeln!(dump, "{}", case.title).expect("string writes should not fail");
-        writeln!(dump, "  query: {}", case.query_name()).expect("string writes should not fail");
-
-        match &case.kind {
-            TraitSelectionCaseKind::Probe(goal) => self.render_probe_case(goal, dump),
-            TraitSelectionCaseKind::NormalizeAssoc(goal) => self.render_normalize_case(goal, dump),
-        }
     }
 
     fn render_probe_case(&self, goal: &str, dump: &mut String) {
@@ -1244,9 +1249,9 @@ impl TraitSelectionSnapshot {
                 let table = InferenceTable::new(solver, Default::default());
                 let cx = table.interner();
                 let parsed = TraitSelectionQueryParser::new(&self.fixture, &table).parse_goal(goal);
-                writeln!(
+                write!(
                     dump,
-                    "  goal: {}",
+                    "{} -> ",
                     self.render_live_goal(cx, &parsed.goal, &parsed.vars)
                 )
                 .expect("string write");
@@ -1269,16 +1274,12 @@ impl TraitSelectionSnapshot {
                     candidates.into_iter().map(|candidate| candidate.impl_ref),
                 );
                 match selected {
-                    ExpectedUnique::Empty => {
-                        writeln!(dump, "  result: empty").expect("string write")
-                    }
-                    ExpectedUnique::Ambiguous => {
-                        writeln!(dump, "  result: ambiguous").expect("string write")
-                    }
+                    ExpectedUnique::Empty => writeln!(dump, "empty").expect("string write"),
+                    ExpectedUnique::Ambiguous => writeln!(dump, "ambiguous").expect("string write"),
                     ExpectedUnique::One(selected) => {
                         writeln!(
                             dump,
-                            "  result: one\n    impl: impl#{}\n    applicability: {}",
+                            "impl#{} ({})",
                             selected.impl_ref.id.0,
                             if selected.outcome == Outcome::Proven {
                                 "yes"
@@ -1308,9 +1309,9 @@ impl TraitSelectionSnapshot {
                 let cx = table.interner();
                 let parsed =
                     TraitSelectionQueryParser::new(&self.fixture, &table).parse_assoc_goal(goal);
-                writeln!(
+                write!(
                     dump,
-                    "  goal: <{} as {}>::{}",
+                    "<{} as {}>::{} -> ",
                     self.render_live_ty(
                         cx,
                         parsed.goal.application.self_ty().expect("Self"),
@@ -1348,12 +1349,12 @@ impl TraitSelectionSnapshot {
                 let Some((ty, outcome)) =
                     table.normalize_assoc_type(application, &bindings, projection)
                 else {
-                    writeln!(dump, "  result: none").expect("string write");
+                    writeln!(dump, "none").expect("string write");
                     return;
                 };
                 writeln!(
                     dump,
-                    "  result: projected\n    final: {}\n    applicability: {}",
+                    "{} ({})",
                     self.render_ty(&table.finalize(ty)),
                     if outcome == Outcome::Proven {
                         "yes"
@@ -1455,13 +1456,9 @@ impl TraitSelectionSnapshot {
         table: &InferenceTable<'s>,
         dump: &mut String,
     ) {
-        if vars.is_empty() {
-            return;
-        }
-        writeln!(dump, "    vars").expect("string write");
         for var in vars {
             let result = self.render_ty(&table.finalize(var.ty));
-            writeln!(dump, "      ?{} = {result}", var.name).expect("string write");
+            writeln!(dump, "  ?{} = {result}", var.name).expect("string write");
         }
     }
 
