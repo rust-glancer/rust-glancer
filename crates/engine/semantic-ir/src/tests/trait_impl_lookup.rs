@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use rg_ir_model::{Mutability, PrimitiveTy, UnsignedIntTy};
 
 use crate::TraitImplSelfHead;
@@ -90,105 +92,89 @@ impl<T> Marker for T {}
             .expect("Marker should be visible")
             .iter()
             .map(|candidate| {
-                store
+                let data = store
                     .impl_data(candidate.impl_ref.id)
-                    .expect("candidate impl should exist")
-                    .self_ty
-                    .to_string()
+                    .expect("candidate impl should exist");
+                // The primitive and shadowing struct have the same source spelling. Qualify the
+                // struct so routing to the wrong impl cannot produce an identical snapshot row.
+                if data.resolved_self_ty.as_option() == Some(&shadowed_u8) {
+                    format!("shadowed::{}", data.self_ty)
+                } else {
+                    data.self_ty.to_string()
+                }
             })
             .collect::<Vec<_>>()
     };
 
-    let cases: [(Option<TraitImplSelfHead>, &[&str], &str); 16] = [
+    // Query names describe routing keys: structural heads do not carry element types or lengths.
+    let heads = [
         (
+            "primitive u8",
             Some(TraitImplSelfHead::Primitive(PrimitiveTy::UnsignedInt(
                 UnsignedIntTy::U8,
             ))),
-            &["u8", "Alias", "T"],
-            "a primitive u8 lookup should include its direct impl and conservative fallbacks",
         ),
         (
+            "primitive u16",
             Some(TraitImplSelfHead::Primitive(PrimitiveTy::UnsignedInt(
                 UnsignedIntTy::U16,
             ))),
-            &["u16", "Alias", "T"],
-            "a primitive u16 lookup should not reuse the u8 lane",
         ),
+        ("nominal User", Some(TraitImplSelfHead::Adt(user))),
         (
-            Some(TraitImplSelfHead::Adt(user)),
-            &["User", "Alias", "T"],
-            "a nominal lookup should include the matching ADT lane",
-        ),
-        (
+            "nominal shadowed::u8",
             Some(TraitImplSelfHead::Adt(shadowed_u8)),
-            &["u8", "Alias", "T"],
-            "an ADT named like a primitive should remain in the nominal lane",
         ),
+        ("tuple arity 2", Some(TraitImplSelfHead::Tuple(2))),
+        ("unit", Some(TraitImplSelfHead::Unit)),
+        ("never", Some(TraitImplSelfHead::Never)),
+        ("array", Some(TraitImplSelfHead::Array)),
+        ("slice", Some(TraitImplSelfHead::Slice)),
         (
-            Some(TraitImplSelfHead::Tuple(2)),
-            &["(u8, u16)", "Alias", "T"],
-            "a tuple lookup should use its arity",
-        ),
-        (
-            Some(TraitImplSelfHead::Unit),
-            &["()", "Alias", "T"],
-            "unit should have a distinct receiver head",
-        ),
-        (
-            Some(TraitImplSelfHead::Never),
-            &["!", "Alias", "T"],
-            "never should have a distinct receiver head",
-        ),
-        (
-            Some(TraitImplSelfHead::Array),
-            &["[u8; 4]", "Alias", "T"],
-            "arrays should use the array receiver lane",
-        ),
-        (
-            Some(TraitImplSelfHead::Slice),
-            &["[u8]", "Alias", "T"],
-            "slices should use the slice receiver lane",
-        ),
-        (
+            "shared reference",
             Some(TraitImplSelfHead::Reference(Mutability::Shared)),
-            &["&u8", "Alias", "T"],
-            "shared references should retain their mutability in the key",
         ),
         (
+            "mutable reference",
             Some(TraitImplSelfHead::Reference(Mutability::Mutable)),
-            &["&mut u8", "Alias", "T"],
-            "mutable references should retain their mutability in the key",
         ),
         (
+            "const pointer",
             Some(TraitImplSelfHead::RawPointer(Mutability::Shared)),
-            &["*const u8", "Alias", "T"],
-            "const raw pointers should retain their mutability in the key",
         ),
         (
+            "mutable pointer",
             Some(TraitImplSelfHead::RawPointer(Mutability::Mutable)),
-            &["*mut u8", "Alias", "T"],
-            "mutable raw pointers should retain their mutability in the key",
         ),
-        (
-            Some(TraitImplSelfHead::FnPointer(1)),
-            &["fn(u8)", "Alias", "T"],
-            "function pointers should use their parameter arity",
-        ),
-        (
-            Some(TraitImplSelfHead::FnPointer(2)),
-            &["fn(u8, u16)", "Alias", "T"],
-            "different function-pointer arities should not share a direct lane",
-        ),
-        (
-            None,
-            &["Alias", "T"],
-            "an absent receiver head should return only conservative fallbacks",
-        ),
+        ("fn arity 1", Some(TraitImplSelfHead::FnPointer(1))),
+        ("fn arity 2", Some(TraitImplSelfHead::FnPointer(2))),
+        ("no head", None),
     ];
 
-    for (head, expected, error_message) in cases {
-        let actual = self_types(head);
-        let actual = actual.iter().map(String::as_str).collect::<Vec<_>>();
-        assert_eq!(actual, expected, "{error_message}");
+    // Keep candidate order visible, including the alias and blanket impl fallbacks after each
+    // direct match. A missing head should return only those fallbacks.
+    let mut dump = String::new();
+    for (name, head) in heads {
+        writeln!(dump, "{name} -> [{}]", self_types(head).join(", "))
+            .expect("string writes should not fail");
     }
+    expect_test::expect![[r#"
+        primitive u8 -> [u8, Alias, T]
+        primitive u16 -> [u16, Alias, T]
+        nominal User -> [User, Alias, T]
+        nominal shadowed::u8 -> [shadowed::u8, Alias, T]
+        tuple arity 2 -> [(u8, u16), Alias, T]
+        unit -> [(), Alias, T]
+        never -> [!, Alias, T]
+        array -> [[u8; 4], Alias, T]
+        slice -> [[u8], Alias, T]
+        shared reference -> [&u8, Alias, T]
+        mutable reference -> [&mut u8, Alias, T]
+        const pointer -> [*const u8, Alias, T]
+        mutable pointer -> [*mut u8, Alias, T]
+        fn arity 1 -> [fn(u8), Alias, T]
+        fn arity 2 -> [fn(u8, u16), Alias, T]
+        no head -> [Alias, T]
+    "#]]
+    .assert_eq(&dump);
 }
