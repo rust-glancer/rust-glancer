@@ -142,6 +142,14 @@ pub fn default_hints(
     let partial = partial;
     let explicit = explicit;
 }
+
+pub fn closure_hints() {
+    let identity = |user: User| user;
+    let wrapped = std::boxed::Box::new(identity);
+    let pair = |left: User, right: u8| (left, right);
+    let unit = || {};
+    let inferred = |user| -> User { user };
+}
 "#,
         InlayHintsQuery::new("type hints", "/src/lib.rs").in_lib("analysis_type_hints"),
         expect![[r#"
@@ -157,6 +165,12 @@ pub fn default_hints(
             `: Pair<u16>` @ 40:9-40:18
             `: Pair<u16, u8>` @ 41:9-41:16
             `: Pair<User, u8, 8>` @ 42:9-42:17
+            `: |User| -> User` @ 46:9-46:17
+            `: Box<|User| -> User>` @ 47:9-47:16
+            `: |User, u8| -> (User, u8)` @ 48:9-48:13
+            `: || -> ()` @ 49:9-49:13
+            `: |User| -> User` @ 50:9-50:17
+            `: User` @ 50:21-50:25
         "#]],
     );
 }

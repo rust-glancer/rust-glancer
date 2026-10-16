@@ -144,7 +144,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                         format!("*{qualifier} {inner}")
                     }))
             }
-            Ty::FnPointer { params, ret } => {
+            Ty::FnPointer { params, ret } | Ty::Closure(rg_ty::ClosureTy { params, ret, .. }) => {
                 let params = params
                     .iter()
                     .map(|ty| {
@@ -155,9 +155,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let ret = self
                     .render_ty_with_trait_impl(ret, application)?
                     .unwrap_or_else(|| "_".to_string());
-                Ok(Some(format!("fn({}) -> {ret}", params.join(", "))))
+                let params = params.join(", ");
+                // Closure signatures do not record which of `Fn`, `FnMut`, or `FnOnce` applies.
+                // Use `|User| -> User` so the label shows known types without guessing a bound.
+                Ok(Some(if matches!(ty, Ty::Closure(_)) {
+                    format!("|{params}| -> {ret}")
+                } else {
+                    format!("fn({params}) -> {ret}")
+                }))
             }
-            Ty::Closure(closure) => Ok(Some(format!("{{closure#{}}}", closure.id))),
             Ty::FnDef(function) => Ok(PathView::new(self.db, self.syntax.edition())
                 .function_path(function.def)?
                 .map(|path| format!("{{fn {path}}}"))),

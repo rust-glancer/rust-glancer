@@ -56,7 +56,7 @@ $range_start$pub fn inspect() {
     let _hover = alias.na$hover$me;
     let _copy = ali$definition$as;
     let _highlight = al$highlight$ias;
-    let _ = |closure_user| -> User { closure_user };
+    let callback = |closure_user| -> User { closure_user };
     keep(&user, 1);
 }$range_end$
 
@@ -107,7 +107,8 @@ pub fn keep(user: &User, count: u32) {}
                 `: Name` type @ 14:14
                 `: User` type @ 15:13
                 `: User` type @ 16:18
-                `: User` type @ 17:25
+                `: |User| -> User` type @ 17:16
+                `: User` type @ 17:32
                 `count:` parameter @ 18:16
             "#]],
         )
