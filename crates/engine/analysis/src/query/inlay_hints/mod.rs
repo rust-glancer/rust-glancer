@@ -56,7 +56,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
         let renderer =
-            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?)
+                .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for binding in
             BodyView::new(self.0.view_db()).inferred_binding_tys(crate_ref, file_id, range)?
@@ -88,7 +89,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let renderer =
-            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?);
+            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?)
+                .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for expr in
             BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?

@@ -188,6 +188,69 @@ pub fn closure_hints() {
 }
 
 #[test]
+fn simplifies_standard_iterator_hints() {
+    check_inlay_hints_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "iterator_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct UserIter;
+impl Iterator for UserIter {
+    type Item = u8;
+}
+pub fn user_iter() -> UserIter { loop {} }
+
+pub fn demo(values: &[u8]) {
+    let custom = user_iter();
+    let source = values.into_iter();
+    let mapped = source.map(|value| *value);
+    let filtered = mapped.filter(|value| true);
+    let enumerated = filtered.enumerate();
+    let borrowed = &enumerated;
+    let wrapped = Option::Some(enumerated);
+    let nested = values.into_iter().map(|value| values.into_iter().map(|item| *item));
+    let chain = values.into_iter()
+        .map(|value| *value)
+        .enumerate();
+}
+
+pub struct Recursive;
+impl Iterator for Recursive {
+    type Item = core::iter::Skip<Self>;
+}
+pub fn recursive() {
+    let iter = Recursive.skip(0);
+}
+"#,
+        InlayHintsQuery::new("iterator hints", "/src/lib.rs").in_lib("iterator_hints"),
+        expect![[r#"
+            // iterator hints
+            `: UserIter` @ 8:9-8:15
+            `: Iter<'_, u8>` @ 9:9-9:15
+            `: impl Iterator<Item = u8>` @ 10:9-10:15
+            `: &u8` @ 10:30-10:35
+            `: impl Iterator<Item = u8>` @ 11:9-11:17
+            `: &u8` @ 11:35-11:40
+            `: impl Iterator<Item = (usize, u8)>` @ 12:9-12:19
+            `: &impl Iterator<Item = (usize, u8)>` @ 13:9-13:17
+            `: Option<impl Iterator<Item = (usize, u8)>>` @ 14:9-14:16
+            `: impl Iterator<Item = impl Iterator<Item = u8>>` @ 15:9-15:15
+            `: &u8` @ 15:42-15:47
+            `: &u8` @ 15:73-15:77
+            `: impl Iterator<Item = (usize, u8)>` @ 16:9-16:14
+            `Iter<'_, u8>` @ 16:17-16:35
+            `: &u8` @ 17:15-17:20
+            `impl Iterator<Item = u8>` @ 16:17-17:29
+            `: impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = impl Iterator<Item = Skip<Recursive>>>>>>>>>` @ 26:9-26:13
+        "#]],
+    );
+}
+
+#[test]
 fn shows_type_hints_inside_bin_roots() {
     check_inlay_hints(
         r#"

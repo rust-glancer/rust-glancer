@@ -12,12 +12,18 @@
 //! `<Worker as Service<u8>>::Output` become `Self::Output` inside `impl Service<u8> for Worker`.
 //! Unrelated projections remain unknown instead of being shortened to the wrong trait.
 
-use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{
+    CrateRef, GenericDefRef, GenericParamRef, ItemOwner, TraitApplicability, TraitDefRef,
+    TypeAliasRef, TypeDefId,
+};
+use rg_item_tree::{LangItem, VisibilityLevel};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
     AdtTy, AliasTy, ConstValue, GenericArg, Lifetime, OpaqueTy, ProjectionTy, Substitution,
-    TraitApplication, TraitRefLowering, Ty, signature::SemanticSignatureQuery,
+    TraitApplication, TraitRefLowering, Ty, TyContext,
+    signature::SemanticSignatureQuery,
+    trait_selection::{TraitGoal, TraitSelectionQuery},
 };
 
 use crate::{
@@ -28,14 +34,33 @@ use crate::{
 pub struct TypeRenderer<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
     syntax: SyntaxRenderer,
+    iterator_context: Option<TyContext<'a, &'a IndexedViewDb<'db>, &'a IndexedViewDb<'db>>>,
+    iterator_depth: usize,
 }
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
+    const MAX_ITERATOR_DEPTH: usize = 8;
+
     pub fn new(db: &'a IndexedViewDb<'db>, edition: RustEdition) -> Self {
         Self {
             db,
             syntax: SyntaxRenderer::new(edition),
+            iterator_context: None,
+            iterator_depth: 0,
         }
+    }
+
+    /// Show standard adapters as `impl Iterator<Item = User>` in inlay hints.
+    /// Hover keeps the concrete type, so users can still inspect the adapter and its arguments.
+    pub fn with_iterator_simplification(mut self, use_site: CrateRef) -> anyhow::Result<Self> {
+        self.iterator_context = Some(TyContext::new(
+            self.db,
+            self.db,
+            self.db.item_lookup_query(use_site)?,
+            use_site,
+            self.db.cancellation().clone(),
+        ));
+        Ok(self)
     }
 
     /// Render an indexed type, returning `None` when inference could not determine it.
@@ -249,6 +274,26 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         ty: &AdtTy,
         application: Option<&TraitApplication>,
     ) -> anyhow::Result<Option<String>> {
+        // Inlay hints describe what an adapter yields. Its concrete machinery still matters
+        // when inspecting hover or inserting source, where `impl Iterator` is not a substitute.
+        if application.is_none()
+            && self.iterator_depth < Self::MAX_ITERATOR_DEPTH
+            && let Some(item) = self.iterator_item(ty)?
+        {
+            // Associated types can lead back to this adapter, even in valid Rust:
+            // `Recursive::Item = Skip<Recursive>` makes `Skip<Recursive>::Item` itself.
+            // Bound these expansions, then render the concrete type and its arguments below.
+            // TODO: Share recursion protection with the other type-rendering paths.
+            let nested = Self {
+                db: self.db,
+                syntax: self.syntax,
+                iterator_context: self.iterator_context.clone(),
+                iterator_depth: self.iterator_depth + 1,
+            };
+            if let Some(item) = nested.render_ty_with_trait_impl(&item, application)? {
+                return Ok(Some(format!("impl Iterator<Item = {item}>")));
+            }
+        }
         let Some(name) = ItemStoreQuery::new(self.db).type_def_name(ty.def)? else {
             return Ok(None);
         };
@@ -261,6 +306,55 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 application
             )?
         )))
+    }
+
+    /// Recognize public adapters declared under `core::iter`, including its private modules.
+    /// Keep named user iterators and types such as `slice::Iter` recognizable in their hints.
+    fn iterator_item(&self, ty: &AdtTy) -> anyhow::Result<Option<Ty>> {
+        let Some(context) = &self.iterator_context else {
+            return Ok(None);
+        };
+        if let Some(iterator) = context.item_lookup().lang_trait(LangItem::Iterator)
+            && ty.def.origin == iterator.origin
+            && let TypeDefId::Struct(id) = ty.def.id
+            && let Some(data) = ItemStoreQuery::new(self.db)
+                .item_store_for_origin(ty.def.origin)?
+                .and_then(|items| items.struct_data(id))
+            && data.visibility == VisibilityLevel::Public
+        {
+            // The compiler identity gives us the defining crate without relying on its import
+            // name. Walk to the root's child to distinguish `iter::adapters` from `slice::iter`.
+            let Some(modules) = self.db.def_map_for_origin(ty.def.origin)? else {
+                return Ok(None);
+            };
+            let mut module = modules.module(data.owner.module);
+            loop {
+                let Some(current) = module else {
+                    return Ok(None);
+                };
+                let Some(parent) = current.parent.and_then(|parent| modules.module(parent)) else {
+                    return Ok(None);
+                };
+                if parent.parent.is_none() {
+                    if current.name.as_ref().map(|name| name.as_str()) != Some("iter") {
+                        return Ok(None);
+                    }
+                    break;
+                }
+                module = Some(parent);
+            }
+
+            // Normalize through the real impl rather than guessing from adapter arguments:
+            // `Map<I, F>` yields F's output, while `Enumerate<I>` yields `(usize, I::Item)`.
+            // Keep the concrete label if the available facts cannot establish that item type.
+            // TODO: Supply enclosing generic bounds to simplify adapters over `I: Iterator` too.
+            let goal = TraitGoal::new(Ty::adt(ty.clone()), iterator, Vec::new());
+            return Ok(TraitSelectionQuery::new(context.clone())
+                .normalize_assoc_type(&goal, "Item")?
+                .filter(|result| result.applicability == TraitApplicability::Yes)
+                .map(|result| result.ty));
+        }
+        Ok(None)
     }
 
     /// Render only projections owned by the exact trait application being implemented.

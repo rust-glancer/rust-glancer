@@ -60,6 +60,8 @@ pub enum LangItem {
     /// Reference-counted pointers recognized for trait-object conversion.
     Arc,
     Rc,
+    /// The iterator trait whose `Item` type is shown for standard adapter hints.
+    Iterator,
 }
 
 impl LangItem {
@@ -67,7 +69,7 @@ impl LangItem {
     ///
     /// New enum variants belong here too; otherwise syntax can retain the identity but downstream
     /// queries will never see it.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::Deref,
         Self::DerefTarget,
         Self::IntoIter,
@@ -93,6 +95,7 @@ impl LangItem {
         Self::OwnedBox,
         Self::Arc,
         Self::Rc,
+        Self::Iterator,
     ];
 
     /// Callable trait identities accepted by closure and function-call reasoning.
@@ -107,6 +110,7 @@ impl LangItem {
             ("lang", "deref") => Self::Deref,
             ("lang", "deref_target") => Self::DerefTarget,
             ("lang", "into_iter") => Self::IntoIter,
+            ("lang", "iterator") => Self::Iterator,
             ("lang", "fn") => Self::Fn,
             ("lang", "fn_mut") => Self::FnMut,
             ("lang", "fn_once") => Self::FnOnce,
