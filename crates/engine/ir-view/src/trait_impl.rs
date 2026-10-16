@@ -1,8 +1,9 @@
 //! Missing-member projections for resolved trait implementations.
 //!
 //! Semantic IR owns associated declarations and the type engine owns instantiated signatures.
-//! This view joins those facts so editor features can present implementation scaffolds without
-//! reparsing display text or approximating trait substitutions in the analysis layer.
+//! This view joins those facts for trait-member completion and the "Implement missing trait
+//! members" code action. It supplies source fragments for the members we insert into the user's
+//! impl, without reparsing UI labels or approximating trait substitutions in the analysis layer.
 //!
 //! ```text
 //! trait Service<T> {
@@ -46,7 +47,7 @@ pub enum MissingTraitMemberRef {
     Const(ConstRef),
 }
 
-/// Syntax-shaped scaffold text before the caller chooses placeholders and bodies.
+/// Source fragments for members that completion or a code action inserts into the user's impl.
 ///
 /// Function and const signatures stop before their body or value. Associated types keep the
 /// declaration prefix and suggested value separate, for example `type Output` plus `()`, so an
@@ -107,7 +108,7 @@ enum AssociatedMemberKey {
     Const(String),
 }
 
-/// Projects canonical trait signatures into one concrete implementation context.
+/// Builds missing-member signatures for code we insert into one concrete trait impl.
 pub struct TraitImplView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -231,7 +232,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         }
 
         // Project the remaining trait declarations through the impl substitution. The view keeps
-        // scaffold text separate from snippet policy so non-LSP consumers can reuse the result.
+        // member source separate from editor placeholders so other callers can reuse the result.
         let edition = self
             .db
             .origin_edition(impl_ref.origin)

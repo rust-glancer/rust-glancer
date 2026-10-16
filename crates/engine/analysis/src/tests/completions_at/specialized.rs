@@ -233,6 +233,8 @@ fn const_body<const N: usize>() {
 
 #[test]
 fn completes_missing_trait_impl_members_with_instantiated_stubs() {
+    // `Object` and `Marker` are not imported beside the impl. Keep their paths in the member
+    // we insert for the user even though the enclosing application is `Service<u8>`.
     check_analysis(
         r#"
 //- /Cargo.toml
@@ -251,7 +253,7 @@ pub trait Service<T> {
     const DEFAULTED: T = loop {};
 
     /// Handle one request.
-    fn required(&self, value: T) -> Self::Output;
+    fn required(&self, value: T, object: &(dyn nested::Object + nested::Marker), mapper: impl nested::Object) -> Self::Output;
     fn defaulted(&self) -> T { loop {} }
 }
 
@@ -263,31 +265,36 @@ impl Service<u8> for Worker {
 
     req$0 // complete_verbose_with_source("missing trait members")
 }
+
+mod nested {
+    pub trait Object {}
+    pub auto trait Marker {}
+}
 "#,
         expect![[r#"
             // missing trait members
             const REQUIRED
               detail: required trait member: const REQUIRED: u8
               sort: 00-required|REQUIRED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: ConstId(0) }) })
-              replace: 411..414
+              replace: 488..491
               snippet: const REQUIRED: u8 = ${1:todo!()};
             fn required
-              detail: required trait member: fn required(&self, value: u8) -> Self::Output
+              detail: required trait member: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output
               docs: Handle one request.
               sort: 00-required|required|06|00|Function(FunctionRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: FunctionId(0) })
-              replace: 411..414
-              snippet: fn required(&self, value: u8) -> Self::Output {
+              replace: 488..491
+              snippet: fn required(&self, value: u8, object: &(dyn analysis_missing_trait_member_completions::nested::Object + analysis_missing_trait_member_completions::nested::Marker), mapper: impl analysis_missing_trait_member_completions::nested::Object) -> Self::Output {
                 ${1:todo!()}
             }
             const DEFAULTED
               detail: default trait member: const DEFAULTED: u8
               sort: 01-default|DEFAULTED|05|00|Declaration(DeclarationRef { kind: "item", item: Const(ConstRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: ConstId(1) }) })
-              replace: 411..414
+              replace: 488..491
               snippet: const DEFAULTED: u8 = ${1:todo!()};
             type_alias Defaulted
               detail: default trait member: type Defaulted = u8
               sort: 01-default|Defaulted|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Crate(CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }), id: TypeAliasId(1) }) })
-              replace: 411..414
+              replace: 488..491
               snippet: type Defaulted = ${1:u8};
         "#]],
     );

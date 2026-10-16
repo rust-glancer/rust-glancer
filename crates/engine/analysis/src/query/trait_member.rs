@@ -3,6 +3,8 @@
 //! Both features select the impl from the editor buffer and read the declaration context prepared
 //! for it. The missing-member projection supplies substituted declarations such as `fn run(&self)`
 //! or `type Output`; this module turns those into completion details and insertable Rust source.
+//! The details preview the code we will insert, so they retain its path qualification even when
+//! an ordinary hover or inlay label would use a shorter name.
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Span};
@@ -119,7 +121,7 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
 
 /// The two text forms shared by completion and the bulk implementation action.
 pub(crate) struct RenderedTraitMember {
-    /// Compact declaration text used in completion detail.
+    /// Declaration text for completion detail, with the same paths as the member we insert.
     pub(crate) signature: String,
     /// Complete, non-snippet source suitable for direct insertion.
     pub(crate) plain: String,

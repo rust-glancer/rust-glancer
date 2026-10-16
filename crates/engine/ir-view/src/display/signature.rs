@@ -1,9 +1,13 @@
-//! Compact Rust-shaped declarations for UI labels and implementation scaffolds.
+//! Declaration text for presentation and for code we insert into the user's source.
 //!
-//! Hover-like surfaces render the declaration facts already stored in the IR. Trait-impl
-//! completion also renders method, associated type, and const prefixes after the caller supplies
-//! semantic substitutions. This renderer stays syntactic rather than reconstructing rustc-perfect
-//! signatures, and every canonical name passes through `SyntaxRenderer` for the use-site edition.
+//! Hover and completion details present declarations for reading, so previews can be compact or
+//! omit members. Trait-member completion and the "Implement missing trait members" code action
+//! also use this renderer to produce Rust that goes into the user's impl. Those entry points apply
+//! the impl's substitutions and use `TypeRenderer`'s insertion context to preserve trait paths and
+//! render matching associated types as `Self::Assoc`.
+//!
+//! Every canonical name passes through `SyntaxRenderer` for the use-site edition. This renderer
+//! stays syntactic rather than reconstructing rustc-perfect signatures.
 
 use std::fmt::Write as _;
 
@@ -29,7 +33,7 @@ use crate::{
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
-/// Renders compact Rust-like declaration signatures for one edition.
+/// Renders declaration previews and signatures for members we insert, using one Rust edition.
 #[derive(Debug, Clone, Copy)]
 pub struct SignatureRenderer {
     syntax: SyntaxRenderer,
@@ -121,7 +125,8 @@ impl SignatureRenderer {
         )
     }
 
-    /// Render a trait method as an implementation stub after applying the impl's trait arguments.
+    /// Render the method signature that completion or a code action inserts into the user's impl.
+    /// Apply the impl's trait arguments before choosing names for that destination.
     ///
     /// ```text
     /// trait Service<T> {
@@ -130,7 +135,7 @@ impl SignatureRenderer {
     /// }
     ///
     /// impl Service<u8> for Worker {
-    ///     // Rendered signature:
+    ///     // Signature we insert:
     ///     fn handle(&self, value: u8) -> Self::Output
     /// }
     /// ```

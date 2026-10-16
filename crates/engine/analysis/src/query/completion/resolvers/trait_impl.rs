@@ -17,6 +17,9 @@
 //! can match `fn re` against `fn required` even though the displayed label is only `required`.
 //! Required members sort before defaulted ones; snippet placeholders are added when supported;
 //! and every row retains the trait declaration as its navigation/documentation target.
+//!
+//! The short label helps users scan the list. Accepting a row inserts a full member into their
+//! impl, so insertion text keeps the path qualification supplied by the shared member renderer.
 
 use anyhow::Context as _;
 use rg_ir_view::trait_impl::{MissingTraitMemberRef, MissingTraitMemberScaffold};
@@ -37,7 +40,7 @@ use crate::{
     },
 };
 
-/// Turns missing trait declarations into editor-ready implementation scaffolds.
+/// Builds completion entries that insert missing trait members into the user's impl.
 ///
 /// The view layer has already substituted trait generics. This resolver chooses the member family
 /// implied by a written `fn`, `type`, or `const`, then applies replacement and snippet policy.

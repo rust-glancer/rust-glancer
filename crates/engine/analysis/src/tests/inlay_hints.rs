@@ -18,10 +18,22 @@ pub trait Service<T = u8> { type Reply; }
 pub fn copy<'a>(value: &'a (dyn Service<u8, Reply = u16> + Send + Sync + 'a)) {
     let copied = value;
 }
+
+mod source {
+    pub trait r#gen { type Item; }
+}
+pub fn stream() -> impl source::r#gen<Item = u8> { loop {} }
+pub fn opaque(value: impl source::r#gen<Item = u16>) {
+    let passed = value;
+    let returned = stream();
+}
 "#,
         InlayHintsQuery::new("object bounds", "/src/lib.rs"),
         expect![[r#"
-            `: &'_ (dyn auto_trait_hints::Service<Reply = u16> + auto_trait_hints::Send + auto_trait_hints::Sync + '_)` @ 5:9-5:15 // object bounds
+            // object bounds
+            `: &'_ (dyn Service<Reply = u16> + Send + Sync + '_)` @ 5:9-5:15
+            `: impl r#gen<Item = u16>` @ 13:9-13:15
+            `: impl r#gen<Item = u8>` @ 14:9-14:17
         "#]],
     );
 }
@@ -52,9 +64,9 @@ pub fn references<'a>(
         InlayHintsQuery::new("reference hints", "/src/lib.rs"),
         expect![[r#"
             // reference hints
-            `: &'_ (dyn analysis_reference_hints::Service<u8, Reply = u16> + '_)` @ 8:9-8:15
-            `: &mut dyn analysis_reference_hints::Opaque` @ 9:9-9:19
-            `: &&mut dyn analysis_reference_hints::Opaque` @ 10:9-10:22
+            `: &'_ (dyn Service<u8, Reply = u16> + '_)` @ 8:9-8:15
+            `: &mut dyn Opaque` @ 9:9-9:19
+            `: &&mut dyn Opaque` @ 10:9-10:22
             `: &_` @ 11:9-11:17
         "#]],
     );

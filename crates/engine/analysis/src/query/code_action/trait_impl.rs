@@ -1,14 +1,16 @@
-//! Bulk implementation of required members for one resolved trait impl.
+//! The "Implement missing trait members" code action.
 //!
 //! Given `trait Service { fn run(&self); }` and `impl Service for Worker {}`, the action inserts a
-//! plain `run` scaffold with a `todo!()` body. The resolved impl header provides substituted
-//! member signatures, while the current syntax tree subtracts members typed since the last save.
+//! `run` method with a `todo!()` body into the user's source. The resolved impl header supplies
+//! substituted member signatures, while the current syntax tree subtracts members typed since
+//! the last save.
 //! A new impl gets that header from a request-local semantic store, so the action does not require
 //! saving incomplete source first.
 //!
-//! Nominal types in those signatures are rendered by their declared short name. This provider
-//! does not add imports for them: if a generated method mentions `Request`, that name must already
-//! be visible from the impl module.
+//! Trait bounds in the signatures we insert keep full paths so they do not assume imports in the
+//! impl module. Nominal types still use their declared short name. This provider does not add
+//! imports for them: if a method we insert mentions `Request`, that name must already be visible
+//! from the impl module.
 
 use anyhow::Context as _;
 use rg_ir_model::Span;
@@ -134,10 +136,9 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             return Ok(None);
         }
 
-        // TODO: Decide how generated signatures should handle names that are not visible from the
-        // impl module. Fully qualified paths become noisy for traits with many members, while
-        // inserting imports can conflict with the surrounding module. Until that policy exists,
-        // keep the name as written in the trait and let the user qualify or import it if needed.
+        // TODO: Handle nominal types that are not visible from the impl module, such as `Request`.
+        // The signatures we insert need qualified paths or import edits for those names. Trait
+        // bounds already keep full paths; nominal types still use their declared short names.
         //
         // 3. Render the remaining members together and replace only whitespace before the closing
         // brace. Everything else in the possibly-unsaved impl stays untouched.
@@ -154,7 +155,7 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
     /// Replace only trailing whitespace before `}` so comments and incomplete syntax survive.
     ///
     /// Existing member indentation wins when available. An empty impl gets one leading newline;
-    /// an impl with inner content gets a blank line before the generated block.
+    /// an impl with inner content gets a blank line before the block we insert.
     fn member_insertion(
         source: &str,
         impl_: &ast::Impl,
@@ -181,7 +182,7 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             .filter(|indent| indent.len() > closing_indent.len())
             .unwrap_or_else(|| format!("{closing_indent}    "));
         // The shared renderer produces unindented member text. Indent every line here, then keep a
-        // blank line between generated members so functions, types, and consts form one block.
+        // blank line between the members we insert so functions, types, and consts form one block.
         let block = members
             .iter()
             .map(|member| {

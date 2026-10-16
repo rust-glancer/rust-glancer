@@ -62,9 +62,8 @@ impl Service$0<u8> for Worker { // code_actions("implement missing members")
 
 #[test]
 fn trait_member_action_for_signature_types_that_need_imports() {
-    // Qualification can make large generated impls noisy, while inserting imports can conflict
-    // with the surrounding module. Until there is a policy for that tradeoff, the action keeps the
-    // name as written in the trait and leaves any required qualification or import to the user.
+    // `Request` lives in `protocol` and is not imported beside `Worker`. This records the
+    // nominal-type qualification/import work still needed for the code this action inserts.
     check_analysis(
         r#"
 //- /Cargo.toml

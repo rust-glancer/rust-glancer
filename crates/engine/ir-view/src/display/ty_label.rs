@@ -1,9 +1,16 @@
-//! Compact type syntax for UI labels and trait-implementation scaffolds.
+//! Type text for presentation and for code we insert into the user's source.
 //!
-//! Ordinary UI rendering favors short, recognizable names over fully-qualified debug output.
-//! Trait-impl rendering adds one controlled context: a projection owned by the implemented trait,
-//! such as `<Worker as Service<u8>>::Output`, becomes the source-valid `Self::Output`. Unrelated
-//! projections remain unknown instead of being shortened to the wrong trait.
+//! Presentation, such as inlay hints and hover, favors short, recognizable names. An `Iterator`
+//! label is easier to read than its full module path.
+//!
+//! Refactorings and completions need names that resolve in the code we insert. For example, the
+//! "Implement missing trait members" action may insert a `dyn protocol::Object` parameter into
+//! a module that has not imported `Object`. Trait paths stay qualified for this use. Nominal types
+//! still use short names, so their qualification or imports remain a separate limitation.
+//!
+//! For code we insert into an impl, the caller supplies that impl's trait application. It lets
+//! `<Worker as Service<u8>>::Output` become `Self::Output` inside `impl Service<u8> for Worker`.
+//! Unrelated projections remain unknown instead of being shortened to the wrong trait.
 
 use rg_ir_model::{GenericDefRef, GenericParamRef, ItemOwner, TraitDefRef, TypeAliasRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
@@ -17,7 +24,7 @@ use crate::{
     IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView, ty::IndexedType,
 };
 
-/// Renders compact user-facing labels for `Ty`.
+/// Renders `Ty` for readable UI labels or member signatures we insert into the user's impl.
 pub struct TypeRenderer<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
     syntax: SyntaxRenderer,
@@ -36,15 +43,16 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         self.render_ty(ty.raw())
     }
 
-    /// Render the compiler representation while composing other view-level displays.
+    /// Render a compact type label for presentation, including inferred types in hover.
     pub(crate) fn render_ty(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
         self.render_ty_with_trait_impl(ty, None)
     }
 
-    /// Render a type inside an implementation of one concrete trait application.
+    /// Render a type for a member we insert through trait-member completion or a code action.
     ///
-    /// Projections belonging to that application use `Self::Assoc`, which remains valid even
-    /// while the associated type implementation is one of the missing members being completed.
+    /// `application` identifies the impl receiving the member. Its projections use `Self::Assoc`,
+    /// and trait names keep their full paths so the inserted signature does not assume imports.
+    /// `Self::Assoc` remains valid even while that associated type is one of the missing members.
     ///
     /// ```text
     /// trait Service<T> {
@@ -64,6 +72,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         self.render_ty_with_trait_impl(ty, Some(application))
     }
 
+    /// Use `None` for presentation. Code we insert into a user's impl carries its application.
     fn render_ty_with_trait_impl(
         &self,
         ty: &Ty,
@@ -179,8 +188,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     application,
                 )?;
                 for auto_trait in &object.auto_traits {
-                    let name = PathView::new(self.db, self.syntax.edition())
-                        .trait_path(*auto_trait)?
+                    let name = self
+                        .render_trait_name(*auto_trait, application)?
                         .unwrap_or_else(|| "_".to_string());
                     bound.push_str(" + ");
                     bound.push_str(&name);
@@ -191,8 +200,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 };
                 Ok(Some(format!("dyn {bound}{lifetime}")))
             }
-            Ty::Param(param) => self.render_type_param(*param),
-            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque),
+            Ty::Param(param) => self.render_type_param(*param, application),
+            Ty::Alias(AliasTy::Opaque(opaque)) => self.render_opaque(opaque, application),
             Ty::Alias(AliasTy::Projection(projection)) => match application {
                 Some(application) => self.render_trait_impl_projection(projection, application),
                 None => Ok(None),
@@ -204,6 +213,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     fn render_type_param(
         &self,
         param: rg_ir_model::TypeParamRef,
+        application: Option<&TraitApplication>,
     ) -> anyhow::Result<Option<String>> {
         let generics = GenericsQuery::new(self.db).generics(param.owner)?;
         let Some(data) = generics
@@ -221,7 +231,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
                     .function_type_param_bounds(param)?
                     .iter()
-                    .map(|bound| self.render_opaque_bound(bound))
+                    .map(|bound| self.render_opaque_bound(bound, application))
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 Ok(Some(if bounds.is_empty() {
                     "impl _".to_string()
@@ -256,8 +266,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     /// Render only projections owned by the exact trait application being implemented.
     ///
     /// A projection from another trait, or from the same trait under different arguments, is not
-    /// safe to shorten to `Self::Assoc`; returning `None` lets scaffold rendering use `_` instead
-    /// of emitting a path with the wrong meaning.
+    /// safe to shorten to `Self::Assoc`; returning `None` leaves a `_` placeholder in the signature
+    /// we insert instead of giving the associated type the wrong meaning.
     fn render_trait_impl_projection(
         &self,
         projection: &ProjectionTy,
@@ -286,12 +296,16 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         )))
     }
 
-    fn render_opaque(&self, opaque: &OpaqueTy) -> anyhow::Result<Option<String>> {
+    fn render_opaque(
+        &self,
+        opaque: &OpaqueTy,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<Option<String>> {
         let bounds = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db)
             .opaque_bounds(opaque)?
             .unwrap_or_default()
             .iter()
-            .map(|bound| self.render_opaque_bound(bound))
+            .map(|bound| self.render_opaque_bound(bound, application))
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(Some(if bounds.is_empty() {
             "impl _".to_string()
@@ -301,7 +315,14 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     /// Render one of the trait bounds in an `impl Trait` type.
-    fn render_opaque_bound(&self, bound: &TraitRefLowering) -> anyhow::Result<String> {
+    ///
+    /// `bound.application` is the bound being displayed. The separate `application` describes
+    /// the impl receiving the member we insert and must also reach types nested inside this bound.
+    fn render_opaque_bound(
+        &self,
+        bound: &TraitRefLowering,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<String> {
         self.render_trait_bound(
             bound.application.def,
             &bound.application.args[1..],
@@ -309,8 +330,30 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 .associated_types
                 .iter()
                 .map(|binding| (binding.projection.associated_ty, &binding.ty)),
-            None,
+            application,
         )
+    }
+
+    /// Choose how to spell the trait named by `def`.
+    ///
+    /// `application` describes the impl receiving code from our completion or code action.
+    /// When rendering a `dyn Object` parameter in `impl Service<u8> for Worker`, `def` identifies
+    /// `Object` and `application` describes `Service<u8>`.
+    ///
+    /// Inlay hints and hover pass `None` and use the short name for readability. When we insert
+    /// member code, callers pass `Some` and keep the full path so `Object` resolves even if the
+    /// user has not imported it in the impl's module.
+    fn render_trait_name(
+        &self,
+        def: TraitDefRef,
+        application: Option<&TraitApplication>,
+    ) -> anyhow::Result<Option<String>> {
+        if application.is_some() {
+            return PathView::new(self.db, self.syntax.edition()).trait_path(def);
+        }
+        Ok(ItemStoreQuery::new(self.db)
+            .trait_data(def)?
+            .map(|data| self.syntax.identifier(&data.name).to_string()))
     }
 
     /// Render `Service<Request, Output = Reply>` for either an `impl` or a `dyn` type.
@@ -328,8 +371,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             return Ok(callable);
         }
 
-        let trait_path = PathView::new(self.db, self.syntax.edition())
-            .trait_path(def)?
+        let trait_name = self
+            .render_trait_name(def, application)?
             .unwrap_or_else(|| "<trait>".to_string());
         let mut args = self
             .non_default_generic_args(def.into(), args)?
@@ -348,9 +391,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             args.push(format!("{name} = {ty}"));
         }
         Ok(if args.is_empty() {
-            trait_path
+            trait_name
         } else {
-            format!("{trait_path}<{}>", args.join(", "))
+            format!("{trait_name}<{}>", args.join(", "))
         })
     }
 
