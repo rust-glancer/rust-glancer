@@ -7,39 +7,14 @@ use test_fixture::testonly::MarkedText;
 use crate::{PackageResidencyPolicy, testonly::ProjectFixture};
 
 const SAVED: &str = r#"
-//- /Cargo.toml
-[package]
-name = "current_declarations"
-version = "0.1.0"
-edition = "2024"
-
-[workspace]
-members = ["protocol"]
-
-[dependencies]
-protocol = { path = "protocol" }
-
-[lib]
-path = "src/shared.rs"
-
-[[test]]
-name = "shared"
-path = "src/shared.rs"
-
-//- /protocol/Cargo.toml
-[package]
-name = "protocol"
-version = "0.1.0"
-edition = "2024"
-
-//- /protocol/src/lib.rs
+//- /protocol/src/lib.rs crate:protocol root:protocol
 pub trait Service<T> {
     fn implemented(&self, value: T);
     fn missing(&self, value: T);
     fn test_mode(&self) {}
 }
 
-//- /src/shared.rs
+//- /src/shared.rs crate:current_declarations deps:protocol targets:lib=current_declarations,test=shared
 use protocol::Service;
 pub struct Worker<T> { pub value: T }
 "#;

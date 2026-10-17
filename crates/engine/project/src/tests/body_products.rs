@@ -12,13 +12,7 @@ use crate::{
 };
 
 const SOURCE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "body_products"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_products
 mod first;
 mod second;
 mod third;
@@ -37,15 +31,15 @@ pub fn third() -> usize { let value = 3usize; value }
 //- /src/empty.rs
 pub struct Empty;
 
-//- /tests/first.rs
+//- /tests/first.rs crate:body_products kind:test name:first
 #[test]
 fn first() { let value = body_products::root(); }
 
-//- /tests/second.rs
+//- /tests/second.rs crate:body_products kind:test name:second
 #[test]
 fn second() { let value = body_products::root(); }
 
-//- /tests/multi.rs
+//- /tests/multi.rs crate:body_products kind:test name:multi
 #[path = "../src/third.rs"]
 mod third;
 #[test]

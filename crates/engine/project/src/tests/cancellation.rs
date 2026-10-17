@@ -14,13 +14,7 @@ use rg_package_store::PackageStoreError;
 use rg_std::CancellationToken;
 
 const SOURCE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "cancelled_search"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cancelled_search
 mod first;
 mod second;
 pub struct User;
@@ -114,27 +108,19 @@ fn cancelled_materialization_preserves_coverage_and_allows_retry() {
         testonly::ProjectSourceFixture,
     };
 
-    let mut source = String::from(
-        "//- /Cargo.toml\n[workspace]\nmembers = [\"first\", \"second\"]\nresolver = \"3\"\n",
-    );
+    let mut source = String::new();
     for name in ["first", "second"] {
         writeln!(
             source,
             r#"
-//- /{name}/Cargo.toml
-[package]
-name = "{name}"
-version = "0.1.0"
-edition = "2024"
-
-//- /{name}/src/lib.rs
+//- /{name}/src/lib.rs crate:{name} root:{name}
 pub fn value() -> usize {{ 1 }}
 
-//- /{name}/tests/requested.rs
+//- /{name}/tests/requested.rs crate:{name} root:{name} kind:test name:requested
 #[test]
 fn requested() {{ let value = {name}::value(); }}
 
-//- /{name}/tests/untouched.rs
+//- /{name}/tests/untouched.rs crate:{name} root:{name} kind:test name:untouched
 #[test]
 fn untouched() {{ let value = {name}::value(); }}
 "#

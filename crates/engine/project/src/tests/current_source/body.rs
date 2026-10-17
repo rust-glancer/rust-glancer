@@ -10,13 +10,7 @@ use crate::{
 };
 
 const SAVED_FIXTURE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "current_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_body_fixture
 pub struct Saved {
     pub field: u8,
 }
@@ -45,13 +39,7 @@ pub fn inspect() {
 fn early_start_current_body_completion_builds_request_local_item_lookup() {
     let source = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_body_early_start_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_body_early_start_fixture
 pub struct Saved;
 
 impl Saved {
@@ -205,13 +193,7 @@ pub fn inspect() {
 fn current_body_builds_new_nested_bodies_and_parent_local_impls() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_nested_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_nested_body_fixture
 pub fn inspect() {}
 "#,
     );
@@ -268,13 +250,7 @@ fn current_body_keeps_an_unfinished_record_literal_inside_its_saved_owner() {
 fn current_body_association_uses_the_full_saved_owner_path() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_body_owner_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_body_owner_fixture
 pub mod left {
     pub struct Item;
 
@@ -390,13 +366,7 @@ pub fn newly_added(value: Saved) {
 
     let ambiguous = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "ambiguous_current_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:ambiguous_current_body_fixture
 pub fn inspect() {}
 pub fn inspect() {}
 "#,
@@ -557,13 +527,7 @@ fn current_declaration_headers_use_request_local_semantics() {
 fn request_local_method_root_uses_current_impl_without_publishing_current_items() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_method_root_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_method_root_fixture
 pub struct Service {
     pub value: u32,
 }
@@ -870,13 +834,7 @@ pub fn outside(service: Service) {
 fn current_module_syntax_uses_saved_global_names_without_saved_offsets() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_module_fixture
 pub struct RootSaved;
 
 pub mod nested {
@@ -969,13 +927,7 @@ pub fn inspect() {
 fn exact_current_source_preserves_unselected_saved_bodies() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "exact_current_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:exact_current_body_fixture
 pub struct Saved;
 
 pub fn selected() {
@@ -1036,13 +988,7 @@ pub fn unselected() {
 fn current_body_range_analyzes_only_intersecting_owners() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "current_body_range_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:current_body_range_fixture
 pub struct Value;
 
 pub fn make_value() -> Value {
@@ -1130,13 +1076,7 @@ fn unfinished
 fn current_body_range_does_not_reuse_one_saved_identity_for_duplicate_roots() {
     let fixture = CurrentBodyFixture::new(
         r#"
-//- /Cargo.toml
-[package]
-name = "duplicate_current_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:duplicate_current_body_fixture
 pub fn inspect() {}
 "#,
     );
