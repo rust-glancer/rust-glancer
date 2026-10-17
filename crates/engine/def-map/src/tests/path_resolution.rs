@@ -6,34 +6,14 @@ use super::utils::{self, PathResolutionQuery};
 fn resolves_paths_against_frozen_def_map() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub trait ExternalTrait {}
 
 mod hidden {
     pub trait HiddenTrait {}
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::ExternalTrait as ImportedTrait;
 
 pub struct Root;
@@ -83,30 +63,10 @@ pub mod api {
 fn resolves_crate_root_extern_aliases_from_child_modules() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Shared;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 extern crate dep as dep_alias;
 
 pub mod api {
@@ -128,13 +88,7 @@ pub mod api {
 fn enum_variant_shape_controls_qualified_path_namespaces() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[package]
-name = "variant_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:variant_path_fixture
 pub enum Choice {
     Record { value: u8 },
     Tuple(u8),
@@ -164,40 +118,13 @@ pub enum Choice {
 fn resolves_bin_target_roots_and_dependencies() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Thing;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "app-bin"
-path = "src/main.rs"
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Api;
 
-//- /crates/app/src/main.rs
+//- /crates/app/src/main.rs crate:app root:crates/app deps:dep kind:bin name:app-bin
 mod cli;
 
 fn main() {}
@@ -222,13 +149,7 @@ pub struct Thing;
 fn resolves_injected_sysroot_extern_roots() {
     utils::check_project_path_resolution_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 use Option as Maybe;
 
 pub struct App;
@@ -272,13 +193,7 @@ pub mod local_shadow {
 fn selects_standard_prelude_from_package_edition() {
     utils::check_project_path_resolution_with_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2021"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app edition:2021
 pub struct App;
 
 //- /sysroot/library/core/src/lib.rs
@@ -321,13 +236,7 @@ pub struct TokenStream;
 fn selects_sysroot_crates_own_preludes_without_self_aliases() {
     utils::check_project_path_resolution_with_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 
 //- /sysroot/library/core/src/lib.rs
@@ -374,13 +283,7 @@ pub struct TokenStream;
 fn falls_back_to_core_prelude_when_std_is_unavailable() {
     utils::check_project_path_resolution_with_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 
 //- /sysroot/library/core/src/lib.rs
@@ -426,30 +329,10 @@ pub struct TokenStream;
 fn falls_back_to_extern_roots_when_wrong_namespace_bindings_match_first_segment() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub trait ExternalTrait {}
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub mod value_shadow {
     pub const dep: u8 = 0;
 }
@@ -481,13 +364,7 @@ pub mod type_shadow {
 fn resolves_repeated_super_visibility_to_its_semantic_module() {
     utils::check_project_path_resolution(
         r#"
-//- /Cargo.toml
-[package]
-name = "repeated_super_visibility_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:repeated_super_visibility_fixture
 pub mod a {
     pub mod b {
         pub mod c {

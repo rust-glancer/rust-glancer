@@ -10,13 +10,7 @@ fn profile_snapshot_records_macro_finalization_metrics() {
 
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "def_map_profile_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:def_map_profile_fixture
 macro_rules! make_item {
     ($name:ident) => {
         pub struct $name;
@@ -76,13 +70,7 @@ fn profile_snapshot_records_import_pass_work_and_changes() {
     // feeding the chain, so later checkpoints should show that its import group was not rerun.
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "def_map_import_profile_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:def_map_import_profile_fixture
 mod source {
     pub struct User;
 }

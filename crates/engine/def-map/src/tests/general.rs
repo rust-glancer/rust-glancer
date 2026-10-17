@@ -6,13 +6,7 @@ use super::utils;
 fn resolves_reexports_from_out_of_line_files_inside_inline_modules() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "nested_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:nested_module_fixture
 pub mod outer {
     pub mod child;
 }
@@ -43,13 +37,7 @@ pub fn work() {}
 fn resolves_reexports_from_path_attribute_modules() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "path_attr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:path_attr_fixture
 #[path = "generated/api_file.rs"]
 pub mod api;
 
@@ -93,13 +81,7 @@ pub fn work() {}
 fn module_collection_terminates_on_file_cycles() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "def_map_module_cycle"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:def_map_module_cycle
 pub mod a;
 
 //- /src/a/mod.rs
@@ -125,23 +107,10 @@ pub mod root_again;
 fn exposes_shared_out_of_line_modules_from_lib_and_bin_roots() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "shared_module_def_map"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "shared-module-def-map"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:shared_module_def_map
 pub mod shared;
 
-//- /src/main.rs
+//- /src/main.rs crate:shared_module_def_map kind:bin name:shared-module-def-map
 mod shared;
 
 fn main() {}
@@ -174,13 +143,7 @@ pub struct Shared;
 fn records_impl_blocks_without_scope_bindings() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "impl_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:impl_fixture
 pub struct Root;
 
 impl Root {}
@@ -213,13 +176,7 @@ pub mod nested {
 fn keeps_type_and_value_bindings_separate() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "namespace_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:namespace_fixture
 pub struct Thing {
     field: (),
 }
@@ -242,13 +199,7 @@ pub fn Thing() -> Thing {
 fn struct_field_shape_determines_value_namespace_occupancy() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "struct_namespace_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:struct_namespace_fixture
 pub struct Unit;
 pub struct Tuple(pub u8);
 pub struct Record { pub value: u8 }
@@ -274,31 +225,10 @@ pub struct Record { pub value: u8 }
 fn resident_unresolved_import_totals_are_partitioned_by_package_origin() {
     let fixture = crate::testonly::DefMapFixture::build_with_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-exclude = ["dep"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:dep
 use missing_workspace::Thing;
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 use missing_dependency::Thing;
 
 //- /sysroot/library/core/src/lib.rs

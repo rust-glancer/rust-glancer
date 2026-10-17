@@ -6,13 +6,7 @@ use crate::tests::utils;
 fn skips_cfg_disabled_macro_definitions_and_calls() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_macro_fixture
 #[cfg(false)]
 macro_rules! make_hidden {
     () => {
@@ -50,13 +44,7 @@ make_visible!();
 fn filters_macro_generated_cfg_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "generated_cfg_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:generated_cfg_fixture
 macro_rules! make_items {
     () => {
         #[cfg(false)]
@@ -82,6 +70,7 @@ make_items!();
 
 #[test]
 fn filters_feature_cfg_items_with_cargo_active_features() {
+    // Keep Cargo here so default feature activation passes through workspace lowering.
     let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
@@ -117,13 +106,7 @@ pub struct Disabled;
 fn filters_current_platform_cfg_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "platform_cfg_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:platform_cfg_fixture
 #[cfg(unix)]
 pub struct UnixOnly;
 
@@ -152,6 +135,7 @@ pub struct WindowsOnly;
 
 #[test]
 fn filters_test_cfg_items_with_workspace_config() {
+    // Keep Cargo here to exercise the cfg(test) option in workspace lowering.
     let fixture = r#"
 //- /Cargo.toml
 [package]
@@ -193,13 +177,7 @@ pub struct NormalOnly;
 fn applies_cfg_attr_cfg_gates() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_attr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_attr_fixture
 #[cfg_attr(true, cfg(false))]
 pub struct Hidden;
 

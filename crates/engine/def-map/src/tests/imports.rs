@@ -6,18 +6,7 @@ use super::utils;
 fn explicit_bindings_shadow_globs_independent_of_import_order() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/named-first", "crates/glob-first"]
-resolver = "3"
-
-//- /crates/named-first/Cargo.toml
-[package]
-name = "named-first"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/named-first/src/lib.rs
+//- /crates/named-first/src/lib.rs crate:named-first root:crates/named-first
 mod explicit;
 mod globbed;
 
@@ -30,13 +19,7 @@ pub struct Thing;
 //- /crates/named-first/src/globbed.rs
 pub struct Thing;
 
-//- /crates/glob-first/Cargo.toml
-[package]
-name = "glob-first"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/glob-first/src/lib.rs
+//- /crates/glob-first/src/lib.rs crate:glob-first root:crates/glob-first
 mod explicit;
 mod globbed;
 
@@ -63,13 +46,7 @@ pub struct Thing;
 fn imports_preserve_constructor_namespace_occupancy_and_value_precedence() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "constructor_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:constructor_import_fixture
 mod named {
     pub struct Unit;
     pub struct Record { pub value: u8 }
@@ -131,13 +108,7 @@ fn Choice() {}
 fn enum_variant_imports_preserve_shape_namespace_occupancy() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "variant_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:variant_import_fixture
 mod source;
 
 use source::Choice::{
@@ -181,13 +152,7 @@ pub enum Choice {
 fn equal_priority_imports_record_ambiguity() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "ambiguous_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:ambiguous_import_fixture
 mod first;
 mod second;
 
@@ -215,13 +180,7 @@ pub struct Thing;
 fn duplicate_glob_routes_to_one_definition_are_not_ambiguous() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "duplicate_glob_route_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:duplicate_glob_route_fixture
 mod source {
     pub struct Thing;
 }
@@ -252,13 +211,7 @@ use second::*;
 fn resolves_nested_self_imports_without_binding_literal_self() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "self_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:self_import_fixture
 mod bar {
     pub mod foo {
         pub fn work() {}
@@ -290,30 +243,10 @@ use bar::foo::{self, self as imported_foo, work};
 fn ignores_hidden_renames() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub fn work() {}
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 mod bar {
     pub fn work() {}
 }
@@ -339,13 +272,7 @@ use bar::work as _;
 fn records_unresolved_named_and_glob_imports() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "unresolved_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:unresolved_import_fixture
 mod existing {}
 
 use missing::Thing;
@@ -372,13 +299,7 @@ pub use existing::missing::*;
 fn records_unresolved_hidden_imports_without_flagging_resolved_hidden_imports() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "hidden_unresolved_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:hidden_unresolved_import_fixture
 mod existing {
     pub fn work() {}
 }

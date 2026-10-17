@@ -4,13 +4,7 @@ use crate::tests::utils;
 fn macro_use_module_imports_child_macro_rules_into_parent_textual_scope() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_use_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_use_module_fixture
 #[macro_use]
 mod macros {
     macro_rules! make_user {
@@ -44,18 +38,7 @@ make_hidden!();
 fn macro_use_extern_crate_imports_exported_root_macros() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod source {
     pub struct Thing;
 }
@@ -74,16 +57,7 @@ macro_rules! hidden_thing {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 #[macro_use(export_thing)]
 extern crate dep as _;
 
@@ -119,18 +93,7 @@ pub use child::ChildHiddenViaMacroUse;
 fn local_macro_import_shadows_macro_use_extern_crate_fallback() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep1", "crates/dep2", "crates/app"]
-resolver = "3"
-
-//- /crates/dep1/Cargo.toml
-[package]
-name = "dep1"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep1/src/lib.rs
+//- /crates/dep1/src/lib.rs crate:dep1 root:crates/dep1
 #[macro_export]
 macro_rules! m {
     () => {
@@ -138,13 +101,7 @@ macro_rules! m {
     };
 }
 
-//- /crates/dep2/Cargo.toml
-[package]
-name = "dep2"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep2/src/lib.rs
+//- /crates/dep2/src/lib.rs crate:dep2 root:crates/dep2
 #[macro_export]
 macro_rules! m {
     () => {
@@ -152,17 +109,7 @@ macro_rules! m {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep1 = { path = "../dep1" }
-dep2 = { path = "../dep2" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep1,dep2
 #[macro_use]
 extern crate dep1;
 extern crate dep2;
@@ -191,18 +138,7 @@ pub use child::FromDep2;
 fn cfg_attr_macro_use_activates_legacy_macro_imports() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
 macro_rules! make_dep {
     ($name:ident) => {
@@ -210,16 +146,7 @@ macro_rules! make_dep {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 #[cfg_attr(true, macro_use(make_dep))]
 extern crate dep as _;
 

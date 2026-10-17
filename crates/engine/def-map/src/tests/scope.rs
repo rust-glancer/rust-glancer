@@ -6,13 +6,7 @@ use super::utils;
 fn private_items_are_not_visible_to_sibling_modules() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "sibling_private_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:sibling_private_fixture
 mod source {
     fn hidden() {}
     pub fn exposed() {}
@@ -46,13 +40,7 @@ mod sibling {
 fn child_modules_can_see_private_items_from_ancestor_modules() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "ancestor_private_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:ancestor_private_fixture
 mod parent {
     fn hidden() {}
 
@@ -82,13 +70,7 @@ mod parent {
 fn restricted_visibility_is_evaluated_from_the_binding_owner_module() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "restricted_visibility_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:restricted_visibility_fixture
 mod api {
     pub(super) fn visible_to_root_children() {}
     pub(self) fn private_to_api_descendants() {}
@@ -141,13 +123,7 @@ mod sibling {
 fn restricted_visibility_canonicalizes_raw_identifier_segments() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "raw_restricted_visibility_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:raw_restricted_visibility_fixture
 mod r#type {
     pub(in crate::r#type) fn visible_to_type_descendants() {}
 
@@ -177,18 +153,7 @@ mod r#type {
 fn keyword_module_imports_keep_the_module_declaration_visibility_ceiling() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 mod parent {
     pub mod child {
         pub use super as parent_alias;
@@ -197,16 +162,7 @@ mod parent {
 
 pub use parent::child;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::child::parent_alias;
 "#,
         expect![[r#"
@@ -237,13 +193,7 @@ use dep::child::parent_alias;
 fn only_macro_rules_direct_bindings_receive_the_crate_reexport_ceiling() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_reexport_visibility_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_reexport_visibility_fixture
 mod source {
     macro_rules! legacy {
         () => {};
@@ -287,13 +237,7 @@ mod sibling {
 fn public_reexports_do_not_make_inaccessible_source_bindings_visible() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "reexport_visibility_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:reexport_visibility_fixture
 mod source {
     fn hidden() {}
     pub fn exposed() {}
@@ -332,34 +276,14 @@ use crate::reexports::{exposed, hidden};
 fn public_reexports_do_not_widen_crate_visibility_across_crates() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 mod source {
     pub(crate) struct Thing;
 }
 
 pub use source::Thing;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::Thing;
 "#,
     );

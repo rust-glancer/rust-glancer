@@ -8,6 +8,7 @@ use crate::{DefMapLoader, DefMapSource, testonly::DefMapFixture};
 
 #[test]
 fn retains_compilation_target_width_without_loading_offloaded_scopes() {
+    // Use workspace lowering to supply an explicit compilation target.
     let source = fixture_crate(
         r#"
 //- /Cargo.toml
@@ -51,20 +52,10 @@ pub fn use_it() {}
 fn semantic_crates_retain_their_originating_cargo_targets() {
     let fixture = DefMapFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "multi_target"
-version = "0.1.0"
-edition = "2024"
-
-[[bin]]
-name = "tool"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:multi_target
 pub fn library() {}
 
-//- /src/main.rs
+//- /src/main.rs crate:multi_target kind:bin name:tool
 fn main() {}
 "#,
     );
@@ -96,6 +87,7 @@ fn main() {}
 
 #[test]
 fn target_kind_controls_visible_dependency_roots() {
+    // Keep Cargo's classification of normal, build, and dev dependencies in this fixture.
     utils::check_project_def_map(
         r#"
 //- /Cargo.toml
@@ -219,25 +211,12 @@ pub fn normal_work() {}
 fn proc_macro_sysroot_root_is_visible_only_to_proc_macro_targets() {
     utils::check_project_path_resolution_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "mixed_targets"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-[[bin]]
-name = "ordinary"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:mixed_targets kind:proc-macro
 use proc_macro::TokenStream;
 
 fn consume(_stream: TokenStream) {}
 
-//- /src/main.rs
+//- /src/main.rs crate:mixed_targets kind:bin name:ordinary
 use proc_macro::TokenStream;
 
 fn main() {}

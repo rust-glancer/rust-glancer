@@ -4,13 +4,7 @@ use crate::tests::utils;
 fn parent_textual_macro_rules_respects_child_module_source_order() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "textual_parent_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:textual_parent_macro_fixture
 mod earlier {
     make_item!();
 }
@@ -43,13 +37,7 @@ pub use later::Item as AfterDefinition;
 fn same_module_textual_macro_rules_uses_latest_prior_definition() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "textual_macro_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:textual_macro_shadow_fixture
 macro_rules! make {
     () => {
         pub struct A;
@@ -81,13 +69,7 @@ make!();
 fn inner_textual_macro_rules_shadows_parent_textual_macro() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "inner_textual_macro_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:inner_textual_macro_shadow_fixture
 macro_rules! make {
     () => {
         pub struct Parent;

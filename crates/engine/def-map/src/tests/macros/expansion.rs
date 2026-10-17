@@ -7,13 +7,7 @@ use crate::{profile::metric, profile_descriptors, tests::utils};
 fn expands_local_macro_rules_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_fixture
 macro_rules! make_user {
     () => {
         pub struct User;
@@ -43,21 +37,7 @@ make_user!();
 fn unsupported_proc_macro_calls_do_not_block_ordinary_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "fixture_macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:fixture_macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro]
@@ -65,16 +45,7 @@ pub fn emit(_input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::new()
 }
 
-//- /app/Cargo.toml
-[package]
-name = "fixture_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-fixture_macros = { path = "../macros" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:fixture_app root:app deps:fixture_macros
 use fixture_macros::emit;
 
 emit!();
@@ -93,13 +64,7 @@ pub struct AfterProcMacroCall;
 fn generated_enum_variants_keep_shape_namespace_occupancy() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "generated_variant_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:generated_variant_fixture
 macro_rules! make_choice {
     () => {
         pub enum Choice {
@@ -134,13 +99,7 @@ use Choice::{Record, Tuple, Unit};
 fn generated_impls_keep_generated_source_identity() {
     utils::check_project_def_map(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_impl_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_impl_fixture
 macro_rules! make_user {
     () => {
         pub struct User;
@@ -172,13 +131,7 @@ make_user!();
 fn resolves_imports_generated_by_macros() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_import_fixture
 mod source {
     pub struct Thing;
 }
@@ -203,18 +156,7 @@ import_thing!();
 fn resolves_dollar_crate_in_generated_imports_to_macro_definition_crate() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod source {
     pub struct Thing;
 }
@@ -226,16 +168,7 @@ macro_rules! import_thing {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::import_thing;
 
 import_thing!();
@@ -252,18 +185,7 @@ import_thing!();
 fn generated_macro_definitions_keep_dollar_crate_from_original_macro() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod source {
     pub struct Thing;
 }
@@ -279,16 +201,7 @@ macro_rules! define_inner {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::define_inner;
 
 define_inner!();
@@ -306,13 +219,7 @@ inner!();
 fn expands_imported_macro_rules_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "imported_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:imported_macro_fixture
 mod macros {
     macro_rules! make_user {
         () => {
@@ -339,13 +246,7 @@ make_user!();
 fn expands_macros_generated_by_macros() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "nested_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:nested_macro_fixture
 macro_rules! define_make_user {
     () => {
         macro_rules! make_user {
@@ -375,13 +276,7 @@ fn stops_recursive_generated_macro_expansion_at_pass_limit() {
     );
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "recursive_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:recursive_macro_fixture
 macro_rules! recurse {
     () => {
         recurse!();
@@ -454,13 +349,7 @@ pub struct After;
 fn qualified_macro_can_use_builtin_macro_name() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "qualified_builtin_name_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:qualified_builtin_name_fixture
 mod macros {
     macro_rules! include {
         () => {
@@ -485,13 +374,7 @@ macros::include!();
 fn unqualified_macro_can_resolve_from_standard_prelude() {
     let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "prelude_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:prelude_macro_fixture
 cfg_select! {
     _ => { pub struct FromPrelude; },
 }
@@ -508,13 +391,7 @@ cfg_select! {
 fn imported_macro_shadows_standard_prelude_macro() {
     let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "prelude_macro_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:prelude_macro_shadow_fixture
 mod local {
     macro_rules! cfg_select {
         ($($tt:tt)*) => {
@@ -546,13 +423,7 @@ cfg_select! {
 fn standard_prelude_macro_resolves_before_later_local_macro() {
     let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "prelude_before_later_local_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:prelude_before_later_local_fixture
 cfg_select! {
     _ => { pub struct FromPrelude; },
 }
@@ -578,18 +449,7 @@ macro_rules! cfg_select {
 fn standard_prelude_macro_shadows_macro_use_extern_crate_fallback() {
     let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
 macro_rules! cfg_select {
     ($($tt:tt)*) => {
@@ -597,16 +457,7 @@ macro_rules! cfg_select {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 #[macro_use]
 extern crate dep as _;
 
@@ -629,18 +480,7 @@ cfg_select! {
 fn standard_prelude_macro_resolves_before_macro_use_when_local_macro_is_later() {
     let project = utils::DefMapFixtureDb::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
 macro_rules! cfg_select {
     ($($tt:tt)*) => {
@@ -648,16 +488,7 @@ macro_rules! cfg_select {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 #[macro_use]
 extern crate dep as _;
 
@@ -689,18 +520,7 @@ macro_rules! cfg_select {
 fn ambiguous_standard_prelude_macro_blocks_macro_use_fallback() {
     let project = utils::DefMapFixtureDb::build_with_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
 macro_rules! make_item {
     () => {
@@ -708,16 +528,7 @@ macro_rules! make_item {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 #[macro_use]
 extern crate dep as _;
 

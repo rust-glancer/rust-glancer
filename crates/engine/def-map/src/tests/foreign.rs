@@ -5,13 +5,7 @@ use super::utils::{self, PathResolutionQuery};
 use crate::{ItemSourceKind, testonly::DefMapFixture};
 
 const SOURCE_FOREIGN_FIXTURE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "foreign_items"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:foreign_items
 macro_rules! nested_foreign_macro {
     () => {
         pub struct MustNotExpand;
@@ -95,13 +89,7 @@ fn foreign_declarations_resolve_import_and_reexport_like_named_items() {
 #[test]
 fn macro_generated_extern_blocks_collect_the_same_declaration_kinds() {
     let fixture = r#"
-//- /Cargo.toml
-[package]
-name = "generated_foreign_items"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:generated_foreign_items
 macro_rules! make_foreign {
     () => {
         extern "C" {

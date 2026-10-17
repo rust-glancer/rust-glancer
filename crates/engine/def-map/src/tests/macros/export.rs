@@ -4,18 +4,7 @@ use crate::tests::utils;
 fn macro_export_makes_macro_rules_visible_from_crate_root() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod source {
     pub struct Thing;
 }
@@ -29,16 +18,7 @@ mod private_macros {
     }
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::export_thing;
 
 dep::export_thing!(DirectThing);
@@ -59,13 +39,7 @@ export_thing!(ImportedThing);
 fn macro_exported_root_macro_can_be_called_through_crate_path() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "root_macro_export_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:root_macro_export_fixture
 #[macro_export]
 macro_rules! exported {
     () => {
@@ -87,13 +61,7 @@ crate::exported!();
 fn macro_exported_macro_can_be_called_through_crate_path_before_definition() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "early_root_macro_export_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:early_root_macro_export_fixture
 crate::exported!();
 
 #[macro_export]
@@ -115,13 +83,7 @@ macro_rules! exported {
 fn cfg_attr_macro_export_respects_active_and_inactive_predicates() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_attr_macro_export_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_attr_macro_export_fixture
 crate::active!();
 crate::inactive!();
 
@@ -154,13 +116,7 @@ macro_rules! inactive {
 fn non_exported_macro_path_call_before_definition_is_not_visible() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "early_private_macro_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:early_private_macro_path_fixture
 crate::make_hidden!();
 
 macro_rules! make_hidden {
@@ -181,13 +137,7 @@ macro_rules! make_hidden {
 fn generated_macro_export_makes_macro_visible_from_crate_root() {
     let project = utils::DefMapFixtureDb::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "generated_macro_export_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:generated_macro_export_fixture
 macro_rules! define_exported {
     () => {
         #[cfg_attr(true, macro_export)]

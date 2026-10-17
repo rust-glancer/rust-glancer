@@ -8,21 +8,7 @@ use crate::{
 };
 
 const PROC_MACRO_FIXTURE: &str = r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "fixture_macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:fixture_macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro]
@@ -51,16 +37,7 @@ mod internal {
 }
 pub use internal::reexported;
 
-//- /app/Cargo.toml
-[package]
-name = "fixture_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-fixture_macros = { path = "../macros" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:fixture_app root:app deps:fixture_macros
 use fixture_macros::{leaked_value, LeakedType, reexported};
 "#;
 

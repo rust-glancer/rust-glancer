@@ -5,7 +5,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::PackageStoreError;
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
-use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
@@ -17,32 +17,12 @@ use crate::{
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
     let fixture = RebuildFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub mod api {
     pub struct Api;
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub use dep::api::Api as Before;
 "#,
         "dep",
@@ -75,18 +55,7 @@ pub use dep::api::Api as Renamed;
 fn rebuild_expands_dirty_macro_calls_from_clean_packages() {
     let fixture = RebuildFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 #[macro_export]
 macro_rules! make_dep_item {
     () => {
@@ -94,16 +63,7 @@ macro_rules! make_dep_item {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::make_dep_item;
 
 pub struct Before;
@@ -132,30 +92,10 @@ make_dep_item!();
 fn rebuild_collects_foreign_declarations_in_the_dirty_package() {
     let fixture = RebuildFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Dep;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Before;
 "#,
         "dep",
@@ -198,9 +138,7 @@ struct RebuildFixture {
 impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build");
+        let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
         let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
         let output = crate::testonly::build_source_closed_def_map(
             &workspace, &parse, &item_tree, &mut names,

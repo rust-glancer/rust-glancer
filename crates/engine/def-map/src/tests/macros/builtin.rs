@@ -10,13 +10,7 @@ fn build_builtin_macro_fixture(fixture: &str) -> utils::DefMapFixtureDb {
 fn include_macro_splices_real_source_items() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "include_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:include_macro_fixture
 include!("included.rs");
 
 make_included!();
@@ -46,13 +40,7 @@ macro_rules! make_included {
 fn include_macro_retains_enum_variant_shape_namespace_occupancy() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "included_variant_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:included_variant_fixture
 include!("included.rs");
 use Choice::{Record, Tuple, Unit};
 
@@ -84,13 +72,7 @@ pub enum Choice {
 fn qualified_include_macro_splices_real_source_items() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "qualified_include_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:qualified_include_macro_fixture
 std::include!("included.rs");
 
 //- /src/included.rs
@@ -108,13 +90,7 @@ pub struct Included;
 fn local_include_macro_shadows_builtin_include() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "include_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:include_shadow_fixture
 macro_rules! include {
     ($path:literal) => {
         pub struct FromMacro;
@@ -141,13 +117,7 @@ pub struct FromFile;
 fn cfg_select_expands_first_enabled_item_arm() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_fixture
 cfg_select! {
     false => {
         pub struct HiddenFalse;
@@ -189,13 +159,7 @@ make_from_selected!();
 fn qualified_cfg_select_expands_first_enabled_item_arm() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "qualified_cfg_select_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:qualified_cfg_select_fixture
 std::cfg_select! {
     true => {
         pub struct FromStd;
@@ -232,13 +196,7 @@ core::cfg_select! {
 fn cfg_select_uses_wildcard_fallback() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_fallback_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_fallback_fixture
 cfg_select! {
     false => {
         pub struct Hidden;
@@ -263,17 +221,7 @@ cfg_select! {
 fn cfg_select_matches_key_value_cfg_predicates() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_feature_fixture"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-default = ["enabled"]
-enabled = []
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_feature_fixture features:default,enabled cfg:feature=default,feature=enabled
 cfg_select! {
     feature = "enabled" => {
         pub struct EnabledFeature;
@@ -298,13 +246,7 @@ cfg_select! {
 fn cfg_select_collects_out_of_line_modules_relative_to_call_site() {
     utils::check_project_path_resolution_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_module_fixture
 cfg_select! {
     true => {
         mod os;
@@ -328,16 +270,7 @@ pub struct Unix;
 #[test]
 fn cfg_select_collects_impls_and_extern_crates_as_source_items() {
     let fixture = r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_source_items_fixture"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_source_items_fixture deps:dep
 cfg_select! {
     true => {
         extern crate dep as dep_alias;
@@ -352,13 +285,7 @@ cfg_select! {
     }
 }
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct Dep;
 "#;
     let project = build_builtin_macro_fixture(fixture);
@@ -405,13 +332,7 @@ pub struct Dep;
 fn cfg_select_ignores_failed_inactive_arm_lowering() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_failed_inactive_arm_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_failed_inactive_arm_fixture
 cfg_select! {
     false => {
         mod ;
@@ -433,13 +354,7 @@ cfg_select! {
 fn local_cfg_select_macro_shadows_builtin_cfg_select() {
     let project = build_builtin_macro_fixture(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_shadow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_shadow_fixture
 macro_rules! cfg_select {
     ($($tt:tt)*) => {
         pub struct FromLocalMacro;
