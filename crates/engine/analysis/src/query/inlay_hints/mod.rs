@@ -2,6 +2,8 @@
 
 mod closing_brace;
 
+use std::borrow::Cow;
+
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::{
@@ -42,9 +44,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         range: Option<Span>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         let source = InlaySource::new(self.analysis, crate_ref.package, file_id);
-        let mut hints = self.binding_type_hints(crate_ref, file_id, range)?;
+        let edition = self.analysis.view_db().crate_edition(crate_ref)?;
+        let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
+            .with_iterator_simplification(crate_ref);
+        let mut hints = self.binding_type_hints(crate_ref, file_id, range, &renderer)?;
         hints.extend(self.parameter_hints(crate_ref, file_id, range, &source)?);
-        hints.extend(self.expression_type_hints(crate_ref, file_id, range, &source)?);
+        hints.extend(self.expression_type_hints(crate_ref, file_id, range, &source, &renderer)?);
         hints.extend(closing_brace::closing_brace_hints(
             self.analysis,
             crate_ref,
@@ -62,12 +67,10 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         crate_ref: CrateRef,
         file_id: FileId,
         range: Option<Span>,
+        renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
-        let edition = self.analysis.view_db().crate_edition(crate_ref)?;
-        let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
-            .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for binding in BodyView::new(self.analysis.view_db())
             .inferred_binding_tys(crate_ref, file_id, range)?
@@ -99,10 +102,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<Span>,
         source: &InlaySource<'_, '_>,
+        renderer: &TypeRenderer<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let edition = self.analysis.view_db().crate_edition(crate_ref)?;
-        let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
-            .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for expr in BodyStructureView::new(self.analysis.view_db())
             .method_chain_expr_tys(crate_ref, file_id)?
@@ -240,17 +241,28 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     }
 
     // Recover the name already visible in `&user`, `user.clone()`, or `model.user`.
-    // Parse only this argument, so saved and edited text use the same rules without
-    // retaining syntax trees or adding presentation metadata to the IR.
-    fn arg_hint_name(text: &str, edition: rg_syntax::Edition) -> Option<String> {
+    // A plain identifier needs only lexing; wrappers and paths need the argument's syntax tree.
+    // Saved and edited text use the same rules without retaining trees or adding IR metadata.
+    fn arg_hint_name(text: &str, edition: rg_syntax::Edition) -> Option<Cow<'_, str>> {
+        let text = text.trim();
+        if matches!(
+            rg_syntax::LexedStr::single_token(edition, text),
+            Some((rg_syntax::SyntaxKind::IDENT, None))
+        ) {
+            return Some(Cow::Borrowed(text));
+        }
         let parsed = ast::Expr::parse(text, edition);
         let mut expr = ast::Expr::cast(parsed.syntax_node())?;
         loop {
             expr = match expr {
                 ast::Expr::PathExpr(path) => {
-                    return Some(path.path()?.segment()?.name_ref()?.text().to_string());
+                    return Some(Cow::Owned(
+                        path.path()?.segment()?.name_ref()?.text().to_string(),
+                    ));
                 }
-                ast::Expr::FieldExpr(field) => return Some(field.name_ref()?.text().to_string()),
+                ast::Expr::FieldExpr(field) => {
+                    return Some(Cow::Owned(field.name_ref()?.text().to_string()));
+                }
                 ast::Expr::MethodCallExpr(method) => {
                     let method_name = method.name_ref()?.text().to_string();
                     if ["clone", "as_ref", "into"].contains(&method_name.as_str())
@@ -258,7 +270,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     {
                         method.receiver()?
                     } else {
-                        return Some(method_name);
+                        return Some(Cow::Owned(method_name));
                     }
                 }
                 ast::Expr::RefExpr(reference) => reference.expr()?,

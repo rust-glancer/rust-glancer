@@ -3,6 +3,8 @@
 //! These queries choose which type information and names to show. They do not manage output
 //! buffers; the renderer uses the returned facts and name spellings during its shared walk.
 
+use std::cell::OnceCell;
+
 use rg_ir_model::{
     CrateRef, GenericDefRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef, TypeDefId,
 };
@@ -24,7 +26,8 @@ use crate::{IndexedViewDb, display::syntax::SyntaxRenderer, item::path::PathView
 pub(super) struct TypeLabelQuery<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
     syntax: SyntaxRenderer,
-    iterator_context: Option<TyContext<'a, &'a IndexedViewDb<'db>, &'a IndexedViewDb<'db>>>,
+    iterator_use_site: Option<CrateRef>,
+    iterator_context: OnceCell<TyContext<'a, &'a IndexedViewDb<'db>, &'a IndexedViewDb<'db>>>,
 }
 
 impl<'a, 'db> TypeLabelQuery<'a, 'db> {
@@ -32,29 +35,38 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
         Self {
             db,
             syntax: SyntaxRenderer::new(edition),
-            iterator_context: None,
+            iterator_use_site: None,
+            iterator_context: OnceCell::new(),
         }
     }
 
-    pub(super) fn enable_iterator_simplification(
-        &mut self,
-        use_site: CrateRef,
-    ) -> anyhow::Result<()> {
-        self.iterator_context = Some(TyContext::new(
-            self.db,
-            self.db,
-            self.db.item_lookup_query(use_site)?,
-            use_site,
-            self.db.cancellation().clone(),
-        ));
-        Ok(())
+    pub(super) fn enable_iterator_simplification(&mut self, use_site: CrateRef) {
+        self.iterator_use_site = Some(use_site);
+        self.iterator_context.take();
     }
 
     /// Recognize public adapters declared under `core::iter`, including its private modules.
     /// Keep named user iterators and types such as `slice::Iter` recognizable in their hints.
     pub(super) fn iterator_item(&self, ty: &AdtTy) -> anyhow::Result<Option<Ty>> {
-        let Some(context) = &self.iterator_context else {
+        let Some(use_site) = self.iterator_use_site else {
             return Ok(None);
+        };
+        // Primitive hints such as `let count = 0` need no iterator lookup. Load its dependency
+        // indexes only when a nominal type reaches this query, then reuse them for later hints.
+        let context = match self.iterator_context.get() {
+            Some(context) => context,
+            None => {
+                let lookup = self.db.item_lookup_query(use_site)?;
+                self.iterator_context.get_or_init(|| {
+                    TyContext::new(
+                        self.db,
+                        self.db,
+                        lookup,
+                        use_site,
+                        self.db.cancellation().clone(),
+                    )
+                })
+            }
         };
         if let Some(iterator) = context.item_lookup().lang_trait(LangItem::Iterator)
             && ty.def.origin == iterator.origin

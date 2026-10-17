@@ -63,9 +63,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     /// Enable iterator simplification in the compact form returned by `render_presentation`.
     /// The concrete form retains the adapter and its generic arguments.
-    pub fn with_iterator_simplification(mut self, use_site: CrateRef) -> anyhow::Result<Self> {
-        self.query.enable_iterator_simplification(use_site)?;
-        Ok(self)
+    pub fn with_iterator_simplification(mut self, use_site: CrateRef) -> Self {
+        self.query.enable_iterator_simplification(use_site);
+        self
     }
 
     /// Render a concrete UI type, returning `None` when inference could not determine it.
