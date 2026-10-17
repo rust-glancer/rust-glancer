@@ -58,13 +58,7 @@ fn cache_instances_reuse_unlocked_slots() {
 fn instance_fixture() -> ProjectSourceFixture {
     ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 "#,
     )

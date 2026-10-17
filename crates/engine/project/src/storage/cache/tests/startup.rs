@@ -10,7 +10,6 @@ use super::utils::{package_cache_header_for, write_cached_package_artifact};
 use crate::{
     PackageResidencyPolicy, Project,
     profile::metric,
-    storage::cache::WorkspaceCachePlan,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -18,25 +17,10 @@ use crate::{
 fn residency_policy_changes_rebuild_from_source() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App(dep::Dep);
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct Dep;
 "#,
     );
@@ -126,29 +110,10 @@ pub struct Dep;
 fn lazy_loads_offloaded_packages_for_queries() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App;
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-[[bin]]
-name = "dep-tool"
-path = "src/bin/dep_tool.rs"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct DepType;
 
 unsafe extern "C" {
@@ -157,7 +122,7 @@ unsafe extern "C" {
     pub type DepOpaque;
 }
 
-//- /dep/src/bin/dep_tool.rs
+//- /dep/src/bin/dep_tool.rs crate:dep root:dep origin:dependency kind:bin name:dep-tool
 fn main() {}
 "#,
     );
@@ -198,7 +163,7 @@ fn main() {}
                 .parse_db()
                 .package(symbol.crate_ref.package.0)
                 .expect("workspace symbol package should be parsed");
-            // Crate ids are allocated in parsed Cargo-target order. The DefMap payload is deliberately
+            // Crate ids are allocated in parsed target order. The DefMap payload is deliberately
             // offloaded in this fixture, so render through the stable parsed package shape instead.
             let target = package
                 .targets()
@@ -229,25 +194,10 @@ fn main() {}
 fn startup_indexing_rejects_payload_with_forged_source_fingerprint() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App;
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct DepOld;
 "#,
     );
@@ -275,12 +225,12 @@ pub struct DepOld;
 pub struct DepNew;
 "#,
     );
-    let workspace_after_edit = fixture.workspace_metadata();
-    let cache_plan_after_edit = WorkspaceCachePlan::build(&workspace_after_edit);
-    let parse_after_edit = rg_parse::ParseDb::build(&workspace_after_edit)
+    let parse_after_edit = rg_parse::ParseDb::build(&workspace)
         .expect("fixture parse db should build after source edit");
-    let source_fingerprints = cache_plan_after_edit
-        .source_fingerprints(workspace_after_edit.workspace_root(), &parse_after_edit)
+    let source_fingerprints = project
+        .state
+        .cache_plan
+        .source_fingerprints(workspace.workspace_root(), &parse_after_edit)
         .expect("edited source fingerprints should compute");
 
     // Forge the old artifact header so its package fingerprint claims to describe the edited
@@ -300,7 +250,7 @@ pub struct DepNew;
         .expect("test should commit forged dependency artifact");
 
     drop(project);
-    let cached_project = Project::builder(workspace_after_edit)
+    let cached_project = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should rebuild from matching artifact");
@@ -335,52 +285,17 @@ pub struct DepNew;
 fn startup_cache_misses_rebuild_reverse_dependents() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["dep", "mid", "app", "independent"]
-resolver = "3"
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep
 pub struct Before;
 pub struct Kept;
 
-//- /mid/Cargo.toml
-[package]
-name = "mid"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /mid/src/lib.rs
+//- /mid/src/lib.rs crate:mid root:mid deps:dep
 pub use dep::Kept;
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-mid = { path = "../mid" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:mid
 pub fn keep(value: mid::Ke$usage$pt) -> mid::Kept { value }
 
-//- /independent/Cargo.toml
-[package]
-name = "independent"
-version = "0.1.0"
-edition = "2024"
-
-//- /independent/src/lib.rs
+//- /independent/src/lib.rs crate:independent root:independent
 pub struct Independent;
 "#,
     );
@@ -401,12 +316,11 @@ pub struct AfterTwo;
 pub struct Kept;
 "#,
     );
-    let workspace_after_edit = fixture.workspace_metadata();
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
         "project.build.cache_probe",
     );
-    let project = Project::builder(workspace_after_edit)
+    let project = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("dependency cache miss should rebuild its reverse dependents");
@@ -474,25 +388,10 @@ pub struct Kept;
 fn missing_dependency_artifact_rebuilds_reverse_dependents() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App(dep::Dep);
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct Dep;
 "#,
     );
@@ -546,25 +445,10 @@ pub struct Dep;
 fn startup_discards_incomplete_cache_updates() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App(dep::Dep);
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct Dep;
 "#,
     );
@@ -636,25 +520,10 @@ pub struct Dep;
 fn startup_indexing_rejects_artifacts_when_body_ir_policy_needs_more_bodies() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub fn app_value() -> usize { 1 }
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub fn dep_value() -> usize { 2 }
 "#,
     );
@@ -714,25 +583,10 @@ pub fn dep_value() -> usize { 2 }
 fn startup_indexing_rejects_artifacts_when_out_of_line_modules_change() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct App;
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 mod child;
 
 //- /dep/src/child.rs
@@ -752,11 +606,9 @@ pub struct DepChildOld;
 pub struct DepChildNew;
 "#,
     );
-    let workspace_after_edit = fixture.workspace_metadata();
-
     // The changed file is discovered only after item-tree lowering. Startup cache validation must
     // therefore trust the artifact's saved parse manifest, not the fresh target-root-only parse DB.
-    let cached_project = Project::builder(workspace_after_edit)
+    let cached_project = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should reject stale artifact and rebuild from source");

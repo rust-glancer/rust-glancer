@@ -37,11 +37,17 @@ impl ProjectSourceFixture {
     }
 
     pub fn workspace_metadata(&self) -> WorkspaceMetadata {
-        let workspace = WorkspaceMetadata::for_tests(
-            self.fixture.metadata(),
-            WorkspaceLoweringConfig::default(),
-        )
-        .expect("fixture workspace metadata should build");
+        // Declared graphs keep source and cache tests focused on project behavior. Manifest-based
+        // fixtures still use Cargo for tests of discovery and workspace graph changes.
+        let workspace = if self.fixture.headers().next().is_some() {
+            WorkspaceMetadata::from_fixture(&self.fixture.path(""), self.fixture.headers())
+        } else {
+            WorkspaceMetadata::for_tests(
+                self.fixture.metadata(),
+                WorkspaceLoweringConfig::default(),
+            )
+            .expect("fixture workspace metadata should build")
+        };
         if !self.has_sysroot {
             return workspace;
         }

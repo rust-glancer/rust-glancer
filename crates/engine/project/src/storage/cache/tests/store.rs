@@ -13,13 +13,7 @@ use crate::{PackageResidencyPolicy, Project, testonly::ProjectSourceFixture};
 fn stores_package_cache_artifacts_on_disk() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 "#,
     );
@@ -84,13 +78,7 @@ pub struct App;
 fn removes_stale_package_cache_generations() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 "#,
     );
@@ -127,26 +115,11 @@ pub struct App;
 fn residency_policy_controls_package_artifact_writes() {
     let fixture = ProjectSourceFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app deps:dep
 pub struct AppBefore;
 pub fn use_dep(_: dep::Dep) {}
 
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct Dep;
 "#,
     );
