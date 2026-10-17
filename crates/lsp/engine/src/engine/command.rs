@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
     DocumentRangeSnapshot, EditorDocumentSnapshot, FoldingClientCapabilities,
-    GlobalPositionSnapshot, ProjectInitialization, QueryError, QueryValue,
+    GlobalPositionSnapshot, InlayHintsConfig, ProjectInitialization, QueryError, QueryValue,
 };
 use rg_project::{SavedBodyProducts, SavedFileChange, SplitIndexingProgress};
 use tokio::sync::oneshot;
@@ -33,6 +33,7 @@ pub(crate) enum EngineCommand {
     Initialize {
         root: PathBuf,
         configuration: ProjectConfiguration,
+        inlay_hints: InlayHintsConfig,
         respond_to: EngineResponder<ProjectInitialization>,
     },
     /// Background repair scheduled when a query proves that saved analysis is stale.

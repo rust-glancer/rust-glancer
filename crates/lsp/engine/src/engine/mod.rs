@@ -164,7 +164,7 @@ mod tests {
     };
 
     use futures::task::noop_waker_ref;
-    use rg_lsp_proto::ServiceNotification;
+    use rg_lsp_proto::{AnalysisConfig, InlayHintsConfig, ServiceNotification, SysrootDiscovery};
 
     use super::{EngineCommand, EngineHandle};
     use crate::service::{ServiceNotificationPublisher, ServiceNotificationsSink};
@@ -254,11 +254,12 @@ pub struct Ready;
         engine
             .request(|respond_to| EngineCommand::Initialize {
                 root: fixture.path(""),
-                configuration: rg_lsp_proto::AnalysisConfig {
-                    sysroot_discovery: rg_lsp_proto::SysrootDiscovery::Disabled,
+                configuration: AnalysisConfig {
+                    sysroot_discovery: SysrootDiscovery::Disabled,
                     ..Default::default()
                 }
                 .into(),
+                inlay_hints: InlayHintsConfig::default(),
                 respond_to,
             })
             .await

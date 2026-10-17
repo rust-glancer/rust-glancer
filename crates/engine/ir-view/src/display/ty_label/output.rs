@@ -5,9 +5,13 @@
 
 use std::fmt;
 
+use super::compact::CompactOutput;
+
 /// Concrete and compact UI text for the same type.
 /// For `Option<Repeat<u8>>`, the compact form can show `Option<impl Iterator<Item = u8>>`,
 /// while the concrete form keeps `Option<Repeat<u8>>` for the tooltip.
+/// A length budget can shorten the compact form further to `Option<…>`; concrete text keeps
+/// those arguments.
 ///
 /// Both forms use readable names and omit default arguments. These are labels for reading;
 /// source insertion has its own entry point and qualification rules.
@@ -21,7 +25,7 @@ pub struct TypePresentation {
 /// compact text. An absent buffer also means the corresponding rendering work can be skipped.
 pub(super) struct TypeOutput<'a> {
     concrete: Option<&'a mut String>,
-    compact: Option<&'a mut String>,
+    compact: Option<&'a mut CompactOutput>,
 }
 
 impl<'a> TypeOutput<'a> {
@@ -32,11 +36,40 @@ impl<'a> TypeOutput<'a> {
         }
     }
 
-    pub(super) fn presentation(presentation: &'a mut TypePresentation) -> Self {
-        Self {
-            concrete: Some(&mut presentation.concrete),
-            compact: Some(&mut presentation.compact),
+    /// Render both forms together, then apply the length budget to compact text. Waiting for the
+    /// whole label lets shortening choose inner groups while preserving the outer type structure.
+    pub(super) fn render_presentation(
+        max_length: Option<usize>,
+        render: impl FnOnce(&mut TypeOutput<'_>) -> anyhow::Result<bool>,
+    ) -> anyhow::Result<Option<TypePresentation>> {
+        let mut concrete = String::new();
+        let mut compact = CompactOutput::new(max_length);
+        let known = render(&mut TypeOutput {
+            concrete: Some(&mut concrete),
+            compact: Some(&mut compact),
+        })?;
+        Ok(known.then(|| TypePresentation {
+            concrete,
+            compact: compact.finish(),
+        }))
+    }
+
+    /// Mark only text that can be replaced as a whole. Delimiters stay outside the group:
+    /// `Map<Key, Value>` records `Key, Value`, so shortening leaves a balanced `Map<…>`.
+    /// All requested forms are still rendered here; only compact text records a possible elision.
+    pub(super) fn collapsible<T>(
+        &mut self,
+        render: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let start = self
+            .compact
+            .as_deref_mut()
+            .and_then(CompactOutput::begin_group);
+        let result = render(self);
+        if let Some(compact) = &mut self.compact {
+            compact.end_group(start);
         }
+        result
     }
 
     /// Discard this type's partial text if rendering returns `false` or an error.
@@ -47,14 +80,16 @@ impl<'a> TypeOutput<'a> {
         render: impl FnOnce(&mut Self) -> anyhow::Result<bool>,
     ) -> anyhow::Result<bool> {
         let concrete_len = self.concrete.as_ref().map_or(0, |text| text.len());
-        let compact_len = self.compact.as_ref().map_or(0, |text| text.len());
+        let compact_checkpoint = self.compact.as_ref().map(|text| text.checkpoint());
         let result = render(self);
         if !matches!(result, Ok(true)) {
             if let Some(concrete) = &mut self.concrete {
                 concrete.truncate(concrete_len);
             }
-            if let Some(compact) = &mut self.compact {
-                compact.truncate(compact_len);
+            if let Some(compact) = &mut self.compact
+                && let Some(checkpoint) = compact_checkpoint
+            {
+                compact.rollback(checkpoint);
             }
         }
         result
@@ -71,7 +106,7 @@ impl<'a> TypeOutput<'a> {
         if let Some(compact) = self.compact.as_deref_mut() {
             // A replacement can fail after writing some syntax. Keep that attempt separate
             // until we know it can replace the whole compact branch.
-            let mut text = String::new();
+            let mut text = compact.branch();
             if replacement(&mut TypeOutput {
                 concrete: None,
                 compact: Some(&mut text),
@@ -83,7 +118,7 @@ impl<'a> TypeOutput<'a> {
                 {
                     return Ok(false);
                 }
-                compact.push_str(&text);
+                compact.append(text);
                 return Ok(true);
             }
         }

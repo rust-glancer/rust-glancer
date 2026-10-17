@@ -1525,7 +1525,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         let hints = self
             .db
             .analysis()
-            .inlay_hints(target, file_id, None)
+            .inlay_hints(target, file_id, None, None)
             .expect("fixture inlay hints should resolve");
         let mut dump = String::new();
 

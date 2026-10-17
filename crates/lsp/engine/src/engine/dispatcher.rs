@@ -5,10 +5,15 @@
 //! pool of otherwise read-only queries would still need to coordinate ownership of the project.
 //! Background deferred indexing follows the same rule by returning its result as another command.
 
-use std::sync::{
-    Arc,
-    mpsc::{Receiver, Sender},
+use std::{
+    num::NonZeroUsize,
+    sync::{
+        Arc,
+        mpsc::{Receiver, Sender},
+    },
 };
+
+use rg_lsp_proto::InlayHintsConfig;
 
 use crate::{
     engine::{
@@ -30,6 +35,8 @@ use crate::{
 pub(super) struct EngineDispatcher {
     project: ProjectCoordinator,
     memory_control: Arc<dyn MemoryControl>,
+    // Apply presentation settings when answering queries, after project indexing.
+    inlay_hints: InlayHintsConfig,
 }
 
 impl EngineDispatcher {
@@ -41,6 +48,7 @@ impl EngineDispatcher {
         Self {
             project: ProjectCoordinator::new(sender, Arc::clone(&memory_control), notifications),
             memory_control,
+            inlay_hints: InlayHintsConfig::default(),
         }
     }
 
@@ -65,9 +73,11 @@ impl EngineDispatcher {
                 EngineCommand::Initialize {
                     root,
                     configuration,
+                    inlay_hints,
                     respond_to,
                 } => {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
+                    self.inlay_hints = inlay_hints;
                     let _ = respond_to.send(self.project.initialize(root, configuration));
                 }
                 EngineCommand::RecoverStaleSource { path } => {
@@ -373,11 +383,14 @@ impl EngineDispatcher {
                         queue_elapsed,
                         input.document(),
                     );
+                    // Clients use zero to disable shortening; analysis uses `None` for that.
+                    let max_length =
+                        NonZeroUsize::new(self.inlay_hints.max_length).map(NonZeroUsize::get);
                     self.query_runner().respond_to_query(
                         context,
                         respond_to,
                         cancellation,
-                        |runner, cancellation| runner.inlay_hint(input, cancellation),
+                        |runner, cancellation| runner.inlay_hint(input, max_length, cancellation),
                     );
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {

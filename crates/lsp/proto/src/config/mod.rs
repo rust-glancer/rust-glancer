@@ -4,6 +4,7 @@ mod cargo;
 mod cfg;
 mod diagnostics;
 mod indexing;
+mod inlay_hints;
 mod sysroot;
 
 use gen_lsp_types::LspAny;
@@ -16,6 +17,7 @@ pub use self::{
     cfg::AnalysisCfgConfig,
     diagnostics::DiagnosticsConfig,
     indexing::{IndexingPerformancePreference, PackageBatchSize},
+    inlay_hints::InlayHintsConfig,
     sysroot::SysrootDiscovery,
 };
 
@@ -24,6 +26,7 @@ pub use self::{
 pub struct EngineConfig {
     pub analysis: AnalysisConfig,
     pub diagnostics: DiagnosticsConfig,
+    pub inlay_hints: InlayHintsConfig,
 }
 
 impl EngineConfig {
@@ -31,6 +34,7 @@ impl EngineConfig {
         Ok(Self {
             analysis: AnalysisConfig::from_initialization_options(options)?,
             diagnostics: DiagnosticsConfig::from_initialization_options(options)?,
+            inlay_hints: InlayHintsConfig::from_initialization_options(options)?,
         })
     }
 }
@@ -60,6 +64,9 @@ mod tests {
             "diagnostics": {
                 "onSave": true,
             },
+            "inlayHints": {
+                "maxLength": 0,
+            },
         });
 
         let config = EngineConfig::from_initialization_options(Some(&options))
@@ -67,5 +74,7 @@ mod tests {
 
         assert!(!config.analysis.cfg.test);
         assert!(config.diagnostics.on_save);
+        assert_eq!(config.inlay_hints.max_length, 0);
+        assert_eq!(EngineConfig::default().inlay_hints.max_length, 25);
     }
 }

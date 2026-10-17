@@ -84,6 +84,7 @@ export class LanguageClientSession implements vscode.Disposable {
         cfg: config.cfg,
         diagnostics: config.diagnostics,
         indexing: config.indexing,
+        inlayHints: config.inlayHints,
         cargo: config.cargo,
         cache: config.cache,
       },

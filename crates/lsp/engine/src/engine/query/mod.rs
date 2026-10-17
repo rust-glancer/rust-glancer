@@ -705,6 +705,7 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn inlay_hint(
         &mut self,
         input: DocumentRangeSnapshot,
+        max_length: Option<usize>,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<gen_lsp_types::InlayHint>, QueryRunError> {
         let (document, range) = input.into_parts();
@@ -728,7 +729,12 @@ impl<'a> QueryRunner<'a> {
             hints.extend(
                 current
                     .analysis
-                    .inlay_hints(target.crate_ref, target.context.file, Some(text_range))
+                    .inlay_hints(
+                        target.crate_ref,
+                        target.context.file,
+                        Some(text_range),
+                        max_length,
+                    )
                     .context("compute current body inlay hints")?,
             );
         }

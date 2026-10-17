@@ -95,6 +95,13 @@
           },
           "description": "Additional environment variables for the rust-glancer server process."
         },
+        "rust-glancer.inlayHints.maxLength": {
+          "scope": "window",
+          "type": "integer",
+          "minimum": 0,
+          "default": 25,
+          "description": "Soft character limit for type inlay hints. Shortens nested type arguments while preserving complete names and punctuation. Set to 0 to disable structural shortening. The concrete type remains available in the tooltip. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.indexing.performancePreference": {
           "scope": "window",
           "type": "string",

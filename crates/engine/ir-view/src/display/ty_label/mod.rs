@@ -7,6 +7,8 @@
 //! share a walk: surrounding syntax such as `Option<...>` is written to both outputs. A
 //! simplification splits only the replaced branch: `Repeat<u8>` stays in the concrete form,
 //! while the compact form gets `impl Iterator<Item = u8>`.
+//! After the walk, a length budget can shorten nested groups to `…`. The renderer marks the
+//! boundaries so names and punctuation stay whole, and the concrete tooltip keeps those details.
 //!
 //! Refactorings and completions need names that resolve in the code we insert. For example, the
 //! "Implement missing trait members" action may insert a `dyn protocol::Object` parameter into
@@ -17,6 +19,7 @@
 //! `<Worker as Service<u8>>::Output` become `Self::Output` inside `impl Service<u8> for Worker`.
 //! Unrelated projections remain unknown instead of being shortened to the wrong trait.
 
+mod compact;
 mod output;
 mod query;
 
@@ -72,20 +75,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     /// Produce an inline label and its concrete details together. Shared structure resolves its
     /// names, bounds, and generic defaults once before writing to both forms.
+    ///
+    /// `max_length` is a soft character budget for compact text. `None` skips length-based
+    /// shortening; iterator simplification still applies when enabled.
     pub fn render_presentation(
         &self,
         ty: &IndexedType,
+        max_length: Option<usize>,
     ) -> anyhow::Result<Option<TypePresentation>> {
-        let mut presentation = TypePresentation {
-            concrete: String::new(),
-            compact: String::new(),
-        };
-        let known = self.write_ty(
-            ty.raw(),
-            None,
-            &mut TypeOutput::presentation(&mut presentation),
-        )?;
-        Ok(known.then_some(presentation))
+        TypeOutput::render_presentation(max_length, |output| self.write_ty(ty.raw(), None, output))
     }
 
     /// Render the concrete type for presentation, including inferred types in hover.
@@ -153,12 +151,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             }
             Ty::Tuple(fields) => {
                 output.push('(');
-                for (index, field) in fields.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
+                output.collapsible(|output| {
+                    for (index, field) in fields.iter().enumerate() {
+                        if index > 0 {
+                            output.push_str(", ");
+                        }
+                        self.write_ty_or_unknown(field, application, output)?;
                     }
-                    self.write_ty_or_unknown(field, application, output)?;
-                }
+                    Ok(())
+                })?;
                 if fields.len() == 1 {
                     output.push(',');
                 }
@@ -167,13 +168,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             }
             Ty::Array { inner, len } => {
                 output.push('[');
-                self.write_ty_or_unknown(inner, application, output)?;
+                output
+                    .collapsible(|output| self.write_ty_or_unknown(inner, application, output))?;
                 output.write(format_args!("; {len}]"));
                 Ok(true)
             }
             Ty::Slice(inner) => {
                 output.push('[');
-                self.write_ty_or_unknown(inner, application, output)?;
+                output
+                    .collapsible(|output| self.write_ty_or_unknown(inner, application, output))?;
                 output.push(']');
                 Ok(true)
             }
@@ -230,12 +233,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 // Use `|User| -> User` so the label shows known types without guessing a bound.
                 let closure = matches!(ty, Ty::Closure(_));
                 output.push_str(if closure { "|" } else { "fn(" });
-                for (index, param) in params.iter().enumerate() {
-                    if index > 0 {
-                        output.push_str(", ");
+                output.collapsible(|output| {
+                    for (index, param) in params.iter().enumerate() {
+                        if index > 0 {
+                            output.push_str(", ");
+                        }
+                        self.write_ty_or_unknown(param, application, output)?;
                     }
-                    self.write_ty_or_unknown(param, application, output)?;
-                }
+                    Ok(())
+                })?;
                 output.push_str(if closure { "| -> " } else { ") -> " });
                 self.write_ty_or_unknown(ret, application, output)?;
                 Ok(true)
@@ -387,7 +393,8 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     iterator_depth: self.iterator_depth + 1,
                 };
                 output.push_str("impl Iterator<Item = ");
-                let known = nested.write_ty(&item, application, output)?;
+                let known =
+                    output.collapsible(|output| nested.write_ty(&item, application, output))?;
                 output.push('>');
                 Ok(known)
             },
@@ -464,26 +471,29 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             return Ok(());
         }
         output.push('<');
-        for (index, arg) in args.iter().enumerate() {
-            if index > 0 {
-                output.push_str(", ");
+        output.collapsible(|output| {
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                self.write_generic_arg(arg, application, output)?;
             }
-            self.write_generic_arg(arg, application, output)?;
-        }
-        let mut separator = !args.is_empty();
-        let items = ItemStoreQuery::new(self.db);
-        for (associated_ty, ty) in bindings {
-            if separator {
-                output.push_str(", ");
+            let mut separator = !args.is_empty();
+            let items = ItemStoreQuery::new(self.db);
+            for (associated_ty, ty) in bindings {
+                if separator {
+                    output.push_str(", ");
+                }
+                separator = true;
+                let name = items
+                    .type_alias_data(associated_ty)?
+                    .map(|data| self.syntax.identifier(&data.name).to_string())
+                    .unwrap_or_else(|| "_".to_string());
+                output.write(format_args!("{name} = "));
+                self.write_ty_or_unknown(ty, application, output)?;
             }
-            separator = true;
-            let name = items
-                .type_alias_data(associated_ty)?
-                .map(|data| self.syntax.identifier(&data.name).to_string())
-                .unwrap_or_else(|| "_".to_string());
-            output.write(format_args!("{name} = "));
-            self.write_ty_or_unknown(ty, application, output)?;
-        }
+            Ok(())
+        })?;
         output.push('>');
         Ok(())
     }
@@ -501,12 +511,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             return Ok(false);
         };
         output.write(format_args!("{}(", self.syntax.identifier(name)));
-        for (index, param) in params.iter().enumerate() {
-            if index > 0 {
-                output.push_str(", ");
+        output.collapsible(|output| {
+            for (index, param) in params.iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                self.write_ty_or_unknown(param, application, output)?;
             }
-            self.write_ty_or_unknown(param, application, output)?;
-        }
+            Ok(())
+        })?;
         output.push(')');
         if !matches!(ret, Ty::Unit) {
             output.push_str(" -> ");
@@ -524,12 +537,15 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     ) -> anyhow::Result<()> {
         if !args.is_empty() {
             output.push('<');
-            for (index, arg) in args.iter().enumerate() {
-                if index > 0 {
-                    output.push_str(", ");
+            output.collapsible(|output| {
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        output.push_str(", ");
+                    }
+                    self.write_generic_arg(arg, application, output)?;
                 }
-                self.write_generic_arg(arg, application, output)?;
-            }
+                Ok(())
+            })?;
             output.push('>');
         }
         Ok(())

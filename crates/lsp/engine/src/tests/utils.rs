@@ -96,7 +96,10 @@ impl LspEngineFixture {
         }
     }
 
-    async fn initialized_with_engine_config(fixture: &str, config: EngineConfig) -> Self {
+    pub(super) async fn initialized_with_engine_config(
+        fixture: &str,
+        config: EngineConfig,
+    ) -> Self {
         let fixture = Self::new(fixture);
         let initialization = fixture
             .service
@@ -117,7 +120,7 @@ impl LspEngineFixture {
         fixture
     }
 
-    fn engine_config() -> EngineConfig {
+    pub(super) fn engine_config() -> EngineConfig {
         // These flow tests exercise fixture-local LSP behavior. Real rust-src indexing is covered
         // by lower-level sysroot tests and would dominate every tiny protocol fixture.
         EngineConfig {

@@ -1023,7 +1023,7 @@ pub fn unselected() {
     assert!(summary.is_complete());
     for (crate_ref, file) in targets {
         let hints = analysis
-            .inlay_hints(crate_ref, file, None)
+            .inlay_hints(crate_ref, file, None, None)
             .expect("exact analysis should retain hints from unselected saved bodies");
         assert!(
             hints.iter().any(|hint| hint.label == ": Saved"),
@@ -1118,7 +1118,7 @@ fn unfinished
         panic!("fixture should have exactly one crate interpretation");
     };
     let hints = analysis
-        .inlay_hints(*crate_ref, *file, Some(range))
+        .inlay_hints(*crate_ref, *file, Some(range), None)
         .expect("current body inlay hints should resolve");
     assert!(
         hints.iter().any(|hint| hint.label == ": Value"),

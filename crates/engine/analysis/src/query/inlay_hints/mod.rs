@@ -22,11 +22,17 @@ use crate::{
     model::{InlayHint, InlayHintKind, InlayHintPosition},
 };
 
-pub(crate) struct InlayHintCollector<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct InlayHintCollector<'a, 'db> {
+    analysis: &'a Analysis<'db>,
+    max_length: Option<usize>,
+}
 
 impl<'a, 'db> InlayHintCollector<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(analysis: &'a Analysis<'db>, max_length: Option<usize>) -> Self {
+        Self {
+            analysis,
+            max_length,
+        }
     }
 
     pub(crate) fn inlay_hints(
@@ -35,12 +41,16 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<Span>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let source = InlaySource::new(self.0, crate_ref.package, file_id);
+        let source = InlaySource::new(self.analysis, crate_ref.package, file_id);
         let mut hints = self.binding_type_hints(crate_ref, file_id, range)?;
         hints.extend(self.parameter_hints(crate_ref, file_id, range, &source)?);
         hints.extend(self.expression_type_hints(crate_ref, file_id, range, &source)?);
         hints.extend(closing_brace::closing_brace_hints(
-            self.0, crate_ref, file_id, range, &source,
+            self.analysis,
+            crate_ref,
+            file_id,
+            range,
+            &source,
         )?);
 
         hints.sort_by_key(|hint| (hint.text_offset(), hint.label.clone()));
@@ -55,14 +65,15 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
-        let edition = self.0.view_db().crate_edition(crate_ref)?;
-        let renderer =
-            TypeRenderer::new(self.0.view_db(), edition).with_iterator_simplification(crate_ref)?;
+        let edition = self.analysis.view_db().crate_edition(crate_ref)?;
+        let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
+            .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
-        for binding in
-            BodyView::new(self.0.view_db()).inferred_binding_tys(crate_ref, file_id, range)?
+        for binding in BodyView::new(self.analysis.view_db())
+            .inferred_binding_tys(crate_ref, file_id, range)?
         {
-            let Some(presentation) = renderer.render_presentation(binding.ty())? else {
+            let Some(presentation) = renderer.render_presentation(binding.ty(), self.max_length)?
+            else {
                 continue;
             };
 
@@ -89,12 +100,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         range: Option<Span>,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let edition = self.0.view_db().crate_edition(crate_ref)?;
-        let renderer =
-            TypeRenderer::new(self.0.view_db(), edition).with_iterator_simplification(crate_ref)?;
+        let edition = self.analysis.view_db().crate_edition(crate_ref)?;
+        let renderer = TypeRenderer::new(self.analysis.view_db(), edition)
+            .with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
-        for expr in
-            BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?
+        for expr in BodyStructureView::new(self.analysis.view_db())
+            .method_chain_expr_tys(crate_ref, file_id)?
         {
             let expr_span = expr.span();
             if range.is_some_and(|range| !range.touches(expr_span.end)) {
@@ -111,7 +122,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             if expr.ty().is_unit_or_never() {
                 continue;
             }
-            let Some(presentation) = renderer.render_presentation(expr.ty())? else {
+            let Some(presentation) = renderer.render_presentation(expr.ty(), self.max_length)?
+            else {
                 continue;
             };
 
@@ -138,10 +150,12 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         range: Option<Span>,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let members = MemberView::new(self.0.view_db());
-        let edition = syntax_edition(self.0.view_db().crate_edition(crate_ref)?);
+        let members = MemberView::new(self.analysis.view_db());
+        let edition = syntax_edition(self.analysis.view_db().crate_edition(crate_ref)?);
         let mut hints = UniqueVec::new();
-        for call in BodyView::new(self.0.view_db()).resolved_function_calls(crate_ref, file_id)? {
+        for call in
+            BodyView::new(self.analysis.view_db()).resolved_function_calls(crate_ref, file_id)?
+        {
             let Some(function) = members
                 .function(call.function())
                 .context("read parameter hint function")?
@@ -150,7 +164,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             };
             let is_unary = function.parameters().len() == call.param_offset() + 1;
             for (arg_idx, arg) in call.args().iter().enumerate() {
-                rg_std::check_cancel!(self.0, "inlay hints");
+                rg_std::check_cancel!(self.analysis, "inlay hints");
                 let param_idx = arg_idx + call.param_offset();
                 let Some(param) = function.parameter(param_idx) else {
                     continue;

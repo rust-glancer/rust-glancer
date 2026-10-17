@@ -27,6 +27,7 @@ export interface ExtensionConfig {
   readonly extraEnv: Record<string, string>;
   readonly cfg: CfgConfig;
   readonly indexing: IndexingConfig;
+  readonly inlayHints: InlayHintsConfig;
   readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
   readonly diagnostics: DiagnosticsConfig;
@@ -40,6 +41,10 @@ export interface CfgConfig {
 export interface IndexingConfig {
   readonly performancePreference: IndexingPerformancePreferenceSetting;
   readonly packageBatchSize: number;
+}
+
+export interface InlayHintsConfig {
+  readonly maxLength: number;
 }
 
 export interface CargoConfig {
@@ -96,7 +101,10 @@ export namespace ExtensionConfig {
           INDEXING_PERFORMANCE_PREFERENCE_VALUES,
           "faster-builds",
         ),
-        packageBatchSize: readPositiveInteger(config, "indexing.packageBatchSize", 512),
+        packageBatchSize: readInteger(config, "indexing.packageBatchSize", 512, 1),
+      },
+      inlayHints: {
+        maxLength: readInteger(config, "inlayHints.maxLength", 25, 0),
       },
       cargo: {
         target: normalizeOptionalString(readStringOrNull(config, "cargo.target", null)),
@@ -145,13 +153,16 @@ function readBoolean(
   return typeof value === "boolean" ? value : fallback;
 }
 
-function readPositiveInteger(
+function readInteger(
   config: vscode.WorkspaceConfiguration,
   key: string,
   fallback: number,
+  minimum: number,
 ): number {
   const value = config.get<unknown>(key, fallback);
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= minimum
+    ? value
+    : fallback;
 }
 
 function readString(config: vscode.WorkspaceConfiguration, key: string, fallback: string): string {

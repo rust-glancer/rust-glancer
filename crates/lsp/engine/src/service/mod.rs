@@ -68,6 +68,7 @@ impl EngineService for Service {
             .request(|respond_to| EngineCommand::Initialize {
                 root,
                 configuration: ProjectConfiguration::from(analysis),
+                inlay_hints: config.inlay_hints,
                 respond_to,
             })
             .await

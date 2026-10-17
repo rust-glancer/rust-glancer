@@ -422,14 +422,18 @@ impl<'a> Analysis<'a> {
     }
 
     /// Returns best-effort inlay hints for one file.
+    /// `max_length` is a soft character budget per type label. `None` skips length-based
+    /// shortening; iterator simplification still applies, and tooltips retain concrete text.
     pub fn inlay_hints(
         &self,
         crate_ref: CrateRef,
         file_id: FileId,
         range: Option<Span>,
+        max_length: Option<usize>,
     ) -> anyhow::Result<Vec<InlayHint>> {
         self.run_query("inlay_hints", || {
-            query::inlay_hints::InlayHintCollector::new(self).inlay_hints(crate_ref, file_id, range)
+            query::inlay_hints::InlayHintCollector::new(self, max_length)
+                .inlay_hints(crate_ref, file_id, range)
         })
     }
 

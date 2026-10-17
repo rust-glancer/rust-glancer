@@ -212,7 +212,7 @@ async fn inlay_tooltips_show_concrete_binding_and_chain_types() {
                     ```rust
                     u32
                     ```
-                `: Wrapper<impl Iterator<Item = u8>>` type @ 20:15
+                `: Wrapper<…>` type @ 20:15
                   tooltip:
                     ```rust
                     Wrapper<Adapter<u8>>
@@ -222,6 +222,144 @@ async fn inlay_tooltips_show_concrete_binding_and_chain_types() {
         .await;
 
     fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn inlay_hints_shorten_nested_types_with_configurable_budgets() {
+    let source = r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_nested_type_hints"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod iter {
+            #[lang = "iterator"]
+            pub trait Iterator { type Item; }
+            pub struct Adapter<T>(pub T);
+            impl<T> Iterator for Adapter<T> { type Item = T; }
+        }
+        pub struct Wrapper<T>(pub T);
+        pub struct Result<T, E>(pub T, pub E);
+        pub struct Failure;
+        pub struct ÉlementAvecUnNomLongMaisLisible;
+        pub struct ÉlémentTrèsLisibleAvecUnNomAssezLong;
+        pub struct ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint;
+
+        $start$pub fn demo(
+            nested: &Wrapper<Result<iter::Adapter<ÉlementAvecUnNomLongMaisLisible>, Failure>>,
+            tuple: (Wrapper<ÉlementAvecUnNomLongMaisLisible>, Wrapper<ÉlementAvecUnNomLongMaisLisible>),
+            unicode: Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>,
+            long: ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint,
+        ) {
+            let nested = nested;
+            let tuple = tuple;
+            let unicode = unicode;
+            let long = long;
+        }$end$
+    "#;
+
+    // Zero disables structural shortening; 45 also checks a Unicode label exactly at the budget.
+    // The final case uses the configured default.
+    for (max_length, expected) in [
+        (
+            Some(0),
+            expect![[r#"
+            // nested types
+            `: &Wrapper<Result<impl Iterator<Item = ÉlementAvecUnNomLongMaisLisible>, Failure>>` type @ 19:14
+              tooltip:
+                ```rust
+                &Wrapper<Result<Adapter<ÉlementAvecUnNomLongMaisLisible>, Failure>>
+                ```
+            `: (Wrapper<ÉlementAvecUnNomLongMaisLisible>, Wrapper<ÉlementAvecUnNomLongMaisLisible>)` type @ 20:13
+              tooltip:
+                ```rust
+                (Wrapper<ÉlementAvecUnNomLongMaisLisible>, Wrapper<ÉlementAvecUnNomLongMaisLisible>)
+                ```
+            `: Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>` type @ 21:15
+              tooltip:
+                ```rust
+                Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>
+                ```
+            `: ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint` type @ 22:12
+              tooltip:
+                ```rust
+                ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint
+                ```
+        "#]],
+        ),
+        (
+            Some(45),
+            expect![[r#"
+            // nested types
+            `: &Wrapper<Result<…>>` type @ 19:14
+              tooltip:
+                ```rust
+                &Wrapper<Result<Adapter<ÉlementAvecUnNomLongMaisLisible>, Failure>>
+                ```
+            `: (Wrapper<…>, Wrapper<…>)` type @ 20:13
+              tooltip:
+                ```rust
+                (Wrapper<ÉlementAvecUnNomLongMaisLisible>, Wrapper<ÉlementAvecUnNomLongMaisLisible>)
+                ```
+            `: Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>` type @ 21:15
+              tooltip:
+                ```rust
+                Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>
+                ```
+            `: ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint` type @ 22:12
+              tooltip:
+                ```rust
+                ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint
+                ```
+        "#]],
+        ),
+        (
+            None,
+            expect![[r#"
+            // nested types
+            `: &Wrapper<Result<…>>` type @ 19:14
+              tooltip:
+                ```rust
+                &Wrapper<Result<Adapter<ÉlementAvecUnNomLongMaisLisible>, Failure>>
+                ```
+            `: (Wrapper<…>, Wrapper<…>)` type @ 20:13
+              tooltip:
+                ```rust
+                (Wrapper<ÉlementAvecUnNomLongMaisLisible>, Wrapper<ÉlementAvecUnNomLongMaisLisible>)
+                ```
+            `: Wrapper<…>` type @ 21:15
+              tooltip:
+                ```rust
+                Wrapper<ÉlémentTrèsLisibleAvecUnNomAssezLong>
+                ```
+            `: ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint` type @ 22:12
+              tooltip:
+                ```rust
+                ATypeNameThatIsLongerThanTheDefaultBudgetAndMustRemainWholeInEveryHint
+                ```
+        "#]],
+        ),
+    ] {
+        let mut config = LspEngineFixture::engine_config();
+        if let Some(max_length) = max_length {
+            config.inlay_hints.max_length = max_length;
+        }
+        let fixture = LspEngineFixture::initialized_with_engine_config(source, config).await;
+        fixture
+            .check_queries(
+                &[LspQuery::inlay_hint(
+                    "nested types",
+                    "src/lib.rs",
+                    "start",
+                    "end",
+                )],
+                expected,
+            )
+            .await;
+        fixture.shutdown().await;
+    }
 }
 
 #[tokio::test]
