@@ -47,7 +47,12 @@ use self::{deferred::DeferredIndexingFinish, state::ProjectState};
 // A watcher batch can become stale again while its replacement project is being built. Waiting
 // for one more quiet window avoids rebuilding in a tight loop while a checkout or agent edit is
 // still landing.
-const STALE_SOURCE_RETRY_DELAY: Duration = Duration::from_millis(600);
+const STALE_SOURCE_RETRY_DELAY: Duration = if cfg!(test) {
+    // Unit tests inject source changes synchronously at rebuild boundaries.
+    Duration::ZERO
+} else {
+    Duration::from_millis(600)
+};
 // One stale attempt is common when a watcher fires in the middle of a multi-file write. Three
 // retries leave room for the burst to settle and for the retry scan to collect its remaining paths,
 // while still putting a finite bound on how long one command can own the engine lane.

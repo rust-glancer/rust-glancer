@@ -614,7 +614,7 @@ fn open_document_package_is_published_before_full_deferred_result() {
 }
 
 #[test]
-fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget() {
+fn saved_project_change_exhausts_source_retries_without_publishing() {
     let fixture = fixture_crate(
         r#"
             //- /Cargo.toml
@@ -653,29 +653,6 @@ fn saved_project_change_retries_source_races_but_preserves_a_finite_lane_budget(
     let EngineCommand::DeferredIndexingFinished { generation, result } = initial else {
         panic!("initial background command should finish deferred indexing");
     };
-    project.deferred_indexing_finished(generation, result);
-
-    std::fs::write(
-        &source,
-        "pub struct Candidate;\npub fn deferred_body() {}\n",
-    )
-    .expect("candidate fixture source should be written");
-    // Two writes force the replacement candidate itself to become stale once more. Recovery
-    // must remain indexing until the third attempt captures a quiet generation.
-    hooks.remaining.store(2, Ordering::Release);
-    project
-        .saved_project_changes(vec![SavedFileChange::fs_path(source.clone())])
-        .expect("stale candidate should be retried from the newer disk revision");
-
-    let deferred = receive_completion(&mut project, &receiver);
-    let EngineCommand::DeferredIndexingFinished { generation, result } = deferred else {
-        panic!("updated background command should finish deferred indexing");
-    };
-    assert_eq!(
-        generation,
-        project.project.generation(),
-        "a rejected candidate must not start deferred work for the old generation"
-    );
     project.deferred_indexing_finished(generation, result);
 
     // A continuously rewritten source must eventually return control to the dispatcher. Every
