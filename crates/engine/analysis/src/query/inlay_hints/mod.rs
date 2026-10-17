@@ -55,14 +55,14 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         // Binding hints depend on body-level type facts and type rendering, so keep that
         // projection separate from hint families backed by declaration metadata.
+        let edition = self.0.view_db().crate_edition(crate_ref)?;
         let renderer =
-            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?)
-                .with_iterator_simplification(crate_ref)?;
+            TypeRenderer::new(self.0.view_db(), edition).with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for binding in
             BodyView::new(self.0.view_db()).inferred_binding_tys(crate_ref, file_id, range)?
         {
-            let Some(ty) = renderer.render(binding.ty())? else {
+            let Some(presentation) = renderer.render_presentation(binding.ty())? else {
                 continue;
             };
 
@@ -71,7 +71,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 span: binding.span(),
                 position: InlayHintPosition::After,
                 kind: InlayHintKind::Type,
-                label: format!(": {ty}"),
+                label: format!(": {}", presentation.compact),
+                tooltip: Some(presentation.concrete),
                 padding_left: None,
                 padding_right: None,
             };
@@ -88,9 +89,9 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         range: Option<Span>,
         source: &InlaySource<'_, '_>,
     ) -> anyhow::Result<Vec<InlayHint>> {
+        let edition = self.0.view_db().crate_edition(crate_ref)?;
         let renderer =
-            TypeRenderer::new(self.0.view_db(), self.0.view_db().crate_edition(crate_ref)?)
-                .with_iterator_simplification(crate_ref)?;
+            TypeRenderer::new(self.0.view_db(), edition).with_iterator_simplification(crate_ref)?;
         let mut hints = UniqueVec::new();
         for expr in
             BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(crate_ref, file_id)?
@@ -110,7 +111,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
             if expr.ty().is_unit_or_never() {
                 continue;
             }
-            let Some(ty) = renderer.render(expr.ty())? else {
+            let Some(presentation) = renderer.render_presentation(expr.ty())? else {
                 continue;
             };
 
@@ -119,7 +120,8 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 span: expr_span,
                 position: InlayHintPosition::After,
                 kind: InlayHintKind::Type,
-                label: ty,
+                label: presentation.compact,
+                tooltip: Some(presentation.concrete),
                 padding_left: Some(true),
                 padding_right: None,
             };
@@ -181,6 +183,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                     position: InlayHintPosition::Before,
                     kind: InlayHintKind::Parameter,
                     label: format!("{param_name}:"),
+                    tooltip: None,
                     padding_left: None,
                     padding_right: Some(true),
                 };

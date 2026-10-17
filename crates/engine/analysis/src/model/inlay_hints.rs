@@ -8,6 +8,10 @@ pub struct InlayHint {
     pub position: InlayHintPosition,
     pub kind: InlayHintKind,
     pub label: String,
+    /// Full type name shown in a tooltip without any markdown formatting.
+    /// Keep it even when it matches the label, because editors can crop the inline text
+    /// independently of the server.
+    pub tooltip: Option<String>,
     pub padding_left: Option<bool>,
     pub padding_right: Option<bool>,
 }

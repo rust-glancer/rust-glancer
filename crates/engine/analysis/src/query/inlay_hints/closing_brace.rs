@@ -43,6 +43,7 @@ pub(super) fn closing_brace_hints(
             position: InlayHintPosition::After,
             kind: InlayHintKind::Text,
             label: candidate.label,
+            tooltip: None,
             padding_left: Some(true),
             padding_right: None,
         });

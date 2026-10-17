@@ -103,13 +103,120 @@ pub fn keep(user: &User, count: u32) {}
 
                 // hints for the selected current body
                 `: User` type @ 12:12
+                  tooltip:
+                    ```rust
+                    User
+                    ```
                 `: User` type @ 13:13
+                  tooltip:
+                    ```rust
+                    User
+                    ```
                 `: Name` type @ 14:14
+                  tooltip:
+                    ```rust
+                    Name
+                    ```
                 `: User` type @ 15:13
+                  tooltip:
+                    ```rust
+                    User
+                    ```
                 `: User` type @ 16:18
+                  tooltip:
+                    ```rust
+                    User
+                    ```
                 `: |User| -> User` type @ 17:16
+                  tooltip:
+                    ```rust
+                    |User| -> User
+                    ```
                 `: User` type @ 17:32
+                  tooltip:
+                    ```rust
+                    User
+                    ```
                 `count:` parameter @ 18:16
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
+async fn inlay_tooltips_show_concrete_binding_and_chain_types() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_inlay_tooltips"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod iter {
+            // Declare the iterator language item locally so this fixture does not need rust-src.
+            #[lang = "iterator"]
+            pub trait Iterator { type Item; }
+            pub struct Adapter<T>(pub T);
+            impl<T> Iterator for Adapter<T> { type Item = T; }
+            impl<T> Adapter<T> {
+                pub fn step(self) -> Self { self }
+            }
+            pub fn adapter() -> Adapter<u8> { loop {} }
+        }
+
+        pub struct Wrapper<T>(pub T);
+
+        $range_start$pub fn demo(wrapper: Wrapper<iter::Adapter<u8>>) {
+            let iterator = iter::adapter();
+            let chain = iter::adapter()
+                .step()
+                .step();
+            let number = 1u32;
+            let wrapped = wrapper;
+        }$range_end$
+        "#,
+    )
+    .await;
+
+    fixture
+        .check_queries(
+            &[LspQuery::inlay_hint(
+                "concrete type tooltips",
+                "src/lib.rs",
+                "range_start",
+                "range_end",
+            )],
+            expect![[r#"
+                // concrete type tooltips
+                `: impl Iterator<Item = u8>` type @ 15:16
+                  tooltip:
+                    ```rust
+                    Adapter<u8>
+                    ```
+                `: impl Iterator<Item = u8>` type @ 16:13
+                  tooltip:
+                    ```rust
+                    Adapter<u8>
+                    ```
+                `impl Iterator<Item = u8>` type @ 17:15
+                  tooltip:
+                    ```rust
+                    Adapter<u8>
+                    ```
+                `: u32` type @ 19:14
+                  tooltip:
+                    ```rust
+                    u32
+                    ```
+                `: Wrapper<impl Iterator<Item = u8>>` type @ 20:15
+                  tooltip:
+                    ```rust
+                    Wrapper<Adapter<u8>>
+                    ```
             "#]],
         )
         .await;
@@ -191,7 +298,12 @@ async fn inlay_hints_skip_bodyless_declarations_and_leave_engine_available() {
                 LspQuery::hover("engine remains available after saved inlay hints", "hover"),
             ],
             expect![[r#"
-                `: Value` type @ 7:13 // saved inlay hints skip a trait method
+                // saved inlay hints skip a trait method
+                `: Value` type @ 7:13
+                  tooltip:
+                    ```rust
+                    Value
+                    ```
 
                 // engine remains available after saved inlay hints
                 range: /src/lib.rs:4:11-4:16
@@ -239,7 +351,12 @@ fn unfinished
                 LspQuery::hover("engine remains available after dirty inlay hints", "hover"),
             ],
             expect![[r#"
-                `: Value` type @ 8:13 // dirty inlay hints skip bodyless and unfinished items
+                // dirty inlay hints skip bodyless and unfinished items
+                `: Value` type @ 8:13
+                  tooltip:
+                    ```rust
+                    Value
+                    ```
 
                 // engine remains available after dirty inlay hints
                 range: /src/lib.rs:5:11-5:16

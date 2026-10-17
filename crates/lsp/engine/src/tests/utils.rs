@@ -13,7 +13,8 @@ use expect_test::Expect;
 use gen_lsp_types::{
     CodeAction, CompletionItem, CompletionItemTextEdit, Contents, DocumentChange,
     DocumentHighlight, DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind,
-    Hover, InlayHint, InlayHintKind, Label, Location, Position, Range, TextEdit, WorkspaceEdit,
+    Hover, InlayHint, InlayHintKind, Label, Location, Position, Range, TextEdit, Tooltip,
+    WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
@@ -992,6 +993,16 @@ impl LspEngineFixture {
                 hint.position.line, hint.position.character
             )
             .expect("snapshot should be writable");
+            if let Some(tooltip) = &hint.tooltip {
+                let text = match tooltip {
+                    Tooltip::String(text) => text,
+                    Tooltip::MarkupContent(markup) => &markup.value,
+                };
+                writeln!(rendered, "  tooltip:").expect("snapshot should be writable");
+                for line in text.lines() {
+                    writeln!(rendered, "    {line}").expect("snapshot should be writable");
+                }
+            }
         }
     }
 
