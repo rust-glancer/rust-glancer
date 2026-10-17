@@ -7,13 +7,7 @@ use crate::{ExprKind, testonly::BodyIrFixture};
 fn finalized_bodies_have_aligned_structural_and_semantic_arenas() {
     let fixture = BodyIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_lifecycle_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_lifecycle_fixture
 fn identity<'a, T, const N: usize>(value: &'a [T; N]) -> &'a [T; N] { value }
 
 pub fn use_it(value: &[u8; 3]) {

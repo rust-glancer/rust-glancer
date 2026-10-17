@@ -6,13 +6,7 @@ use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroo
 fn lowers_annotated_destructured_and_unannotated_closure_params() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_closure_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_closure_fixture
 pub struct User;
 
 pub fn use_it(user: User) -> User {
@@ -72,13 +66,7 @@ pub fn use_it(user: User) -> User {
 fn infers_closure_params_from_direct_fn_trait_expectations() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_direct_closure_expectation_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_direct_closure_expectation_fixture
 pub struct Attr;
 
 pub struct AttrVec;
@@ -194,13 +182,7 @@ pub fn use_it(attr: Attr) {
 fn treats_equivalent_fn_trait_bounds_as_one_closure_expectation() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_equivalent_callable_bounds_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_equivalent_callable_bounds_fixture
 pub struct User;
 pub struct Name;
 
@@ -273,13 +255,7 @@ pub fn use_it() {
 fn callable_evidence_flows_through_function_items_and_nested_impls() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_solver_callable_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_solver_callable_fixture
 pub struct User;
 pub struct Name;
 
@@ -451,13 +427,7 @@ fn callable_evidence_flows_through_generic_function_pointers() {
     // shifted through that binder before the outer `FnOnce` obligation substitutes its variables.
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_function_pointer_callable_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_function_pointer_callable_fixture
 pub struct User;
 
 pub fn invoke<F, R>(value: F) -> R
@@ -533,13 +503,7 @@ pub fn forward<R>(callback: fn(User) -> R) -> R {
 fn never_closure_satisfies_generic_callable_output() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_never_closure_callable_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_never_closure_callable_fixture
 pub struct User;
 pub struct Error;
 pub struct ReportedError;

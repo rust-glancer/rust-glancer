@@ -57,12 +57,7 @@ fn default_int_ty() -> Ty {
 fn with_state(exprs: usize, bindings: usize, run: impl for<'s> FnOnce(InferenceState<'s>)) {
     let fixture = crate::testonly::BodyIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "inference_state"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:inference_state
 pub struct User;
 pub struct Vec<T>(T);
 "#,
@@ -351,13 +346,7 @@ pub(super) fn before_expression(cancellation: &CancellationToken) {
 fn cancelling_recursive_inference_never_finalizes_partial_body_facts() {
     let fixture = crate::testonly::BodyIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "cancelled_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cancelled_inference
 pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 }
 "#,
     );

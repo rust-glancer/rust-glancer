@@ -9,13 +9,7 @@ use super::utils::{
 fn expands_module_visible_macro_expression_bodies() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_expr_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_expr_macro_fixture
 macro_rules! make_value {
     ($value:expr) => {
         $value + $value
@@ -59,13 +53,7 @@ pub mod inner {
 fn stops_recursive_macro_expression_expansion() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_expr_recursive_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_expr_recursive_macro_fixture
 macro_rules! recurse {
     () => {
         recurse!()
@@ -99,13 +87,7 @@ pub fn use_it() {
 fn statement_macros_expand_statements_and_body_local_items() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_stmt_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_stmt_macro_fixture
 pub struct GlobalId;
 
 macro_rules! make_steps {
@@ -239,13 +221,7 @@ pub fn local_use() {
 fn macro_patterns_expand_in_let_and_if_let_conditions() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_macro_pattern_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_macro_pattern_fixture
 pub enum Maybe {
     Some(i32),
     None,
@@ -335,13 +311,7 @@ pub fn use_if_let(input: Maybe) -> i32 {
 fn macro_type_expands_in_let_annotation_and_cast() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_macro_type_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_macro_type_fixture
 pub struct User;
 
 macro_rules! user_ty {
@@ -395,13 +365,7 @@ pub fn use_it(input: User, flag: u8) -> User {
 fn imported_macro_expands_inside_function_body() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_imported_macro_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_imported_macro_fixture
 mod macros {
     macro_rules! make_value {
         ($input:expr) => {
@@ -444,18 +408,7 @@ pub fn use_it(input: i32) -> i32 {
 fn generated_body_macro_calls_use_dollar_crate_definition_crate() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub fn dep_value() -> i32 {
     7
 }
@@ -483,16 +436,7 @@ macro_rules! outer_value {
     };
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::{outer_select_value, outer_value};
 
 #[macro_export]
@@ -581,13 +525,7 @@ pub fn via_cfg_select() -> i32 {
 fn cfg_select_builtin_expands_body_syntax_and_respects_shadowing() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_select_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_cfg_select_fixture
 pub fn expr(input: i32) -> i32 {
     let selected = cfg_select! {
         false => { unresolved },
@@ -732,13 +670,7 @@ pub mod local {
 fn format_family_builtins_resolve_through_sysroot_and_shadow_normally() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_format_family_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_format_family_fixture
 use std::format_args as my_format_args;
 
 pub fn direct() {
@@ -916,13 +848,7 @@ pub mod shadow {
 fn ambiguous_prelude_macro_blocks_body_builtin_resolution() {
     check_project_body_ir_with_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_ambiguous_prelude_builtin_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_ambiguous_prelude_builtin_fixture
 pub fn use_it() {
     let value = format_args!();
     value
@@ -1007,13 +933,7 @@ pub struct TokenStream;
 fn common_builtin_macros_lower_to_body_expression_types() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_builtin_macro_types_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_builtin_macro_types_fixture
 pub fn use_it() {
     let cfg_value = cfg!(target_os = "linux");
     let stringified = stringify!(a + b);

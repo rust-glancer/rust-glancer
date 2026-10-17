@@ -4,25 +4,10 @@ use super::utils::{check_project_body_ir, check_project_body_ir_with_policy};
 use crate::BodyIrBuildPolicy;
 
 const PACKAGE_POLICY_FIXTURE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "body_policy_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-body_policy_dep = { path = "dep" }
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_policy_app deps:body_policy_dep
 pub fn app() {}
 
-//- /dep/Cargo.toml
-[package]
-name = "body_policy_dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:body_policy_dep root:dep origin:dependency
 pub fn dep() {}
 "#;
 

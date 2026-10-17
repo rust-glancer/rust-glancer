@@ -6,13 +6,7 @@ use super::utils::check_project_body_ir;
 fn resolves_trait_methods_after_proving_impl_applicability() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_trait_applicability_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_trait_applicability_fixture
 pub struct User;
 pub struct Error;
 
@@ -131,13 +125,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
 fn instantiates_trait_method_signatures_from_selected_impl_arguments() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_trait_method_arguments_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_trait_method_arguments_fixture
 pub struct Source;
 
 pub trait Convert<T> {
@@ -218,13 +206,7 @@ pub fn use_it(source: Source, primitive: u8) {
 fn resolves_unkeyed_trait_associated_paths() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_unkeyed_trait_associated_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_unkeyed_trait_associated_path_fixture
 pub trait PrimitiveFactory<T> {
     const DEFAULT: T;
     fn make() -> T;
@@ -291,18 +273,7 @@ pub fn use_it() {
 fn method_lookup_excludes_traits_from_unrelated_workspace_crates() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/shared", "crates/app", "crates/other"]
-resolver = "3"
-
-//- /crates/shared/Cargo.toml
-[package]
-name = "shared"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/shared/src/lib.rs
+//- /crates/shared/src/lib.rs crate:shared root:crates/shared
 pub struct Maybe;
 
 impl Maybe {
@@ -311,16 +282,7 @@ impl Maybe {
     }
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:shared
 use shared::Maybe;
 
 pub fn use_it(maybe: Maybe) {
@@ -328,16 +290,7 @@ pub fn use_it(maybe: Maybe) {
     let missing = maybe.and_then();
 }
 
-//- /crates/other/Cargo.toml
-[package]
-name = "other"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/other/src/lib.rs
+//- /crates/other/src/lib.rs crate:other root:crates/other deps:shared
 use shared::Maybe;
 
 pub trait OtherExt {
@@ -412,13 +365,7 @@ impl OtherExt for Maybe {
 fn resolves_trait_associated_consts_for_qualified_value_paths() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_trait_assoc_const_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_trait_assoc_const_fixture
 pub enum StmtKind {
     Let,
 }

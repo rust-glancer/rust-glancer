@@ -6,13 +6,7 @@ use super::utils::check_project_body_ir;
 fn propagates_basic_generic_arguments_through_body_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_generic_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_generic_fixture
 pub struct User;
 
 pub struct Slot<T> {
@@ -57,13 +51,7 @@ pub fn use_it() {
 fn preserves_instantiated_args_in_associated_projection_alias() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_alias_projection_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_alias_projection_fixture
 pub trait Iterator {
     type Item;
 }
@@ -103,13 +91,7 @@ pub fn use_it(value: ItemOf<Iter<User>>) {
 fn resolves_associated_type_used_by_another_bound() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_bound_projection_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_bound_projection_fixture
 pub trait SchemaRead {
     type Dst;
 }
@@ -154,13 +136,7 @@ where
 fn recursive_supertrait_projection_stops_at_unknown_argument() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_recursive_supertrait_projection_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_recursive_supertrait_projection_fixture
 pub trait Base<T> {
     type Item;
 }

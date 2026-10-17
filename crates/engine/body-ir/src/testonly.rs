@@ -12,6 +12,9 @@ use rg_text::PackageNameInterners;
 use crate::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, BodyView, PackageBodiesCoverage};
 
 /// End-to-end fixture for tests that need body lowering and type propagation data.
+///
+/// Declare crate roots with headers such as `//- /src/lib.rs crate:demo`. The shared semantic
+/// setup builds workspace metadata from those declarations; Rust files still live on disk.
 pub struct BodyIrFixture {
     semantic_ir: SemanticIrFixture,
     body_ir: BodyIrDb,

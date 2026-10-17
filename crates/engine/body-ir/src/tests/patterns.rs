@@ -6,13 +6,7 @@ use super::utils::{check_project_body_ir, check_project_body_ir_patterns};
 fn propagates_enum_variant_payload_types_through_patterns() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_enum_pattern_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_enum_pattern_fixture
 pub struct User;
 
 pub enum Option<T> {
@@ -68,13 +62,7 @@ pub fn use_it(maybe: Option<User>) {
 fn collects_bindings_from_destructuring_patterns() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_destructure_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_destructure_fixture
 pub struct UserId(u64);
 
 pub struct Pair {
@@ -140,13 +128,7 @@ pub fn destructure(
 fn resolves_ambiguous_identifier_patterns_without_capitalization_heuristics() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_pattern_resolution_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_pattern_resolution_fixture
 pub const ready: u8 = 1;
 
 pub struct User {
@@ -238,13 +220,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
 fn resolves_lowercase_unit_variant_patterns_from_expected_type() {
     check_project_body_ir_patterns(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_lowercase_unit_variant_pattern"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_lowercase_unit_variant_pattern
 pub enum State {
     idle,
     busy,
@@ -274,13 +250,7 @@ pub fn use_it(state: State) {
 fn preserves_pattern_modes_rest_and_ambiguity() {
     check_project_body_ir_patterns(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_pattern_shape_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_pattern_shape_fixture
 pub struct Pair {
     pub left: i32,
     pub right: i32,
@@ -351,13 +321,7 @@ pub fn use_it(
 fn preserves_record_shorthand_pattern_modes_and_explicit_subpatterns() {
     check_project_body_ir_patterns(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_record_shorthand_pattern_shape"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_record_shorthand_pattern_shape
 pub enum Option<T> {
     Some(T),
     None,
@@ -403,13 +367,7 @@ pub fn use_it(by_ref: User, by_mut: User, by_at: User) {
 fn preserves_literal_range_and_const_block_patterns() {
     check_project_body_ir_patterns(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_literal_pattern_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_literal_pattern_fixture
 pub const min_value: i32 = 0;
 pub const max_value: i32 = 10;
 
@@ -456,13 +414,7 @@ pub fn use_it(value: i32) {
 fn reuses_duplicate_or_pattern_bindings() {
     check_project_body_ir_patterns(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_or_pattern_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_or_pattern_fixture
 pub enum Result {
     Ok(i32),
     Err(i32),

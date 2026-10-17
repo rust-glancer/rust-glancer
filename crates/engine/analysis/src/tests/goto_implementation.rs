@@ -354,7 +354,7 @@ pub fn override_call<T: Overridden>(value: T) { value.ma$dot_override$ke(); }
 fn finds_dependency_and_local_impls_across_trait_generic_arguments() {
     check_analysis_queries(
         r#"
-//- /api/src/lib.rs crate:api root:api
+//- /api/src/lib.rs crate:api root:api origin:dependency
 pub trait Convert<T> { fn convert<U>(&self, input: U) -> T; }
 pub struct Remote;
 impl Convert<u8> for Remote {

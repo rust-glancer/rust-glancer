@@ -385,20 +385,12 @@ mod tests {
 
     #[test]
     fn cancelled_parallel_build_drains_started_workers_before_returning() {
-        let mut source = String::from(
-            "//- /Cargo.toml\n[workspace]\nmembers = [\"first\", \"second\", \"third\", \"fourth\"]\nresolver = \"3\"\n",
-        );
+        let mut source = String::new();
         for name in ["first", "second", "third", "fourth"] {
             writeln!(
                 source,
                 r#"
-//- /{name}/Cargo.toml
-[package]
-name = "{name}"
-version = "0.1.0"
-edition = "2024"
-
-//- /{name}/src/lib.rs
+//- /{name}/src/lib.rs crate:{name} root:{name}
 pub fn compute() -> usize {{ let first = 1; first + 2 }}
 "#
             )

@@ -6,13 +6,7 @@ use super::utils::check_project_body_ir;
 fn lowers_scopes_and_resolves_local_bindings() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_scope_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_scope_fixture
 pub struct UserId(u64);
 
 pub fn choose(id: UserId) -> UserId {

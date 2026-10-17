@@ -6,13 +6,7 @@ use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroo
 fn records_calls_fields_methods_and_easy_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_expr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_expr_fixture
 pub struct UserId(u64);
 
 pub struct User {
@@ -115,13 +109,7 @@ impl User {
 fn preserves_method_call_generic_args() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_method_call_generic_args_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_method_call_generic_args_fixture
 pub struct User;
 pub struct Builder;
 
@@ -169,13 +157,7 @@ pub fn use_it(builder: Builder) {
 fn infers_structural_tuple_array_and_slice_types() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_structural_type_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_structural_type_fixture
 pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
     let annotated_tuple: (u8, bool) = pair;
     let annotated_array: [u8; 3] = array;
@@ -292,13 +274,7 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 fn infers_indexing_through_references() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_ref_index_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_ref_index_fixture
 pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
     let slice_item = slice[0];
     let array_item = array_ref[0];
@@ -372,13 +348,7 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
 fn infers_scalar_literals_and_builtin_operator_results() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_scalar_operator_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_scalar_operator_fixture
 pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
     let bool_lit = true;
     let char_lit = 'x';
@@ -503,13 +473,7 @@ pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
 fn records_struct_literals_as_record_expressions() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_record_expr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_record_expr_fixture
 pub struct User {
     pub id: u8,
     pub name: u8,
@@ -563,13 +527,7 @@ pub fn use_it(id: u8, name: u8) -> User {
 fn value_paths_only_use_real_type_constructors() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_value_constructor_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_value_constructor_fixture
 pub struct Named {
     pub value: u8,
 }
@@ -614,13 +572,7 @@ pub fn use_it() {
 fn enum_variant_shape_controls_value_and_record_paths() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_variant_namespace_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_variant_namespace_fixture
 pub fn use_it() {
     enum Choice {
         Record { value: u8 },
@@ -699,18 +651,7 @@ pub fn use_it() {
 fn mixed_declared_and_structural_field_targets_are_unresolved() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct DeclaredId;
 pub struct StructuralId;
 
@@ -777,13 +718,7 @@ pub fn use_it(wrapper: Wrapper) {
 fn preserves_reference_expression_mutability() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_ref_mutability_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_ref_mutability_fixture
 pub fn use_it(mut value: u8) {
     let shared = &value;
     let unique = &mut value;
@@ -821,13 +756,7 @@ pub fn use_it(mut value: u8) {
 fn preserves_rich_body_paths() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_rich_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_rich_path_fixture
 pub enum Maybe<T> {
     Some(T),
     None,
@@ -920,13 +849,7 @@ pub fn use_it(user: User) {
 fn lowers_common_expression_forms() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_common_expr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_common_expr_fixture
 pub struct User {
     pub id: u8,
 }
@@ -1169,13 +1092,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
 fn lowers_block_modifiers() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_block_modifier_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_block_modifier_fixture
 pub fn use_it(value: u8) {
     unsafe { value; };
     const { value; };
@@ -1267,13 +1184,7 @@ pub fn use_it(value: u8) {
 fn resolves_associated_functions_and_enum_variant_calls() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_associated_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_associated_path_fixture
 pub struct Widget;
 
 impl Widget {
@@ -1335,13 +1246,7 @@ pub fn use_it() {
 fn resolves_unkeyed_inherent_associated_paths() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_primitive_associated_path_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_primitive_associated_path_fixture
 impl u32 {
     pub const MAX: u32 = 0;
 
@@ -1407,13 +1312,7 @@ pub fn use_it(bytes: [u8; 4]) {
 fn resolves_tuple_field_accesses() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_tuple_field_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_tuple_field_fixture
 pub struct Left;
 pub struct Right;
 
@@ -1447,13 +1346,7 @@ pub fn use_it(pair: Pair) -> Right {
 fn lowers_and_resolves_item_initializer_bodies() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_item_initializer_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_item_initializer_fixture
 pub const LIMIT: u32 = 3;
 pub static CURRENT: u32 = LIMIT;
 "#,
@@ -1483,13 +1376,7 @@ pub static CURRENT: u32 = LIMIT;
 fn applies_cfg_to_expression_and_pattern_list_children() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_list_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_cfg_list_fixture
 pub struct Pair {
     active: u8,
     hidden: u8,
@@ -1648,13 +1535,7 @@ pub fn use_cfg(
 fn promotes_cfg_filtered_expression_statement_to_block_tail() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_tail_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_cfg_tail_fixture
 pub fn use_cfg_tail(active: u8) -> u8 {
     let promoted = {
         #[cfg(not(test))]

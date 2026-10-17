@@ -6,27 +6,14 @@ use super::utils::check_project_body_ir;
 fn resolves_body_paths_and_types_inside_bin_root() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_bin_fixture"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "body-bin-fixture"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_bin_fixture
 pub struct Api;
 
 pub fn make() -> Api {
     Api
 }
 
-//- /src/main.rs
+//- /src/main.rs crate:body_bin_fixture kind:bin name:body-bin-fixture
 fn main() {
     let api: body_bin_fixture::Api = body_bin_fixture::make();
     let again: body_bin_fixture::Api = api;

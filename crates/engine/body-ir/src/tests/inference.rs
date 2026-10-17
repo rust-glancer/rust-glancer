@@ -6,13 +6,7 @@ use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroo
 fn records_simple_assignment_inference_facts() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_assignment_inference_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_assignment_inference_fixture
 pub struct User;
 
 pub fn missing<T>() -> T {}
@@ -81,13 +75,7 @@ pub fn use_it(user: User) {
 fn resolves_members_from_a_solved_anonymous_binding_type() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_solved_binding_member_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_solved_binding_member_fixture
 pub struct User { pub id: u8 }
 
 impl User {
@@ -164,13 +152,7 @@ pub fn use_it(user: User) {
 fn resolves_inherent_method_after_later_receiver_refinement() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_late_receiver_refinement"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_late_receiver_refinement
 pub struct Pair<A, B> {
     first: A,
     second: B,
@@ -266,13 +248,7 @@ pub fn use_it() {
 fn infers_imported_enum_variant_constructors() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_imported_enum_variant_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_imported_enum_variant_inference
 pub enum Option<T> {
     Some(T),
     None,
@@ -322,13 +298,7 @@ pub fn use_it() {
 fn infers_static_associated_function_impl_generics_from_args() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_static_assoc_fn_impl_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_static_assoc_fn_impl_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -384,13 +354,7 @@ pub fn use_it(user: User) {
 fn keeps_impl_generic_self_type_when_clause_uses_self() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_impl_clause_self_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_impl_clause_self_type
 pub trait Marker {}
 pub struct Wrapper<T>(T);
 
@@ -425,18 +389,7 @@ where
 fn infers_collect_destination_from_selected_trait_obligations() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 pub struct ImportData;
 
 pub struct DefMap;
@@ -447,16 +400,7 @@ impl DefMap {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::DefMap;
 
 pub fn explicit_destination(def_map: &DefMap) {
@@ -560,13 +504,7 @@ pub fn expected_destination(def_map: &DefMap) {
 fn trait_obligations_infer_only_from_declared_bounds() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_conservative_trait_obligation_solving"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_conservative_trait_obligation_solving
 pub struct User;
 
 pub struct Vec<T> {
@@ -696,13 +634,7 @@ pub fn unrelated_collect(iter: NotIterator<User>) {
 fn ignores_never_branches_when_inferring_common_result() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_never_branch_result_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_never_branch_result_inference
 pub struct User;
 
 pub fn use_it(flag: bool, user: User) -> User {
@@ -755,13 +687,7 @@ pub fn use_it(flag: bool, user: User) -> User {
 fn self_referential_branch_results_do_not_recurse() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_self_referential_branch_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_self_referential_branch_inference
 pub enum Maybe<T> {
     Some(T),
     None,

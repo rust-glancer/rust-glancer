@@ -9,13 +9,7 @@ use crate::testonly::BodyIrFixture;
 fn body_local_extern_blocks_collect_declarations_without_scheduling_foreign_bodies() {
     let db = BodyIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_foreign"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_foreign
 macro_rules! nested_foreign_macro {
     () => {
         struct MustNotExpand;
@@ -84,13 +78,7 @@ pub fn outer() {
 fn resolves_body_local_structs_before_module_structs() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_item_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_item_fixture
 pub struct User;
 
 pub fn use_it() {
@@ -142,13 +130,7 @@ pub fn use_it() {
 fn resolves_body_local_aggregate_construction_and_field_access() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_field_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_field_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -230,13 +212,7 @@ pub fn use_it() {
 fn substitutes_generic_body_local_type_alias_arguments() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_generic_alias_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_generic_alias_fixture
 pub struct Slot<T> {
     value: T,
 }
@@ -281,13 +257,7 @@ pub fn use_it() {
 fn resolves_body_local_impl_methods() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_impl_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_impl_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -394,13 +364,7 @@ pub fn use_it() {
 fn resolves_body_local_impl_methods_for_target_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_target_impl_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_target_impl_fixture
 pub struct GlobalId;
 pub struct LocalId;
 
@@ -509,13 +473,7 @@ pub fn use_it(id: GlobalId) {
 fn resolves_body_local_impl_aliases_with_nested_self() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_impl_alias_self_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_impl_alias_self_fixture
 pub fn use_it() {
     struct User;
 
@@ -560,13 +518,7 @@ pub fn use_it() {
 fn resolves_body_local_trait_impl_methods_for_target_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_trait_impl_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_trait_impl_fixture
 pub struct GlobalId;
 pub struct Label;
 
@@ -660,13 +612,7 @@ fn snapshots_body_local_item_kind_support() {
     // changes make newly supported declarations and expressions visible during later feature work.
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_more_local_items_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_more_local_items_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -808,13 +754,7 @@ pub fn use_it() {
 fn resolves_nested_body_references_to_parent_body_items() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "nested_body_parent_items_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:nested_body_parent_items_fixture
 pub fn use_it() {
     struct Local;
     const DEFAULT: Local = Local;
@@ -877,13 +817,7 @@ pub fn use_it() {
 fn resolves_body_local_bodies_discovered_inside_nested_bodies() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_in_body_in_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_in_body_in_body_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -965,13 +899,7 @@ pub fn use_it() {
 fn resolves_nested_body_references_to_parent_body_impl_items() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "nested_body_parent_impl_items_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:nested_body_parent_impl_items_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -1069,13 +997,7 @@ pub fn use_it() {
 fn resolves_body_local_values_by_scope_before_category() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_value_shadowing_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_value_shadowing_fixture
 pub struct Outer;
 pub struct Inner;
 
@@ -1174,13 +1096,7 @@ pub fn use_it() {
 fn resolves_body_local_trait_associated_consts() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_trait_assoc_const_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_trait_assoc_const_fixture
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -1237,13 +1153,7 @@ pub fn use_it() {
 fn lowers_body_local_associated_function_and_const_bodies() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_assoc_body_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_assoc_body_fixture
 pub struct GlobalId;
 
 pub fn make() {
@@ -1340,13 +1250,7 @@ pub fn make() {
 fn propagates_body_local_enum_pattern_payload_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_enum_pattern_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_enum_pattern_fixture
 pub struct User;
 pub struct GlobalId;
 
@@ -1408,13 +1312,7 @@ pub fn use_it() {
 fn resolves_body_local_chained_import_aliases() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_import_alias_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_import_alias_fixture
 pub struct GlobalId;
 
 pub fn use_it(id: GlobalId) {
@@ -1453,13 +1351,7 @@ pub fn use_it(id: GlobalId) {
 fn resolves_body_local_module_imports() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_module_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_module_import_fixture
 pub fn use_it() {
     mod local {
         pub struct User;
@@ -1517,13 +1409,7 @@ pub fn use_it() {
 fn records_unresolved_body_local_imports() {
     let db = BodyIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_unresolved_import_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_unresolved_import_fixture
 pub fn use_it() {
     use missing::Item;
 
@@ -1569,13 +1455,7 @@ pub fn use_it() {
 fn resolves_imports_before_body_local_impl_headers() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_local_imported_impl_header_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_local_imported_impl_header_fixture
 pub struct GlobalId;
 pub struct LocalId;
 
@@ -1637,13 +1517,7 @@ pub fn use_it(id: GlobalId) {
 fn applies_cfg_to_body_statements_and_body_local_items() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_cfg_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_cfg_fixture
 pub struct HiddenGlobal;
 
 pub fn use_it() {

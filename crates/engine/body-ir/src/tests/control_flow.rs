@@ -6,13 +6,7 @@ use super::utils::{check_project_body_ir, check_project_body_ir_with_fake_sysroo
 fn lowers_if_let_scope_and_branch_types() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_if_let_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_if_let_fixture
 pub struct UserId(u64);
 
 impl UserId {
@@ -91,13 +85,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
 fn lowers_let_else_and_match_guards() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_let_else_guard_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_let_else_guard_fixture
 pub struct UserId(u64);
 
 impl UserId {
@@ -181,13 +169,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
 fn lowers_loop_while_for_and_jumps() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_control_flow_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_control_flow_fixture
 pub struct UserId(u64);
 pub type Items = [u64; 2];
 
@@ -266,18 +248,7 @@ pub fn walk(input: Maybe, items: Items) {
 fn propagates_for_loop_items_from_into_iterator() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Package;
 pub struct UserId;
 
@@ -375,18 +346,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 fn propagates_for_loop_items_from_slices_and_slice_iterators() {
     check_project_body_ir_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 pub struct ImportData;
 
 pub struct DefMap;
@@ -397,16 +357,7 @@ impl DefMap {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::DefMap;
 
 pub fn use_direct(def_map: &DefMap) {
@@ -516,13 +467,7 @@ pub fn use_iter(def_map: &DefMap) {
 fn canonicalizes_raw_labels_in_labeled_control_flow() {
     check_project_body_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "body_labeled_block_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:body_labeled_block_fixture
 pub struct UserId(u64);
 
 pub fn choose(value: UserId) -> UserId {

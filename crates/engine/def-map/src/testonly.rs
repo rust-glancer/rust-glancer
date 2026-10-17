@@ -21,12 +21,12 @@ pub struct DefMapFixture {
 impl DefMapFixture {
     pub fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build");
+        let workspace = Self::workspace_metadata(&fixture);
         Self::build_from_crate(fixture, workspace)
     }
 
+    /// Loads Cargo metadata to exercise workspace lowering options. For declaration fixtures,
+    /// put cfg facts in file headers and use `build`.
     pub fn build_with_workspace_config(fixture: &str, config: WorkspaceLoweringConfig) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::for_tests(fixture.metadata(), config)
@@ -38,10 +38,7 @@ impl DefMapFixture {
         let fixture = fixture_crate(fixture);
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
             .expect("fixture sysroot should be complete");
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build")
-                .with_sysroot_sources(Some(sysroot));
+        let workspace = Self::workspace_metadata(&fixture).with_sysroot_sources(Some(sysroot));
         Self::build_from_crate(fixture, workspace)
     }
 
@@ -49,11 +46,19 @@ impl DefMapFixture {
         let fixture = fixture_crate(fixture).with_fake_sysroot();
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
             .expect("fake sysroot should be complete");
-        let workspace =
+        let workspace = Self::workspace_metadata(&fixture).with_sysroot_sources(Some(sysroot));
+        Self::build_from_crate(fixture, workspace)
+    }
+
+    fn workspace_metadata(fixture: &CrateFixture) -> WorkspaceMetadata {
+        // Semantic fixtures declare the graph they need. A manifest-based fixture still runs
+        // Cargo so tests of discovery and lowering can exercise that boundary explicitly.
+        if fixture.headers().next().is_some() {
+            WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
+        } else {
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
                 .expect("fixture workspace metadata should build")
-                .with_sysroot_sources(Some(sysroot));
-        Self::build_from_crate(fixture, workspace)
+        }
     }
 
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
