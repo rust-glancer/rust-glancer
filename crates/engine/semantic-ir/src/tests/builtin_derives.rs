@@ -4,13 +4,7 @@ use expect_test::expect;
 fn builtin_derives_preserve_generics_and_projection_requirements() {
     let fixture = crate::testonly::SemanticIrFixture::build_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "derive_headers"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:derive_headers
 pub trait Family { type Item; type Other; }
 
 #[derive(Clone)]

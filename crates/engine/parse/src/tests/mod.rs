@@ -8,16 +8,10 @@ use self::utils::{check_parse_db, check_parse_db_after_module_discovery};
 fn reallocated_parse_releases_old_sources_and_preserves_file_lookups() {
     let fixture = test_fixture::fixture_crate(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "catalog"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:catalog
         mod shared;
 
-        //- /src/main.rs
+        //- /src/main.rs crate:catalog kind:bin
         mod shared;
         fn main() {}
 
@@ -25,11 +19,8 @@ fn reallocated_parse_releases_old_sources_and_preserves_file_lookups() {
         pub struct Catalog;
         "#,
     );
-    let workspace = rg_workspace::WorkspaceMetadata::for_tests(
-        fixture.metadata(),
-        rg_workspace::WorkspaceLoweringConfig::default(),
-    )
-    .expect("fixture workspace should build");
+    let workspace =
+        rg_workspace::WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
     let mut parse = crate::ParseDb::build(&workspace).expect("fixture parse db should build");
     {
         let sources = parse.source_inventory_handle();
@@ -103,6 +94,7 @@ fn reallocated_parse_releases_old_sources_and_preserves_file_lookups() {
 
 #[test]
 fn dumps_workspace_packages_targets_and_dependencies() {
+    // Keep Cargo here to check workspace membership and dependency target filtering.
     check_parse_db(
         r#"
         //- /Cargo.toml
@@ -186,13 +178,7 @@ fn dumps_workspace_packages_targets_and_dependencies() {
 fn module_discovery_parses_reachable_out_of_line_files() {
     check_parse_db_after_module_discovery(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "module_discovery"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:module_discovery
         pub mod flat;
         pub mod nested;
         pub mod inline {
@@ -246,16 +232,7 @@ fn module_discovery_parses_reachable_out_of_line_files() {
 fn module_discovery_carries_module_path_provenance() {
     check_parse_db_after_module_discovery(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "module_context_discovery"
-        version = "0.1.0"
-        edition = "2024"
-
-        [lib]
-        path = "src/tool.rs"
-
-        //- /src/tool.rs
+        //- /src/tool.rs crate:module_context_discovery
         pub mod flat;
 
         #[path = "models"]
@@ -292,27 +269,10 @@ fn module_discovery_carries_module_path_provenance() {
 fn deduplicates_package_files_across_target_roots_and_module_discovery() {
     check_parse_db_after_module_discovery(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "shared_discovery"
-        version = "0.1.0"
-        edition = "2024"
-
-        [lib]
-        path = "src/lib.rs"
-
-        [[bin]]
-        name = "shared-discovery"
-        path = "src/main.rs"
-
-        [[bin]]
-        name = "shared-root-alias"
-        path = "src/lib.rs"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:shared_discovery targets:lib=shared_discovery,bin=shared-root-alias
         pub mod shared;
 
-        //- /src/main.rs
+        //- /src/main.rs crate:shared_discovery kind:bin name:shared-discovery
         mod shared;
 
         fn main() {}
@@ -340,13 +300,7 @@ fn deduplicates_package_files_across_target_roots_and_module_discovery() {
 fn module_discovery_terminates_on_module_cycles() {
     check_parse_db_after_module_discovery(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "cycle_discovery"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:cycle_discovery
         pub mod a;
 
         //- /src/a/mod.rs

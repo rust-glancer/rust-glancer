@@ -17,35 +17,15 @@ use self::utils::{
 fn indexed_lookup_facts_keep_language_items_per_use_site() {
     let fixture = crate::testonly::SemanticIrFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "dep"]
-resolver = "3"
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep
 #[lang = "deref"]
 pub trait DependencyDeref {}
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:dep
 #[lang = "deref"]
 pub trait LibraryDeref {}
 
-//- /app/src/main.rs
+//- /app/src/main.rs crate:app root:app deps:dep kind:bin
 #[lang = "deref"]
 trait BinaryDeref {}
 
@@ -96,34 +76,12 @@ fn high_target_fanout_shares_results_by_ordered_dependency_set() {
     let mut retained_entries = Vec::new();
 
     for target_count in [1_usize, 4, 12] {
-        let mut app_manifest = r#"
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[dev-dependencies]
-dep = { path = "../dep" }
-"#
-        .to_owned();
         let mut test_sources = String::new();
         for target_idx in 0..target_count {
             writeln!(
-                app_manifest,
-                r#"
-[[test]]
-name = "test-{target_idx}"
-path = "tests/test_{target_idx}.rs"
-"#,
-            )
-            .expect("fixture manifest writes should succeed");
-            writeln!(
                 test_sources,
                 r#"
-//- /app/tests/test_{target_idx}.rs
+//- /app/tests/test_{target_idx}.rs crate:app root:app dev-deps:dep kind:test name:test-{target_idx}
 use dep::Shared;
 
 struct Local{target_idx};
@@ -138,18 +96,7 @@ impl Shared for Local{target_idx} {{
 
         let fixture_source = format!(
             r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "dep"]
-resolver = "3"
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep
 pub trait Shared {{
     fn shared(&self);
 }}
@@ -160,9 +107,7 @@ impl Shared for SharedType {{
     fn shared(&self) {{}}
 }}
 
-//- /app/Cargo.toml
-{app_manifest}
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app dev-deps:dep
 pub struct Library;
 {test_sources}
 "#,
@@ -335,16 +280,7 @@ pub struct Library;
 fn proc_macro_exports_link_to_semantic_implementation_functions() {
     let fixture = crate::testonly::SemanticIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "semantic_proc_macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /src/lib.rs
+//- /src/lib.rs crate:semantic_proc_macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro]
@@ -432,48 +368,13 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 fn proc_macro_implementation_stores_do_not_cross_the_dependency_boundary() {
     let fixture = crate::testonly::SemanticIrFixture::build(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "runtime", "derive_macro", "parser"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 pub struct App;
 
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-derive_macro = { path = "../derive_macro" }
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime deps:derive_macro
 pub struct Runtime;
 
-//- /derive_macro/Cargo.toml
-[package]
-name = "derive_macro"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-[dependencies]
-parser = { path = "../parser" }
-
-//- /derive_macro/src/lib.rs
+//- /derive_macro/src/lib.rs crate:derive_macro root:derive_macro deps:parser kind:proc-macro
 extern crate proc_macro;
 
 struct Implementation;
@@ -487,13 +388,7 @@ pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     input
 }
 
-//- /parser/Cargo.toml
-[package]
-name = "parser"
-version = "0.1.0"
-edition = "2024"
-
-//- /parser/src/lib.rs
+//- /parser/src/lib.rs crate:parser root:parser
 pub struct Parser;
 "#,
     );
@@ -544,13 +439,7 @@ pub struct Parser;
 fn dumps_semantic_ir_signatures() {
     check_project_semantic_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "semantic_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:semantic_fixture
 pub struct User<T> {
     pub id: UserId,
     payload: Option<T>,
@@ -636,13 +525,7 @@ pub static mut CACHE_READY: bool = false;
 fn lowers_source_and_generated_foreign_declaration_signatures() {
     check_project_semantic_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "foreign_semantic_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:foreign_semantic_fixture
 extern "C" {
     pub fn foreign_fn(input: u32) -> u64;
     pub static mut FOREIGN_STATIC: u32;
@@ -680,13 +563,7 @@ make_foreign!();
 fn lowers_macro_generated_signatures_and_impls() {
     check_project_semantic_ir(
         r#"
-//- /Cargo.toml
-[package]
-name = "generated_semantic_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:generated_semantic_fixture
 macro_rules! make_generated {
     () => {
         pub struct Generated<T> {
@@ -720,33 +597,13 @@ make_generated!();
 fn resolves_cross_crate_impl_queries_from_root_and_module_scopes() {
     check_project_semantic_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub trait ExternalTrait {
     fn required(&self);
     fn defaulted(&self) {}
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 use dep::ExternalTrait as ImportedTrait;
 
 pub struct Local;
@@ -822,13 +679,7 @@ mod consumer {
 fn resolves_core_and_alloc_impl_headers_through_core_prelude() {
     check_project_semantic_queries_with_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub struct App;
 
 //- /sysroot/library/core/src/lib.rs
@@ -908,18 +759,7 @@ pub struct TokenStream;
 fn crate_queries_exclude_impls_from_unrelated_workspace_crates() {
     check_project_semantic_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/shared", "crates/app", "crates/other"]
-resolver = "3"
-
-//- /crates/shared/Cargo.toml
-[package]
-name = "shared"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/shared/src/lib.rs
+//- /crates/shared/src/lib.rs crate:shared root:crates/shared
 pub struct Maybe;
 
 impl Maybe {
@@ -928,16 +768,7 @@ impl Maybe {
     }
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:shared
 use shared::Maybe;
 
 pub trait AppExt {
@@ -948,16 +779,7 @@ impl AppExt for Maybe {
     fn and_then(&self) {}
 }
 
-//- /crates/other/Cargo.toml
-[package]
-name = "other"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/other/src/lib.rs
+//- /crates/other/src/lib.rs crate:other root:crates/other deps:shared
 use shared::Maybe;
 
 pub trait OtherExt {
@@ -992,48 +814,21 @@ impl OtherExt for Maybe {
 fn resolves_bin_queries_to_sibling_lib_and_dependencies() {
     check_project_semantic_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Thing;
 
 impl Thing {
     pub fn external(&self) {}
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "app-bin"
-path = "src/main.rs"
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Api;
 
 impl Api {
     pub fn local(&self) {}
 }
 
-//- /crates/app/src/main.rs
+//- /crates/app/src/main.rs crate:app root:crates/app deps:dep kind:bin name:app-bin
 fn main() {}
 "#,
         &[

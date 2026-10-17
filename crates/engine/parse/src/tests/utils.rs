@@ -21,9 +21,13 @@ fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
         .canonicalize()
         .expect("fixture root should be canonicalizable");
     let display_root = fixture.path("");
-    let workspace =
+    let workspace = if fixture.headers().next().is_some() {
+        WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
+    } else {
+        // Manifest fixtures check which Cargo packages and targets reach the parser.
         WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-            .expect("fixture workspace metadata should build");
+            .expect("fixture workspace metadata should build")
+    };
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     if matches!(mode, ParseFixtureMode::DiscoverModules) {
         let sources = parse.source_inventory_handle();

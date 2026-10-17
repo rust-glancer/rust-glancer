@@ -4,10 +4,11 @@
 //! their paths. `root:` is the package directory relative to the fixture root; it defaults to
 //! the fixture root itself. Several roots with the same `crate:` declare one package's targets.
 //! `kind:bin name:tool` declares a named binary; the defaults are `lib` and edition 2024.
+//! `targets:lib=app,bin=tool` declares several targets sharing the same source file.
 //!
-//! `deps:alias=package` declares a renamed dependency. `cfg:unix,feature=enabled` supplies active
-//! cfg facts, while `features:enabled,disabled` lists feature names for completion. Packages are
-//! workspace members unless marked `origin:dependency`.
+//! `deps:alias=package` declares a renamed dependency; `dev-deps:` supplies development edges.
+//! `cfg:unix,feature=enabled` supplies active cfg facts, while `features:enabled,disabled` lists
+//! feature names for completion. Packages are workspace members unless marked `origin:dependency`.
 
 use std::{collections::BTreeMap, path::Path};
 
@@ -30,9 +31,9 @@ impl WorkspaceMetadata {
         let root = root.canonicalize().expect("fixture root should exist");
         let target_cfg = CfgOptions::current_host();
         let mut packages = Vec::<Package>::new();
-        let mut dependency_names = BTreeMap::<String, String>::new();
+        let mut dependency_names = BTreeMap::<String, [String; 2]>::new();
 
-        // Each annotated source file declares a target. Group targets by package before
+        // Each annotated source file declares its targets. Group targets by package before
         // connecting dependencies, so a declaration can refer to a package written later.
         for (path, header) in headers {
             if header.is_empty() {
@@ -50,8 +51,10 @@ impl WorkspaceMetadata {
                             | "root"
                             | "kind"
                             | "name"
+                            | "targets"
                             | "edition"
                             | "deps"
+                            | "dev-deps"
                             | "cfg"
                             | "features"
                             | "origin"
@@ -77,33 +80,59 @@ impl WorkspaceMetadata {
                 "2024" => RustEdition::Edition2024,
                 edition => panic!("unknown fixture edition `{edition}`"),
             };
-            let kind = match fields.get("kind").copied().unwrap_or("lib") {
-                "lib" => TargetKind::Lib,
-                "bin" => TargetKind::Bin,
-                "proc-macro" => TargetKind::ProcMacro,
-                "example" => TargetKind::Example,
-                "test" => TargetKind::Test,
-                "bench" => TargetKind::Bench,
-                kind => panic!("unknown fixture target kind `{kind}`"),
+            let target_specs = if let Some(targets) = fields.get("targets") {
+                assert!(
+                    !fields.contains_key("kind") && !fields.contains_key("name"),
+                    "targets: supplies both target kinds and names"
+                );
+                targets
+                    .split(',')
+                    .map(|target| {
+                        let (kind, name) = target
+                            .split_once('=')
+                            .expect("shared targets should use kind=name");
+                        (kind, Some(name))
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![(
+                    fields.get("kind").copied().unwrap_or("lib"),
+                    fields.get("name").copied(),
+                )]
             };
-            let target_name = fields.get("name").map_or_else(
-                || {
-                    if kind.is_lib() {
-                        name.replace('-', "_")
-                    } else {
-                        name.to_string()
+            let source_path = root
+                .join(path)
+                .canonicalize()
+                .expect("fixture target should exist");
+            let targets = target_specs
+                .into_iter()
+                .map(|(kind, target_name)| {
+                    let kind = match kind {
+                        "lib" => TargetKind::Lib,
+                        "bin" => TargetKind::Bin,
+                        "proc-macro" => TargetKind::ProcMacro,
+                        "example" => TargetKind::Example,
+                        "test" => TargetKind::Test,
+                        "bench" => TargetKind::Bench,
+                        kind => panic!("unknown fixture target kind `{kind}`"),
+                    };
+                    let target_name = target_name.map_or_else(
+                        || {
+                            if kind.is_lib() {
+                                name.replace('-', "_")
+                            } else {
+                                name.to_string()
+                            }
+                        },
+                        str::to_string,
+                    );
+                    CargoTarget {
+                        name: target_name,
+                        kind,
+                        src_path: source_path.clone(),
                     }
-                },
-                |name| name.to_string(),
-            );
-            let target = CargoTarget {
-                name: target_name,
-                kind,
-                src_path: root
-                    .join(path)
-                    .canonicalize()
-                    .expect("fixture target should exist"),
-            };
+                })
+                .collect::<Vec<_>>();
             let origin = match fields.get("origin").copied().unwrap_or("workspace") {
                 "workspace" => PackageOrigin::Workspace,
                 "dependency" => PackageOrigin::Dependency,
@@ -123,7 +152,8 @@ impl WorkspaceMetadata {
                 .flat_map(|features| features.split(',').map(str::to_string))
                 .collect::<Vec<_>>();
             declared_features.sort();
-            let deps = fields.get("deps").copied().unwrap_or("").to_string();
+            let deps =
+                ["deps", "dev-deps"].map(|key| fields.get(key).copied().unwrap_or("").to_string());
             if let Some(previous) = dependency_names.insert(name.to_string(), deps.clone()) {
                 assert_eq!(previous, deps, "targets must agree on package dependencies");
             }
@@ -134,7 +164,7 @@ impl WorkspaceMetadata {
                 assert_eq!(package.origin, origin);
                 assert_eq!(package.cfg_options, cfg_options);
                 assert_eq!(package.declared_features, declared_features);
-                package.targets.push(target);
+                package.targets.extend(targets);
             } else {
                 let is_workspace_member = origin == PackageOrigin::Workspace;
                 packages.push(Package {
@@ -153,7 +183,7 @@ impl WorkspaceMetadata {
                     declared_features,
                     // Generated build outputs belong to Cargo integration fixtures.
                     cargo_generated_sources: None,
-                    targets: vec![target],
+                    targets,
                     dependencies: Vec::new(),
                 });
             }
@@ -170,20 +200,32 @@ impl WorkspaceMetadata {
             package.targets.sort_by(|left, right| {
                 (left.kind.sort_order(), &left.name).cmp(&(right.kind.sort_order(), &right.name))
             });
-            for dependency in dependency_names[&package.name]
-                .split(',')
-                .filter(|name| !name.is_empty())
-            {
-                let (alias, name) = dependency
-                    .split_once('=')
-                    .unwrap_or((dependency, dependency));
+            // A dependency used in both normal and dev targets is still one resolved edge.
+            let [normal, dev] = &dependency_names[&package.name];
+            let mut dependencies = BTreeMap::new();
+            for (names, is_dev) in [(normal, false), (dev, true)] {
+                for dependency in names.split(',').filter(|name| !name.is_empty()) {
+                    let (alias, name) = dependency
+                        .split_once('=')
+                        .unwrap_or((dependency, dependency));
+                    let (is_normal, is_development) =
+                        dependencies.entry((alias, name)).or_insert((false, false));
+                    *is_normal |= !is_dev;
+                    *is_development |= is_dev;
+                }
+            }
+            for ((alias, name), (is_normal, is_dev)) in dependencies {
                 let id = ids
                     .get(name)
                     .unwrap_or_else(|| panic!("unknown fixture dependency `{name}`"));
-                // TODO: Add build/dev edges when semantic fixtures need those target scopes.
-                package
-                    .dependencies
-                    .push(PackageDependency::normal(id.clone(), alias));
+                // TODO: Add build edges when semantic fixtures need build-script scopes.
+                package.dependencies.push(PackageDependency::new(
+                    id.clone(),
+                    alias,
+                    is_normal,
+                    false,
+                    is_dev,
+                ));
             }
         }
         Self::from_parts(
@@ -207,9 +249,9 @@ mod tests {
     fn declared_workspace_connects_targets_dependencies_and_cfg() {
         let fixture = fixture_crate(
             r#"
-//- /app/src/main.rs crate:app root:app kind:bin name:tool deps:api=library cfg:feature=enabled features:enabled,disabled
+//- /app/src/main.rs crate:app root:app kind:bin name:tool deps:api=library dev-deps:api=library cfg:feature=enabled features:enabled,disabled
 fn main() {}
-//- /app/src/lib.rs crate:app root:app deps:api=library cfg:feature=enabled features:enabled,disabled
+//- /app/src/lib.rs crate:app root:app deps:api=library dev-deps:api=library cfg:feature=enabled features:enabled,disabled
 pub fn work() {}
 //- /library/src/lib.rs crate:library root:library edition:2021 origin:dependency
 pub struct Item;
@@ -227,8 +269,11 @@ pub struct Item;
         );
         assert!(app.cfg_options.contains_key_value("feature", "enabled"));
         assert_eq!(app.declared_features, ["disabled", "enabled"]);
+        assert_eq!(app.dependencies.len(), 1);
         assert_eq!(app.dependencies[0].name(), "api");
         assert_eq!(app.dependencies[0].package_id(), &library.id);
+        assert!(app.dependencies[0].is_normal());
+        assert!(app.dependencies[0].is_dev());
         assert_eq!(library.edition, RustEdition::Edition2021);
         assert!(!library.is_workspace_member);
         assert!(app.targets.iter().all(|target| target.src_path.is_file()));

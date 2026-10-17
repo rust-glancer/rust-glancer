@@ -6,13 +6,7 @@ use self::utils::check_source_occurrences;
 fn source_scan_classifies_body_path_occurrences() {
     check_source_occurrences(
         r#"
-//- /Cargo.toml
-[package]
-name = "source_occurrence_paths"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:source_occurrence_paths
 pub enum Action {
     Configure,
 }
@@ -69,13 +63,7 @@ fn foo(baz: u8) -> u8 {
 fn source_scan_classifies_record_field_surfaces() {
     check_source_occurrences(
         r#"
-//- /Cargo.toml
-[package]
-name = "source_occurrence_records"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:source_occurrence_records
 enum Option<T> {
     Some(T),
     None,
@@ -149,13 +137,7 @@ fn pattern_modifiers(by_ref: OptionalUser, by_mut: OptionalUser, by_at: Optional
 fn source_scan_distinguishes_written_and_generated_macro_sources() {
     check_source_occurrences(
         r#"
-//- /Cargo.toml
-[package]
-name = "source_occurrence_macros"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:source_occurrence_macros
 pub struct Text;
 
 macro_rules! make_item {

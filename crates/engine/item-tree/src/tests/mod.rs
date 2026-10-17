@@ -129,13 +129,7 @@ fn lower_alias_ty(source: &str) -> TypeRef {
 fn lowers_raw_identifier_tokens_to_semantic_names() {
     utils::check_project_item_tree_with_declarations(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "raw_item_names"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:raw_item_names
         pub struct r#type<'r#fn, r#match> {
             pub r#struct: &'r#fn r#match,
         }
@@ -180,6 +174,7 @@ fn lowers_raw_identifier_tokens_to_semantic_names() {
 
 #[test]
 fn uses_manifest_edition_when_parsing_package_sources() {
+    // Keep Cargo here so the parser's edition comes from manifest lowering.
     utils::check_project_item_tree(
         r#"
 //- /Cargo.toml
@@ -209,27 +204,14 @@ pub fn gen() {}
 fn lowers_target_specific_and_shared_module_files_once() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "target_module_fixture"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "target-module-fixture"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:target_module_fixture
 pub mod library;
 pub mod shared;
 
 //- /src/library.rs
 pub struct LibraryThing;
 
-//- /src/main.rs
+//- /src/main.rs crate:target_module_fixture kind:bin name:target-module-fixture
 mod cli;
 mod shared;
 
@@ -275,13 +257,7 @@ pub struct Shared;
 fn module_lowering_terminates_on_file_cycles() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "cycle_lowering"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cycle_lowering
 pub mod a;
 
 //- /src/a/mod.rs
@@ -308,13 +284,7 @@ pub mod root_again;
 fn resolves_out_of_line_multi_module_chains() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "module_chain_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:module_chain_fixture
 pub mod outer;
 
 //- /src/outer.rs
@@ -356,13 +326,7 @@ pub struct Leaf;
 fn resolves_path_attribute_modules() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "path_attr_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:path_attr_fixture
 #[path = "generated/api_file.rs"]
 pub mod api;
 
@@ -421,13 +385,7 @@ pub fn work() {}
 fn dumps_import_payloads() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "import_crate"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:import_crate
 #[macro_use(make_bar)]
 pub mod bar {
     pub mod foo {}
@@ -471,13 +429,7 @@ use ::bar::foo;
 fn lowers_dangling_use_before_attribute_for_completion() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "dangling_use_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:dangling_use_fixture
 use std::collections::
 
 #[derive(Debug)]
@@ -504,13 +456,7 @@ enum CliInvocation {
 fn lowers_item_position_macro_calls_only() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "macro_crate"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:macro_crate
 #[macro_export]
 macro_rules! make_user {
     () => {
@@ -547,13 +493,7 @@ pub fn use_it() {
 fn lowers_literal_include_files_for_macro_calls() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "include_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:include_fixture
 include!("included.rs");
 
 //- /src/included.rs
@@ -581,13 +521,7 @@ pub struct Included;
 fn lowers_cfg_select_arms_as_source_fragments() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_item_tree_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_item_tree_fixture
 cfg_select! {
     unix => {
         mod os;
@@ -625,13 +559,7 @@ pub struct Unix;
 fn preserves_failed_cfg_select_arm_lowering_per_arm() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "cfg_select_failed_arm_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cfg_select_failed_arm_fixture
 cfg_select! {
     false => {
         mod ;
@@ -662,13 +590,7 @@ cfg_select! {
 fn literal_include_probe_ignores_unreadable_targets() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "shadowed_include_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:shadowed_include_fixture
 macro_rules! include {
     ($path:literal) => {};
 }
@@ -698,13 +620,7 @@ pub struct Foo;
 fn cyclic_literal_include_files_do_not_recurse_forever() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "cyclic_include_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:cyclic_include_fixture
 include!("foo.rs");
 
 //- /src/foo.rs
@@ -747,13 +663,7 @@ include!("foo.rs");
 fn dumps_declaration_payloads() {
     utils::check_project_item_tree_with_declarations(
         r#"
-//- /Cargo.toml
-[package]
-name = "declaration_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:declaration_fixture
 pub struct User<T>
 where
     T: Clone,
@@ -846,13 +756,7 @@ pub static mut CACHE_READY: bool = false;
 fn stores_item_source_spans() {
     let db = crate::testonly::ItemTreeFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "simple_crate"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:simple_crate
 pub fn add_two_numbers(left: i32, right: i32) -> i32 {
     left + right
 }
@@ -901,13 +805,7 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
 fn extern_blocks_own_lowered_foreign_declarations() {
     utils::check_project_item_tree(
         r#"
-//- /Cargo.toml
-[package]
-name = "foreign_tree"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:foreign_tree
 unsafe extern "C" {
     pub fn foreign_fn(input: u32) -> u64;
     pub static FOREIGN_STATIC: u32;

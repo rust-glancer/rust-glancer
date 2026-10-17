@@ -8,13 +8,7 @@ use crate::TraitImplSelfHead;
 fn trait_impl_lookup_uses_direct_self_heads_and_conservative_fallbacks() {
     let fixture = crate::testonly::SemanticIrFixture::build(
         r#"
-//- /Cargo.toml
-[package]
-name = "trait_head_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:trait_head_fixture
 pub trait Marker {}
 
 pub struct User;

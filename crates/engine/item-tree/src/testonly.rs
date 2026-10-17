@@ -14,9 +14,13 @@ pub struct ItemTreeFixture {
 impl ItemTreeFixture {
     pub fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace =
+        let workspace = if fixture.headers().next().is_some() {
+            WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
+        } else {
+            // Manifest fixtures exercise Cargo's edition and target lowering.
             WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build");
+                .expect("fixture workspace metadata should build")
+        };
         Self::build_from_crate(fixture, &workspace)
     }
 
