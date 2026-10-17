@@ -11,7 +11,7 @@ use super::compact::CompactOutput;
 /// For `Option<Repeat<u8>>`, the compact form can show `Option<impl Iterator<Item = u8>>`,
 /// while the concrete form keeps `Option<Repeat<u8>>` for the tooltip.
 /// A length budget can shorten the compact form further to `Option<…>`; concrete text keeps
-/// those arguments.
+/// those arguments. Reference lifetimes appear only in concrete text.
 ///
 /// Both forms use readable names and omit default arguments. These are labels for reading;
 /// source insertion has its own entry point and qualification rules.
@@ -147,6 +147,13 @@ impl<'a> TypeOutput<'a> {
     /// Formatting happens once before the resulting pieces are appended to both buffers.
     pub(super) fn write(&mut self, value: impl fmt::Display) {
         fmt::write(self, format_args!("{value}")).expect("string writes should not fail");
+    }
+
+    /// Write details that belong in concrete text but are omitted from compact hints.
+    pub(super) fn write_concrete(&mut self, value: impl fmt::Display) {
+        if let Some(concrete) = self.concrete.as_deref_mut() {
+            fmt::write(concrete, format_args!("{value}")).expect("string writes should not fail");
+        }
     }
 }
 

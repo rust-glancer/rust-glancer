@@ -193,7 +193,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 );
                 output.push('&');
                 if *lifetime != Lifetime::Erased {
-                    output.write(format_args!("{lifetime} "));
+                    output.write_concrete(format_args!("{lifetime} "));
                 }
                 if matches!(mutability, rg_ir_model::Mutability::Mutable) {
                     output.push_str("mut ");

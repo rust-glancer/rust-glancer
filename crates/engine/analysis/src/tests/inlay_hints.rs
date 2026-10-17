@@ -31,7 +31,7 @@ pub fn opaque(value: impl source::r#gen<Item = u16>) {
         InlayHintsQuery::new("object bounds", "/src/lib.rs"),
         expect![[r#"
             // object bounds
-            `: &'_ (dyn Service<Reply = u16> + Send + Sync + '_)` @ 5:9-5:15
+            `: &(dyn Service<Reply = u16> + Send + Sync + '_)` @ 5:9-5:15
             `: impl r#gen<Item = u16>` @ 13:9-13:15
             `: impl r#gen<Item = u8>` @ 14:9-14:17
         "#]],
@@ -64,7 +64,7 @@ pub fn references<'a>(
         InlayHintsQuery::new("reference hints", "/src/lib.rs"),
         expect![[r#"
             // reference hints
-            `: &'_ (dyn Service<u8, Reply = u16> + '_)` @ 8:9-8:15
+            `: &(dyn Service<u8, Reply = u16> + '_)` @ 8:9-8:15
             `: &mut dyn Opaque` @ 9:9-9:19
             `: &&mut dyn Opaque` @ 10:9-10:22
             `: &_` @ 11:9-11:17
