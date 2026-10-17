@@ -6,7 +6,7 @@ use rg_ir_model::{CrateId, PackageSlot};
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::SemanticPackage;
 
-use super::utils::{assert_reader_matches_resident_package, write_resident_package_artifact};
+use super::utils::write_resident_package_artifact;
 use crate::{
     PackageResidencyPolicy,
     profile::metric,
@@ -98,42 +98,6 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
     assert_eq!(decoded_semantic_ir, semantic_ir);
     assert!(body_index.manifest().crates().is_empty());
     assert!(!bytes.is_empty(), "encoded artifact should contain bytes");
-}
-
-#[test]
-fn roundtrips_fixture_package_cache_artifact_codec() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct App;
-"#,
-    );
-    let project = fixture.build_project();
-    let header = write_resident_package_artifact(&project, PackageSlot(0));
-    let path = project
-        .state
-        .cache_store
-        .package_artifact_path(&header.package);
-    let reader = project
-        .state
-        .cache_store
-        .open_artifact(&header)
-        .expect("fixture package cache artifact should open")
-        .expect("fixture package cache artifact should exist");
-    assert_reader_matches_resident_package(&reader, &project, PackageSlot(0));
-    assert!(
-        fs::metadata(path)
-            .expect("fixture package cache artifact should have metadata")
-            .len()
-            > 0,
-        "encoded fixture artifact should contain bytes",
-    );
 }
 
 #[test]

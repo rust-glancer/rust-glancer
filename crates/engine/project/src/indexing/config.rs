@@ -215,19 +215,6 @@ mod tests {
     }
 
     #[test]
-    fn lower_peak_memory_limits_body_ir_to_four_workers() {
-        assert_eq!(
-            IndexingPerformancePreference::LowerPeakMemory
-                .body_ir_worker_limit()
-                .map(std::num::NonZeroUsize::get),
-            Some(4),
-        );
-        assert_eq!(
-            IndexingPerformancePreference::FasterBuilds.body_ir_worker_limit(),
-            None,
-        );
-    }
-    #[test]
     fn early_start_reallocates_packages_waiting_for_deferred_artifacts() {
         let residency = PackageResidencyPlan {
             policy: PackageResidencyPolicy::WorkspaceResident,

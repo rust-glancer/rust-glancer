@@ -231,6 +231,7 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
         .body_ir;
     assert_eq!(initial_body_ir.complete_crate_count, 1);
     assert_eq!(initial_body_ir.missing_crate_count, 0);
+    assert_eq!(initial_body_ir.body_count, 1);
 
     project
         .reindex_workspace()

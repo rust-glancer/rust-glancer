@@ -298,8 +298,9 @@ pub struct Lib;
         ("unsupported", Some("mystery+https://example.com"), Err(())),
     ];
 
+    let metadata = fixture.metadata();
     for (label, source, expected) in cases {
-        let mut metadata = fixture.metadata();
+        let mut metadata = metadata.clone();
         metadata.workspace_members.clear();
         metadata.packages[0].source = source.map(|source| cargo_metadata::Source {
             repr: source.to_string(),

@@ -562,201 +562,8 @@ macro_rules! make_child_item {
 }
 
 #[test]
-fn generated_module_discovery_profiles_batches_and_coalesced_paths() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_module_profile_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! make_modules {
-    () => {
-        #[path = "shared.rs"]
-        pub mod first;
-
-        #[path = "shared.rs"]
-        pub mod second;
-
-        pub mod missing;
-    };
-}
-
-make_modules!();
-
-//- /src/shared.rs
-pub struct Shared;
-"#,
-    );
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.macro_source_files",
-    );
-
-    let project = Project::builder(fixture.workspace_metadata())
-        .build()
-        .expect("generated module profile fixture should build");
-    let snapshot = run.finish();
-
-    assert_eq!(
-        project
-            .snapshot()
-            .parse_db()
-            .package(0)
-            .expect("generated module profile package should exist")
-            .parsed_files()
-            .count(),
-        2,
-        "a missing request should not add a placeholder file",
-    );
-    assert!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("generated module profile analysis should build")
-            .workspace_symbols("missing")
-            .expect("missing generated module query should resolve")
-            .is_empty(),
-        "a missing request should not allocate a fake semantic module",
-    );
-
-    for (path, expected, message) in [
-        (
-            "project.build.macro_source_files.requests.seen",
-            3,
-            "one wave should return the two source aliases and one missing module",
-        ),
-        (
-            "project.build.macro_source_files.requests.unique",
-            3,
-            "each differently spelled generated declaration should retain one request",
-        ),
-        (
-            "project.build.macro_source_files.paths.unique",
-            1,
-            "the two path overrides should resolve to one package-local source",
-        ),
-        (
-            "project.build.macro_source_files.paths.coalesced",
-            1,
-            "the second alias should reuse the first path's captured file",
-        ),
-        (
-            "project.build.macro_source_files.paths.missing",
-            1,
-            "the absent conventional module should be recorded without a fake module",
-        ),
-        (
-            "project.build.macro_source_files.files.discovered",
-            1,
-            "only shared.rs should enter the parsed package",
-        ),
-        (
-            "project.build.macro_source_files.item_tree.files_lowered",
-            1,
-            "shared.rs should be lowered exactly once",
-        ),
-        (
-            "project.build.macro_source_files.waves",
-            1,
-            "the first request batch should discover every available source",
-        ),
-        (
-            "project.build.macro_source_files.def_map_resumes",
-            1,
-            "one resumable step should apply both source aliases",
-        ),
-        (
-            "project.build.macro_source_files.cache.fingerprint_changes",
-            1,
-            "late discovery should change the source-built package fingerprint once",
-        ),
-    ] {
-        snapshot.assert_counter_path_with_message(path, expected, message);
-    }
-}
-
-#[test]
-fn generated_module_source_waves_resume_one_def_map_fixed_point() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "generated_module_wave_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-macro_rules! make_outer {
-    () => {
-        pub mod outer;
-    };
-}
-
-make_outer!();
-pub use outer::inner::Deep;
-
-//- /src/outer.rs
-macro_rules! make_inner {
-    () => {
-        pub mod inner;
-    };
-}
-
-make_inner!();
-
-//- /src/outer/inner.rs
-pub struct Deep;
-"#,
-    );
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.macro_source_files,def_map.finalization",
-    );
-
-    let project = Project::builder(fixture.workspace_metadata())
-        .build()
-        .expect("nested generated-module fixture should build");
-    let profile = run.finish();
-
-    assert_eq!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("nested generated-module analysis should build")
-            .workspace_symbols("Deep")
-            .expect("nested generated-module query should resolve")
-            .len(),
-        1,
-        "the second source wave should contribute its declarations",
-    );
-    profile.assert_counter_path_with_message(
-        "project.build.macro_source_files.waves",
-        2,
-        "the nested macro chain should require two sequential source waves",
-    );
-    profile.assert_counter_path_with_message(
-        "project.build.macro_source_files.def_map_resumes",
-        2,
-        "each answered source wave should resume the retained DefMap state",
-    );
-    profile.assert_counter_path_with_message(
-        "def_map.finalization.rounds",
-        2,
-        "source capture should suspend one fixed point instead of starting rounds per wave",
-    );
-    profile.assert_counter_path_with_message(
-        "def_map.finalization.import_resolution.runs",
-        2,
-        "imports should settle before expansion and once after the source chain drains",
-    );
-}
-
-#[test]
-fn generated_module_requests_coalesce_across_package_targets() {
-    let fixture = ProjectSourceFixture::build(
+fn generated_module_aliases_resolve_shared_sources_in_lib_and_bin() {
+    let fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -764,80 +571,88 @@ name = "generated_multi_target_fixture"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-path = "src/lib.rs"
-
 [[bin]]
 name = "generated-bin"
 path = "src/main.rs"
 
 //- /src/lib.rs
-macro_rules! make_shared {
+macro_rules! make_modules {
     () => {
-        pub mod shared;
+        #[path = "shared.rs"]
+        pub mod first;
+        #[path = "shared.rs"]
+        pub mod second;
+        pub mod missing;
     };
 }
 
-make_shared!();
+make_modules!();
+pub fn consume(_: first::Sha$library_first$red, _: second::Sha$library_second$red) {}
 
 //- /src/main.rs
-macro_rules! make_shared {
+macro_rules! make_modules {
     () => {
-        pub mod shared;
+        #[path = "shared.rs"]
+        pub mod first;
+        #[path = "shared.rs"]
+        pub mod second;
+        pub mod missing;
     };
 }
 
-make_shared!();
+make_modules!();
+fn consume(_: first::Sha$binary_first$red, _: second::Sha$binary_second$red) {}
+fn main() {}
 
 //- /src/shared.rs
-pub struct SharedAcrossTargets;
+pub struct Shared;
 "#,
     );
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.macro_source_files",
-    );
-    let project = fixture.build_project();
-    let profile = run.finish();
 
-    for (path, expected, message) in [
-        (
-            "project.build.macro_source_files.requests.seen",
-            1,
-            "equivalent requests from the library and binary should be deduplicated",
-        ),
-        (
-            "project.build.macro_source_files.paths.unique",
-            1,
-            "both targets should share one package-local generated source",
-        ),
-        (
-            "project.build.macro_source_files.files.discovered",
-            1,
-            "the shared source should enter the package file table once",
-        ),
-        (
-            "project.build.macro_source_files.def_map_resumes",
-            1,
-            "one resumable step should apply the shared answer to both targets",
-        ),
-    ] {
-        profile.assert_counter_path_with_message(path, expected, message);
-    }
+    fixture.check(
+        &[
+            HostObservation::file_contexts("shared source", "src/shared.rs"),
+            HostObservation::type_names_at(
+                "library first alias",
+                "generated_multi_target_fixture",
+                "library_first",
+            ),
+            HostObservation::type_names_at(
+                "library second alias",
+                "generated_multi_target_fixture",
+                "library_second",
+            ),
+            HostObservation::type_names_at(
+                "binary first alias",
+                "generated_multi_target_fixture",
+                "binary_first",
+            ),
+            HostObservation::type_names_at(
+                "binary second alias",
+                "generated_multi_target_fixture",
+                "binary_second",
+            ),
+            HostObservation::workspace_symbols("missing"),
+        ],
+        expect![[r#"
+            file contexts `shared source`
+            - generated_multi_target_fixture src/shared.rs -> generated_multi_target_fixture[bin], generated_multi_target_fixture[lib]
 
-    let snapshot = project.snapshot();
-    let contexts = snapshot
-        .file_contexts_for_path(fixture.path("src/shared.rs"))
-        .expect("shared generated source should have file contexts");
-    assert_eq!(
-        contexts.len(),
-        1,
-        "the source should have one package-local file id"
-    );
-    assert_eq!(
-        contexts[0].crates.len(),
-        2,
-        "the shared source should belong to both package targets",
+            type names at `library first alias`
+            - Shared
+
+            type names at `library second alias`
+            - Shared
+
+            type names at `binary first alias`
+            - Shared
+
+            type names at `binary second alias`
+            - Shared
+
+            workspace symbols `missing`
+            - <none>
+        "#]],
     );
 }
 

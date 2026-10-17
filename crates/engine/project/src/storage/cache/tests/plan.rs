@@ -206,14 +206,13 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
+    let metadata = fixture.metadata();
     let normal_workspace =
-        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+        WorkspaceMetadata::for_tests(metadata.clone(), WorkspaceLoweringConfig::default())
             .expect("fixture workspace metadata should build");
-    let test_workspace = WorkspaceMetadata::for_tests(
-        fixture.metadata(),
-        WorkspaceLoweringConfig::default().cfg_test(true),
-    )
-    .expect("fixture workspace metadata should build");
+    let test_workspace =
+        WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default().cfg_test(true))
+            .expect("fixture workspace metadata should build");
     let normal_plan = WorkspaceCachePlan::build(&normal_workspace);
     let test_plan = WorkspaceCachePlan::build(&test_workspace);
 

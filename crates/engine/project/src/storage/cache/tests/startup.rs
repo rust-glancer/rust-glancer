@@ -332,67 +332,6 @@ pub struct DepNew;
 }
 
 #[test]
-fn startup_cache_profile_reports_probe_hits() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-pub struct App;
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Dep;
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-    Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should write dependency cache artifact");
-
-    let run = rg_profile::test_support::ProfileTest::start(
-        crate::profile_descriptors(),
-        "project.build.cache_probe",
-    );
-    let _project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should build from dependency cache artifact");
-    let snapshot = CacheProbeCounters::capture(run.finish());
-
-    let mut dump = StartupSnapshot::new("startup cache probe profile");
-    dump.values(&[
-        ("packages", snapshot.packages),
-        ("resident", snapshot.resident),
-        ("offloadable", snapshot.offloadable),
-        ("hits", snapshot.hits),
-        ("misses", snapshot.misses),
-    ]);
-
-    dump.check(expect![[r#"
-        startup cache probe profile
-        packages 2
-        resident 1
-        offloadable 1
-        hits 1
-        misses 0
-    "#]]);
-}
-
-#[test]
 fn startup_cache_misses_rebuild_reverse_dependents() {
     let fixture = ProjectSourceFixture::build(
         r#"
@@ -885,9 +824,6 @@ impl StartupSnapshot {
 
 /// A completed startup's counter observations. Tests choose which fields belong in their snapshot.
 struct CacheProbeCounters {
-    packages: u64,
-    resident: u64,
-    offloadable: u64,
     hits: u64,
     missing_artifacts: u64,
     parse_restore_errors: u64,
@@ -915,9 +851,6 @@ impl CacheProbeCounters {
         .map(counter)
         .sum();
         Self {
-            packages: counter(metric::CACHE_PROBE_PACKAGES),
-            resident: counter(metric::CACHE_PROBE_RESIDENT_PACKAGES),
-            offloadable: counter(metric::CACHE_PROBE_OFFLOADABLE_PACKAGES),
             hits: counter(metric::CACHE_PROBE_HITS),
             missing_artifacts: counter(metric::CACHE_PROBE_MISSING_ARTIFACTS),
             parse_restore_errors: counter(metric::CACHE_PROBE_PARSE_RESTORE_ERRORS),

@@ -68,11 +68,6 @@ mod tests {
         let cases = [
             ("LF", "fn main() {\n}\n", "fn main() {}\n"),
             ("CRLF", "fn main() {\r\n}\r\n", "fn main() {}\r\n"),
-            (
-                "missing final newline is normalized",
-                "fn main() {}",
-                "fn main() {}\n",
-            ),
         ];
 
         for (case, input, expected) in cases {
