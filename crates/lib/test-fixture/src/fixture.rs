@@ -19,6 +19,7 @@ impl FixtureSpec {
         let mut files = Vec::new();
         let mut markers = FixtureMarkers::default();
         let mut current_path = None::<String>;
+        let mut current_metadata = String::new();
         let mut current_contents = String::new();
         let mut current_offset = 0_u32;
 
@@ -28,11 +29,14 @@ impl FixtureSpec {
                     files.push(FixtureFile {
                         relative_path: path,
                         contents: current_contents,
+                        metadata: current_metadata,
                     });
                     current_contents = String::new();
                 }
 
-                current_path = Some(Self::parse_fixture_header(header));
+                let (path, metadata) = Self::parse_fixture_header(header);
+                current_path = Some(path);
+                current_metadata = metadata;
                 current_offset = 0;
                 continue;
             }
@@ -56,6 +60,7 @@ impl FixtureSpec {
             files.push(FixtureFile {
                 relative_path: path,
                 contents: current_contents,
+                metadata: current_metadata,
             });
         }
 
@@ -150,15 +155,10 @@ impl FixtureSpec {
         }
     }
 
-    fn parse_fixture_header(header: &str) -> String {
+    fn parse_fixture_header(header: &str) -> (String, String) {
         let (path, metadata) = header
             .split_once(char::is_whitespace)
             .unwrap_or((header, ""));
-        assert!(
-            metadata.trim().is_empty(),
-            "fixture header metadata is not supported yet: `{}`",
-            metadata.trim()
-        );
         assert!(
             path.starts_with('/'),
             "fixture path should start with `/`: {path}"
@@ -169,7 +169,7 @@ impl FixtureSpec {
             !relative_path.is_empty(),
             "fixture path should not be empty"
         );
-        relative_path.to_string()
+        (relative_path.to_string(), metadata.trim().to_string())
     }
 
     fn trim_fixture_indent(spec: &str) -> String {
@@ -209,7 +209,8 @@ impl FixtureSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FixtureFile {
     relative_path: String,
-    contents: String,
+    pub(crate) contents: String,
+    metadata: String,
 }
 
 impl FixtureFile {
@@ -219,6 +220,11 @@ impl FixtureFile {
 
     pub fn contents(&self) -> &str {
         &self.contents
+    }
+
+    /// Header declarations belong to the consuming suite; file and marker parsing preserves them.
+    pub fn metadata(&self) -> &str {
+        &self.metadata
     }
 }
 
@@ -301,11 +307,11 @@ pub fn fixture_path_for_snapshot(path: &Path) -> String {
 
 /// Creates temporary on-disk crate fixtures from inline file contents.
 ///
-/// Parser tests should exercise the same `cargo metadata` path as production code, but many of
-/// them only need a tiny crate with one or two files. This helper lets those tests define the
-/// exact crate layout they need without depending on the larger checked-in fixture projects.
+/// Files stay on disk so module discovery follows ordinary filesystem rules. Suites can either
+/// declare their workspace in file headers or load a real Cargo project through `metadata()`.
 pub struct CrateFixture {
     root: TempDir,
+    headers: Vec<(String, String)>,
 }
 
 impl CrateFixture {
@@ -320,8 +326,8 @@ impl CrateFixture {
     /// pub fn work() {}
     /// ```
     ///
-    /// Cargo metadata still remains the source of truth for package/target/dependency structure,
-    /// so rust-analyzer header metadata such as `crate:` or `deps:` is intentionally not parsed.
+    /// Header declarations such as `crate:demo` are retained for suites that construct workspace
+    /// metadata directly. Cargo-backed fixtures can keep ordinary manifest files instead.
     pub fn from_fixture_spec(spec: &str) -> Self {
         Self::from_parsed_fixture(FixtureSpec::parse(spec))
     }
@@ -350,28 +356,34 @@ impl CrateFixture {
     }
 
     fn from_parsed_fixture(fixture: FixtureSpec) -> Self {
-        Self::from_files(
-            fixture
-                .into_files()
-                .into_iter()
-                .map(|file| (file.relative_path, file.contents)),
-        )
+        Self::from_files(fixture.into_files())
     }
 
     /// Materializes already-parsed files without interpreting source markers a second time.
-    pub fn from_files<P, C>(files: impl IntoIterator<Item = (P, C)>) -> Self
-    where
-        P: AsRef<str>,
-        C: AsRef<str>,
-    {
+    pub fn from_files(files: impl IntoIterator<Item = FixtureFile>) -> Self {
         let root = Self::create_root_directory();
-        let fixture = Self { root };
+        let mut fixture = Self {
+            root,
+            headers: Vec::new(),
+        };
 
-        for (relative_path, contents) in files {
-            fixture.write_file(relative_path.as_ref(), contents.as_ref());
+        // Parsing reads these files through the filesystem. Retain only their declarations,
+        // rather than keeping another copy of every Rust source string in the fixture owner.
+        for file in files {
+            fixture.write_file(file.relative_path(), file.contents());
+            if !file.metadata.is_empty() {
+                fixture.headers.push((file.relative_path, file.metadata));
+            }
         }
 
         fixture
+    }
+
+    /// Returns annotated file headers; ordinary source-file headers have no declarations.
+    pub fn headers(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.headers
+            .iter()
+            .map(|(path, metadata)| (path.as_str(), metadata.as_str()))
     }
 
     /// Writes one or more fixture files into this crate root and returns the parsed file set.

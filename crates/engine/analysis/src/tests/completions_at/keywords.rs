@@ -5,13 +5,7 @@ use crate::tests::utils::check_analysis;
 fn completes_keywords_for_each_item_list_context() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_item_list_keyword_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_item_list_keyword_completions
 $0 // complete_keywords_with_source("source-file items")
 
 pub mod nested {
@@ -110,13 +104,7 @@ extern "C" {
 fn completes_type_and_qualified_item_keywords_without_cross_context_fallbacks() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_contextual_keyword_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_contextual_keyword_completions
 pub mod scope {}
 pub trait Service {}
 
@@ -175,13 +163,7 @@ mod restricted_visibility_context {
 fn completes_path_root_keywords_from_an_unqualified_body_site() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_path_root_keyword_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_path_root_keyword_completions
 pub fn body() {
     let _ = cr$0; // complete("path root keyword completions")
 }

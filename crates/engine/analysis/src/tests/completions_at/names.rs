@@ -5,13 +5,7 @@ use crate::tests::utils::check_analysis;
 fn completes_unqualified_values_from_lexical_and_module_scope() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_value_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_value_completions
 pub struct User;
 
 pub fn make_user() -> User {
@@ -39,13 +33,7 @@ pub fn use_it(input_user: User) {
 fn unqualified_local_values_shadow_module_values() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_shadow_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_shadow_completions
 pub fn shadowed() {}
 
 pub fn use_it(shadowed: u8) {
@@ -64,13 +52,7 @@ pub fn use_it(shadowed: u8) {
 fn sorts_unqualified_body_values_by_lexical_proximity() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_value_proximity"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_value_proximity
 pub fn c_module_item() {}
 
 pub fn use_it(c_a_outer: u8) {
@@ -113,13 +95,7 @@ pub fn use_it(c_a_outer: u8) {
 fn sorts_unqualified_body_types_by_lexical_proximity() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_type_proximity"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_type_proximity
 pub mod a_mod {}
 pub trait ATrait {}
 pub struct AModule;
@@ -156,13 +132,7 @@ pub fn use_it() {
 fn completes_unqualified_types_from_body_and_module_scope() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_type_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_type_completions
 pub struct ModuleUser;
 
 pub fn use_it() {
@@ -185,13 +155,7 @@ pub fn use_it() {
 fn completes_type_paths_and_owner_generics_in_item_signatures() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_signature_type_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_signature_type_completions
 pub struct Fixture;
 pub struct Wrapper<T>(T);
 pub struct Array<const N: usize>;
@@ -315,13 +279,7 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
 fn completes_local_item_signatures_from_the_local_generic_scope() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_signature_type_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_signature_type_completions
 pub fn outer<Outer>() {
     fn inner<Inner>(value: Inn$0) {} // complete("local item generic")
 }
@@ -336,13 +294,7 @@ pub fn outer<Outer>() {
 fn completes_owner_generics_in_body_type_positions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_generic_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_generic_completions
 pub struct Array<const N: usize>;
 
 pub fn use_it<T, const N: usize>() {
@@ -367,13 +319,7 @@ pub fn use_it<T, const N: usize>() {
 fn completes_primitive_types_in_unqualified_type_positions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_primitive_type_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_primitive_type_completions
 pub struct Vec<T>(T);
 
 pub fn use_it() {
@@ -407,13 +353,7 @@ pub fn use_it() {
 fn suppresses_shadowed_primitive_type_completions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_shadowed_primitive_type_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_shadowed_primitive_type_completions
 pub struct usize;
 
 pub fn use_it() {
@@ -438,13 +378,7 @@ pub fn use_it() {
 fn completes_primitive_types_shadowed_only_by_modules() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_named_like_primitive_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_module_named_like_primitive_completions
 pub mod usize {}
 
 pub fn use_it() {
@@ -469,13 +403,7 @@ pub fn use_it() {
 fn completes_more_body_local_type_and_value_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_more_body_local_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_more_body_local_completions
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -519,13 +447,7 @@ pub fn use_it() {
 fn completes_unqualified_type_args_in_generic_type_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_generic_type_arg_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_generic_type_arg_completions
 pub struct Session;
 pub struct State;
 pub struct String;
@@ -574,13 +496,7 @@ pub fn use_it() {
 fn sorts_unqualified_type_context_completions_by_type_likelihood() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_type_sorting"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_type_sorting
 pub mod aa_prefix {}
 pub trait Mid {}
 pub struct Zed;

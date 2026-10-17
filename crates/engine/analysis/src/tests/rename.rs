@@ -6,13 +6,7 @@ use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 fn prepares_and_renames_common_symbol_subjects() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename
 pub struct User {
     na$field_ref$me: Name,
 }
@@ -72,13 +66,7 @@ pub fn use_it() {
 fn rename_respects_local_binding_shadowing_same_name_function() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_method_receiver_shadow"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_method_receiver_shadow
 pub fn bar(baz: u8) -> u8 {
     fo$0o(baz) // rename("rename function", "qux")
 }
@@ -107,13 +95,7 @@ fn foo(baz: u8) -> u8 {
 fn renames_supported_item_kinds_from_representative_uses() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_supported_item_kinds"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_supported_item_kinds
 pub struct User;
 
 pub enum Status {
@@ -202,13 +184,7 @@ pub fn use_it(user: User, status: Sta$0tus, packet: Pac$1ket) -> Han$2dle { // r
 fn rename_edits_multiple_modules_and_use_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_multi_module"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_multi_module
 pub mod model;
 pub mod use_sites;
 
@@ -254,13 +230,7 @@ pub fn wrap(user: User) -> crate::model::User {
 fn rename_skips_import_alias_reference_spelling() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_alias_spelling"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_alias_spelling
 pub mod api {
     pub struct Us$0er; // rename("rename type with import alias references", "Person")
     pub fn ma$0ke(value: User) -> User { value } // rename("rename function with import alias references", "create")
@@ -301,13 +271,7 @@ pub fn use_fn(account: Account) -> api::User {
 fn rename_reuses_record_constructor_occurrences() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_record_constructors"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_record_constructors
 pub mod model {
     pub struct Qual$qualified_decl$ified<T> {
         pub value: T,
@@ -381,13 +345,7 @@ pub fn make(value: u8) {
 fn rename_respects_nested_body_shadowing() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_nested_shadowing"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_nested_shadowing
 pub struct Value;
 
 pub fn make() -> Value {
@@ -442,13 +400,7 @@ pub fn make() -> Value {
 fn renames_parent_body_local_const_from_nested_body_owners() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_nested_body_owner_const"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_nested_body_owner_const
 pub struct GlobalId;
 
 pub fn make() {
@@ -496,13 +448,7 @@ pub fn make() {
 fn renames_target_items_from_body_local_initializers() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_target_items_from_local_initializers"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_target_items_from_local_initializers
 pub struct GlobalId;
 
 pub const GLOBAL: GlobalId = GlobalId;
@@ -562,13 +508,7 @@ pub fn make() -> GlobalId {
 fn renames_body_local_items_from_associated_bodies_and_initializers() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_body_local_item_nested_bodies"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_body_local_item_nested_bodies
 pub struct GlobalId;
 
 pub fn make() {
@@ -674,13 +614,7 @@ pub fn make() {
 fn rename_field_in_record_literals_patterns_and_accesses() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_record_fields"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_record_fields
 pub struct User {
     pub na$field_decl$me: u8,
     pub age: u8,
@@ -722,13 +656,7 @@ pub fn use_it(user: User, name: u8, age: u8) {
 fn rename_expands_record_shorthand_occurrences() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_record_shorthand"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_record_shorthand
 pub struct User {
     pub na$field_decl$me: u8,
     pub age: u8,
@@ -784,13 +712,7 @@ pub fn use_it(source: User, na$param_decl$me: u8, age: u8) -> u8 {
 fn rename_preserves_record_pattern_shorthand_syntax() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_record_pattern_shorthand"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_record_pattern_shorthand
 pub enum Option<T> {
     Some(T),
     None,
@@ -843,13 +765,7 @@ pub fn use_it(by_ref_source: User, by_mut_source: User, by_at_source: User) -> u
 fn renames_body_macro_calls() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rename_body_macros"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rename_body_macros
 pub struct Text;
 
 pub fn helper(value: u64) -> Text { Text }
@@ -922,13 +838,7 @@ pub fn use_it(input: u64) {
 fn rejects_unsupported_rename_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reject_rename"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reject_rename
 mod us$0er { // prepare_rename("reject module rename")
     pub struct User;
 }

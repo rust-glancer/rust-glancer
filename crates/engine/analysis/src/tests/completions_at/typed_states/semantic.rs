@@ -11,13 +11,7 @@ use crate::tests::utils::check_analysis;
 fn completes_common_sites_across_realistic_typed_states() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_typed_states
 pub mod api {
     pub struct PathType;
 }
@@ -118,13 +112,7 @@ use crate::api::PathT$0 // complete_with_source("unfinished import path").matchi
 fn completes_common_body_sites_at_incomplete_file_end() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_incomplete_file_end"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_incomplete_file_end
 pub mod associated;
 pub mod bare_associated;
 pub mod bare_dot;
@@ -221,13 +209,7 @@ pub fn run() {
 fn completes_associated_type_bindings_before_the_equals_sign() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_associated_binding_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_associated_binding_typed_states
 pub mod eof;
 
 pub trait Sequence {

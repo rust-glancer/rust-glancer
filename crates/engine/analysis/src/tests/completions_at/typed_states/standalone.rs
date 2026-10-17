@@ -14,13 +14,7 @@ use crate::tests::utils::check_analysis;
 fn completes_standalone_sites_while_items_are_being_typed() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_standalone_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_standalone_typed_states
 pub mod macro_edit;
 pub mod macro_forward;
 pub mod module_edit;

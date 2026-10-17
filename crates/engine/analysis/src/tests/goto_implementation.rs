@@ -6,13 +6,7 @@ use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 fn selects_wrapped_self_type_paths_and_preserves_fallbacks() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_impl_self_type_spans"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_impl_self_type_spans
 pub trait Ac$0tion {} // goto_impl("select implementation self types")
 pub struct Wrapper<T>(T);
 
@@ -38,13 +32,7 @@ implement!(Generated<()>);
 fn resolves_type_trait_and_trait_method_implementations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_implementation"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_implementation
 pub struct User;
 pub struct Account;
 pub struct UserName;
@@ -129,13 +117,7 @@ pub fn use_it(user: User) {
 fn resolves_body_local_type_implementations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_goto_implementation"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_goto_implementation
 pub fn use_it() {
     struct Us$0er; // goto_impl("goto body-local implementations from type")
 
@@ -157,13 +139,7 @@ pub fn use_it() {
 fn finds_trait_method_implementations_across_receiver_generic_args() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_implementation_trait_impl_generics"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_implementation_trait_impl_generics
 pub struct User;
 pub struct Account;
 pub struct Wrapper<T>(T);
@@ -196,13 +172,7 @@ pub fn use_it(account: Wrapper<Account>) {
 fn shares_body_local_impl_discovery_between_traits_and_methods() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_trait_implementations"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_trait_implementations
 pub trait Global { fn run(&self); }
 pub struct Service;
 impl Global for Service { fn run(&self) {} }
@@ -267,13 +237,7 @@ pub fn use_it() {
 fn expands_supertrait_methods_across_receiver_forms() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_supertrait_implementations"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_supertrait_implementations
 pub trait Parent { fn ru$0n(&self); } // goto_impl("parent method")
 pub trait Child: Parent {}
 pub struct User;
@@ -343,13 +307,7 @@ pub fn use_it<T: Child>(value: T, wrapped: Wrapper<User>, number: u8, slice: &[u
 fn finds_all_explicit_overrides_and_finishes_default_only_queries() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_default_implementations"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_default_implementations
 pub struct Result;
 impl Result { fn other(&self) {} }
 pub trait DefaultOnly { fn ma$default_declaration$ke(&self) -> Result { Result } }
@@ -396,28 +354,14 @@ pub fn override_call<T: Overridden>(value: T) { value.ma$dot_override$ke(); }
 fn finds_dependency_and_local_impls_across_trait_generic_arguments() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_dependency_implementations"
-version = "0.1.0"
-edition = "2024"
-[dependencies]
-api = { path = "api" }
-
-//- /api/Cargo.toml
-[package]
-name = "api"
-version = "0.1.0"
-edition = "2024"
-
-//- /api/src/lib.rs
+//- /api/src/lib.rs crate:api root:api
 pub trait Convert<T> { fn convert<U>(&self, input: U) -> T; }
 pub struct Remote;
 impl Convert<u8> for Remote {
     fn convert<U>(&self, input: U) -> u8 { 0 }
 }
 
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_dependency_implementations deps:api
 use api::Convert;
 pub struct Local;
 impl Convert<u16> for Local { fn con$local_method$vert<U>(&self, input: U) -> u16 { 0 } }

@@ -6,12 +6,7 @@ use super::utils::{InlayHintsQuery, check_inlay_hints, check_inlay_hints_with_fa
 fn shows_auto_trait_bounds_on_object_hints() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "auto_trait_hints"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:auto_trait_hints
 pub auto trait Send {}
 pub auto trait Sync {}
 pub trait Service<T = u8> { type Reply; }
@@ -42,12 +37,7 @@ pub fn opaque(value: impl source::r#gen<Item = u16>) {
 fn shows_shared_mutable_and_nested_reference_hints() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reference_hints"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reference_hints
 pub trait Opaque {}
 pub trait Service<T> { type Reply; }
 pub fn references<'a>(
@@ -76,13 +66,7 @@ pub fn references<'a>(
 fn shows_array_lengths_from_const_expressions() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_const_arithmetic_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_const_arithmetic_hints
 const SIZE: usize = 2;
 pub fn use_it() {
     let arithmetic = [0u8; 2 + 2];
@@ -104,13 +88,7 @@ pub fn use_it() {
 fn shows_inferred_local_binding_types() {
     check_inlay_hints_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_type_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_type_hints
 pub struct User;
 pub struct Option<T> {
     pub value: T,
@@ -191,13 +169,7 @@ pub fn closure_hints() {
 fn simplifies_standard_iterator_hints() {
     check_inlay_hints_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "iterator_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:iterator_hints
 pub struct UserIter;
 impl Iterator for UserIter {
     type Item = u8;
@@ -254,17 +226,7 @@ pub fn recursive() {
 fn shows_type_hints_inside_bin_roots() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bin_type_hints"
-version = "0.1.0"
-edition = "2024"
-
-[[bin]]
-name = "app"
-path = "src/main.rs"
-
-//- /src/main.rs
+//- /src/main.rs crate:analysis_bin_type_hints kind:bin name:app
 struct User;
 
 fn make_user() -> User {
@@ -286,13 +248,7 @@ fn main() {
 fn skips_inlay_hints_for_generated_body_macro_internals() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_macro_inlay_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_macro_inlay_hints
 pub struct Text;
 
 pub fn helper(value: u64) -> Text {
@@ -318,13 +274,7 @@ pub fn demo(input: u64) {
 fn shows_type_hints_for_pattern_bindings_with_known_types() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_pattern_type_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_pattern_type_hints
 pub struct User;
 pub struct Profile;
 
@@ -369,18 +319,7 @@ pub fn match_it(maybe: Option<User>) {
 fn shows_type_hints_for_for_loop_bindings_with_known_items() {
     check_inlay_hints_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Package;
 pub struct UserId;
 
@@ -414,13 +353,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 fn applies_expression_type_hint_policy_to_method_chains() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_method_chain_expression_type_hints"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_method_chain_expression_type_hints
 pub struct Factory;
 pub struct User;
 pub struct Profile;
@@ -472,13 +405,7 @@ pub fn inline_and_unknown(factory: Factory) {
 fn applies_closing_brace_hint_policy_to_long_and_short_constructs() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_closing_brace_hint_policy"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_closing_brace_hint_policy
 pub mod outer {
     pub enum Mode {
         Fast,
@@ -549,13 +476,7 @@ pub fn short() {
 fn applies_parameter_hint_policy_to_resolved_noisy_and_unresolved_calls() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_parameter_hint_policy"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_parameter_hint_policy
 pub struct User;
 
 pub fn build(scope: u32, annotation: User, initializer: User) -> User {
@@ -629,13 +550,7 @@ pub fn obvious(user: User, model: Model, local_user_id: u32) {
 fn infers_fields_and_methods_through_generic_deref_steps() {
     check_inlay_hints(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_deref_steps"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_deref_steps
 #[lang = "deref"]
 pub trait Project {
     #[lang = "deref_target"]

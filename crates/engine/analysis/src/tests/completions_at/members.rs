@@ -11,12 +11,7 @@ use crate::tests::utils::{
 fn finds_methods_from_trait_objects_without_importing_the_trait() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "object_members"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:object_members
 pub mod api {
     pub trait Base<T> {
         type Item;
@@ -60,13 +55,7 @@ pub fn run(value: &Service) {
 fn finds_methods_from_caller_bounds_without_concrete_impls() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "bound_members"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:bound_members
 pub mod api {
     pub trait Base<T> {
         fn render_base(&self) -> T;
@@ -112,18 +101,7 @@ pub fn inspect<T: api::Render>(value: T) {
 fn finds_members_through_generic_deref_bounds() {
     check_analysis_queries_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Widget {
     pub value: u16,
 }
@@ -171,13 +149,7 @@ where
 fn finds_methods_using_enclosing_trait_and_impl_bounds() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "owner_bound_members"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:owner_bound_members
 // There is no concrete Marker impl; each body relies on its enclosing bounds.
 pub trait Marker {}
 pub trait ViaMarker { fn from_marker(&self) -> bool; }
@@ -264,13 +236,7 @@ impl Owner where Other: Marker {
 fn completes_inherent_and_trait_methods_at_partial_and_bare_dot_sites() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completions
 pub trait Named {
     fn trait_name(&self);
     fn associated() {}
@@ -315,18 +281,7 @@ pub fn use_it(user: User) {
 fn trait_method_completion_respects_lexical_trait_scope() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub struct Value;
 
 pub mod named {
@@ -354,16 +309,7 @@ pub mod hidden {
     impl Hidden for super::Value { fn hidden(&self) {} }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::Value;
 use runtime::alias::Aliased as Renamed;
 use runtime::named::Named;
@@ -427,13 +373,7 @@ pub fn inspect(value: Value) {
 fn completion_ignores_unrelated_impls_in_speculative_trait_budget() {
     let mut fixture = String::from(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_budget_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_budget_completions
 pub trait Rel<T> {}
 
 pub struct User;
@@ -483,13 +423,7 @@ pub fn inspect() {
 fn completes_bare_dot_before_following_statement() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bare_dot_before_statement_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bare_dot_before_statement_completions
 pub struct User {
     pub name: String,
 }
@@ -523,13 +457,7 @@ pub fn use_it(user: User) {
 fn completes_through_references_try_and_await_wrappers() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_wrapper_completion"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_wrapper_completion
 pub struct Error;
 
 pub struct User {
@@ -589,20 +517,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 fn completes_methods_for_bin_root_library_type() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bin_completion"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "analysis-bin-completion"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bin_completion
 pub struct Api;
 
 impl Api {
@@ -610,7 +525,7 @@ impl Api {
     pub fn work(&self) {}
 }
 
-//- /src/main.rs
+//- /src/main.rs crate:analysis_bin_completion kind:bin name:analysis-bin-completion
 fn main() {
     let api: analysis_bin_completion::Api = todo!();
     api.$0; // complete("bin root completions").in_bin("analysis_bin_completion")
@@ -628,13 +543,7 @@ fn main() {
 fn does_not_trigger_inside_method_arguments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_dot_range"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_dot_range
 pub struct User;
 
 impl User {
@@ -657,13 +566,7 @@ pub fn use_it(user: User) {
 fn preserves_distinct_same_name_candidates() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_duplicates"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_duplicates
 pub trait Named {
     fn label(&self);
 }
@@ -705,13 +608,7 @@ pub fn use_it(user: User) {
 fn does_not_complete_concrete_impl_methods_for_wrong_generic_args() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_concrete_impl_completion"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_concrete_impl_completion
 pub struct User;
 pub struct Error;
 
@@ -751,13 +648,7 @@ pub fn use_it(error: Wrapper<Error>) {
 fn resolves_generic_trait_methods_and_rejects_unmet_bounds() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_trait_completion"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_trait_completion
 pub struct User;
 
 pub struct Wrapper<T> {
@@ -801,13 +692,7 @@ pub fn use_it(wrapper: Wrapper<User>) {
 fn rejects_trait_impls_with_different_const_arguments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_const_trait_completion"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_const_trait_completion
 pub struct Wrapper<const N: usize>;
 
 pub trait Named {
@@ -832,13 +717,7 @@ pub fn use_it(wrapper: Wrapper<2>) {
 fn completes_members_for_nested_field_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_field_receiver_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_field_receiver_completions
 pub struct Profile;
 
 impl Profile {
@@ -865,13 +744,7 @@ pub fn use_it(user: User) {
 fn completes_body_local_struct_fields_at_dot() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_field_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_field_completions
 pub struct User;
 
 pub fn use_it() {
@@ -906,18 +779,7 @@ pub fn use_it() {
 fn completes_through_core_deref() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 use std::sync::Arc;
 
 pub struct User {
@@ -954,18 +816,7 @@ pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
 fn completes_structural_slice_inherent_methods() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["core", "app"]
-resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
+//- /core/src/lib.rs crate:fake_core root:core
 impl<T> [T] {
     pub fn first_ref(&self) -> &T {
         missing()
@@ -976,16 +827,7 @@ impl<T> [T] {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:core=fake_core
 pub struct Package;
 
 pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
@@ -1014,18 +856,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 fn completes_primitive_inherent_methods_directly_and_through_deref() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 #[lang = "deref"]
 pub trait Project {
     #[lang = "deref_target"]
@@ -1056,16 +887,7 @@ impl Project for OwnedText {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::OwnedText;
 
 pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
@@ -1086,18 +908,7 @@ pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
 fn completes_methods_generated_by_associated_item_macros() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub struct Label;
 
 macro_rules! nested_integer_methods {
@@ -1138,16 +949,7 @@ impl GeneratedTrait for u32 {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::GeneratedTrait;
 
 pub fn use_it(value: u32) {
@@ -1167,18 +969,7 @@ pub fn use_it(value: u32) {
 fn completes_raw_pointer_inherent_methods_with_compiler_provided_bounds() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 #[lang = "pointee_sized"]
 pub trait PointeeSized {}
 
@@ -1188,16 +979,7 @@ impl<T: PointeeSized> *const T {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 pub fn use_it(pointer: *const u8) {
     pointer.$0; // complete("raw pointer methods").in_lib("app")
 }
@@ -1212,18 +994,7 @@ pub fn use_it(pointer: *const u8) {
 fn completes_trait_methods_for_unkeyed_and_blanket_impl_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub struct Label;
 
 pub trait ScalarLabel {
@@ -1270,16 +1041,7 @@ impl<T> BlanketLabel for T {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
 
 pub struct User;
@@ -1313,13 +1075,7 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
 fn completes_body_local_impl_methods_across_scope_variants() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_impl_completion_matrix"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_impl_completion_matrix
 pub struct GlobalId;
 pub struct Label;
 
@@ -1427,13 +1183,7 @@ pub fn nested_body_owner() {
 fn completes_body_local_generic_impl_method_return_and_field_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_generic_impl_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_generic_impl_completions
 pub fn use_it() {
     struct Id;
     struct Error;
@@ -1489,13 +1239,7 @@ pub fn use_it() {
 fn completes_members_for_pattern_and_closure_introduced_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_pattern_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_enum_pattern_completions
 pub struct Id;
 
 pub struct User {
@@ -1578,13 +1322,7 @@ pub fn use_it(maybe: Option<User>) {
 fn completes_tuple_fields_at_dot() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_tuple_field_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_tuple_field_completions
 pub struct Left;
 pub struct Right;
 
@@ -1606,13 +1344,7 @@ pub fn use_it(pair: Pair) {
 fn completes_dot_members_with_metadata_and_replacement_range() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_metadata"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_metadata
 pub struct Profile;
 
 pub struct User {

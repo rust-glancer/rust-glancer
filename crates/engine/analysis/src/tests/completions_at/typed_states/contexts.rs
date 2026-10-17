@@ -9,13 +9,7 @@ use crate::tests::utils::check_analysis;
 fn completes_empty_paths_at_incomplete_file_end() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_empty_path_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_empty_path_typed_states
 pub mod argument;
 pub mod expression;
 pub mod generic_argument;
@@ -68,13 +62,7 @@ pub fn run() {
 fn completes_keywords_and_patterns_while_the_construct_is_being_typed() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_context_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_context_typed_states
 pub mod expression;
 pub mod impl_trait;
 pub mod pattern;
@@ -110,13 +98,7 @@ pub fn run(value: bool) {
 fn completes_each_item_list_context_at_incomplete_file_end() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_item_list_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_item_list_typed_states
 pub mod extern_block;
 pub mod inherent_impl;
 pub mod inline_module;
@@ -163,13 +145,7 @@ extern "C" {
 fn completes_item_keywords_after_qualifiers_at_incomplete_file_end() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_item_qualifier_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_item_qualifier_typed_states
 pub mod after_async;
 pub mod after_const;
 pub mod after_extern;
@@ -202,13 +178,7 @@ const f$0 // complete_keywords_with_source("after const at EOF").matching("fn")
 fn completes_pattern_constructor_families_across_typed_states() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_pattern_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_pattern_typed_states
 pub mod empty_qualified_eof;
 pub mod eof;
 

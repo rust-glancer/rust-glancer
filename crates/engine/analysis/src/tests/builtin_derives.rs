@@ -6,13 +6,7 @@ use super::utils::check_analysis_with_fake_sysroot;
 fn builtin_derives_expose_methods_and_satisfy_trait_bounds() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "builtin_derives"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:builtin_derives
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Key;
 
@@ -50,13 +44,7 @@ pub fn use_it() {
 fn builtin_derives_handle_aliases_cfg_generics_and_macro_output() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "derive_generics"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:derive_generics
 #![no_std]
 use core::clone::Clone as Duplicate;
 
@@ -99,13 +87,7 @@ pub fn use_it(original: Wrapper<Value>) {
 fn builtin_derives_keep_rename_edits_on_written_type_names() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "derive_rename"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:derive_rename
 #[derive(Clone)]
 pub struct Fo$0o; // rename("rename derived type", "Bar").in_lib("derive_rename")
 
@@ -124,18 +106,7 @@ pub type Alias = Foo;
 fn builtin_derives_resolve_dollar_crate_in_exported_macro_output() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["helpers", "app"]
-resolver = "3"
-
-//- /helpers/Cargo.toml
-[package]
-name = "derive_helpers"
-version = "0.1.0"
-edition = "2024"
-
-//- /helpers/src/lib.rs
+//- /helpers/src/lib.rs crate:derive_helpers root:helpers
 pub use core::clone::Clone as Duplicate;
 
 #[macro_export]
@@ -148,15 +119,7 @@ macro_rules! declare {
     };
 }
 
-//- /app/Cargo.toml
-[package]
-name = "derive_app"
-version = "0.1.0"
-edition = "2024"
-[dependencies]
-derive_helpers = { path = "../helpers" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:derive_app root:app deps:derive_helpers
 mod nested {
     derive_helpers::declare!(Generated, Choice);
 }
@@ -177,13 +140,7 @@ pub fn use_it() {
 fn builtin_derives_allow_clone_with_a_qualified_non_clone_projection() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "derive_projection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:derive_projection
 pub trait Family { type Item; }
 pub struct NoClone;
 #[derive(Clone)]

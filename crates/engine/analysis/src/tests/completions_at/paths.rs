@@ -5,13 +5,7 @@ use crate::tests::utils::{AnalysisQuery, check_analysis, check_analysis_queries}
 fn completes_explicit_empty_import_type_expression_argument_and_generic_argument_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_empty_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_empty_path_completions
 use $0; // complete_with_source("empty import path")
 
 pub struct ModuleType;
@@ -149,13 +143,7 @@ pub fn body(param: u8) {
 fn completes_qualified_module_paths_in_body_contexts() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_path_completions
 pub mod api {
     pub mod api_nested {}
     mod private_nested {}
@@ -217,13 +205,7 @@ pub fn use_it() {
 fn completes_bare_qualified_paths_in_value_contexts() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bare_value_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bare_value_path_completions
 pub mod api {
     pub fn build_user() {}
 }
@@ -247,13 +229,7 @@ pub fn use_it() {
 fn completes_bare_qualified_paths_in_type_contexts_without_semicolon() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bare_type_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bare_type_path_completions
 pub mod api {
     pub struct User;
 }
@@ -276,13 +252,7 @@ pub fn use_it() {
 fn completes_qualified_paths_with_replacement_range() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_path_completion_metadata"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_path_completion_metadata
 pub mod api {
     pub struct User;
 }

@@ -6,13 +6,7 @@ use super::utils::check_analysis;
 fn resolves_body_symbols_to_navigation_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_resolve_symbol"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_resolve_symbol
 pub struct User;
 
 pub fn helper() -> User {
@@ -36,13 +30,7 @@ pub fn use_it() {
 fn resolves_body_macro_call_symbols_to_navigation_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_macro_resolve_symbol"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_macro_resolve_symbol
 pub struct Text;
 
 pub fn helper(value: u64) -> Text { Text }
@@ -65,13 +53,7 @@ pub fn use_it(input: u64) {
 fn resolves_body_local_struct_symbols_to_navigation_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_struct_resolve"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_struct_resolve
 pub struct User;
 
 pub fn make() {

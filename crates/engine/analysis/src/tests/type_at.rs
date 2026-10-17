@@ -6,13 +6,7 @@ use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 fn returns_basic_body_expression_and_binding_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_type_at
 pub struct User;
 
 pub fn helper() -> User {
@@ -36,13 +30,7 @@ pub fn use_it() {
 fn returns_scalar_literal_and_operator_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_scalar_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_scalar_type_at
 pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
     let bool_lit = true$0; // ty("bool literal")
     let char_lit = 'x'$0; // ty("char literal")
@@ -87,13 +75,7 @@ pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_wrapper_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_wrapper_type_at
 pub struct Error;
 pub struct User;
 
@@ -130,13 +112,7 @@ pub async fn use_it(mut user: User) -> Result<(), Error> {
 fn autoderefs_references_for_member_lookup_and_explicit_deref() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reference_autoderef"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reference_autoderef
 pub struct Profile;
 pub struct Label;
 
@@ -173,13 +149,7 @@ pub fn use_it(mut user: User, value: u8) {
 fn selects_methods_by_the_adjusted_self_parameter() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "method_receiver_selection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:method_receiver_selection
 pub trait Record {
     type Output;
     fn record(&self) -> Self::Output;
@@ -284,18 +254,7 @@ pub fn explicit_reference(value: &&Predicate) {
 fn autoderefs_core_deref_for_member_lookup_and_explicit_deref() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -338,18 +297,7 @@ pub fn use_it(user: Arc<User>, tuple: Arc<(Id, Label)>, cell: RefCell<User>) {
 fn identifies_deref_by_language_item_instead_of_path_or_name() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "fake_runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:fake_runtime root:runtime
 pub mod magic {
     #[lang = "deref"]
     pub trait Project {
@@ -358,16 +306,7 @@ pub mod magic {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { package = "fake_runtime", path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime=fake_runtime
 mod core {
     pub mod ops {
         pub trait Deref {
@@ -414,18 +353,7 @@ pub fn use_it(language: LanguageWrapper<User>, name_only: NameOnlyWrapper<User>)
 fn rejects_uncertain_nested_generic_deref_impls_for_member_lookup() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Id;
 pub struct Foo;
 pub struct Option<T> {
@@ -461,18 +389,7 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
 fn rejects_defaulted_deref_impl_params_with_unproven_bounds() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub trait Allocator {}
 
 pub struct Global;
@@ -504,18 +421,7 @@ pub fn use_it(wrapper: Wrapper) {
 fn aggregates_same_depth_deref_targets_before_resolving_members() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct UserId;
 pub struct ProjectId;
 pub struct UserLabel;
@@ -567,18 +473,7 @@ pub fn use_it(wrapper: Wrapper) {
 fn alternates_reference_and_trait_deref_for_member_lookup() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Id;
 pub struct Label;
 
@@ -618,13 +513,7 @@ pub fn use_it(user_box: &Box<User>, ref_box: &Box<&User>) {
 fn returns_primitive_type_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_primitive_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_primitive_type_at
 pub struct Slot<T> {
     pub value: T,
 }
@@ -649,13 +538,7 @@ pub fn use_it() {
 fn returns_structural_tuple_array_and_slice_types() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_structural_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_structural_type_at
 const N: usize = 3;
 
 pub struct Holder;
@@ -710,13 +593,7 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 fn returns_index_types_through_references() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_ref_index_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_ref_index_type_at
 pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
     let slice_item = slice[0]$0; // ty("slice reference index").in_lib("analysis_ref_index_type_at")
     let array_item = array_ref[0]$0; // ty("array reference index").in_lib("analysis_ref_index_type_at")
@@ -735,18 +612,7 @@ pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
 fn resolves_structural_slice_inherent_method_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["core", "app"]
-resolver = "3"
-
-//- /core/Cargo.toml
-[package]
-name = "fake_core"
-version = "0.1.0"
-edition = "2024"
-
-//- /core/src/lib.rs
+//- /core/src/lib.rs crate:fake_core root:core
 impl<T> [T] {
     pub fn first_ref(&self) -> &T {
         missing()
@@ -757,16 +623,7 @@ impl<T> [T] {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-core = { package = "fake_core", path = "../core" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:core=fake_core
 pub struct Package;
 
 pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
@@ -791,18 +648,7 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 fn resolves_trait_method_types_for_unkeyed_and_blanket_impl_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub struct Label;
 
 pub trait ScalarLabel {
@@ -849,16 +695,7 @@ impl<T> BlanketLabel for T {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::{ArrayElement, BlanketLabel, ReferenceIdentity, ScalarLabel};
 
 pub struct User;
@@ -883,18 +720,7 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
 fn resolves_fake_sysroot_array_into_iter_method_return_type() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Package;
 
 pub fn use_it(array: [Package; 3]) {
@@ -911,13 +737,7 @@ pub fn use_it(array: [Package; 3]) {
 fn builtin_macro_types_ignore_local_core_module() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 mod core {}
 
 pub fn use_it() {
@@ -936,18 +756,7 @@ pub fn use_it() {
 fn resolves_source_backed_builtin_associated_macro_items() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Selected;
 pub struct Included;
 pub struct Value;
@@ -990,18 +799,7 @@ pub fn included(&self) -> Included {
 fn propagates_for_loop_item_types_from_into_iterator() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Package;
 pub struct UserId;
 pub struct Event;
@@ -1113,18 +911,7 @@ pub fn use_it(
 fn propagates_for_loop_item_types_from_method_returned_slice() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 pub struct ImportData;
 
 pub struct DefMap;
@@ -1157,16 +944,7 @@ impl<'a> PartialDefMap<'a> {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::{DefMap, DefMapBuilder};
 
 pub struct BuildState {
@@ -1194,18 +972,7 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
 fn fake_sysroot_iterator_chain_infers_map_and_collect_types() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct Field;
 pub struct Rendered;
 
@@ -1236,18 +1003,7 @@ pub fn use_it(fields: &[Field]) {
 fn propagates_for_loop_item_types_from_slice_iter_method() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 pub struct ImportData;
 
 pub struct DefMap;
@@ -1258,16 +1014,7 @@ impl DefMap {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::DefMap;
 
 pub fn use_it(def_map: &DefMap) {
@@ -1297,18 +1044,7 @@ pub fn use_it(def_map: &DefMap) {
 fn propagates_for_loop_items_from_project_style_import_helpers() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 use core::iter;
 
 pub struct ImportId;
@@ -1356,16 +1092,7 @@ pub struct CrateState {
     pub def_map_builder: DefMapBuilder,
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::CrateState;
 
 pub fn use_it(state: &CrateState) {
@@ -1417,13 +1144,7 @@ pub fn use_it(state: &CrateState) {
 fn primitive_type_paths_respect_type_namespace_shadowing() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_primitive_shadow_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_primitive_shadow_type_at
 pub struct usize(pub u8);
 
 pub struct Holder {
@@ -1451,13 +1172,7 @@ pub fn local_shadow() {
 fn returns_associated_function_and_enum_variant_call_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_associated_path_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_associated_path_type
 pub struct Widget;
 
 impl Widget {
@@ -1486,40 +1201,13 @@ pub fn use_it() {
 fn returns_bin_root_dependency_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Thing;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "app-bin"
-path = "src/main.rs"
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Api;
 
-//- /crates/app/src/main.rs
+//- /crates/app/src/main.rs crate:app root:crates/app deps:dep kind:bin name:app-bin
 fn main() {
     let thing$0: dep::Thing = todo!(); // ty("type at bin dependency binding").in_bin("app")
 }
@@ -1534,13 +1222,7 @@ fn main() {
 fn returns_field_access_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_field_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_field_type
 pub struct Profile;
 
 pub struct User {
@@ -1561,13 +1243,7 @@ pub fn use_it(user: User) {
 fn propagates_basic_generic_arguments_through_fields_and_methods() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_type_at
 pub struct User;
 pub struct Error;
 
@@ -1617,13 +1293,7 @@ pub fn use_it() {
 fn applies_explicit_generic_call_arguments_to_return_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_explicit_generic_call_args"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_explicit_generic_call_args
 fn missing<T>() -> T {
     loop {}
 }
@@ -1675,13 +1345,7 @@ pub fn use_it(builder: Builder) {
 fn infers_basic_generic_call_arguments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_call_arg_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_call_arg_inference
 fn missing<T>() -> T {
     loop {}
 }
@@ -1745,13 +1409,7 @@ pub fn use_it(builder: Builder, user: User, project: Project) {
 fn inferred_function_generics_shadow_impl_generics() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_call_arg_shadowing"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_call_arg_shadowing
 fn missing<T>() -> T {
     loop {}
 }
@@ -1789,13 +1447,7 @@ pub fn use_it(container: Container<User>, project: Project) {
 fn resolves_lifetime_parameterized_receiver_method_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_lifetime_receiver_method_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_lifetime_receiver_method_type
 fn missing<T>() -> T {
     loop {}
 }
@@ -1854,13 +1506,7 @@ pub fn use_it<'db>(
 fn does_not_treat_concrete_impl_self_args_as_type_params() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_concrete_impl_args"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_concrete_impl_args
 pub struct User;
 pub struct Error;
 
@@ -1898,13 +1544,7 @@ pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
 fn does_not_ignore_const_generic_args_when_matching_impls() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_const_impl_args"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_const_impl_args
 fn missing<T>() -> T {
     loop {}
 }
@@ -1948,13 +1588,7 @@ pub fn use_local() {
 fn uses_proven_trait_impls_for_method_return_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_applicability_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_applicability_type_at
 fn missing<T>() -> T {
     loop {}
 }
@@ -2005,13 +1639,7 @@ pub fn use_it(generic: Wrapper<Error>, concrete: Wrapper<Error>) {
 fn propagates_trait_method_return_types_through_bindings() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_direct_trait_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_direct_trait_type_at
 fn missing<T>() -> T {
     loop {}
 }
@@ -2044,18 +1672,7 @@ pub fn use_it(user: User) {
 fn implicit_trait_items_require_scope_but_explicit_trait_paths_do_not() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub struct Value;
 pub struct Output;
 
@@ -2071,16 +1688,7 @@ impl Hidden for Value {
     fn secret(&self) -> Output { Output }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::Value;
 
 pub fn inspect(value: Value) {
@@ -2122,13 +1730,7 @@ pub fn inspect(value: Value) {
 fn returns_body_local_field_access_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_field_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_field_type
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -2150,13 +1752,7 @@ pub fn use_it() {
 fn propagates_basic_generic_arguments_for_body_local_fields() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_generic_field_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_generic_field_type
 pub struct User;
 
 pub fn use_it() {
@@ -2178,13 +1774,7 @@ pub fn use_it() {
 fn returns_body_local_method_call_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_method_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_method_type
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -2216,13 +1806,7 @@ pub fn use_it() {
 fn returns_body_local_imported_value_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_import_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_import_type
 pub fn use_it() {
     mod local {
         pub struct User;
@@ -2246,13 +1830,7 @@ pub fn use_it() {
 fn returns_nested_body_local_impl_method_call_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_local_method_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_nested_body_local_method_type
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -2280,13 +1858,7 @@ pub fn use_it() {
 fn substitutes_body_local_impl_generics_in_method_returns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_impl_generic_method_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_impl_generic_method_type
 pub fn use_it() {
     struct User;
     struct Wrapper<T> {
@@ -2313,13 +1885,7 @@ pub fn use_it() {
 fn propagates_enum_variant_payload_types_into_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_pattern_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_enum_pattern_type_at
 pub struct User;
 pub struct Profile;
 
@@ -2362,13 +1928,7 @@ pub fn match_it(maybe: Option<User>) {
 fn returns_tuple_field_access_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_tuple_field_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_tuple_field_type
 pub struct Left;
 pub struct Right;
 
@@ -2388,13 +1948,7 @@ pub fn use_it(pair: Pair) {
 fn returns_signature_path_and_field_declaration_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_signature_type_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_signature_type_at
 pub struct Profile;
 
 pub struct User {
@@ -2418,13 +1972,7 @@ pub fn make(profile: Pro$0file) -> Pro$1file { // ty("type at parameter type"), 
 fn returns_self_type_in_impl_signatures() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_impl_self_signature_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_impl_self_signature_type
 pub struct User;
 
 impl User {
@@ -2443,13 +1991,7 @@ impl User {
 fn returns_self_receiver_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_self_receiver_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_self_receiver_type
 pub struct User;
 
 impl User {
@@ -2478,13 +2020,7 @@ impl User {
 fn returns_body_local_struct_types_before_module_structs() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_struct_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_struct_type
 pub struct User;
 
 pub fn make() {
@@ -2510,13 +2046,7 @@ pub fn outside() {
 fn returns_body_local_enum_variant_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_enum_variant_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_enum_variant_type
 pub struct GlobalId;
 
 pub fn make() {
@@ -2538,13 +2068,7 @@ pub fn make() {
 fn returns_body_local_record_literal_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_record_literal_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_record_literal_type
 pub struct GlobalId;
 
 pub fn make() {
@@ -2566,13 +2090,7 @@ pub fn make() {
 fn returns_scope_ordered_body_local_value_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_value_shadowing_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_value_shadowing_type
 pub struct Outer;
 pub struct Inner;
 
@@ -2606,13 +2124,7 @@ pub fn make() {
 fn returns_body_local_associated_item_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_assoc_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_assoc_type
 pub struct GlobalId;
 
 pub fn make() {
@@ -2645,13 +2157,7 @@ pub fn make() {
 fn returns_body_local_enum_pattern_payload_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_enum_pattern_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_enum_pattern_type
 pub struct User;
 pub struct GlobalId;
 
@@ -2678,13 +2184,7 @@ pub fn make() {
 fn returns_body_let_annotation_types_with_body_context() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_annotation_type"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_annotation_type
 pub struct User;
 
 impl User {

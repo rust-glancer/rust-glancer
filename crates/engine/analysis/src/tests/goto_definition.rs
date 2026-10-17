@@ -8,13 +8,7 @@ use super::utils::{
 fn resolves_body_references_to_definition_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_definition"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_definition
 pub struct User;
 
 pub fn helper() -> User {
@@ -38,13 +32,7 @@ pub fn use_it() {
 fn resolves_binding_declarations_to_themselves() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_binding_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_binding_goto
 pub struct User;
 
 pub fn helper() -> User {
@@ -65,13 +53,7 @@ pub fn use_it() {
 fn lands_on_declaration_names_after_doc_comments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_doc_comment_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_doc_comment_goto
 /// User docs.
 pub struct User;
 
@@ -95,13 +77,7 @@ pub fn use_it() {
 fn resolves_body_macro_calls_to_macro_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_macro_call_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_macro_call_goto
 pub struct Text;
 
 pub fn helper(value: u64) -> Text { Text }
@@ -125,21 +101,7 @@ pub fn use_it(input: u64) {
 fn resolves_proc_macro_calls_to_their_implementation_source() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "goto_proc_macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:goto_proc_macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 /// Emits its input unchanged.
@@ -148,16 +110,7 @@ pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     input
 }
 
-//- /app/Cargo.toml
-[package]
-name = "goto_proc_macro_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-goto_proc_macros = { path = "../macros" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:goto_proc_macro_app root:app deps:goto_proc_macros
 use goto_proc_macros::emit;
 
 pub fn use_it() {
@@ -174,13 +127,7 @@ pub fn use_it() {
 fn named_module_targets_select_module_name() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_named_module_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_named_module_goto
 mod api {
     pub struct User;
 }
@@ -197,13 +144,7 @@ pub fn use_it(_: a$0pi::User) {} // goto("goto module")
 fn resolves_field_accesses_to_field_declarations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_field_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_field_goto
 pub struct Profile;
 
 pub struct User {
@@ -224,13 +165,7 @@ pub fn use_it(user: User) {
 fn resolves_body_local_field_accesses_to_field_declarations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_field_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_field_goto
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -252,13 +187,7 @@ pub fn use_it() {
 fn resolves_body_local_method_calls_to_method_declarations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_method_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_method_goto
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -284,13 +213,7 @@ pub fn use_it() {
 fn resolves_lifetime_parameterized_receiver_method_calls() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_lifetime_receiver_method_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_lifetime_receiver_method_goto
 fn missing<T>() -> T {
     loop {}
 }
@@ -361,13 +284,7 @@ pub fn use_it<'db>(
 fn resolves_associated_functions_and_enum_variants_in_body_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_associated_path_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_associated_path_goto
 pub struct Widget;
 
 impl Widget {
@@ -432,33 +349,13 @@ pub fn use_it(action: Action, value: i32) {
 fn resolves_unkeyed_inherent_associated_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 impl u32 {
     pub const MAX: u32 = 0;
     pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 pub fn use_it(bytes: [u8; 4]) {
     let _max = u32::M$0AX; // goto("goto primitive associated const").in_lib("app")
     let _value = u32::from_be_$0bytes(bytes); // goto("goto primitive associated function").in_lib("app")
@@ -475,30 +372,10 @@ pub fn use_it(bytes: [u8; 4]) {
 fn resolves_crate_prefixes_inside_body_type_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/helper", "crates/app"]
-resolver = "3"
-
-//- /crates/helper/Cargo.toml
-[package]
-name = "helper"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/helper/src/lib.rs
+//- /crates/helper/src/lib.rs crate:helper root:crates/helper
 pub struct Tool;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-helper = { path = "../helper" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:helper
 pub fn use_it() {
     let _tool: hel$0per::Tool = todo!(); // goto("goto crate prefix").in_lib("app")
 }
@@ -513,13 +390,7 @@ pub fn use_it() {
 fn resolves_tuple_field_accesses_to_tuple_field_declarations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_tuple_field_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_tuple_field_goto
 pub struct Left;
 pub struct Right;
 
@@ -539,13 +410,7 @@ pub fn use_it(pair: Pair) {
 fn resolves_direct_trait_method_calls_to_impl_methods() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_direct_trait_method_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_direct_trait_method_goto
 pub struct User;
 
 pub trait Identify {
@@ -570,13 +435,7 @@ pub fn use_it(user: User) {
 fn follows_the_selected_self_type_for_trait_method_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_selected_receiver_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_selected_receiver_goto
 pub trait Record {
     fn record(&self);
 }
@@ -638,13 +497,7 @@ pub fn explicit_reference(value: &&Predicate) {
 fn selects_trait_call_definitions_with_finalized_generic_arguments() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_call_definition_arguments"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_call_definition_arguments
 pub struct Source;
 
 pub trait Convert<T> {
@@ -696,13 +549,7 @@ pub fn use_it(source: Source) {
 fn navigates_blanket_impl_calls_and_preserves_trait_body_destinations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_call_definition_bodies"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_call_definition_bodies
 pub trait Named {
     fn name(&self) {}
 }
@@ -740,13 +587,7 @@ pub fn abstract_call<T: Named>(value: T) {
 fn navigates_trait_calls_to_body_local_impl_methods() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_call_definition_local"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_call_definition_local
 pub trait Named {
     fn name(&self);
 }
@@ -772,18 +613,7 @@ pub fn use_it() {
 fn navigates_trait_calls_through_deref_to_cross_crate_primitive_impls() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 pub trait Named {
     fn name(&self);
 }
@@ -805,16 +635,7 @@ impl Deref for Wrapper {
     fn deref(&self) -> &u8 { missing() }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::{Named, Wrapper};
 
 pub fn use_it(value: u8, wrapped: Wrapper) {
@@ -833,18 +654,7 @@ pub fn use_it(value: u8, wrapped: Wrapper) {
 fn resolves_structural_and_macro_generated_method_calls() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 #[lang = "deref"]
 pub trait Project {
     #[lang = "deref_target"]
@@ -883,16 +693,7 @@ impl Project for OwnedText {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::OwnedText;
 
 pub fn use_it(text: OwnedText, value: u32) {
@@ -911,13 +712,7 @@ pub fn use_it(text: OwnedText, value: u32) {
 fn resolves_use_and_signature_paths_to_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_signature_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_signature_goto
 mod api {
     pub trait Named {}
     pub struct User;
@@ -946,40 +741,13 @@ pub fn make(user: Us$0er) -> Us$1er { // goto("goto parameter type"), goto("goto
 fn resolves_bin_root_paths_to_library_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct Thing;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "app-bin"
-path = "src/main.rs"
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Api;
 
-//- /crates/app/src/main.rs
+//- /crates/app/src/main.rs crate:app root:crates/app deps:dep kind:bin name:app-bin
 fn main() {
     let _api: app::A$0pi = todo!(); // goto("goto bin root to library item").in_bin("app")
     let _thing: dep::Th$0ing = todo!(); // goto("goto bin root to dependency item").in_bin("app")
@@ -996,13 +764,7 @@ fn main() {
 fn resolves_standard_prelude_signature_paths() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_prelude_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_prelude_goto
 pub fn use_it(_: Str$0ing) {} // goto("goto prelude type").in_lib("analysis_prelude_goto")
 "#,
         expect![[r#"
@@ -1015,13 +777,7 @@ pub fn use_it(_: Str$0ing) {} // goto("goto prelude type").in_lib("analysis_prel
 fn resolves_standard_prelude_signature_paths_shadowed_by_non_type_names() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_prelude_shadow_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_prelude_shadow_goto
 const String: u8 = 0;
 
 pub fn value_shadow(_: Str$0ing) {} // goto("goto prelude type shadowed by value").in_lib("analysis_prelude_shadow_goto")
@@ -1045,13 +801,7 @@ mod macro_shadow {
 fn resolves_cursors_inside_out_of_line_nested_modules() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "nested_analysis"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:nested_analysis
 pub struct Api;
 pub mod outer;
 
@@ -1071,13 +821,7 @@ pub fn use_it(_: crate::A$0pi) {} // goto("goto from nested file").in_lib("neste
 fn resolves_field_declarations_and_field_type_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_field_signature_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_field_signature_goto
 pub struct Profile;
 
 pub struct User {
@@ -1095,13 +839,7 @@ pub struct User {
 fn resolves_import_alias_cursors_to_imported_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_import_alias_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_import_alias_goto
 mod api {
     pub struct User;
 }
@@ -1118,13 +856,7 @@ use api::User as Acc$0ount; // goto("goto import alias")
 fn resolves_self_in_impl_signatures_to_impl_self_type() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_impl_self_signature_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_impl_self_signature_goto
 pub struct User;
 
 impl User {
@@ -1143,13 +875,7 @@ impl User {
 fn resolves_body_local_structs_before_module_structs() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_struct_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_struct_goto
 pub struct User;
 
 pub fn make() {
@@ -1173,13 +899,7 @@ pub fn outside() {
 fn resolves_body_local_enum_variants() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_enum_variant_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_enum_variant_goto
 pub fn make() {
     enum Action {
         Start,
@@ -1199,13 +919,7 @@ pub fn make() {
 fn resolves_body_local_record_literals() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_record_literal_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_record_literal_goto
 pub struct GlobalId;
 
 pub fn make() {
@@ -1226,13 +940,7 @@ pub fn make() {
 fn resolves_body_local_value_shadowing_by_scope() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_value_shadowing_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_value_shadowing_goto
 pub struct Outer;
 pub struct Inner;
 
@@ -1266,13 +974,7 @@ pub fn make() {
 fn resolves_parent_body_local_items_from_nested_body_owners() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_owner_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_nested_body_owner_goto
 pub struct GlobalId;
 
 pub fn make() {
@@ -1304,13 +1006,7 @@ pub fn make() {
 fn resolves_body_local_associated_consts_and_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_assoc_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_assoc_goto
 pub struct GlobalId;
 
 pub fn make() {
@@ -1336,13 +1032,7 @@ pub fn make() {
 fn resolves_trait_associated_const_qualified_value_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_assoc_const_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_assoc_const_goto
 pub enum StmtKind {
     Let,
 }
@@ -1379,13 +1069,7 @@ pub fn use_it() {
 fn resolves_body_local_imported_paths_and_impl_headers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_import_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_import_goto
 pub struct GlobalId;
 pub struct LocalId;
 
@@ -1414,13 +1098,7 @@ pub fn use_it(id: GlobalId) {
 fn resolves_body_let_annotation_paths_with_body_context() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_annotation_goto"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_annotation_goto
 pub struct User;
 
 impl User {

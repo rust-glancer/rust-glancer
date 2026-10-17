@@ -6,13 +6,13 @@ use rg_syntax::{Edition, LexedStr, SyntaxKind};
 use syn::parse::Parser as _;
 
 use super::MarkedText;
-use crate::{FixtureMarker, FixtureMarkers, FixtureSpec};
+use crate::{FixtureFile, FixtureMarker, FixtureMarkers, FixtureSpec};
 
 // More annotations make a source line hard to follow; crowded lines use explicit query lists.
 const MAX_MARKERS_PER_LINE: usize = 3;
 
 pub struct InlineFixture {
-    pub files: Vec<(String, String)>,
+    pub files: Vec<FixtureFile>,
     pub markers: FixtureMarkers,
     pub queries: Vec<InlineQuery>,
 }
@@ -40,7 +40,9 @@ impl InlineFixture {
                     .map(|(name, marker)| (name.to_string(), marker.clone())),
             );
             queries.extend(cleaned.queries);
-            files.push((file.relative_path().to_string(), cleaned.text.text));
+            let mut file = file.clone();
+            file.contents = cleaned.text.text;
+            files.push(file);
         }
 
         Self {

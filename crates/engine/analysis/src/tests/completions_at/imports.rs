@@ -6,18 +6,7 @@ use crate::tests::utils::{check_analysis, check_analysis_with_fake_sysroot};
 fn completes_unqualified_names_with_bounded_auto_imports() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["catalog", "app"]
-resolver = "3"
-
-//- /catalog/Cargo.toml
-[package]
-name = "catalog"
-version = "0.1.0"
-edition = "2024"
-
-//- /catalog/src/lib.rs
+//- /catalog/src/lib.rs crate:catalog root:catalog
 pub mod collections {
     pub struct BTreeMap;
     pub struct HashMap;
@@ -58,16 +47,7 @@ pub struct DisabledWidget;
 
 pub fn make_widget() {}
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-catalog = { path = "../catalog" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:catalog
 use catalog::collections::BTreeMap;
 
 fn types() {
@@ -139,13 +119,7 @@ fn values() {
 fn completes_body_local_imported_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_import_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_import_completions
 pub fn use_it() {
     mod local {
         pub struct User;
@@ -177,23 +151,10 @@ pub fn use_it() {
 fn completes_unqualified_import_roots_and_external_roots() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_roots"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "analysis-unqualified-roots"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_roots
 pub struct Api;
 
-//- /src/main.rs
+//- /src/main.rs crate:analysis_unqualified_roots kind:bin name:analysis-unqualified-roots
 use analysis_unqualified_roots$0; // complete("unqualified use root completions").in_bin("analysis_unqualified_roots")
 
 fn main() {
@@ -216,13 +177,7 @@ fn main() {
 fn completes_absolute_keyword_rooted_paths_and_root_keywords() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_rooted_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_rooted_path_completions
 pub mod parent {
     pub mod sibling {
         pub struct Sibling;
@@ -257,13 +212,7 @@ pub mod parent {
 fn completes_unqualified_prelude_names() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_unqualified_prelude_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_unqualified_prelude_completions
 pub fn use_it() {
     let _value: Vec$0; // complete("unqualified prelude completions").in_lib("analysis_unqualified_prelude_completions")
 }
@@ -299,13 +248,7 @@ pub fn use_it() {
 fn completes_qualified_paths_in_use_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_use_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_use_path_completions
 use crate::api::Ap$0; // complete("use path completions")
 
 pub mod api {
@@ -342,13 +285,7 @@ pub mod api {
 fn completes_qualified_paths_inside_braced_use_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_braced_use_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_braced_use_path_completions
 use crate::api::{Ap$0}; // complete("braced use path completions")
 
 pub mod api {
@@ -368,13 +305,7 @@ pub mod api {
 fn completes_qualified_paths_at_bare_use_path_coloncolon() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bare_use_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bare_use_path_completions
 use crate::api_notify::$0; // complete("bare use path completions")
 
 pub mod api_notify {
@@ -391,13 +322,7 @@ pub mod api_notify {
 fn completes_qualified_paths_at_incomplete_bare_use_path_coloncolon() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_incomplete_bare_use_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_incomplete_bare_use_path_completions
 pub mod api_notify {
     pub struct Notification;
 }
@@ -414,13 +339,7 @@ use crate::api_notify::$0 // complete("incomplete bare use path completions")
 fn completes_sysroot_paths_at_incomplete_bare_use_path_coloncolon() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_sysroot_bare_use_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_sysroot_bare_use_path_completions
 use std::sync::$0 // complete("incomplete sysroot use path completions").in_lib("analysis_sysroot_bare_use_path_completions")
 
 #[derive(Debug)]

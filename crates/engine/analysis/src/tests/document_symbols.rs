@@ -6,13 +6,7 @@ use super::utils::{DocumentSymbolsQuery, check_document_symbol_queries, check_do
 fn outlines_macro_generated_items_at_call_site() {
     check_document_symbols(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_macro_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_macro_document_symbols
 macro_rules! make_id {
     ($name:ident) => {
         struct $name;
@@ -41,13 +35,7 @@ make_named!();
 fn outlines_semantic_and_body_local_items() {
     check_document_symbols(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_document_symbols
 pub const DEFAULT_ID: u32 = 1;
 pub static LIMIT: u8 = 4;
 pub type UserId = u32;
@@ -136,13 +124,7 @@ pub fn make() {
 fn outlines_more_body_local_items() {
     check_document_symbols(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_more_body_local_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_more_body_local_document_symbols
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -198,23 +180,10 @@ pub fn use_it() {
 fn outlines_bin_owned_out_of_line_module_files() {
     check_document_symbols(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bin_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "analysis-bin"
-path = "src/main.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bin_document_symbols
 pub struct Api;
 
-//- /src/main.rs
+//- /src/main.rs crate:analysis_bin_document_symbols kind:bin name:analysis-bin
 mod cli;
 
 fn main() {}
@@ -246,13 +215,7 @@ pub fn run() {}
 fn outlines_module_declarations_and_inline_module_children() {
     check_document_symbol_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_document_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_module_document_symbols
 mod api {
     pub struct User {
         pub id: u32,

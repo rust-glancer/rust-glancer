@@ -6,13 +6,7 @@ use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 fn implements_required_trait_members_with_concrete_substitution() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_member_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_member_actions
 trait Service<T> {
     type Output;
     type Defaulted = T;
@@ -66,13 +60,7 @@ fn trait_member_action_for_signature_types_that_need_imports() {
     // nominal-type qualification/import work still needed for the code this action inserts.
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_member_type_paths"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_member_type_paths
 mod protocol {
     pub struct Request;
 
@@ -114,13 +102,7 @@ impl protocol::Service for Worker {$0 // code_actions("out-of-scope signature ty
 fn complete_and_inherent_impls_have_no_trait_member_action() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completed_trait_member_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completed_trait_member_actions
 trait Service {
     fn required(&self);
 }
@@ -145,13 +127,7 @@ impl Worker {$0 // code_actions("inherent impl")
 fn imports_exact_unresolved_type_and_value_names() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_import_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_import_actions
 mod models {
     pub struct User;
     pub struct Client;
@@ -246,13 +222,7 @@ fn load() {
 fn imports_std_type_used_as_qualified_path_root() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_std_import_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_std_import_actions
 fn load() {
     let _ = Arc$0::new(1); // code_actions("unresolved std path root").in_lib("analysis_std_import_actions")
 }
@@ -275,33 +245,13 @@ fn load() {
 fn import_action_distinguishes_private_imports_from_reexports() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["catalog", "app"]
-resolver = "3"
-
-//- /catalog/Cargo.toml
-[package]
-name = "catalog"
-version = "0.1.0"
-edition = "2024"
-
-//- /catalog/src/lib.rs
+//- /catalog/src/lib.rs crate:catalog root:catalog
 pub mod collections {
     pub struct BTreeMap;
     pub struct HashMap;
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-catalog = { path = "../catalog" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:catalog
 use catalog::collections::HashMap;
 pub(crate) use catalog::collections::BTreeMap;
 
@@ -361,13 +311,7 @@ mod nested {
 fn import_actions_preserve_ambiguity_and_require_explicit_invocation() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_ambiguous_import_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_ambiguous_import_actions
 mod alpha { pub struct User; }
 mod beta { pub struct User; }
 
@@ -413,13 +357,7 @@ fn load() {
 fn import_action_is_absent_for_a_resolved_name() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_resolved_import_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_resolved_import_actions
 struct User;
 
 fn load() {
@@ -436,13 +374,7 @@ fn load() {
 fn replaces_resolved_qualified_paths_with_imports() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_qualified_path_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_qualified_path_actions
 mod models {
     pub struct User<T>(T);
 
@@ -496,13 +428,7 @@ fn load() {
 fn qualified_path_reuses_an_existing_import() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_existing_import_path_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_existing_import_path_actions
 mod models { pub struct User; }
 use crate::models::User;
 
@@ -529,13 +455,7 @@ fn load() {
 fn qualified_path_declines_conflicts_and_associated_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_excluded_qualified_path_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_excluded_qualified_path_actions
 mod models {
     pub struct User;
     pub enum State { Ready }
@@ -584,13 +504,7 @@ fn body_local() {
 fn trait_member_action_formats_a_nested_one_line_impl_and_skips_unresolved_traits() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_trait_member_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_nested_trait_member_actions
 trait Service {
     type Output;
     fn run(&self) -> Self::Output;
@@ -637,13 +551,7 @@ impl Unknown for Worker {$0} // code_actions("unresolved trait")
 fn imports_one_character_and_reexported_names_into_the_innermost_module() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_import_context_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_import_context_actions
 mod models {
     pub struct X;
     pub struct User;
@@ -709,13 +617,7 @@ fn reexport(_: PublicUser$0) {} // code_actions("re-export import")
 fn import_action_excludes_private_items_and_macro_call_syntax() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_excluded_import_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_excluded_import_actions
 mod hidden { struct Secret; }
 mod values {
     pub enum State { Ready }
@@ -745,13 +647,7 @@ fn load(_: Secret$0) { // code_actions("private item")
 fn qualified_path_supports_self_and_super_roots_but_not_use_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_qualified_root_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_qualified_root_actions
 mod outer {
     pub struct Local;
     pub mod models { pub struct User; }
@@ -809,30 +705,10 @@ mod outer {
 fn qualified_path_supports_external_crate_roots() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["catalog", "app"]
-resolver = "3"
-
-//- /catalog/Cargo.toml
-[package]
-name = "catalog"
-version = "0.1.0"
-edition = "2024"
-
-//- /catalog/src/lib.rs
+//- /catalog/src/lib.rs crate:catalog root:catalog
 pub struct External;
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-catalog = { path = "../catalog" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:catalog
 fn load(_: catalog::External$0) {} // code_actions("external path").in_lib("app")
 "#,
         expect![[r#"
@@ -851,13 +727,7 @@ fn load(_: catalog::External$0) {} // code_actions("external path").in_lib("app"
 fn qualified_path_supports_std_roots() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_std_qualified_path_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_std_qualified_path_actions
 fn load(_: std::sync::Arc$0<u8>) {} // code_actions("std path").in_lib("analysis_std_qualified_path_actions")
 "#,
         expect![[r#"
@@ -876,13 +746,7 @@ fn load(_: std::sync::Arc$0<u8>) {} // code_actions("std path").in_lib("analysis
 fn orders_independent_actions_stably_at_the_same_position() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_combined_code_actions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_combined_code_actions
 trait Service {
     fn required(&self);
 }

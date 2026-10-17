@@ -19,14 +19,14 @@
 //! lines and cursor positions intact, including spaces before a cursor at EOF.
 
 use test_fixture::{
-    FixtureMarkers,
+    FixtureFile, FixtureMarkers,
     testonly::inline::{InlineArgument, InlineCall, InlineFixture},
 };
 
 use super::{AnalysisQuery, ReferenceQuery};
 
 pub(super) struct InlineAnalysisFixture {
-    pub(super) files: Vec<(String, String)>,
+    pub(super) files: Vec<FixtureFile>,
     pub(super) markers: FixtureMarkers,
     pub(super) queries: Vec<AnalysisQuery>,
 }
@@ -170,12 +170,7 @@ fn strips_directives_without_changing_source_or_marker_positions() {
 
     let fixture = InlineAnalysisFixture::parse(
         r##"
-//- /Cargo.toml
-[package]
-name = "inline_queries"
-version = "0.1.0"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:inline_queries edition:2015
 let literal = "\$0 and \$1 and \$11$ and \$named$";
 let raw = r#"// ty("inside a string")"#;
 /* // hover("inside a block comment") */
@@ -183,18 +178,13 @@ let raw = r#"// ty("inside a string")"#;
 let pair$binding$ = (1$0, 2$1); // ty("binding, \"quoted\""), ty("left"), ty(r#"right"#)
 let digits = 1$0$2; // ty("digits")
 name.$11 // complete_with_source("members").matching("na").in_lib("inline_queries")
-//- /src/main.rs
+//- /src/main.rs crate:inline_queries edition:2015 kind:bin
 use $0 // complete_keywords_with_source("import at EOF").in_bin("inline_queries")
 "##,
     );
     let expected = FixtureSpec::parse(
         r##"
-//- /Cargo.toml
-[package]
-name = "inline_queries"
-version = "0.1.0"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:inline_queries edition:2015
 let literal = "\$0 and \$1 and \$11$ and \$named$";
 let raw = r#"// ty("inside a string")"#;
 /* // hover("inside a block comment") */
@@ -202,21 +192,11 @@ let raw = r#"// ty("inside a string")"#;
 let pair$binding$ = (1$left$, 2$right$);
 let digits = 1$digits$2;
 name.$member$
-//- /src/main.rs
+//- /src/main.rs crate:inline_queries edition:2015 kind:bin
 use $0
 "##,
     );
-    let expected_files = expected
-        .files()
-        .iter()
-        .map(|file| {
-            (
-                file.relative_path().to_string(),
-                file.contents().to_string(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(fixture.files, expected_files);
+    assert_eq!(fixture.files, expected.files());
     let expected_markers = ["binding", "left", "right", "digits", "member", "0"];
     assert_eq!(fixture.queries.len(), expected_markers.len());
     for (query, expected_marker) in fixture.queries.iter().zip(expected_markers) {

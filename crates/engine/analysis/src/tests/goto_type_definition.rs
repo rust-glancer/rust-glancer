@@ -6,13 +6,7 @@ use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 fn resolves_body_expression_type_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_body"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_body
 pub struct User;
 pub struct Profile;
 
@@ -44,13 +38,7 @@ pub fn use_it(account: Account) {
 fn resolves_type_definitions_through_references_try_and_await_wrappers() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_wrappers"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_wrappers
 pub struct Error;
 pub struct User;
 
@@ -84,13 +72,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 fn resolves_signature_type_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_signature"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_signature
 pub struct User;
 pub struct Profile;
 
@@ -122,13 +104,7 @@ impl User {
 fn resolves_nominal_types_inside_a_transparent_generic_alias() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_alias"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_alias
 pub struct Wrapper<T>(pub T);
 pub struct User;
 pub type Alias<T> = Wrapper<T>;
@@ -153,13 +129,7 @@ pub fn inspect(_: Ali$0as<User>) { // goto_type("goto nominal types inside a sig
 fn resolves_body_local_type_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_body_local"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_body_local
 pub struct User;
 
 pub fn use_it() {
@@ -180,13 +150,7 @@ pub fn use_it() {
 fn resolves_body_local_generic_impl_method_return_type_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_body_local_impl_generic"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_body_local_impl_generic
 pub fn use_it() {
     struct User;
     struct Wrapper<T> {
@@ -213,13 +177,7 @@ pub fn use_it() {
 fn resolves_enum_pattern_payload_type_definitions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_goto_type_enum_pattern"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_goto_type_enum_pattern
 pub struct User;
 
 pub enum Option<T> {

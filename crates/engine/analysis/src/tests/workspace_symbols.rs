@@ -6,18 +6,7 @@ use super::utils::check_workspace_symbols;
 fn searches_symbols_across_workspace_targets_and_dependencies() {
     check_workspace_symbols(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 pub struct DepApi {
     pub dep_api_field: u32,
 }
@@ -26,23 +15,7 @@ pub trait DepApiTrait {
     fn dep_api_method(&self);
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "app-bin"
-path = "src/main.rs"
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 pub struct Api {
     pub api_field: u32,
 }
@@ -55,7 +28,7 @@ pub enum ApiState {
     ApiReady,
 }
 
-//- /crates/app/src/main.rs
+//- /crates/app/src/main.rs crate:app root:crates/app deps:dep kind:bin name:app-bin
 struct CliApi;
 
 impl CliApi {
@@ -84,13 +57,7 @@ impl CliApi {
 fn searches_module_declarations() {
     check_workspace_symbols(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_workspace_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_module_workspace_symbols
 mod api;
 
 mod inline_api {

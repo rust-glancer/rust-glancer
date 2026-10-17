@@ -7,6 +7,8 @@ mod model;
 mod path;
 mod rustc;
 mod sysroot;
+#[doc(hidden)]
+pub mod testonly;
 
 #[cfg(test)]
 mod tests;

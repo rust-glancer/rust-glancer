@@ -5,13 +5,7 @@ use crate::tests::utils::check_analysis;
 fn completes_specialized_strings_macro_fragments_and_postfix_transforms() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "specialized_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:specialized_completions
 const MODULE_CAPTURE: usize = 1;
 static STATIC_CAPTURE: usize = 2;
 
@@ -102,21 +96,7 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
 fn completes_attributes_lifetimes_labels_visibility_extern_and_const_sites() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "dependency", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro_attribute]
@@ -129,30 +109,10 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::new()
 }
 
-//- /dependency/Cargo.toml
-[package]
-name = "dependency"
-version = "0.1.0"
-edition = "2024"
-
-//- /dependency/src/lib.rs
+//- /dependency/src/lib.rs crate:dependency root:dependency
 pub struct Dependency;
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-default = []
-serde-support = []
-
-[dependencies]
-macros = { path = "../macros" }
-dependency = { path = "../dependency" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:macros,dependency features:default,serde-support cfg:feature=default
 const LIMIT: usize = 8;
 static STATIC_LIMIT: usize = 16;
 
@@ -237,13 +197,7 @@ fn completes_missing_trait_impl_members_with_instantiated_stubs() {
     // we insert for the user even though the enclosing application is `Service<u8>`.
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_missing_trait_member_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_missing_trait_member_completions
 pub trait Service<T> {
     /// The response selected by an implementation.
     type Output;
@@ -304,13 +258,7 @@ mod nested {
 fn trait_impl_member_introducers_filter_and_replace_the_whole_prefix() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_member_introducer_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_member_introducer_completions
 trait Service {
     type Output;
     const LIMIT: usize;
@@ -366,13 +314,7 @@ impl Service for ConstWorker {
 fn completes_module_scope_macro_invocations_only() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_macro_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_module_macro_completions
 macro_rules! local_item {
     () => { struct Generated; };
 }
@@ -410,13 +352,7 @@ tools::nested_i$0!(); // complete_verbose_with_source("qualified module macro")
 fn completes_conventional_out_of_line_module_names() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_module_declaration_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_module_declaration_completions
 mod already;
 mod pars$0; // complete_verbose_with_source("root module declaration")
 #[path = "custom.rs"]
@@ -470,20 +406,7 @@ pub struct Child;
 fn completes_modules_from_semantic_file_contexts() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "semantic_module_context_completions"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-
-[[bin]]
-name = "semantic-context-tool"
-path = "src/tool.rs"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:semantic_module_context_completions
 #[path = "custom_imp.rs"]
 mod implementation;
 
@@ -496,7 +419,7 @@ pub struct Beside;
 //- /src/custom_imp/below.rs
 pub struct Below;
 
-//- /src/tool.rs
+//- /src/tool.rs crate:semantic_module_context_completions kind:bin name:semantic-context-tool
 mod roo$0; // complete_verbose_with_source("custom target root").in_bin("semantic_module_context_completions").matching("root_child")
 
 //- /src/root_child.rs
@@ -525,13 +448,7 @@ pub struct WrongChild;
 fn completes_qualified_and_unqualified_body_macros() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_macro_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_macro_completions
 /// Builds a value through an unqualified declarative macro.
 macro_rules! make_value {
     () => { 1u8 };
@@ -618,21 +535,7 @@ pub fn use_it() {
 fn proc_macro_completions_keep_export_identity_and_hide_implementation_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "completion_proc_macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:completion_proc_macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro]
@@ -656,16 +559,7 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn leaked_value() {}
 pub struct LeakedType;
 
-//- /app/Cargo.toml
-[package]
-name = "completion_proc_macro_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-completion_proc_macros = { path = "../macros" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:completion_proc_macro_app root:app deps:completion_proc_macros
 pub mod already_invoked;
 pub mod attribute;
 pub mod derive;

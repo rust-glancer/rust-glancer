@@ -1,8 +1,8 @@
-//! Analysis tests run queries against small Cargo fixtures and snapshot the answers. Add a test
+//! Analysis tests run queries against small Rust fixtures and snapshot the answers. Add a test
 //! to the module for the behavior being checked, and keep the fixture focused on that behavior.
 //!
-//! Start with `check_analysis`. Each `//- /path` starts a fixture file; include a Cargo manifest
-//! and the Rust source needed by the test:
+//! Start with `check_analysis`. Each `//- /path` starts a fixture file. Put `crate:name` on a
+//! crate root to declare its package directly, then include the Rust source needed by the test:
 //!
 //! ```text
 //! use expect_test::expect;
@@ -12,13 +12,7 @@
 //! fn infers_a_byte() {
 //!     check_analysis(
 //!         r#"
-//! //- /Cargo.toml
-//! [package]
-//! name = "analysis_byte"
-//! version = "0.1.0"
-//! edition = "2024"
-//!
-//! //- /src/lib.rs
+//! //- /src/lib.rs crate:analysis_byte
 //! pub fn demo() {
 //!     let byte = 1_u8$0; // ty("literal")
 //!     let copy$0 = byte; // ty("binding")
@@ -31,6 +25,11 @@
 //!     );
 //! }
 //! ```
+//!
+//! The default edition is 2024 and the default target kind is `lib`. For several packages, use
+//! `root:app` for a package directory and `deps:api` for its dependency. A root with
+//! `kind:bin name:tool` declares a binary in that same package. See `rg_workspace::testonly`
+//! for the header options. Rust files still live on disk; these fixtures do not run Cargo.
 //!
 //! Put a marker exactly where an editor's cursor would be. Numeric IDs are local to each line,
 //! so `$0` can be reused on the next line or in another file. With several markers, pair queries

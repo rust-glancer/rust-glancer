@@ -6,13 +6,7 @@ use super::utils::{AnalysisQuery, ReferenceQuery, check_analysis, check_analysis
 fn finds_common_reference_subjects() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_references
 pub struct User {
     na$field_ref$me: Name,
 }
@@ -72,13 +66,7 @@ pub fn use_it() {
 fn finds_record_constructor_references() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_constructor_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_record_constructor_references
 pub mod model {
     pub struct Qual$qualified_decl$ified<T> {
         pub value: T,
@@ -167,13 +155,7 @@ pub fn make(value: u8) {
 fn finds_item_initializer_references() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_item_initializer_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_item_initializer_references
 pub const LIMIT: u32 = 3;
 pub static CURRENT: u32 = LI$0MIT; // references("const references", ReferenceQuery::all())
 
@@ -194,13 +176,7 @@ pub fn use_it() -> u32 {
 fn finds_body_macro_call_references() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_macro_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_macro_references
 pub struct Text;
 
 pub fn helper(value: u64) -> Text { Text }
@@ -254,13 +230,7 @@ pub fn use_it(input: u64) {
 fn local_binding_method_receiver_shadows_same_name_function() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_method_receiver_shadow_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_method_receiver_shadow_references
 pub fn bar(baz: u8) -> u8 {
     fo$fn_ref$o(baz)
 }
@@ -291,13 +261,7 @@ fn foo(baz: u8) -> u8 {
 fn finds_body_local_method_references() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_method_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_method_references
 pub struct Id;
 
 pub fn use_it() {
@@ -325,13 +289,7 @@ pub fn use_it() {
 fn finds_more_body_local_item_references() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_more_body_local_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_more_body_local_references
 pub struct GlobalId;
 
 pub fn use_it() {
@@ -383,13 +341,7 @@ pub fn use_it() {
 fn finds_scope_ordered_body_local_value_references() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_value_shadowing_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_value_shadowing_references
 pub struct Outer;
 pub struct Inner;
 
@@ -430,13 +382,7 @@ pub fn make() {
 fn finds_parent_body_local_references_from_nested_body_owners() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_nested_body_owner_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_nested_body_owner_references
 pub struct GlobalId;
 
 pub fn make() {
@@ -485,13 +431,7 @@ pub fn make() {
 fn finds_body_local_associated_item_references() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_assoc_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_assoc_references
 pub struct GlobalId;
 
 pub fn make() {
@@ -522,13 +462,7 @@ pub fn make() {
 fn finds_parent_body_local_references_inside_associated_item_bodies() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_assoc_body_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_assoc_body_references
 pub struct GlobalId;
 
 pub fn make() {
@@ -571,13 +505,7 @@ pub fn make() {
 fn finds_lowercase_const_references_from_ambiguous_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_ambiguous_pattern_const_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_ambiguous_pattern_const_references
 pub const re$0ady: u8 = 1; // references("lowercase const references from ambiguous pattern", ReferenceQuery::all())
 
 pub fn use_it(value: u8) {
@@ -599,34 +527,14 @@ pub fn use_it(value: u8) {
 fn reference_scopes_handle_external_declarations() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/helper", "crates/app"]
-resolver = "3"
-
-//- /crates/helper/Cargo.toml
-[package]
-name = "helper"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/helper/src/lib.rs
+//- /crates/helper/src/lib.rs crate:helper root:crates/helper
 pub struct Tool;
 
 pub fn helper_use(tool: Tool) {
     let _again: Tool = tool;
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-helper = { path = "../helper" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:helper
 pub fn use_it() {
     let tool: helper::To$scoped_type_ref$ol = todo!();
     let _again: helper::Tool = tool;
@@ -663,13 +571,7 @@ pub fn use_it() {
 fn reference_file_selection_honors_current_and_explicit_file_sets() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reference_file_selection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reference_file_selection
 mod other;
 mod skipped;
 
@@ -719,46 +621,15 @@ pub fn use_elsewhere(_: User) {}
 fn scoped_references_from_dependency_include_reverse_dependency_uses() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/app"]
-exclude = ["dep", "helper"]
-resolver = "3"
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
+//- /dep/src/lib.rs crate:dep root:dep origin:dependency
 pub struct A$0pi; // references("dependency-scoped type references", ReferenceQuery::libs(&["dep", "helper", "app"])).in_lib("dep")
 
 pub fn dep_use(_: Api) {}
 
-//- /helper/Cargo.toml
-[package]
-name = "helper"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /helper/src/lib.rs
+//- /helper/src/lib.rs crate:helper root:helper origin:dependency deps:dep
 pub fn helper_use(_: dep::Api) {}
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../../dep" }
-helper = { path = "../../helper" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep,helper
 pub fn app_use(_: dep::Api) {
     helper::helper_use(todo!());
 }
@@ -777,13 +648,7 @@ pub fn app_use(_: dep::Api) {
 fn references_search_declared_spelling_for_imported_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_import_alias_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_import_alias_references
 pub mod api {
     pub struct Us$0er; // references("aliased type references", ReferenceQuery::all())
 }
@@ -804,13 +669,7 @@ pub fn use_it(_: Account) {}
 fn finds_self_references_for_nominal_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_self_references"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_self_references
 pub struct Us$0er; // references("type references including Self", ReferenceQuery::all())
 
 impl User {
@@ -835,13 +694,7 @@ fn finds_named_and_relative_module_references() {
     // Query both targets to show that each segment is resolved separately.
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "module_reference_filter"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:module_reference_filter
 pub mod pa$0rent; // references("parent module references", ReferenceQuery::all())
 pub struct Root;
 pub fn named(_: parent::Item) {}
@@ -858,7 +711,7 @@ pub fn root(_: super::Root) {}
 use super::Item;
 use super::super::Root;
 
-//- /src/main.rs
+//- /src/main.rs crate:module_reference_filter kind:bin
 use module_reference_filter::Root;
 fn main() {}
 "#,

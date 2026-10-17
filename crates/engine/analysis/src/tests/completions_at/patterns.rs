@@ -5,13 +5,7 @@ use crate::tests::utils::check_analysis;
 fn completes_qualified_paths_in_control_flow_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_control_flow_pattern_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_control_flow_pattern_path_completions
 pub mod api {
     pub struct Profile(pub u8);
     pub struct User(pub u8);
@@ -48,13 +42,7 @@ pub fn use_it(user: api::User, users: Users) {
 fn completes_for_loop_pattern_bindings() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_for_pattern_binding_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_for_pattern_binding_completions
 pub struct Items;
 
 pub fn use_it(items: Items) {
@@ -77,13 +65,7 @@ pub fn use_it(items: Items) {
 fn completes_pattern_sites_without_expression_only_candidates() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_pattern_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_pattern_completions
 pub enum Action {
     Start,
     Stop { code: u8 },
@@ -271,13 +253,7 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
 fn completes_pattern_keywords_from_request_local_source() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_pattern_keyword_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_pattern_keyword_completions
 pub fn inspect(value: bool) {
     if let r$0 = value {} // complete_verbose_with_source("ref pattern keyword")
     if let m$0 = value {} // complete_with_source("mut pattern keyword")
@@ -303,13 +279,7 @@ pub fn inspect(value: bool) {
 fn completes_only_invocation_macros_in_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_pattern_macro_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_pattern_macro_completions
 #[rustc_builtin_macro]
 pub macro DeriveOnly($item:item) {}
 
@@ -336,13 +306,7 @@ pub fn inspect(event: Event) {
 fn completes_body_local_pattern_constructors_by_shape() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_pattern_constructor_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_pattern_constructor_completions
 pub fn inspect() {
     struct LocalTuple(u8);
     struct LocalRecord { field: u8 }

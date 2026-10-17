@@ -6,13 +6,7 @@ use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 fn hovers_with_formatted_function_signatures() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_signatures"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_signatures
         /// Resolves an implementation header.
         pub(crate) fn impl_header_$0with<'query, D, I, R>( // hover("hover long function signature")
             item_paths: &ItemPathQuery<'query, D, I>,
@@ -53,13 +47,7 @@ fn hovers_with_formatted_function_signatures() {
 fn hovers_over_documented_items_and_usages() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover
         /// User account stored by the service.
         pub struct User {
             /// Display name shown in the UI.
@@ -128,13 +116,7 @@ fn hovers_over_documented_items_and_usages() {
 fn hovers_over_impl_fn_trait_parenthesized_args() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_hover_fn_trait_args"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_hover_fn_trait_args
 pub struct AttrVec;
 
 pub fn configure(f$0: impl FnOnce(&mut AttrVec)) { // hover("hover impl FnOnce parenthesized args").in_lib("analysis_hover_fn_trait_args")
@@ -156,13 +138,7 @@ pub fn configure(f$0: impl FnOnce(&mut AttrVec)) { // hover("hover impl FnOnce p
 fn hovers_over_body_macro_calls_without_exposing_generated_internals() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_body_macros"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_body_macros
         pub struct Text;
 
         /// Internal helper used by macro output.
@@ -198,13 +174,7 @@ fn hovers_over_body_macro_calls_without_exposing_generated_internals() {
 fn hovers_over_enum_variants_and_body_local_items() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_locals"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_locals
         pub enum Event {
             /// Event has started.
             Sta$0rted, // hover("hover enum variant declaration")
@@ -304,13 +274,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
 fn hovers_over_more_body_local_items() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_more_locals"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_more_locals
         pub struct GlobalId;
 
         pub fn demo() {
@@ -375,13 +339,7 @@ fn hovers_over_more_body_local_items() {
 fn hovers_over_documented_module_declarations() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_modules"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_modules
         pub mod a$0pi; // hover("hover out-of-line module")
 
         /// Inline helpers.
@@ -423,31 +381,11 @@ fn hovers_over_documented_module_declarations() {
 fn hovers_over_crate_root_path_names_and_docs() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/dep", "crates/app"]
-resolver = "3"
-
-//- /crates/dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/dep/src/lib.rs
+//- /crates/dep/src/lib.rs crate:dep root:crates/dep
 //! Dependency crate docs.
 pub struct Thing;
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
 //! Application crate docs.
 pub struct Api;
 
@@ -481,18 +419,7 @@ pub fn use_roots(_: cra$0te::Api, _: de$1p::Thing) {} // hover("hover crate root
 fn hovers_over_method_when_unrelated_workspace_crate_has_same_named_trait_method() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/shared", "crates/unrelated", "crates/app"]
-resolver = "3"
-
-//- /crates/shared/Cargo.toml
-[package]
-name = "shared"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/shared/src/lib.rs
+//- /crates/shared/src/lib.rs crate:shared root:crates/shared
 pub struct Maybe<T>(T);
 pub struct User;
 pub struct Label;
@@ -503,16 +430,7 @@ impl<T> Maybe<T> {
     }
 }
 
-//- /crates/unrelated/Cargo.toml
-[package]
-name = "unrelated"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/unrelated/src/lib.rs
+//- /crates/unrelated/src/lib.rs crate:unrelated root:crates/unrelated deps:shared
 pub trait Layer<S> {
     fn and_then(self) -> S;
 }
@@ -523,16 +441,7 @@ impl<T, S> Layer<S> for shared::Maybe<T> {
     }
 }
 
-//- /crates/app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-shared = { path = "../shared" }
-
-//- /crates/app/src/lib.rs
+//- /crates/app/src/lib.rs crate:app root:crates/app deps:shared
 pub fn demo(maybe: shared::Maybe<shared::User>) {
     let _label = maybe.an$0d_then(); // hover("hover visible method").in_lib("app")
 }
@@ -553,18 +462,7 @@ pub fn demo(maybe: shared::Maybe<shared::User>) {
 fn hovers_over_primitive_method_reached_through_deref() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 #[lang = "deref"]
 pub trait Project {
     #[lang = "deref_target"]
@@ -590,16 +488,7 @@ impl Project for OwnedText {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::OwnedText;
 pub fn use_it(text: OwnedText) {
     let _found = text.con$0tains("needle"); // hover("hover primitive method through Deref").in_lib("app")
@@ -623,18 +512,7 @@ pub fn use_it(text: OwnedText) {
 fn hovers_over_unkeyed_inherent_associated_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 impl u32 {
     /// Largest represented value.
     pub const MAX: u32 = 0;
@@ -643,16 +521,7 @@ impl u32 {
     pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 pub fn use_it(bytes: [u8; 4]) {
     let _max = u32::M$0AX; // hover("hover primitive associated const").in_lib("app")
     let _value = u32::from_be_$0bytes(bytes); // hover("hover primitive associated function").in_lib("app")
@@ -686,13 +555,7 @@ pub fn use_it(bytes: [u8; 4]) {
 fn hovers_with_bounded_item_previews() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_hover_previews"
-        version = "0.0.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_hover_previews
         pub struct Pa$0cket { // hover("hover struct preview")
             pub first: u8,
             pub second: u8,

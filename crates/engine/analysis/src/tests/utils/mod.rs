@@ -12,7 +12,7 @@ use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::testonly::ViewFixture;
 use rg_parse::ParseDb;
 use rg_semantic_ir::testonly::SemanticIrFixture;
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
     fixture_path_for_snapshot,
@@ -425,9 +425,7 @@ struct AnalysisFixtureDb {
 
 impl AnalysisFixtureDb {
     fn build_from_crate(fixture: CrateFixture) -> Self {
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build");
+        let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
         Self::build_from_crate_with_workspace(fixture, workspace)
     }
 
@@ -435,10 +433,8 @@ impl AnalysisFixtureDb {
         let fixture = fixture.with_fake_sysroot();
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
             .expect("fake sysroot should be complete");
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build")
-                .with_sysroot_sources(Some(sysroot));
+        let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
+            .with_sysroot_sources(Some(sysroot));
         Self::build_from_crate_with_workspace(fixture, workspace)
     }
 

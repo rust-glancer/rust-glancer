@@ -6,13 +6,7 @@ use super::utils::check_analysis;
 fn finds_body_symbols_at_offsets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_symbol_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_symbol_at
 pub struct User;
 
 pub fn helper() -> User {
@@ -37,13 +31,7 @@ pub fn use_it() {
 fn finds_item_and_signature_symbols_at_offsets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_signature_symbol_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_signature_symbol_at
 pub struct Us$0er; // symbol("symbol at struct declaration")
 
 pub trait Na$0med { // symbol("symbol at trait declaration")
@@ -67,13 +55,7 @@ pub fn make(user: Us$0er) -> Us$1er { // symbol("symbol at parameter type"), sym
 fn finds_body_macro_call_symbols_at_offsets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_macro_symbol_at"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_macro_symbol_at
 pub struct Text;
 
 pub fn helper(value: u64) -> Text { Text }
@@ -96,13 +78,7 @@ pub fn use_it(input: u64) {
 fn finds_body_local_struct_symbols_at_offsets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_local_struct_symbol"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_local_struct_symbol
 pub struct User;
 
 pub fn make() {
@@ -122,13 +98,7 @@ pub fn make() {
 fn finds_more_body_local_item_symbols_at_offsets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_more_body_local_symbols"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_more_body_local_symbols
 pub struct GlobalId;
 
 pub fn use_it() {

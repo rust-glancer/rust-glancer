@@ -6,18 +6,7 @@ use crate::tests::utils::check_analysis;
 fn completes_unkeyed_associated_items() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["runtime", "app"]
-resolver = "3"
-
-//- /runtime/Cargo.toml
-[package]
-name = "runtime"
-version = "0.1.0"
-edition = "2024"
-
-//- /runtime/src/lib.rs
+//- /runtime/src/lib.rs crate:runtime root:runtime
 impl u32 {
     pub const MAX: u32 = 0;
     pub fn from_be_bytes(_bytes: [u8; 4]) -> Self { 0 }
@@ -34,16 +23,7 @@ impl PrimitiveFactory<u16> for u32 {
     fn make() -> u16 { 0 }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-runtime = { path = "../runtime" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:runtime
 use runtime::PrimitiveFactory;
 
 pub fn use_it() {
@@ -65,13 +45,7 @@ pub fn use_it() {
 fn completes_associated_items_for_types_traits_aliases_and_qualified_anchors() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_associated_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_associated_path_completions
 use Event::Sta$0; // complete("enum variant import items")
 
 pub trait Parent {
@@ -210,13 +184,7 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
 fn completes_associated_type_binding_names_from_traits_and_supertraits() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_associated_type_binding_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_associated_type_binding_completions
 pub trait Parent {
     type ParentItem;
     const PARENT_CONST: u8;
@@ -270,13 +238,7 @@ pub fn body() {
 fn completes_body_local_associated_items_and_impl_self() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_associated_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_associated_completions
 pub fn use_local() {
     trait Build {
         type Output;

@@ -5,13 +5,7 @@ use crate::tests::utils::check_analysis;
 fn completes_record_constructor_paths() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_constructor_path_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_record_constructor_path_completions
 pub mod api {
     pub struct User {
         pub id: u8,
@@ -62,13 +56,7 @@ pub fn use_it() {
 fn completes_record_fields_for_semantic_and_body_local_enum_variants() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_variant_record_field_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_enum_variant_record_field_completions
 pub enum Action {
     Named { code: u8, message: String },
 }
@@ -97,13 +85,7 @@ pub fn inspect(action: Action) {
 fn completes_record_fields_across_literal_and_pattern_contexts() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_field_context_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_record_field_context_completions
 pub struct User {
     pub id: u8,
     pub name: u8,
@@ -164,13 +146,7 @@ pub fn use_it(id: u8, user: User, users: Users) {
 fn completes_body_local_record_literal_fields() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_body_local_record_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_body_local_record_completions
 pub fn use_it() {
     struct Local {
         left: u8,
@@ -192,13 +168,7 @@ pub fn use_it() {
 fn keeps_record_field_value_positions_as_value_completions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_record_value_completions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_record_value_completions
 pub struct User {
     pub id: u8,
     pub name: u8,

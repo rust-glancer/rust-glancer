@@ -9,13 +9,7 @@ use crate::tests::utils::{AnalysisQuery, check_analysis_queries};
 fn completes_strings_fragments_and_postfix_before_and_after_closing_syntax_exists() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_specialized_typed_states"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_specialized_typed_states
 pub mod abi_edit;
 pub mod abi_eof;
 pub mod environment_edit;
@@ -144,13 +138,7 @@ pub fn run(condition: bool) {
 fn completes_immediately_after_specialized_trigger_characters() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_empty_specialized_triggers"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_empty_specialized_triggers
 pub mod array;
 pub mod attribute;
 pub mod const_default;
@@ -231,21 +219,7 @@ struct Array([u8; $empty_array$
 fn completes_attribute_families_in_incomplete_attributes_at_file_end() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["macros", "app"]
-resolver = "3"
-
-//- /macros/Cargo.toml
-[package]
-name = "macros"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-proc-macro = true
-
-//- /macros/src/lib.rs
+//- /macros/src/lib.rs crate:macros root:macros kind:proc-macro
 extern crate proc_macro;
 
 #[proc_macro_attribute]
@@ -261,20 +235,7 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     proc_macro::TokenStream::new()
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[features]
-default = []
-serde-support = []
-
-[dependencies]
-macros = { path = "../macros" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:macros features:default,serde-support cfg:feature=default
 pub mod attribute_macro;
 pub mod attribute_path;
 pub mod cfg_feature;
@@ -348,30 +309,10 @@ pub mod repr;
 fn completes_remaining_specialized_families_across_typed_states() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["dependency", "app"]
-resolver = "3"
-
-//- /dependency/Cargo.toml
-[package]
-name = "dependency"
-version = "0.1.0"
-edition = "2024"
-
-//- /dependency/src/lib.rs
+//- /dependency/src/lib.rs crate:dependency root:dependency
 pub struct Dependency;
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dependency = { path = "../dependency" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:dependency
 pub mod array_edit;
 pub mod array_eof;
 pub mod const_arg_edit;

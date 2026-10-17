@@ -6,13 +6,7 @@ use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
 fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
     check_analysis_queries(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_raw_identifiers"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_raw_identifiers
         pub struct r#type<r#match> {
             pub r#struct: r#match,
         }
@@ -117,13 +111,7 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
 fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_2021_identifiers"
-        version = "0.1.0"
-        edition = "2021"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_2021_identifiers edition:2021
         pub struct gen;
 
         pub fn inspect(value: g$0en) { // hover("hover 2021 identifier")
@@ -148,30 +136,10 @@ fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
 fn prepare_rename_preserves_the_selected_occurrence_edition() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [workspace]
-        members = ["crates/dep", "crates/app"]
-        resolver = "3"
-
-        //- /crates/dep/Cargo.toml
-        [package]
-        name = "dep"
-        version = "0.1.0"
-        edition = "2021"
-
-        //- /crates/dep/src/lib.rs
+        //- /crates/dep/src/lib.rs crate:dep root:crates/dep edition:2021
         pub struct gen;
 
-        //- /crates/app/Cargo.toml
-        [package]
-        name = "app"
-        version = "0.1.0"
-        edition = "2024"
-
-        [dependencies]
-        dep = { path = "../dep" }
-
-        //- /crates/app/src/lib.rs
+        //- /crates/app/src/lib.rs crate:app root:crates/app deps:dep
         pub fn inspect(_: dep::r#g$0en) {} // prepare_rename("prepare cross-edition raw use").in_lib("app")
         "#,
         expect![[r#"
@@ -184,13 +152,7 @@ fn prepare_rename_preserves_the_selected_occurrence_edition() {
 fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_raw_lifetimes"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_raw_lifetimes
         pub struct Borrowed<'r#fn> {
             pub value: &'r#fn str,
         }
@@ -219,13 +181,7 @@ fn canonical_raw_lifetimes_are_escaped_again_in_signatures() {
 fn rename_treats_raw_syntax_as_presentation_of_one_semantic_name() {
     check_analysis(
         r#"
-        //- /Cargo.toml
-        [package]
-        name = "analysis_raw_rename"
-        version = "0.1.0"
-        edition = "2024"
-
-        //- /src/lib.rs
+        //- /src/lib.rs crate:analysis_raw_rename
         pub struct r#ty$0pe; // rename("rename raw identifier to keyword", "match")
 
         pub fn identity(value: r#ty$0pe) -> r#type { // prepare_rename("prepare raw rename")

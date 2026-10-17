@@ -15,12 +15,7 @@ use super::utils::{
 fn infers_auto_traits_from_aggregate_fields() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "auto_trait_fields"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:auto_trait_fields
 pub unsafe auto trait Send {}
 pub unsafe auto trait Sync {}
 pub struct Record<T> { pub value: T }
@@ -51,12 +46,7 @@ pub fn check(record: Record<u8>, choice: Choice<bool>, bits: Bits, node: Node<'_
 fn preserves_auto_traits_on_boxed_trait_objects() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "auto_trait_objects"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:auto_trait_objects
 use std::boxed::Box;
 pub trait Stream {
     type Item;
@@ -103,12 +93,7 @@ pub fn reordered<T>(first: &Box<dyn Stream<Item = T> + Send + Sync>, second: &Bo
 fn converts_references_to_trait_objects_without_erasing_the_source() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "object_references"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:object_references
 pub trait Stream {
     type Item;
     fn peek(&self) -> Self::Item;
@@ -142,12 +127,7 @@ fn converts_smart_pointers_to_trait_objects_without_erasing_generic_arguments() 
         std::println!("pointer: {pointer}");
         check_analysis_queries_with_fake_sysroot(
             &r#"
-//- /Cargo.toml
-[package]
-name = "object_pointers"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:object_pointers
 use std::POINTER as Pointer;
 
 pub trait Stream {
@@ -188,12 +168,7 @@ pub fn check() {
 fn infers_references_to_trait_objects() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_object_references"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_object_references
 pub trait Opaque {}
 pub type Borrowed<'a, T: ?Sized> = &'a T;
 pub fn make<T: 'static>() -> &'static T { loop {} }
@@ -238,12 +213,7 @@ pub fn references<'a>(shared: &'a dyn Opaque, mutable: &mut dyn Opaque, nested: 
 fn infers_bindings_from_reference_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reference_patterns"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reference_patterns
 pub trait Opaque {}
 pub struct Holder { pub value: dyn Opaque }
 
@@ -285,12 +255,7 @@ pub fn fields(holder: &mut Holder) {
 fn selects_trait_methods_for_reference_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_reference_method"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_reference_method
 pub trait Opaque {}
 pub trait Kind {
     type Output;
@@ -319,13 +284,7 @@ pub fn inspect(value: &dyn Opaque) {
 fn infers_types_from_const_expressions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_const_arithmetic"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_const_arithmetic
 pub const SIZE: usize = 2;
 pub struct Holder;
 impl Holder { pub const SIZE: usize = 2; }
@@ -387,13 +346,7 @@ pub fn bits(annotated: [u16; (1 << 3) | 1], argument: Buffer<{ (1 << 3) >> 1 }>)
 fn infers_default_calls_alongside_unresolved_impl_receivers() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_default_with_unresolved_impl"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_default_with_unresolved_impl
 pub trait Default { fn default() -> Self; }
 pub struct Vec<T>(T);
 
@@ -422,13 +375,7 @@ pub fn use_it() {
 fn infers_inherent_impl_bounds_from_constructor_arguments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_inherent_constructor_bounds"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_inherent_constructor_bounds
 pub struct User;
 pub trait Marker {}
 impl Marker for User {}
@@ -453,13 +400,7 @@ pub fn use_it() {
 fn refines_unsuffixed_numeric_literals_from_let_annotations() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_numeric_literal_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_numeric_literal_inference
 pub fn use_it() {
     let default_int = 1$0; // ty("default integer literal")
     let annotated_int: u64 = 1$0; // ty("annotated integer literal")
@@ -490,13 +431,7 @@ pub fn use_it() {
 fn infers_clones_with_extended_float_impls() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_float_clone"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_float_clone
 pub struct Manual;
 impl Clone for Manual {
     fn clone(&self) -> Self { Manual }
@@ -525,13 +460,7 @@ pub fn use_it(half: f16, quad: f128, manual: Manual, derived: Derived) {
 fn infers_standard_range_forms_and_shared_endpoints() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_ranges"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_ranges
 pub fn use_it(end: u16) {
     let exclusive = (1$0..end)$1; // ty("start refined by end").in_lib("analysis_ranges"), ty("exclusive range").in_lib("analysis_ranges")
     let from = (2u32..)$0; // ty("range from").in_lib("analysis_ranges")
@@ -560,13 +489,7 @@ pub fn use_it(end: u16) {
 fn range_expectations_and_later_uses_refine_endpoints() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_range_evidence"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_range_evidence
 use std::ops::{Range, RangeFrom, RangeInclusive};
 pub type Inclusive = RangeInclusive<u8>;
 pub fn make<T>() -> T { loop {} }
@@ -615,13 +538,7 @@ pub fn use_it() {
 fn identifies_range_by_language_item_instead_of_name() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_range_identity"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_range_identity
 #[lang = "Range"]
 pub struct Interval<T> { pub start: T, pub end: T }
 
@@ -641,13 +558,7 @@ pub fn use_it() {
 fn infers_standard_index_outputs_from_the_index_type() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_index_outputs"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_index_outputs
 pub const LENGTH: usize = 4;
 pub fn symbolic_lengths<const N: usize>() {
     let named = [1_u8; LENGTH][0$0]$1; // ty("named array length index").in_lib("analysis_index_outputs"), ty("named array length output").in_lib("analysis_index_outputs")
@@ -697,13 +608,7 @@ pub fn use_it(mut bytes: [u8; 4], slice: &[u16], text: &str) {
 fn selects_index_receivers_with_isolated_live_evidence() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_index_receivers"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_index_receivers
 use std::ops::{Deref, Index};
 pub struct Key;
 pub struct Store<T>(T);
@@ -757,13 +662,7 @@ pub fn deref_bound<P: Deref<Target = Store<u8>>>(pointer: P) {
 fn coerces_index_arguments_without_changing_their_source_types() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_index_coercions"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_index_coercions
 use std::ops::{Deref, Index};
 pub struct TextStore;
 impl Index<&str> for TextStore { type Output = u32; }
@@ -822,13 +721,7 @@ fn indexes_arrays_through_slice_impls_of_the_identified_trait() {
     // independently of core's blanket array impl. The renamed trait checks language identity.
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_index_unsizing"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_index_unsizing
 #[lang = "index"]
 pub trait Project<I> { type Output; }
 impl<T> Project<usize> for [T] { type Output = T; }
@@ -847,13 +740,7 @@ pub fn use_it(array: [u8; 3]) {
 fn refines_indexing_from_later_operand_and_output_evidence() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_index_evidence"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_index_evidence
 use std::ops::Index;
 pub struct User { pub id: u32 }
 impl User { pub fn id(&self) -> u32 { self.id } }
@@ -933,13 +820,7 @@ pub fn output_drives_bound() {
 fn propagates_let_annotation_expected_types_through_tuple_expressions() {
     check_analysis_queries(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_tuple_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_tuple_expected_type_inference
 pub fn use_it() {
     let default_pair = (1, 1.0)$type_default_pair$;
     let annotated_pair: (u64, f32) = (1$type_pair_int$, 1.0$type_pair_float$)$type_pair$;
@@ -982,13 +863,7 @@ pub fn use_it() {
 fn propagates_expected_types_through_transparent_and_array_expressions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_shape_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_shape_expected_type_inference
 pub struct User;
 
 pub fn missing<T>() -> T {}
@@ -1028,13 +903,7 @@ pub fn use_it() {
 fn propagates_function_return_expected_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_return_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_return_expected_type_inference
 pub fn int_tail() -> u64 {
     1$0 // ty("integer tail return")
 }
@@ -1070,13 +939,7 @@ pub fn explicit_return(flag: bool) -> u64 {
 fn propagates_function_call_argument_expected_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_call_argument_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_call_argument_expected_type_inference
 pub fn takes_u64(value: u64) {}
 
 pub fn takes_f32(value: f32) {}
@@ -1103,13 +966,7 @@ pub fn use_it() {
 fn propagates_method_call_argument_expected_types() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_method_call_argument_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_method_call_argument_expected_type_inference
 pub struct Sink;
 
 impl Sink {
@@ -1157,13 +1014,7 @@ pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
 fn propagates_expected_types_into_generic_call_results() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_call_result_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_call_result_inference
 pub struct User;
 
 pub fn id<T>(value: T) -> T {}
@@ -1210,13 +1061,7 @@ pub fn use_it(builder: Builder) {
 fn propagates_expected_types_into_generic_call_result_shapes() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_generic_call_result_shape_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_generic_call_result_shape_inference
 pub struct User;
 pub struct Error;
 
@@ -1273,13 +1118,7 @@ pub fn use_it(builder: Builder) {
 fn preserves_live_receiver_self_when_instantiating_method_return() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_method_self_return_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_method_self_return_inference
 pub struct User;
 pub struct Name;
 
@@ -1312,18 +1151,7 @@ pub fn use_it(user: User, name: Name) {
 fn infers_collect_destination_through_trait_obligations() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["storage", "app"]
-resolver = "3"
-
-//- /storage/Cargo.toml
-[package]
-name = "storage"
-version = "0.1.0"
-edition = "2024"
-
-//- /storage/src/lib.rs
+//- /storage/src/lib.rs crate:storage root:storage
 pub struct ImportData;
 
 pub struct DefMap;
@@ -1334,16 +1162,7 @@ impl DefMap {
     }
 }
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-storage = { path = "../storage" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:storage
 use storage::DefMap;
 
 pub trait UserCollector<S> {}
@@ -1396,18 +1215,7 @@ pub fn associated_equality_destination(stream: UserStream) {
 fn projects_custom_iterator_collect_targets_and_ignores_same_name_methods() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct User;
 pub struct Key;
 pub struct Value;
@@ -1475,13 +1283,7 @@ fn projects_realistic_sysroot_iterator_adapters_into_collect_destination() {
 
     check_analysis_queries_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_realistic_iterator_adapters"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_realistic_iterator_adapters
 pub struct User;
 pub struct Name;
 pub struct Email;
@@ -1647,13 +1449,7 @@ pub fn use_it(users: &[User], changed_files: &[ChangedFile], bytes: &[u8], prefi
 fn explicit_closure_returns_use_their_own_output_types() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "closure_returns"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:closure_returns
 pub fn output<F: FnOnce() -> R, R>(callback: F) -> R { loop {} }
 pub fn make<T>() -> T { loop {} }
 
@@ -1695,13 +1491,7 @@ pub fn outer(flag: bool) -> u64 {
 fn infers_closure_params_and_returns_from_callable_bounds() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_callable_closure_bound_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_callable_closure_bound_inference
 pub struct Attr;
 
 pub struct Id;
@@ -1784,18 +1574,7 @@ pub fn use_it(flag: bool, attr: Attr, user: User, users: &[User], seed: Id) {
 fn infers_iterator_closure_params_from_selected_trait_method_bounds() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["app"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app
 pub struct User;
 pub struct Name;
 pub struct Searcher;
@@ -1847,13 +1626,7 @@ pub fn use_it(users: &[User], searcher: Searcher) {
 fn projects_associated_type_from_callable_impl_where_clause() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_callable_impl_where_projection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_callable_impl_where_projection
 pub trait Produces {
     type Output;
 
@@ -1893,13 +1666,7 @@ pub fn use_it(not_callable: NotCallable) {
 fn projects_associated_type_from_callable_impl_where_clause_with_generic_assoc_input() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_callable_impl_where_assoc_input_projection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_callable_impl_where_assoc_input_projection
 pub trait Stream {
     type Item;
 
@@ -1993,13 +1760,7 @@ pub fn use_it(source: Source<User>) {
 fn propagates_expected_types_through_result_expressions() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_result_expression_expected_type_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_result_expression_expected_type_inference
 pub struct User;
 
 pub enum Kind {
@@ -2041,13 +1802,7 @@ pub fn use_it(flag: bool, kind: Kind, user: User) {
 fn treats_explicit_call_wildcard_generics_as_inference_variables() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_explicit_call_wildcard_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_explicit_call_wildcard_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2083,13 +1838,7 @@ pub fn use_it(user: User) {
 fn uses_call_arguments_as_function_generic_evidence() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_call_argument_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_call_argument_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2136,13 +1885,7 @@ pub fn use_it(user: User) {
 fn alias_placeholders_share_later_evidence_between_components() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "source_type_identity"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:source_type_identity
 type Pair<T> = (T, T);
 fn missing<T>() -> T { loop {} }
 fn require(_: u16) {}
@@ -2164,13 +1907,7 @@ pub fn use_it() {
 fn propagates_associated_function_prefix_generics() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_associated_function_prefix_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_associated_function_prefix_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2254,13 +1991,7 @@ pub fn use_it(user: User) {
 fn carries_generic_variables_through_simple_bindings() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_simple_binding_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_simple_binding_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2295,13 +2026,7 @@ pub fn use_it() {
 fn constrains_receiver_generic_variables_from_method_arguments() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_method_receiver_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_method_receiver_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2376,13 +2101,7 @@ pub fn selected_inherent_receiver() {
 fn carries_generic_variables_through_member_projections() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_member_projection_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_member_projection_generic_inference
 pub struct User;
 
 pub struct Boxed<T> {
@@ -2438,13 +2157,7 @@ pub fn tuple_field(user: User) {
 fn carries_generic_variables_through_structural_patterns() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_structural_pattern_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_structural_pattern_generic_inference
 pub struct User;
 
 pub struct Vec<T> {
@@ -2489,13 +2202,7 @@ pub fn slice_pattern(user: User) {
 fn projects_borrowed_patterns_through_live_type_variables() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_borrowed_patterns"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_borrowed_patterns
 pub struct User { pub count: u64 }
 pub struct Account<T> { pub user: T }
 pub struct Holder { pub account: Account<User>, pub optional: Option<User> }
@@ -2559,13 +2266,7 @@ pub fn borrowed_mut(holder: &mut Holder) {
 fn uses_simple_assignments_as_equality_evidence() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_assignment_generic_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_assignment_generic_inference
 pub struct User;
 
 pub fn missing<T>() -> T {}
@@ -2589,13 +2290,7 @@ pub fn use_it(user: User) {
 fn infers_enum_variant_payload_generics_bidirectionally() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_enum_payload_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_enum_payload_inference
 pub struct User;
 pub struct Error;
 
@@ -2653,13 +2348,7 @@ pub fn use_it(user: User, error: Error) {
 fn infers_record_fields_bidirectionally() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_bidirectional_record_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_bidirectional_record_inference
 pub struct User;
 pub struct Error;
 
@@ -2724,13 +2413,7 @@ pub fn use_it(user: User, error: Error) {
 fn late_associated_type_evidence_reaches_destructured_bindings_and_members() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_late_projection"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_late_projection
 pub struct User { pub name: Name }
 pub struct Name;
 pub struct UserSource;
@@ -2763,12 +2446,7 @@ pub fn use_it() {
 fn infers_try_output_with_a_residual_default_in_its_supertrait() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_try_supertrait"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_try_supertrait
 #[lang = "Try"]
 pub trait Extract: FromResidual {
     type Output;
@@ -2797,13 +2475,7 @@ pub fn use_it(input: Fallible<u16>) -> Fallible<()> {
 fn infers_try_outputs_from_trait_implementations_and_bounds() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_try_outputs"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_try_outputs
 pub struct Error;
 pub struct Packet<E, T>(E, T);
 impl<E, T> core::ops::Try for Packet<E, T> { type Output = T; }
@@ -2855,13 +2527,7 @@ pub fn generic<T: core::ops::Try<Output = U>, U>(value: T) -> T {
 fn late_try_operand_evidence_reaches_output_members_and_obligations() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_late_try_operand"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_late_try_operand
 pub struct User { pub id: u32 }
 impl User { pub fn id(&self) -> u32 { self.id } }
 pub trait Marker {}
@@ -2900,13 +2566,7 @@ pub fn use_it() -> Carrier<UserSource> {
 fn coerces_try_output_after_later_evidence_reveals_never() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_try_never"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_try_never
 pub struct Stop;
 impl core::ops::Try for Stop { type Output = !; }
 pub fn make<T>() -> T { loop {} }
@@ -2933,13 +2593,7 @@ pub fn use_it() -> Stop {
 fn retains_late_expectations_for_ambiguous_conversion_results() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_conversion_expectation"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_conversion_expectation
 pub struct Conversion<T> { pub value: T }
 impl<T> Conversion<T> {
     pub fn ok(self) -> Option<T> { Option::Some(self.value) }
@@ -2969,13 +2623,7 @@ pub fn convert_later(number: usize) -> Option<u32> {
 fn coerces_deferred_branch_results() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_deferred_never_branches"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_deferred_never_branches
 pub struct User;
 impl User {
     pub fn abort(self) -> ! { loop {} }
@@ -3043,12 +2691,7 @@ pub fn use_it(flag: bool) {
 fn generic_body_projection_feeds_a_dependent_call_obligation() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_shared_solver_environment"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_shared_solver_environment
 pub trait Produce {
     type Item;
     fn get(self) -> Self::Item;
@@ -3072,12 +2715,7 @@ pub fn relay<I: Produce<Item = T>, T: Marker>(input: I) -> T {
 fn infers_iterator_items_with_unrelated_reference_impls() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_iterator_impl_shapes"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_iterator_impl_shapes
 pub trait Reflect {}
 impl<'a> IntoIterator for &'a dyn Reflect {
     type Item = u32;
@@ -3104,12 +2742,7 @@ pub fn run() {
 fn infers_trait_arguments_from_a_unique_methods_signature() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_trait_call_arguments"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_trait_call_arguments
 pub trait Marker {}
 pub struct User { pub id: u64 }
 impl Marker for User {}
@@ -3134,12 +2767,7 @@ pub fn run() {
 fn infers_projection_after_numeric_receiver_becomes_known() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_deferred_numeric_projection"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_deferred_numeric_projection
 pub struct User { pub id: u64 }
 pub trait Produce { type Item; }
 pub trait Reflect {}
@@ -3167,12 +2795,7 @@ pub fn run() {
 fn resolves_impl_bound_aliases_before_checking_applicability() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_impl_bound_aliases"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_impl_bound_aliases
 pub trait Marker {}
 pub struct Good;
 pub struct Other;
@@ -3219,12 +2842,7 @@ pub fn check_parent() {
 fn infers_inherited_associated_equalities_and_displays_their_bounds() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_inherited_equalities"
-version = "0.1.0"
-edition = "2024"
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_inherited_equalities
 pub struct Vec<T> { pub value: T }
 pub struct Option<T> { pub value: T }
 pub trait Base<T> {
@@ -3259,13 +2877,7 @@ pub fn display(value: impl Derived<u8, Item = u64> + Other<u8, Item = bool>) {
 fn infers_labeled_block_exit_values() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_labeled_block_exits"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_labeled_block_exits
 pub fn use_it(flag: bool) {
     let semicolon = 'done: { break 'done 1u64; }$0; // ty("break statement")
     let tail = 'done: { break 'done 2u64 }$0; // ty("break tail")
@@ -3306,13 +2918,7 @@ pub fn use_it(flag: bool) {
 fn routes_labeled_block_breaks_to_their_lexical_targets() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_labeled_block_targets"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_labeled_block_targets
 pub fn use_it(flag: bool) {
     let outer = 'done: {
         let inner = 'done: { break 'done true; }$0; // ty("shadowed block label")
@@ -3354,13 +2960,7 @@ pub fn use_it(flag: bool) {
 fn propagates_labeled_block_expectations_and_deferred_results() {
     check_analysis_with_fake_sysroot(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_labeled_block_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_labeled_block_inference
 pub struct User;
 impl User {
     pub fn abort(self) -> ! { loop {} }
@@ -3411,13 +3011,7 @@ pub fn use_it(flag: bool) {
 fn infers_loop_exit_values() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_loop_exits"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_loop_exits
 pub fn use_it(flag: bool) {
     let bare = loop { break; };
     bare$0; // ty("bare break")
@@ -3483,13 +3077,7 @@ pub fn spin() {
 fn propagates_loop_expectations_and_deferred_results() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_loop_inference"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_loop_inference
 pub struct Source;
 impl Source {
     pub fn value(&self) -> u64 { 1 }

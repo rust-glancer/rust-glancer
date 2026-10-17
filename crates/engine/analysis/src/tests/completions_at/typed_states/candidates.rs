@@ -13,13 +13,7 @@ use crate::tests::utils::check_analysis;
 fn completes_each_candidate_domain_across_realistic_line_states() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:app
 pub mod module {
     pub struct ModuleType;
 }
@@ -145,30 +139,10 @@ pub fn method_edit(target: MemberTarget) {
 fn completes_auto_import_candidates_across_realistic_line_states() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[workspace]
-members = ["catalog", "app"]
-resolver = "3"
-
-//- /catalog/Cargo.toml
-[package]
-name = "catalog"
-version = "0.1.0"
-edition = "2024"
-
-//- /catalog/src/lib.rs
+//- /catalog/src/lib.rs crate:catalog root:catalog
 pub struct AutoImportedType;
 
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-catalog = { path = "../catalog" }
-
-//- /app/src/lib.rs
+//- /app/src/lib.rs crate:app root:app deps:catalog
 pub fn auto_import_unfinished() {
     let _: AutoImportedT$0 // complete_with_source("unfinished auto-import candidate").in_lib("app").matching("AutoImportedType")
 }
@@ -189,13 +163,7 @@ pub fn auto_import_edit() {
 fn keeps_existing_call_and_macro_syntax_when_completing_in_place() {
     check_analysis(
         r#"
-//- /Cargo.toml
-[package]
-name = "analysis_completion_existing_call_syntax"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
+//- /src/lib.rs crate:analysis_completion_existing_call_syntax
 macro_rules! local_macro {
     () => { 1u8 };
 }
