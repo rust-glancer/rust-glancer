@@ -3,9 +3,10 @@
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId};
+use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, Span};
 use rg_parse::LineIndex;
-use rg_syntax::{AstNode as _, ast};
+use rg_std::CancellationToken;
+use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 use rg_text::NameInterner;
 
 use super::{
@@ -27,7 +28,7 @@ pub(super) struct BodyLowering<'a> {
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
     generated_context: Option<GeneratedBodyMacroContext>,
-    cancellation: &'a rg_std::CancellationToken,
+    cancellation: &'a CancellationToken,
 }
 
 impl<'a> BodyLowering<'a> {
@@ -41,7 +42,7 @@ impl<'a> BodyLowering<'a> {
         line_index: &'a LineIndex,
         interner: &'a mut NameInterner,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
-        cancellation: &'a rg_std::CancellationToken,
+        cancellation: &'a CancellationToken,
     ) -> Self {
         Self {
             owner,
@@ -162,7 +163,7 @@ impl<'a> BodyLowering<'a> {
 impl BodyLowering<'_> {
     pub(super) fn alloc_expr(
         &mut self,
-        syntax: &rg_syntax::SyntaxNode,
+        syntax: &SyntaxNode,
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
@@ -186,7 +187,7 @@ impl BodyLowering<'_> {
         })
     }
 
-    pub(super) fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
+    pub(super) fn source(&self, syntax: &SyntaxNode) -> BodySource {
         if let Some(context) = &self.generated_context {
             // Macro expansion provenance is intentionally token-sized. A larger generated node can
             // contain substituted input while still being structurally created by the transcriber.
@@ -202,20 +203,47 @@ impl BodyLowering<'_> {
         source_for(self.body_source.file_id, syntax)
     }
 
+    /// Translate a token range from expansion text back to the original macro argument.
+    ///
+    /// Path segments and member names store spans without a separate `BodySource`. They need
+    /// the same copied-token check as expression sources; template tokens get the whole call span.
+    pub(super) fn source_span(&self, range: TextRange) -> Span {
+        self.remap_span(Span::from_text_range(range))
+    }
+
+    /// Remap a span retained by item-tree lowering using the active expansion.
+    pub(super) fn remap_span(&self, span: Span) -> Span {
+        match &self.generated_context {
+            Some(context) => context
+                .expanded
+                .source_for_range(
+                    context.source,
+                    TextRange::new(span.start.into(), span.end.into()),
+                )
+                .unwrap_or(context.source.span),
+            None => span,
+        }
+    }
+
     pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
         self.generated_context
             .as_ref()
             .map(|context| context.expanded.dollar_crate())
     }
 
+    pub(super) fn macro_call_is_generated(&self) -> bool {
+        self.generated_context.is_some()
+    }
+
     /// Classify the macro call syntax that is about to be expanded.
     ///
     /// User-written calls have no macro-definition crate. Calls found while recursively lowering
-    /// generated syntax keep the generating definition's `$crate` identity.
+    /// generated syntax keep the generating definition's `$crate` identity and token map.
     pub(super) fn macro_call_origin(&self) -> BodyMacroCallOrigin {
         match &self.generated_context {
             Some(context) => BodyMacroCallOrigin::Generated {
                 dollar_crate: context.expanded.dollar_crate(),
+                source_map: context.expanded.source_map(),
             },
             None => BodyMacroCallOrigin::Source,
         }
@@ -237,14 +265,20 @@ impl BodyLowering<'_> {
     }
 
     /// Lower one expanded macro under its source-map and macro-definition crate context.
-    pub(super) fn with_expanded_macro<Syntax: rg_syntax::AstNode, Output>(
+    pub(super) fn with_expanded_macro<Syntax: AstNode, Output>(
         &mut self,
         call_source: BodySource,
         expanded: ExpandedBodyMacro<Syntax>,
         f: impl FnOnce(&mut Self, Syntax) -> Output,
     ) -> Output {
+        // Save the proven input spans in Body IR while the full expansion tree is still available.
+        // The tree and its token map only need to live through recursive lowering.
+        self.builder
+            .source_map
+            .extend_macro_arguments(expanded.argument_spans(call_source));
         let (syntax, expanded_context) = expanded.into_syntax_and_context();
         let context = GeneratedBodyMacroContext::new(call_source, expanded_context);
+        // A nested expansion uses its own map, then restores the parent before lowering continues.
         let previous = self.generated_context.replace(context);
         let result = f(self, syntax);
         self.generated_context = previous;
@@ -253,9 +287,9 @@ impl BodyLowering<'_> {
 
     /// Record a user-written macro call as a navigation/reference candidate.
     ///
-    /// Generated nested macro calls are implementation details of expansion, so only source calls
-    /// are indexed. The definition comes from the expansion outcome, which keeps hover/goto
-    /// aligned with the macro that lowering actually selected.
+    /// A nested invocation copied from an argument is still user-written syntax, while helper
+    /// invocations introduced by the template stay hidden. Keep the definition selected by
+    /// expansion so source queries use the same macro as lowering.
     pub(super) fn record_source_macro_call(
         &mut self,
         call_source: BodySource,
@@ -263,16 +297,26 @@ impl BodyLowering<'_> {
         origin: BodyMacroCallOrigin,
         definition: LocalDefRef,
     ) {
-        if !matches!(origin, BodyMacroCallOrigin::Source) {
-            return;
-        }
-
         let Some(path) = call.path() else {
             return;
         };
         let Some(name_ref) = path.segment().and_then(|segment| segment.name_ref()) else {
             return;
         };
+
+        if !matches!(origin, BodyMacroCallOrigin::Source)
+            && self
+                .generated_context
+                .as_ref()
+                .and_then(|context| {
+                    context
+                        .expanded
+                        .source_for_exact_syntax(context.source, name_ref.syntax())
+                })
+                .is_none()
+        {
+            return;
+        }
 
         self.builder.push_macro_call(BodyMacroCallData {
             source: call_source,
@@ -302,7 +346,7 @@ impl BodyLowering<'_> {
         // macros should leave normal unknown expressions instead of aborting the whole body build.
         let outcome = self
             .macro_expansion
-            .expand_expr_call(module, call_source, origin, call)
+            .expand_expr_call(module, call_source, origin.clone(), call)
             .ok()
             .flatten()?;
         self.record_source_macro_call(call_source, call, origin, outcome.definition);
@@ -336,11 +380,11 @@ impl BodyLowering<'_> {
 /// while the surrounding binary expression still belongs to the macro call.
 struct GeneratedBodyMacroContext {
     source: BodySource,
-    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
+    expanded: ExpandedBodyMacro<SyntaxNode>,
 }
 
 impl GeneratedBodyMacroContext {
-    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
+    fn new(source: BodySource, expanded: ExpandedBodyMacro<SyntaxNode>) -> Self {
         Self { source, expanded }
     }
 }

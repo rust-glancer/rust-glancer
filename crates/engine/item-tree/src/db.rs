@@ -2,7 +2,7 @@
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-use rg_ir_model::FileId;
+use rg_ir_model::{FileId, PackageSlot};
 use rg_parse::ParseDb;
 use rg_std::{MemorySize, Shrink};
 use rg_text::PackageNameInterners;
@@ -91,6 +91,7 @@ impl ItemTreeDb {
         })?;
 
         let stats = lower::extend_package(
+            PackageSlot(package_slot),
             parse_package,
             &sources,
             interner,
@@ -169,7 +170,7 @@ impl ItemTreeDb {
         package.discover_modules(sources).with_context(|| {
             format!("while attempting to discover modules for package {package_name}")
         })?;
-        let item_tree = lower::build_package(package, sources, interner)
+        let item_tree = lower::build_package(PackageSlot(package_slot), package, sources, interner)
             .with_context(|| {
                 format!("while attempting to build item trees for package {package_name}")
             })

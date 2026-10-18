@@ -5,8 +5,8 @@ use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
 use crate::body::{
-    BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
-    FunctionParamData, PatData, ScopeData, StmtData,
+    BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
+    BodySourceMap, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
 };
 
 /// Body shape plus the source ambiguity that must be settled before the shape is frozen.
@@ -81,6 +81,7 @@ pub(crate) enum PendingBindingResolution {
 pub(super) struct BodyBuilder {
     pub(super) source_items: BodySourceItems,
     pub(super) macro_calls: Vec<BodyMacroCallData>,
+    pub(super) source_map: BodySourceMap,
     pub(super) scopes: Arena<ScopeId, ScopeData>,
     pub(super) bindings: Arena<BindingId, BindingData>,
     pub(super) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
@@ -105,6 +106,7 @@ impl BodyBuilder {
         let Self {
             source_items,
             macro_calls,
+            mut source_map,
             scopes,
             bindings,
             pending_binding_resolutions,
@@ -114,6 +116,7 @@ impl BodyBuilder {
             integer_literals,
         } = self;
 
+        source_map.finish();
         LoweredBodyData {
             body: BodyData::new(
                 owner,
@@ -122,6 +125,7 @@ impl BodyBuilder {
                 source,
                 source_items,
                 macro_calls,
+                source_map,
                 param_scope,
                 root_expr,
                 function_params,

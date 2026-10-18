@@ -15,7 +15,7 @@ use rg_syntax::{
 use smol_str::SmolStr;
 
 use crate::{
-    span::{EditionedFileId, ROOT_ERASED_FILE_AST_ID, Span, SpanAnchor, SyntaxContext},
+    span::{EditionedFileId, Span, SpanAnchor, SyntaxContext},
     tt::{
         self, DelimiterKind, Leaf, Spacing, TokenTree, TokenTreesView, buffer::Cursor,
         symbol::Symbol,
@@ -42,9 +42,16 @@ impl ExpansionSpanMap {
     }
 
     /// Returns the mapped span only when it points into the requested source file.
-    pub fn span_for_range_in_file(&self, range: TextRange, origin_file_id: usize) -> Option<Span> {
+    pub fn span_for_range_in_file(
+        &self,
+        range: TextRange,
+        origin_package: usize,
+        origin_file_id: usize,
+    ) -> Option<Span> {
         let span = self.span_for_range(range)?;
-        (span.anchor.file_id.raw_file_id() as usize == origin_file_id).then_some(span)
+        (span.anchor.package as usize == origin_package
+            && span.anchor.file_id.raw_file_id() as usize == origin_file_id)
+            .then_some(span)
     }
 
     fn push(&mut self, end: TextSize, span: Span) {
@@ -60,11 +67,11 @@ pub struct SpanFactory {
 }
 
 impl SpanFactory {
-    pub fn new(file_id: u32, edition: Edition) -> Self {
+    pub fn new(package: u32, file_id: u32, edition: Edition) -> Self {
         Self {
             anchor: SpanAnchor {
+                package,
                 file_id: EditionedFileId::new(file_id, edition),
-                ast_id: ROOT_ERASED_FILE_AST_ID,
             },
             ctx: SyntaxContext::root(edition),
         }
@@ -666,18 +673,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn span_for_range_in_file_filters_mapped_file() {
-        let span = SpanFactory::new(7, Edition::CURRENT)
+    fn span_for_range_in_file_filters_mapped_origin() {
+        let span = SpanFactory::new(2, 7, Edition::CURRENT)
             .span_for(TextRange::new(TextSize::new(3), TextSize::new(8)));
+        let other_package = SpanFactory::new(3, 7, Edition::CURRENT).span_for(span.range);
         let span_map = ExpansionSpanMap {
-            spans: vec![(TextSize::new(5), span)],
+            spans: vec![(TextSize::new(5), span), (TextSize::new(10), other_package)],
         };
         let generated_range = TextRange::new(TextSize::new(0), TextSize::new(5));
 
         assert_eq!(
-            span_map.span_for_range_in_file(generated_range, 7),
+            span_map.span_for_range_in_file(generated_range, 2, 7),
             Some(span),
         );
-        assert_eq!(span_map.span_for_range_in_file(generated_range, 8), None);
+        assert_eq!(span_map.span_for_range_in_file(generated_range, 2, 8), None);
+        let other_range = TextRange::new(TextSize::new(5), TextSize::new(10));
+        assert_eq!(
+            span_map.span_for_range_in_file(other_range, 3, 7),
+            Some(other_package),
+        );
+        assert_eq!(span_map.span_for_range_in_file(other_range, 2, 7), None);
     }
 }

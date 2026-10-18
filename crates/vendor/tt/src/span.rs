@@ -33,17 +33,21 @@ impl fmt::Debug for Span {
     }
 }
 
+/// A token's source file, including the package that owns its file-table slot.
+///
+/// Expansion can mix tokens from several packages. Keep the package here so equal file IDs and
+/// ranges in a caller and a macro definition still refer to different source locations.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SpanAnchor {
+    pub package: u32,
     pub file_id: EditionedFileId,
-    pub ast_id: ErasedFileAstId,
 }
 
 impl fmt::Debug for SpanAnchor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("SpanAnchor")
+            .field(&self.package)
             .field(&self.file_id)
-            .field(&self.ast_id)
             .finish()
     }
 }
@@ -56,6 +60,10 @@ impl EditionedFileId {
     const FILE_ID_MASK: u32 = 0x00ff_ffff;
 
     pub const fn new(raw_file_id: u32, edition: Edition) -> Self {
+        assert!(
+            raw_file_id <= Self::FILE_ID_MASK,
+            "file id exceeds macro span storage"
+        );
         Self((raw_file_id & Self::FILE_ID_MASK) | ((edition as u32) << Self::EDITION_BITS_OFFSET))
     }
 
@@ -122,16 +130,6 @@ impl fmt::Debug for EditionedFileId {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
-pub struct ErasedFileAstId(pub u32);
-
-impl fmt::Debug for ErasedFileAstId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("ErasedFileAstId").field(&self.0).finish()
-    }
-}
-
-pub const ROOT_ERASED_FILE_AST_ID: ErasedFileAstId = ErasedFileAstId(0);
-#[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SyntaxContext {
     #[wincode(with = "crate::wincode_adapters::EditionCodec")]
     edition: Edition,
@@ -158,14 +156,14 @@ mod tests {
     use super::{Edition, EditionedFileId, SyntaxContext};
 
     #[test]
-    fn wincode_preserves_non_current_syntax_context_edition() {
+    fn wincode_preserves_syntax_context_edition() {
         let ctx = SyntaxContext::root(Edition::Edition2015);
 
         let bytes = wincode::serialize(&ctx).expect("syntax context should serialize");
         let decoded: SyntaxContext =
             wincode::deserialize(&bytes).expect("syntax context should deserialize");
 
-        assert_eq!(decoded.edition(), Edition::Edition2015);
+        assert_eq!(decoded, ctx);
     }
 
     #[test]

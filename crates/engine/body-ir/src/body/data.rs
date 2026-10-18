@@ -1,12 +1,12 @@
 use rg_arena::Arena;
-use rg_ir_model::{BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId};
+use rg_ir_model::{BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, Span, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
-    PatData, PatKind, ScopeData, StmtData, StmtKind,
+    BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, BodySourceMap,
+    ExprData, ExprKind, PatData, PatKind, ScopeData, StmtData, StmtKind,
 };
 
 /// Frozen structural IR for a function, const, or static initializer.
@@ -26,6 +26,7 @@ pub struct BodyData {
     source: BodySource,
     source_items: BodySourceItems,
     macro_calls: Vec<BodyMacroCallData>,
+    source_map: BodySourceMap,
     param_scope: ScopeId,
     root_expr: ExprId,
     function_params: Vec<FunctionParamData>,
@@ -48,6 +49,7 @@ impl BodyData {
         source: BodySource,
         source_items: BodySourceItems,
         macro_calls: Vec<BodyMacroCallData>,
+        source_map: BodySourceMap,
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
@@ -69,6 +71,7 @@ impl BodyData {
             source,
             source_items,
             macro_calls,
+            source_map,
             param_scope,
             root_expr,
             function_params,
@@ -109,6 +112,24 @@ impl BodyData {
 
     pub fn macro_calls(&self) -> &[BodyMacroCallData] {
         &self.macro_calls
+    }
+
+    pub fn source_map(&self) -> &BodySourceMap {
+        &self.source_map
+    }
+
+    /// Check whether an IR span refers to written source rather than a generated fallback.
+    ///
+    /// In `let value: make_type!(User) = input;`, the statement is written even though its type
+    /// comes from expansion. The statement's source flag alone cannot tell us which type names
+    /// were copied from input, so spans inside a macro call need proof from the argument map.
+    pub fn contains_source_span(&self, source: BodySource, span: Span) -> bool {
+        self.source_map.is_macro_argument(span)
+            || source.is_written()
+                && !self
+                    .macro_calls
+                    .iter()
+                    .any(|call| call.source.span.contains_span(span))
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -386,6 +407,7 @@ mod tests {
             source(),
             BodySourceItems::default(),
             Vec::new(),
+            Default::default(),
             param_scope,
             root_expr,
             vec![FunctionParamData {

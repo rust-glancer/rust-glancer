@@ -3,7 +3,7 @@
 use rg_ir_model::{FileId, PrimitiveTy, Span, UnsignedIntTy};
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, SyntaxNode,
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 use rg_text::Name;
@@ -39,7 +39,7 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn lower_body_path(&mut self, path: ast::Path) -> Option<BodyPath> {
-        let source_span = Span::from_text_range(path.syntax().text_range());
+        let source_span = self.source(path.syntax()).span;
         let absolute = path
             .first_segment()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
@@ -83,7 +83,22 @@ impl BodyLowering<'_> {
             return expanded;
         }
 
-        TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))
+        let mut ty = TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner));
+        // Item-tree lowering sees offsets in the parsed expansion. Translate every retained type
+        // name before that temporary syntax tree is dropped, including names inside generic args.
+        if self.macro_call_is_generated() {
+            ty.map_spans(&mut |span| self.remap_span(span));
+        }
+        ty
+    }
+
+    /// Turbofish arguments need the same source mapping as body type annotations.
+    pub(super) fn lower_generic_arg(&mut self, arg: &ast::GenericArg) -> GenericArg {
+        let mut arg = GenericArg::from_ast(arg, (self.line_index, &mut *self.interner));
+        if self.macro_call_is_generated() {
+            arg.map_spans(&mut |span| self.remap_span(span));
+        }
+        arg
     }
 
     fn expand_macro_type(&mut self, ty: &ast::MacroType) -> Option<TypeRef> {
@@ -97,7 +112,7 @@ impl BodyLowering<'_> {
         // keeps the original `MacroType` as an unknown TypeRef so body lowering remains buildable.
         let outcome = self
             .macro_expansion
-            .expand_type_call(module, call_source, origin, &call)
+            .expand_type_call(module, call_source, origin.clone(), &call)
             .ok()
             .flatten()?;
         self.record_source_macro_call(call_source, &call, origin, outcome.definition);
@@ -158,28 +173,28 @@ impl BodyLowering<'_> {
                 let token = segment.self_type_token()?;
                 (
                     BodyPathSegmentKind::SelfType,
-                    Span::from_text_range(token.text_range()),
+                    self.source_span(token.text_range()),
                 )
             }
             PathSegmentKind::SelfKw => {
                 let token = segment.self_token()?;
                 (
                     BodyPathSegmentKind::SelfKw,
-                    Span::from_text_range(token.text_range()),
+                    self.source_span(token.text_range()),
                 )
             }
             PathSegmentKind::SuperKw => {
                 let token = segment.super_token()?;
                 (
                     BodyPathSegmentKind::SuperKw,
-                    Span::from_text_range(token.text_range()),
+                    self.source_span(token.text_range()),
                 )
             }
             PathSegmentKind::CrateKw => {
                 let token = segment.crate_token()?;
                 (
                     BodyPathSegmentKind::CrateKw,
-                    Span::from_text_range(token.text_range()),
+                    self.source_span(token.text_range()),
                 )
             }
             PathSegmentKind::Type {
@@ -190,10 +205,14 @@ impl BodyLowering<'_> {
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {
-                        TypeRef::Path(TypePath::from_ast(
+                        let mut ty = TypeRef::Path(TypePath::from_ast(
                             &path,
                             (self.line_index, &mut *self.interner),
-                        ))
+                        ));
+                        if self.macro_call_is_generated() {
+                            ty.map_spans(&mut |span| self.remap_span(span));
+                        }
+                        ty
                     });
                 let span = segment
                     .type_anchor()
@@ -217,7 +236,7 @@ impl BodyLowering<'_> {
                 colon_colon: args.coloncolon_token().is_some(),
                 args: args
                     .generic_args()
-                    .map(|arg| GenericArg::from_ast(&arg, (self.line_index, &mut *self.interner)))
+                    .map(|arg| self.lower_generic_arg(&arg))
                     .collect(),
             });
         }
@@ -232,7 +251,7 @@ impl BodyLowering<'_> {
     }
 }
 
-pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> BodySource {
+pub(super) fn source_for(file_id: FileId, syntax: &SyntaxNode) -> BodySource {
     BodySource::written(file_id, Span::from_text_range(syntax.text_range()))
 }
 

@@ -1,7 +1,7 @@
 //! Expression lowering for syntax that Body IR models directly.
 
 use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, PrimitiveTy, ScopeId, Span};
-use rg_item_tree::{FromAst as _, GenericArg, MaybeFromAst as _};
+use rg_item_tree::MaybeFromAst as _;
 use rg_syntax::{
     AstNode as _,
     ast::{
@@ -526,7 +526,7 @@ impl BodyLowering<'_> {
             .map(|receiver| self.lower_expr(receiver, scope));
         let dot_span = method_call
             .dot_token()
-            .map(|dot| Span::from_text_range(dot.text_range()));
+            .map(|dot| self.source_span(dot.text_range()));
         let name_ref = method_call.name_ref();
         let method_name = name_ref
             .clone()
@@ -539,7 +539,7 @@ impl BodyLowering<'_> {
             .generic_arg_list()
             .into_iter()
             .flat_map(|args| args.generic_args())
-            .map(|arg| GenericArg::from_ast(&arg, (self.line_index, &mut *self.interner)))
+            .map(|arg| self.lower_generic_arg(&arg))
             .collect();
         let mut args = Vec::new();
         for arg in method_call
@@ -571,11 +571,11 @@ impl BodyLowering<'_> {
         let base = field.expr().map(|base| self.lower_expr(base, scope));
         let dot_span = field
             .dot_token()
-            .map(|dot| Span::from_text_range(dot.text_range()));
+            .map(|dot| self.source_span(dot.text_range()));
         let (field_key, field_span) = if let Some(index) = field.index_token() {
             (
                 index.text().parse::<usize>().ok().map(FieldKey::Tuple),
-                Some(Span::from_text_range(index.text_range())),
+                Some(self.source_span(index.text_range())),
             )
         } else if let Some(name) = field.name_ref() {
             let field_key = name

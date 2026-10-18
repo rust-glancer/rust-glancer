@@ -1,42 +1,87 @@
-use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, Span};
-use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
+use std::sync::Arc;
+
+use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, PackageSlot, Span};
+use rg_syntax::{AstNode, Parse, SyntaxNode, TextRange, ast};
 use rg_tt::syntax_bridge::ExpansionSpanMap;
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
+///
+/// Output tokens can come from invocation arguments or from the macro definition. Keep the full
+/// token map while lowering this syntax; Body IR only needs the proven argument spans afterward.
 pub struct ExpandedBodyMacro<T> {
     syntax: T,
-    source_map: ExpansionSpanMap,
+    source_map: Arc<ExpansionSpanMap>,
+    call_package: PackageSlot,
     dollar_crate: CrateRef,
 }
 
 impl<T> ExpandedBodyMacro<T> {
-    pub(super) fn new(syntax: T, source_map: ExpansionSpanMap, dollar_crate: CrateRef) -> Self {
+    pub(super) fn new(
+        syntax: T,
+        source_map: ExpansionSpanMap,
+        call_package: PackageSlot,
+        dollar_crate: CrateRef,
+    ) -> Self {
         Self {
             syntax,
-            source_map,
+            source_map: Arc::new(source_map),
+            call_package,
             dollar_crate,
         }
     }
 
-    /// Maps generated syntax back to a macro invocation token when that mapping is precise.
+    pub fn source_map(&self) -> Arc<ExpansionSpanMap> {
+        Arc::clone(&self.source_map)
+    }
+
+    /// Return the original argument span when this node contains exactly one copied token.
     pub fn source_for_exact_syntax(
         &self,
         call_source: BodySource,
         syntax: &SyntaxNode,
     ) -> Option<Span> {
-        let range = syntax.text_range();
-
-        // Only accept exact single-token source mappings from the original call. Compound
-        // generated nodes often contain substituted tokens, but the node as a whole was shaped by
-        // the macro transcriber and should stay anchored to the call site.
-        let token = syntax.first_token()?;
-        if token != syntax.last_token()? || token.text_range() != range {
+        // The token-tree parser can place separating whitespace inside a name node. Ignore
+        // that trivia: `value ` still names exactly one input token, whereas `value.field` does
+        // not represent one source occurrence.
+        let mut tokens = syntax
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia());
+        let token = tokens.next()?;
+        if tokens.next().is_some() {
             return None;
         }
+        self.source_for_token_range(call_source, token.text_range())
+    }
 
-        let span = self
-            .source_map
-            .span_for_range_in_file(range, call_source.file_id.0)?;
+    /// Find copied input tokens, including tokens forwarded through nested expansions.
+    pub fn argument_spans(&self, call_source: BodySource) -> impl Iterator<Item = Span> + '_
+    where
+        T: AstNode,
+    {
+        self.syntax
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .filter(|token| !token.kind().is_trivia())
+            .filter_map(move |token| self.source_for_token_range(call_source, token.text_range()))
+    }
+
+    /// Accept only unchanged tokens copied from this invocation.
+    ///
+    /// Compare the complete source file identity: caller and definition packages can reuse file IDs.
+    /// Require the span to be inside this call and keep the original token's length, so a template
+    /// token or whole-call fallback cannot pass as a written argument.
+    pub fn source_for_token_range(
+        &self,
+        call_source: BodySource,
+        range: TextRange,
+    ) -> Option<Span> {
+        let span = self.source_map.span_for_range_in_file(
+            range,
+            self.call_package.0,
+            call_source.file_id.0,
+        )?;
         let span = Span::from_text_range(span.range);
         (call_source.span.contains_span(span) && span.len() == u32::from(range.len()))
             .then_some(span)
@@ -54,13 +99,45 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
         let Self {
             syntax,
             source_map,
+            call_package,
             dollar_crate,
         } = self;
         let context_syntax = syntax.syntax().clone();
         (
             syntax,
-            ExpandedBodyMacro::new(context_syntax, source_map, dollar_crate),
+            ExpandedBodyMacro {
+                syntax: context_syntax,
+                source_map,
+                call_package,
+                dollar_crate,
+            },
         )
+    }
+}
+
+impl ExpandedBodyMacro<SyntaxNode> {
+    /// Type syntax retains ranges of name nodes, which may include parser-inserted whitespace.
+    /// Recover the one real token without treating a compound generated range as an argument.
+    pub fn source_for_range(&self, call_source: BodySource, range: TextRange) -> Option<Span> {
+        let mut token = self.syntax.token_at_offset(range.start()).right_biased()?;
+        while token.kind().is_trivia() && token.text_range().end() <= range.end() {
+            token = token.next_token()?;
+        }
+        if !range.contains_range(token.text_range()) {
+            return None;
+        }
+        let source = self.source_for_token_range(call_source, token.text_range())?;
+        let mut next = token.next_token();
+        while let Some(token) = next {
+            if token.text_range().start() >= range.end() {
+                break;
+            }
+            if !token.kind().is_trivia() {
+                return None;
+            }
+            next = token.next_token();
+        }
+        Some(source)
     }
 }
 
@@ -69,11 +146,17 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
         let Self {
             syntax: parse,
             source_map,
+            call_package,
             dollar_crate,
         } = self;
         let root = parse.syntax_node();
         let syntax = N::cast(root.clone()).or_else(|| root.children().find_map(N::cast))?;
-        Some(ExpandedBodyMacro::new(syntax, source_map, dollar_crate))
+        Some(ExpandedBodyMacro {
+            syntax,
+            source_map,
+            call_package,
+            dollar_crate,
+        })
     }
 }
 

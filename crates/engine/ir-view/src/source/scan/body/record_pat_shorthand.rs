@@ -29,7 +29,7 @@ impl RecordPatShorthandBinding {
     ) -> Vec<Self> {
         let mut bindings = Vec::new();
         let mut seen = UniqueVec::new();
-        BodyScanSites::new(body).walk_pats(file_id, offset, |site| {
+        BodyScanSites::new(body).walk_pats(file_id, offset, offset.is_some(), |site| {
             let PatKind::Record { fields, .. } = &site.data.kind else {
                 return;
             };

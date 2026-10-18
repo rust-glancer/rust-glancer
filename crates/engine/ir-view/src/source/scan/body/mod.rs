@@ -252,6 +252,7 @@ pub(crate) enum BodySourceCandidate {
     },
     /// Macro invocation path written inside a body, e.g. `format` in `format!("{}", value)`.
     MacroCall {
+        body: BodyRef,
         definition: LocalDefRef,
         file_id: FileId,
         span: Span,

@@ -16,6 +16,7 @@ mod path;
 mod record;
 mod scope;
 mod source_items;
+mod source_map;
 mod stmt;
 mod view;
 
@@ -40,6 +41,7 @@ pub use self::{
     record::RecordFieldSyntax,
     scope::ScopeData,
     source_items::{BodySourceItem, BodySourceItems},
+    source_map::BodySourceMap,
     stmt::{StmtData, StmtKind},
     view::BodyView,
 };

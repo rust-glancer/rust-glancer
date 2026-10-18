@@ -40,7 +40,7 @@ pub mod inner {
                 initializer
                   expr e2 binary + => i32 @ 9:21-9:39
                     lhs
-                      expr e0 path input -> local v0 => i32 @ 9:21-9:39
+                      expr e0 path input -> local v0 => i32 @ 9:33-9:38
                     rhs
                       expr e1 path input -> local v0 => i32 @ 9:33-9:38
               tail
@@ -153,16 +153,16 @@ pub fn local_use() {
                 initializer
                   expr e2 binary + => i32 @ 27:5-27:23
                     lhs
-                      expr e0 path input -> local v0 => i32 @ 27:5-27:23
+                      expr e0 path input -> local v0 => i32 @ 27:17-27:22
                     rhs
-                      expr e1 path input -> local v0 => i32 @ 27:5-27:23
+                      expr e1 path input -> local v0 => i32 @ 27:17-27:22
               stmt s1 let v2 @ 27:5-27:23
                 initializer
                   expr e5 binary + => i32 @ 27:5-27:23
                     lhs
                       expr e3 path doubled -> local v1 => i32 @ 27:5-27:23
                     rhs
-                      expr e4 path input -> local v0 => i32 @ 27:5-27:23
+                      expr e4 path input -> local v0 => i32 @ 27:17-27:22
               tail
                 expr e6 path tripled -> local v2 => i32 @ 28:5-28:12
 
@@ -262,7 +262,7 @@ pub fn use_if_let(input: Maybe) -> i32 {
             - s1 parent s0: v1, v2
             bindings
             - v0 param input `input`: (i32, i32) => (i32, i32) @ 18:16-18:21
-            - v1 let left `bind_pair!(left, right)` => i32 @ 19:9-19:32
+            - v1 let left `left` => i32 @ 19:20-19:24
             - v2 let right `right` => i32 @ 19:26-19:31
             body
             expr e4 block s1 => i32 @ 18:42-21:2
@@ -397,7 +397,7 @@ pub fn use_it(input: i32) -> i32 {
               tail
                 expr e2 binary + => i32 @ 14:5-14:23
                   lhs
-                    expr e0 path input -> local v0 => i32 @ 14:5-14:23
+                    expr e0 path input -> local v0 => i32 @ 14:17-14:22
                   rhs
                     expr e1 path input -> local v0 => i32 @ 14:17-14:22
         "#]],
@@ -595,7 +595,7 @@ pub mod local {
                 initializer
                   expr e2 binary + => i32 @ 2:20-6:6
                     lhs
-                      expr e0 path input -> local v0 => i32 @ 2:20-6:6
+                      expr e0 path input -> local v0 => i32 @ 4:24-4:29
                     rhs
                       expr e1 literal int `1` => i32 @ 4:32-4:33
               stmt s1 let v2 @ 8:5-11:7
@@ -615,24 +615,24 @@ pub mod local {
             - s1 parent s0: v1, v2
             bindings
             - v0 param input `input`: i32 => i32 @ 16:13-16:18
-            - v1 let doubled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 17:5-28:6
-            - v2 let tripled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 17:5-28:6
+            - v1 let doubled `doubled` => i32 @ 22:17-22:24
+            - v2 let tripled `tripled` => i32 @ 23:17-23:24
             body
             expr e7 block s1 => i32 @ 16:32-31:2
               stmt s0 let v1 @ 17:5-28:6
                 initializer
                   expr e2 binary + => i32 @ 17:5-28:6
                     lhs
-                      expr e0 path input -> local v0 => i32 @ 17:5-28:6
+                      expr e0 path input -> local v0 => i32 @ 22:27-22:32
                     rhs
-                      expr e1 path input -> local v0 => i32 @ 17:5-28:6
+                      expr e1 path input -> local v0 => i32 @ 22:35-22:40
               stmt s1 let v2 @ 17:5-28:6
                 initializer
                   expr e5 binary + => i32 @ 17:5-28:6
                     lhs
-                      expr e3 path doubled -> local v1 => i32 @ 17:5-28:6
+                      expr e3 path doubled -> local v1 => i32 @ 23:27-23:34
                     rhs
-                      expr e4 path input -> local v0 => i32 @ 17:5-28:6
+                      expr e4 path input -> local v0 => i32 @ 23:37-23:42
               tail
                 expr e6 path tripled -> local v2 => i32 @ 30:5-30:12
 

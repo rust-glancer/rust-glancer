@@ -1,12 +1,12 @@
 use rg_ir_model::{
-    BindingId, BodyRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
+    BindingId, BodyRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, Span, StmtId,
     identity::DeclarationRef,
 };
 use rg_item_tree::{ItemNode, ItemTreeId};
 
 use super::{
-    BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, ExprData,
-    FunctionParamData, PatData, ScopeData, StmtData,
+    BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
+    BodySourceMap, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
     facts::{BodyFacts, BodyResolution, CallFacts, ExprFacts},
 };
 
@@ -64,6 +64,14 @@ impl<'a> BodyView<'a> {
 
     pub fn macro_calls(self) -> &'a [BodyMacroCallData] {
         self.body.macro_calls()
+    }
+
+    pub fn source_map(self) -> &'a BodySourceMap {
+        self.body.source_map()
+    }
+
+    pub fn contains_source_span(self, source: BodySource, span: Span) -> bool {
+        self.body.contains_source_span(source, span)
     }
 
     pub fn param_scope(self) -> ScopeId {

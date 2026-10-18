@@ -124,6 +124,7 @@ impl GeneratedCollector<'_> {
         self.result.mark_changed();
 
         let generated_source = GeneratedSourceLowering::lower(
+            self.state.crate_ref.package,
             &self.origin,
             expansion,
             self.interner,

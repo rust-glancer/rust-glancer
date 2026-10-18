@@ -62,18 +62,19 @@ pub struct DeclarativeMacro {
 impl DeclarativeMacro {
     /// Compiles a `macro_rules!` definition from a parsed syntax node.
     ///
-    /// `file_id` anchors spans created for the vendored expander. The generated
+    /// `package` and `file_id` anchor spans created for the vendored expander. The generated
     /// syntax keeps a span map, so callers can later map expanded tokens back to
     /// the definition or call site.
     pub fn from_macro_rules(
         item: &ast::MacroRules,
         edition: Edition,
+        package: u32,
         file_id: u32,
     ) -> anyhow::Result<Self> {
         let body = item
             .token_tree()
             .context("while attempting to fetch macro_rules body")?;
-        let span_factory = SpanFactory::new(file_id, edition);
+        let span_factory = SpanFactory::new(package, file_id, edition);
         let body = syntax_node_to_token_tree(&body, span_factory);
         let inner = mbe::DeclarativeMacro::parse_macro_rules(&body, move |ctx| ctx.edition());
         Ok(Self { inner, edition })
@@ -89,9 +90,10 @@ impl DeclarativeMacro {
     pub fn from_macro_def(
         item: &ast::MacroDef,
         edition: Edition,
+        package: u32,
         file_id: u32,
     ) -> anyhow::Result<Self> {
-        let span_factory = SpanFactory::new(file_id, edition);
+        let span_factory = SpanFactory::new(package, file_id, edition);
         let args = item
             .args()
             .map(|args| syntax_node_to_token_tree(&args, span_factory));
@@ -118,13 +120,14 @@ impl DeclarativeMacro {
     pub fn expand_call(
         &self,
         call: &ast::MacroCall,
+        package: u32,
         file_id: u32,
         parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<ExpansionSyntax> {
         let args = call
             .token_tree()
             .context("while attempting to fetch macro call arguments")?;
-        let span_factory = SpanFactory::new(file_id, self.edition);
+        let span_factory = SpanFactory::new(package, file_id, self.edition);
         let call_site = span_factory.span_for(call.syntax().text_range());
         let args = syntax_node_to_token_tree(&args, span_factory);
         let expanded = self.inner.expand(
@@ -201,6 +204,80 @@ mod tests {
     use super::*;
 
     #[test]
+    fn nested_expansion_preserves_each_tokens_package_and_file() {
+        use rg_syntax::{TextRange, TextSize};
+        use rg_tt::syntax_bridge::syntax_node_to_token_tree_with_span;
+
+        let outer_source = "macro_rules! outer { ($value:expr) => { inner!($value, Template) }; }";
+        let inner_source =
+            "macro_rules! inner { ($value:expr, $name:ident) => { ($value, $name, Helper) }; }";
+        let [outer, inner] = [(1, outer_source), (2, inner_source)].map(|(package, source)| {
+            let file = ast::SourceFile::parse(source, Edition::CURRENT).tree();
+            let definition = file
+                .syntax()
+                .descendants()
+                .find_map(ast::MacroRules::cast)
+                .expect("fixture contains a macro definition");
+            DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, package, 7)
+                .expect("fixture macro should compile")
+        });
+        let caller_source = "outer!(input);";
+        let file = ast::SourceFile::parse(caller_source, Edition::CURRENT).tree();
+        let call = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroCall::cast)
+            .expect("fixture contains a macro call");
+        let expanded = outer
+            .expand_call(&call, 0, 7, ExpansionParseKind::Expr)
+            .expect("outer macro should expand");
+        let nested = expanded
+            .parse
+            .syntax_node()
+            .descendants()
+            .find_map(ast::MacroCall::cast)
+            .expect("outer expansion contains a nested call");
+        let args = nested.token_tree().expect("nested call has arguments");
+        let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
+            expanded
+                .span_map
+                .span_for_range(range)
+                .expect("expanded tokens have source spans")
+        });
+        let call_site =
+            SpanFactory::new(0, 7, Edition::CURRENT).span_for(call.syntax().text_range());
+        let expanded = inner
+            .expand_call_tokens(&args, call_site, ExpansionParseKind::Expr)
+            .expect("inner macro should expand");
+
+        // All three files use slot 7. The output still identifies the original file for each token.
+        for (name, package, source) in [
+            ("input", 0, caller_source),
+            ("Template", 1, outer_source),
+            ("Helper", 2, inner_source),
+        ] {
+            let token = expanded
+                .parse
+                .syntax_node()
+                .descendants_with_tokens()
+                .filter_map(|element| element.into_token())
+                .find(|token| token.text() == name)
+                .expect("expanded tuple contains the expected token");
+            let start = u32::try_from(source.find(name).expect("source contains the token"))
+                .expect("fixture offset fits u32");
+            let expected = SpanFactory::new(package, 7, Edition::CURRENT).span_for(TextRange::at(
+                TextSize::new(start),
+                TextSize::new(u32::try_from(name.len()).expect("fixture token length fits u32")),
+            ));
+            assert_eq!(
+                expanded.span_map.span_for_range(token.text_range()),
+                Some(expected),
+                "nested expansion should preserve the full origin of {name}",
+            );
+        }
+    }
+
+    #[test]
     fn preserves_doc_attributes_and_their_spans_through_item_expansion() {
         use rg_syntax::{AstToken as _, ast::HasAttrs as _};
 
@@ -226,10 +303,10 @@ forward! {
             .descendants()
             .find_map(ast::MacroCall::cast)
             .expect("fixture contains macro call");
-        let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0)
+        let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0, 0)
             .expect("macro should compile");
         let expansion = mac
-            .expand_call(&call, 0, ExpansionParseKind::Items)
+            .expand_call(&call, 0, 0, ExpansionParseKind::Items)
             .expect("documented item should expand");
         assert!(expansion.parse.errors().is_empty());
         let module = expansion
@@ -260,7 +337,7 @@ forward! {
         );
         let span = expansion
             .span_map
-            .span_for_range_in_file(strings[0].syntax().text_range(), 0)
+            .span_for_range_in_file(strings[0].syntax().text_range(), 0, 0)
             .expect("generated doc attribute should map to its comment");
         assert_eq!(&source[span.range], "/// Outer \"quoted\" café.");
     }
@@ -303,10 +380,10 @@ documented! {
                 .descendants()
                 .find_map(ast::MacroCall::cast)
                 .expect("fixture contains macro call");
-            let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0)
+            let mac = DeclarativeMacro::from_macro_rules(&definition, Edition::CURRENT, 0, 0)
                 .expect("identity macro should compile");
             let expanded = mac
-                .expand_call(&call, 0, ExpansionParseKind::Expr)
+                .expand_call(&call, 0, 0, ExpansionParseKind::Expr)
                 .expect("identity macro should retain malformed expression tokens");
 
             assert!(
@@ -327,7 +404,7 @@ documented! {
             assert_eq!(literal.text(), "1e3", "{expression}");
             let span = expanded
                 .span_map
-                .span_for_range_in_file(literal.text_range(), 0)
+                .span_for_range_in_file(literal.text_range(), 0, 0)
                 .expect("recovered token should map to macro input");
             assert_eq!(&source[span.range], "1e3", "{expression}");
         }
@@ -687,11 +764,11 @@ make!(Generated);
         let body = macro_rules
             .token_tree()
             .expect("macro_rules fixture should have a body");
-        syntax_node_to_token_tree(&body, SpanFactory::new(0, Edition::CURRENT))
+        syntax_node_to_token_tree(&body, SpanFactory::new(0, 0, Edition::CURRENT))
     }
 
     fn stored_call_args(call: &ast::MacroCall) -> (TopSubtree, rg_tt::Span) {
-        let span_factory = SpanFactory::new(0, Edition::CURRENT);
+        let span_factory = SpanFactory::new(0, 0, Edition::CURRENT);
         let call_site = span_factory.span_for(call.syntax().text_range());
         let args = call
             .token_tree()

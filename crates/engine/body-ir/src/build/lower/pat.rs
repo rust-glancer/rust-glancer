@@ -396,7 +396,7 @@ impl BodyLowering<'_> {
         // pattern, the caller keeps the original macro pattern as unsupported but buildable IR.
         let outcome = self
             .macro_expansion
-            .expand_pat_call(module, call_source, origin, &call)
+            .expand_pat_call(module, call_source, origin.clone(), &call)
             .ok()
             .flatten()?;
         self.record_source_macro_call(call_source, &call, origin, outcome.definition);

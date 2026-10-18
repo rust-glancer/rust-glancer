@@ -33,14 +33,13 @@ mod tests {
             Delimiter, DelimiterKind, Ident, Leaf, LitKind, Literal, TopSubtreeBuilder,
         };
 
-        let root =
-            SpanFactory::new(0, Edition::Edition2015).span_for(TextRange::empty(TextSize::new(0)));
+        let root = SpanFactory::new(0, 0, Edition::Edition2015)
+            .span_for(TextRange::empty(TextSize::new(0)));
         let mut builder = TopSubtreeBuilder::new(Delimiter::invisible_spanned(root));
         for index in 0..80 {
-            let span = SpanFactory::new(index, Edition::Edition2024).span_for(TextRange::at(
-                TextSize::new(0x100_0000 + index * 100),
-                TextSize::new(70),
-            ));
+            let span = SpanFactory::new(index, index + 7, Edition::Edition2024).span_for(
+                TextRange::at(TextSize::new(0x100_0000 + index * 100), TextSize::new(70)),
+            );
             builder.open(DelimiterKind::Bracket, span);
             builder.push(Leaf::Ident(Ident::new(&format!("r#field_{index}"), span)));
             builder.push(Leaf::Literal(Literal::new(
@@ -97,7 +96,7 @@ macro_rules! make {
             .and_then(|macro_rules| macro_rules.token_tree())
             .expect("fixture should contain macro_rules body");
 
-        let subtree = syntax_node_to_token_tree(&body, SpanFactory::new(0, Edition::CURRENT));
+        let subtree = syntax_node_to_token_tree(&body, SpanFactory::new(0, 0, Edition::CURRENT));
         let bytes = wincode::serialize(&subtree).expect("top subtree should serialize");
         let decoded: TopSubtree =
             wincode::deserialize(&bytes).expect("top subtree should deserialize");

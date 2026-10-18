@@ -82,13 +82,6 @@ Good:
 text = text.split_whitespace().collect::<Vec<_>>().join(" ")
 ```
 
-## Paths
-
-For `cargo_metadata` items, always use fully qualified paths.
-
-This project defines a lot of similarly looking names, so include the module path when you refer to something,
-e.g. `def_map::Package` instead of `Package`.
-
 ## State of project
 
 This software is heavily WIP, we don't care about backward compatibility.

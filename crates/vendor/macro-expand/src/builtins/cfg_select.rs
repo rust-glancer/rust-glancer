@@ -251,6 +251,6 @@ cfg_select! {
         let args = call
             .token_tree()
             .expect("macro call fixture should have arguments");
-        syntax_node_to_token_tree(&args, SpanFactory::new(0, Edition::CURRENT))
+        syntax_node_to_token_tree(&args, SpanFactory::new(0, 0, Edition::CURRENT))
     }
 }

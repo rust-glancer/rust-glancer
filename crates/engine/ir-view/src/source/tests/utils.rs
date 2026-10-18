@@ -107,6 +107,7 @@ fn render_occurrence(
     surface: IndexedSourceSurface,
 ) -> String {
     match surface {
+        IndexedSourceSurface::MacroArgument => "macro_argument".to_string(),
         IndexedSourceSurface::RecordExprShorthandFieldKey { .. }
         | IndexedSourceSurface::RecordPatShorthandFieldKey { .. } => {
             let IndexedSourceFact::RecordField { owner, key, .. } = fact else {

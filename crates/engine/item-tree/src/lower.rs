@@ -10,11 +10,11 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use rg_arena::Arena;
-use rg_ir_model::{FileId, Span};
+use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, TextRange,
     ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
 use rg_text::{Name, NameInterner};
@@ -35,13 +35,20 @@ use super::{
 
 /// Lowers the files reachable from every target root and records those target entrypoints.
 pub(super) fn build_package(
+    package_slot: PackageSlot,
     parse_package: &mut ParsePackage,
     sources: &rg_source::SourceInventory,
     interner: &mut NameInterner,
 ) -> anyhow::Result<Package> {
     let mut file_trees = Arena::new();
-    let target_roots = PackageLowering::new(parse_package, sources, interner, &mut file_trees)
-        .lower_target_roots()?;
+    let target_roots = PackageLowering::new(
+        package_slot,
+        parse_package,
+        sources,
+        interner,
+        &mut file_trees,
+    )
+    .lower_target_roots()?;
 
     Ok(Package {
         files: file_trees,
@@ -51,6 +58,7 @@ pub(super) fn build_package(
 
 /// Adds one file and its ordinary out-of-line descendants to an existing package tree.
 pub(super) fn extend_package(
+    package_slot: PackageSlot,
     parse_package: &mut ParsePackage,
     sources: &rg_source::SourceInventory,
     interner: &mut NameInterner,
@@ -59,6 +67,7 @@ pub(super) fn extend_package(
     module_file_context: ModuleFileContext,
 ) -> anyhow::Result<PackageLoweringStats> {
     let mut lowering = PackageLowering::new(
+        package_slot,
         parse_package,
         sources,
         interner,
@@ -81,6 +90,7 @@ pub(super) struct PackageLoweringStats {
 /// an existing file tree is reused rather than replaced. Contextual visits remain distinct because
 /// one physical file can be included from multiple logical modules.
 struct PackageLowering<'db> {
+    package: u32,
     parse_package: &'db mut ParsePackage,
     sources: &'db rg_source::SourceInventory,
     interner: &'db mut NameInterner,
@@ -91,12 +101,15 @@ struct PackageLowering<'db> {
 
 impl<'db> PackageLowering<'db> {
     fn new(
+        package_slot: PackageSlot,
         parse_package: &'db mut ParsePackage,
         sources: &'db rg_source::SourceInventory,
         interner: &'db mut NameInterner,
         file_trees: &'db mut Arena<FileId, Option<FileTree>>,
     ) -> Self {
         Self {
+            package: u32::try_from(package_slot.0)
+                .expect("package slot should fit macro span storage"),
             parse_package,
             sources,
             interner,
@@ -183,7 +196,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        let mut builder = FileTreeBuilder::new(current_file_id, &line_index);
+        let mut builder = FileTreeBuilder::new(self.package, current_file_id, &line_index);
         let top_level = self
             .collect_items(&mut builder, items, &module_file_context)
             .with_context(|| {
@@ -294,6 +307,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         };
         let span_factory = SpanFactory::new(
+            self.package,
             current_file_id.0.try_into().unwrap_or(u32::MAX),
             syntax_edition(self.parse_package.edition()),
         );
@@ -985,6 +999,7 @@ impl<'db> PackageLowering<'db> {
 
 /// File-local item arena under construction.
 struct FileTreeBuilder<'a> {
+    package: u32,
     current_file_id: FileId,
     line_index: &'a LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
@@ -992,8 +1007,9 @@ struct FileTreeBuilder<'a> {
 }
 
 impl<'a> FileTreeBuilder<'a> {
-    fn new(current_file_id: FileId, line_index: &'a LineIndex) -> Self {
+    fn new(package: u32, current_file_id: FileId, line_index: &'a LineIndex) -> Self {
         Self {
+            package,
             current_file_id,
             line_index,
             items: Arena::new(),
@@ -1012,7 +1028,7 @@ impl<'a> FileTreeBuilder<'a> {
         result
     }
 
-    fn source_span_for_range(&self, range: rg_syntax::TextRange) -> Span {
+    fn source_span_for_range(&self, range: TextRange) -> Span {
         self.span_map
             .as_ref()
             .and_then(|span_map| span_map.span_for_range(range))
@@ -1020,7 +1036,7 @@ impl<'a> FileTreeBuilder<'a> {
             .unwrap_or_else(|| Span::from_text_range(range))
     }
 
-    fn tt_span_for_range(&self, range: rg_syntax::TextRange, edition: rg_tt::Edition) -> TtSpan {
+    fn tt_span_for_range(&self, range: TextRange, edition: rg_tt::Edition) -> TtSpan {
         if let Some(span) = self
             .span_map
             .as_ref()
@@ -1029,16 +1045,21 @@ impl<'a> FileTreeBuilder<'a> {
             return span;
         }
 
-        SpanFactory::new(Self::file_id_u32(self.current_file_id), edition).span_for(range)
+        SpanFactory::new(
+            self.package,
+            Self::file_id_u32(self.current_file_id),
+            edition,
+        )
+        .span_for(range)
     }
 
     fn alloc_item(
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
-        text_range: rg_syntax::TextRange,
+        text_range: TextRange,
     ) -> ItemTreeId {
         self.alloc_item_with_docs(kind, name, name_range, visibility, None, text_range)
     }
@@ -1047,7 +1068,7 @@ impl<'a> FileTreeBuilder<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         item: &T,
     ) -> ItemTreeId
@@ -1075,10 +1096,10 @@ impl<'a> FileTreeBuilder<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        text_range: rg_syntax::TextRange,
+        text_range: TextRange,
     ) -> ItemTreeId {
         self.items.alloc(ItemNode::new(
             kind,

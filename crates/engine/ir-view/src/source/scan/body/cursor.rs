@@ -33,9 +33,9 @@ use crate::source::scan::NarrowestSourceSite;
 
 /// Scans one Body IR transaction for all source interpretations at a cursor offset.
 ///
-/// There is one narrowest body-local candidate plus any type/value path segment candidates that
-/// touch the same offset. Returning all of them lets analysis choose the semantic interpretation
-/// without teaching Body IR about navigation policy.
+/// Ordinary source selects one narrowest body-local candidate plus any type/value path segments
+/// that touch the same offset. If a macro copied the selected token into several nodes, keep each
+/// expanded use. Analysis can then interpret all uses without Body IR choosing a navigation target.
 pub(crate) struct BodyCursorScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     crate_ref: CrateRef,
@@ -68,7 +68,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         };
 
         let mut candidates = Vec::new();
-        candidates.push(self.candidate_at_body(body_ref, body)?);
+        candidates.extend(self.candidate_at_body(body_ref, body)?);
         TypePathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
             .scan();
         BodyPathSourceScanner::at(body_ref, body, self.file_id, self.offset, &mut candidates)
@@ -93,12 +93,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         Ok(best.finish())
     }
 
-    /// Picks the most precise source node in one body, falling back to the body itself.
+    /// Pick the narrowest source span, retaining expanded uses that share that span.
+    /// Outside macro calls, the body itself is the fallback when no smaller candidate matches.
     fn candidate_at_body(
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-    ) -> Result<BodySourceCandidate, PackageStoreError> {
+    ) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
         let mut best = BestCursorCandidate::new(BodySourceCandidate::Body {
             body: body_ref,
             span: body.source().span,
@@ -113,22 +114,38 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         self.consider_body_owner_declaration(body, &mut best)?;
 
         // Macro expansion can map many generated nodes back to the invocation span. Give the
-        // written macro path a precise candidate before the generated-source guard below decides
-        // whether the rest of the expanded internals should stay hidden.
-        self.consider_macro_calls(body, &mut best);
+        // written macro path a precise candidate before scanning the arguments. Helper invocations
+        // created by a template have no written name token and stay hidden.
+        self.consider_macro_calls(body_ref, body, &mut best);
 
-        // Expanded macro syntax often maps back to the macro call span. Once generated nodes are
-        // hidden from editor queries, do not let a broad enclosing expression such as the function
-        // body block answer a cursor query for the macro call token.
-        if self.generated_source_touches_offset(body) {
-            return Ok(best.finish());
-        }
+        // Inside an expansion, a broad handwritten parent (such as the function block) must
+        // not mask a mapped argument or answer for a generated helper. Precise argument tokens
+        // are considered below, while ordinary parent expressions stay outside this boundary.
+        let inside_expansion = self.macro_source_touches_offset(body);
 
         // First look at expressions under the cursor: calls, paths, field accesses, literals, and
         // so on. Record shorthand values are skipped here because the key token has its own
         // source-level candidate.
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
-            if !expr.source.is_written_in_file(self.file_id) {
+            if expr.source.file_id != self.file_id {
+                continue;
+            }
+            if !expr.source.is_written() {
+                self.consider_record_expr_fields(body_ref, body, expr, &mut best);
+                let span = Self::expression_reference_span(expr).unwrap_or(expr.source.span);
+                if span.touches(self.offset) && body.source_map().is_macro_argument(span) {
+                    best.consider_mapped(
+                        span,
+                        BodySourceCandidate::Expr {
+                            body: body_ref,
+                            expr: ExprId(expr_idx),
+                            span,
+                        },
+                    );
+                }
+                continue;
+            }
+            if inside_expansion {
                 continue;
             }
             if expr.source.span.touches(self.offset) {
@@ -137,7 +154,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 }
                 // Record expression keys can resolve to fields, while the record expression itself
                 // is still an ordinary expression candidate.
-                self.consider_record_expr_fields(body_ref, expr, &mut best);
+                self.consider_record_expr_fields(body_ref, body, expr, &mut best);
                 let span = Self::expression_reference_span(expr)
                     .filter(|span| span.touches(self.offset))
                     .unwrap_or(expr.source.span);
@@ -159,10 +176,12 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // Then look for local bindings introduced by params, lets, closures, and patterns. For
         // shorthand record patterns, keep enough surface information for rename to expand the field.
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
-            if !binding.source.is_written_in_file(self.file_id) {
+            let binding_span = binding.name_span.unwrap_or(binding.source.span);
+            if binding.source.file_id != self.file_id
+                || !body.contains_source_span(binding.source, binding_span)
+            {
                 continue;
             }
-            let binding_span = binding.name_span.unwrap_or(binding.source.span);
             if binding_span.touches(self.offset) {
                 let binding_id = BindingId(binding_idx);
                 let surface = if let Some(shorthand) = record_shorthand_bindings
@@ -178,7 +197,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 } else {
                     BindingSurface::Plain
                 };
-                best.consider(
+                best.consider_mapped(
                     binding_span,
                     BodySourceCandidate::Binding {
                         body: body_ref,
@@ -247,7 +266,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        Ok(best.finish())
+        if inside_expansion && best.candidates.is_empty() {
+            Ok(Vec::new())
+        } else {
+            Ok(best.finish())
+        }
     }
 
     /// Projects a nested body back to its body-local item declaration when the cursor is on the
@@ -288,9 +311,17 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         Ok(())
     }
 
-    fn consider_macro_calls(&self, body: BodyView<'_>, best: &mut BestCursorCandidate) {
+    fn consider_macro_calls(
+        &self,
+        body_ref: BodyRef,
+        body: BodyView<'_>,
+        best: &mut BestCursorCandidate,
+    ) {
         for call in body.macro_calls() {
-            if !call.source.is_written_in_file(self.file_id) {
+            if call.source.file_id != self.file_id
+                || !(call.source.is_written()
+                    || body.source_map().is_macro_argument(call.name_span))
+            {
                 continue;
             }
             if !call.name_span.touches(self.offset) {
@@ -300,6 +331,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             best.consider(
                 call.name_span,
                 BodySourceCandidate::MacroCall {
+                    body: body_ref,
                     definition: call.definition,
                     file_id: call.source.file_id,
                     span: call.name_span,
@@ -352,8 +384,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    fn generated_source_touches_offset(&self, body: BodyView<'_>) -> bool {
-        body.exprs().iter().any(|expr| {
+    /// Recognize macro ranges even when they produce no expression, such as type expansions.
+    fn macro_source_touches_offset(&self, body: BodyView<'_>) -> bool {
+        body.macro_calls().iter().any(|call| {
+            call.source.file_id == self.file_id && call.source.span.touches(self.offset)
+        }) || body.exprs().iter().any(|expr| {
             !expr.source.is_written()
                 && expr.source.file_id == self.file_id
                 && expr.source.span.touches(self.offset)
@@ -371,6 +406,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn consider_record_expr_fields(
         &self,
         body_ref: BodyRef,
+        body: BodyView<'_>,
         expr: &ExprData,
         best: &mut BestCursorCandidate,
     ) {
@@ -387,10 +423,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         };
 
         for field in fields {
-            if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
+            if !field.syntax.is_explicit()
+                || !field.key_span.touches(self.offset)
+                || !body.contains_source_span(expr.source, field.key_span)
+            {
                 continue;
             }
-            best.consider(
+            best.consider_mapped(
                 field.key_span,
                 BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
@@ -412,7 +451,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         best: &mut BestCursorCandidate,
     ) {
         let sites = BodyScanSites::new(body);
-        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+        sites.walk_pats(Some(self.file_id), Some(self.offset), true, |site| {
             let PatKind::Record {
                 path: Some(owner),
                 fields,
@@ -426,10 +465,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             };
 
             for field in fields {
-                if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
+                if !field.syntax.is_explicit()
+                    || !field.key_span.touches(self.offset)
+                    || !body.contains_source_span(site.data.source, field.key_span)
+                {
                     continue;
                 }
-                best.consider(
+                best.consider_mapped(
                     field.key_span,
                     BodySourceCandidate::RecordFieldKey {
                         body: body_ref,
@@ -447,7 +489,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn expression_reference_span(expr: &ExprData) -> Option<Span> {
         match &expr.kind {
-            ExprKind::Path { path } if path.segment_count() == 1 => path.segment_span(0),
+            ExprKind::Path { path } => path.last_segment_span(),
             ExprKind::MethodCall {
                 method_name_span, ..
             } => *method_name_span,
@@ -542,33 +584,53 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 }
 
 /// Tracks the narrowest body-local candidate seen while scanning one body.
+///
+/// For `both!(run)` expanding to `(First.run(), Second.run())`, both method calls have the same
+/// source span. Keep both candidates so a cursor query can report both meanings of `run`.
 struct BestCursorCandidate {
-    candidate: Option<(u32, BodySourceCandidate)>,
+    candidates: Vec<BodySourceCandidate>,
     fallback: BodySourceCandidate,
 }
 
 impl BestCursorCandidate {
     fn new(fallback: BodySourceCandidate) -> Self {
         Self {
-            candidate: None,
+            candidates: Vec::new(),
             fallback,
         }
     }
 
     fn consider(&mut self, span: Span, candidate: BodySourceCandidate) {
-        let len = span.len();
         if self
-            .candidate
-            .as_ref()
-            .is_none_or(|(best_len, _)| len < *best_len)
+            .candidates
+            .first()
+            .is_none_or(|best| span.len() < best.span().len())
         {
-            self.candidate = Some((len, candidate));
+            self.candidates.clear();
+            self.candidates.push(candidate);
         }
     }
 
-    fn finish(self) -> BodySourceCandidate {
-        self.candidate
-            .map(|(_, candidate)| candidate)
-            .unwrap_or(self.fallback)
+    /// Keep distinct uses of the same original span; a narrower span still replaces them all.
+    fn consider_mapped(&mut self, span: Span, candidate: BodySourceCandidate) {
+        if self
+            .candidates
+            .first()
+            .is_some_and(|best| best.span() == span)
+        {
+            if !self.candidates.contains(&candidate) {
+                self.candidates.push(candidate);
+            }
+        } else {
+            self.consider(span, candidate);
+        }
+    }
+
+    fn finish(self) -> Vec<BodySourceCandidate> {
+        if self.candidates.is_empty() {
+            vec![self.fallback]
+        } else {
+            self.candidates
+        }
     }
 }

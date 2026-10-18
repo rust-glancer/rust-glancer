@@ -297,7 +297,7 @@ impl BodyLowering<'_> {
         // falls back to the original macro expression statement so Body IR remains buildable.
         let Some(outcome) = self
             .macro_expansion
-            .expand_stmt_call(module, call_source, origin, &call)
+            .expand_stmt_call(module, call_source, origin.clone(), &call)
             .ok()
             .flatten()
         else {
@@ -308,8 +308,8 @@ impl BodyLowering<'_> {
         };
         self.record_source_macro_call(call_source, &call, origin, outcome.definition);
 
-        // Generated statement syntax has no stable Body IR source of its own yet. Lower every
-        // generated node under the call site so cursor-facing data remains conservative.
+        // The invocation remains the fallback range for generated statements. Individual argument
+        // tokens keep their precise source locations while these statements are lowered.
         self.with_expanded_macro(call_source, expanded, |this, expanded| {
             for generated in expanded.statements() {
                 this.lower_statement(generated, scope, statements);

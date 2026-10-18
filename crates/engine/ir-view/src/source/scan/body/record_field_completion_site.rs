@@ -107,7 +107,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<RecordFieldCompletionSite>,
     ) {
         let sites = BodyScanSites::new(body);
-        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+        sites.walk_pats(Some(self.file_id), Some(self.offset), false, |site| {
             self.scan_pat_data(body_ref, body, site.scope, site.data, best);
         });
     }

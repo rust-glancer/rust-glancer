@@ -74,7 +74,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
                 self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates)
                     .context("collect body occurrences")?;
-                self.push_macro_call_candidates(body, &mut candidates)
+                self.push_macro_call_candidates(body_ref, body, &mut candidates)
                     .context("collect body occurrences")?;
                 self.push_expression_reference_candidates(body_ref, body, &mut candidates)
                     .context("collect body occurrences")?;
@@ -93,6 +93,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     /// Adds written macro invocations as references to the macro definition selected by expansion.
     fn push_macro_call_candidates(
         &self,
+        body_ref: BodyRef,
         body: BodyView<'_>,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
@@ -103,6 +104,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             }
 
             candidates.push(BodySourceCandidate::MacroCall {
+                body: body_ref,
                 definition: call.definition,
                 file_id: call.source.file_id,
                 span: call.name_span,
@@ -376,7 +378,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
 
         let sites = BodyScanSites::new(body);
-        sites.walk_pats(self.file_id, None, |site| {
+        sites.walk_pats(self.file_id, None, false, |site| {
             let PatKind::Record {
                 path: Some(owner),
                 fields,

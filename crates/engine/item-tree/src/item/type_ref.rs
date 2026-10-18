@@ -78,6 +78,45 @@ pub enum TypeRef {
 }
 
 impl TypeRef {
+    /// Move retained syntax locations through a source map without changing type structure.
+    ///
+    /// For `as_type!(Option<User>)`, this also maps `User` inside the generic argument. Macro
+    /// lowering runs this while the expansion map is alive, so stored types keep source-file
+    /// offsets without retaining the generated syntax tree.
+    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
+        match self {
+            Self::Path(path) => path.map_spans(map),
+            Self::Tuple(types) => {
+                for ty in types {
+                    ty.map_spans(map);
+                }
+            }
+            Self::Reference { inner, .. } | Self::RawPointer { inner, .. } | Self::Slice(inner) => {
+                inner.map_spans(map)
+            }
+            Self::Array { inner, len } => {
+                inner.map_spans(map);
+                if let Some(len) = len {
+                    len.span = map(len.span);
+                }
+            }
+            Self::FnPointer { params, ret } => {
+                for ty in params {
+                    ty.map_spans(map);
+                }
+                ret.map_spans(map);
+            }
+            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
+                for bound in bounds {
+                    if let TypeBound::Trait { ty, .. } = bound {
+                        ty.map_spans(map);
+                    }
+                }
+            }
+            Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => {}
+        }
+    }
+
     pub fn unknown_from_text(text: impl Into<String>) -> Self {
         Self::Unknown(text.into())
     }
@@ -207,6 +246,26 @@ pub struct TypePath {
 }
 
 impl TypePath {
+    /// Mapping `Vec<User>` must reach both names; `<T as Trait>::Item` also needs its anchor mapped.
+    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
+        self.source_span = map(self.source_span);
+        if let Some(anchor) = &mut self.anchor {
+            match anchor {
+                TypePathAnchor::Type(ty) => ty.map_spans(map),
+                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
+                    self_ty.map_spans(map);
+                    trait_ty.map_spans(map);
+                }
+            }
+        }
+        for segment in &mut self.segments {
+            segment.span = map(segment.span);
+            for arg in &mut segment.args {
+                arg.map_spans(map);
+            }
+        }
+    }
+
     /// Returns the compact path shape used by DefMap resolution.
     ///
     /// Type anchors such as `<T>::Assoc` and `<T as Trait>::Assoc` are real path syntax, but
@@ -381,6 +440,27 @@ pub enum GenericArg {
 }
 
 impl GenericArg {
+    /// Map spans inside the argument, including `Item` in an associated binding `Item = User`.
+    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
+        match self {
+            Self::Type(ty) => ty.map_spans(map),
+            Self::Const(expr) => expr.span = map(expr.span),
+            Self::FnTraitArgs { params, ret } => {
+                for ty in params {
+                    ty.map_spans(map);
+                }
+                ret.map_spans(map);
+            }
+            Self::AssocType { name_span, ty, .. } => {
+                *name_span = map(*name_span);
+                if let Some(ty) = ty {
+                    ty.map_spans(map);
+                }
+            }
+            Self::Lifetime(_) | Self::Unsupported(_) => {}
+        }
+    }
+
     /// Extracts the syntax type from this argument when it is a type argument.
     pub fn type_ref(&self) -> Option<&TypeRef> {
         match self {

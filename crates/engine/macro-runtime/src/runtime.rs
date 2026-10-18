@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use anyhow::Context as _;
-use rg_ir_model::{FileId, LocalDefRef, Span};
+use rg_ir_model::{FileId, LocalDefRef, PackageSlot, Span};
 use rg_parse::syntax_edition;
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
@@ -59,6 +59,7 @@ impl MacroExpansionRuntime {
         };
 
         let call_site = tt_span_for_parse_span(
+            request.call_package,
             request.call_file_id,
             request.call_span,
             syntax_edition(request.call_edition),
@@ -194,6 +195,7 @@ pub struct MacroExpansionRequest<'a> {
     pub definition: DeclarativeMacroDefinition<'a>,
     pub path_text: &'a str,
     pub args: &'a TopSubtree,
+    pub call_package: PackageSlot,
     pub call_file_id: FileId,
     pub call_span: Span,
     pub call_edition: RustEdition,

@@ -135,6 +135,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // Plain references can replace the selected text directly. Shorthand record syntax carries
         // two names in one span, so those occurrences expand into explicit `field: value` spelling.
         let (span, old_text, new_text) = match symbol.surface().clone() {
+            IndexedSourceSurface::MacroArgument => return Ok(None),
             IndexedSourceSurface::Plain | IndexedSourceSurface::RecordFieldKeyExplicit => {
                 (symbol.span(), source_name, new_name.clone())
             }
@@ -306,7 +307,10 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     ) -> anyhow::Result<Option<RenameTarget>> {
         // Structural candidates exist so references can highlight syntax tied to a symbol, but
         // they are not independently renameable cursor targets.
-        if symbol.role() == SourceSymbolRole::Structural {
+        // Macro input also needs more than a single target: rewriting it changes every expanded use.
+        if symbol.role() == SourceSymbolRole::Structural
+            || matches!(symbol.surface(), IndexedSourceSurface::MacroArgument)
+        {
             return Ok(None);
         }
 
@@ -321,6 +325,14 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         else {
             return Ok(None);
         };
+
+        // TODO: Rename through a macro argument must account for every expanded use, including
+        // the mapped declaration when the request starts from an ordinary reference elsewhere.
+        if SourceOccurrenceView::new(self.analysis.view_db())
+            .declaration_is_macro_argument(*declaration_ref)?
+        {
+            return Ok(None);
+        }
 
         // If the cursor was on a declaration occurrence, require it to be the canonical source
         // declaration. This avoids renaming through generated or alternate declaration-like spans.

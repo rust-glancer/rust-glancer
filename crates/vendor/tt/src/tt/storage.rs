@@ -1298,15 +1298,6 @@ impl TopSubtree {
     pub fn as_token_trees(&self) -> TokenTreesView<'_> {
         self.view().as_token_trees()
     }
-
-    pub fn change_every_ast_id(
-        &mut self,
-        mut callback: impl FnMut(&mut crate::span::ErasedFileAstId),
-    ) {
-        for span_part in &mut self.span_parts {
-            callback(&mut span_part.anchor.ast_id);
-        }
-    }
 }
 
 // The byte decoder trusts its in-memory encoding. Persist logical tokens instead, then validate

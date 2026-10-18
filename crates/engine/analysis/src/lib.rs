@@ -18,7 +18,11 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 pub use rg_ir_view::SymbolKind;
-use rg_ir_view::{IndexedViewDb, source::IndexedModuleFileBase, ty::IndexedType};
+use rg_ir_view::{
+    IndexedViewDb,
+    source::{IndexedModuleFileBase, IndexedSourceSurface},
+    ty::IndexedType,
+};
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
 };
@@ -267,43 +271,66 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SourceSymbol>> {
+        Ok(self
+            .source_symbols_at_for_query(crate_ref, file_id, offset)?
+            .into_iter()
+            .next())
+    }
+
+    /// Return all expanded uses represented by the selected macro argument token.
+    ///
+    /// A macro can turn `both!(run)` into `(First.run(), Second.run())`. Both calls share `run`'s
+    /// written span, but each can name a different method.
+    /// Ordinary source keeps its existing single-symbol selection policy; expansion repetitions
+    /// must not silently select the first inferred type or declaration.
+    pub(crate) fn source_symbols_at_for_query(
+        &self,
+        crate_ref: CrateRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<SourceSymbol>> {
         // Saved and exact source can share one offset. Edited source is read in four explicit
         // layers: current Body IR, its request-local declaration header, module-level current
         // syntax, then an unchanged header paired to saved semantics. None of those paths
         // interpret the current offset in a saved scanner.
+        let index = SourceSymbolIndex::new(self.view_db());
         match self.current_source_relationship(crate_ref.package, file_id) {
             Some(SavedSourceRelationship::Different) => {
-                let current_body_symbols = SourceSymbolIndex::new(self.view_db())
-                    .body_symbols_at(crate_ref, file_id, offset)?;
+                let current_body_symbols = index.body_symbols_at(crate_ref, file_id, offset)?;
                 let (body_roots, body_symbols): (Vec<_>, Vec<_>) = current_body_symbols
                     .into_iter()
                     .partition(|symbol| matches!(symbol.symbol(), SymbolAt::FunctionBody { .. }));
-                if let Some(symbol) = Self::narrowest_source_symbol(body_symbols) {
-                    return Ok(Some(symbol));
+                let body_symbols = Self::narrowest_source_symbols(body_symbols);
+                if !body_symbols.is_empty() {
+                    return Ok(body_symbols);
                 }
 
-                let current_signature_symbols = SourceSymbolIndex::new(self.view_db())
-                    .current_signature_symbols_at(crate_ref, file_id, offset)?;
-                if let Some(symbol) = Self::narrowest_source_symbol(current_signature_symbols) {
-                    return Ok(Some(symbol));
+                let current_signature_symbols = Self::narrowest_source_symbols(
+                    index.current_signature_symbols_at(crate_ref, file_id, offset)?,
+                );
+                if !current_signature_symbols.is_empty() {
+                    return Ok(current_signature_symbols);
                 }
 
                 if let Some(symbol) =
                     self.current_module_use_source_symbol(crate_ref, file_id, offset)?
                 {
-                    return Ok(Some(symbol));
+                    return Ok(vec![symbol]);
                 }
 
                 // A body root spans its whole declaration so queries can identify the owning
                 // function. In a dirty header that broad structural fact must not hide a narrower
                 // unchanged token with saved semantics. Keep it only as the final fallback when
                 // none of the editor-facing source layers recognize the cursor.
-                Ok(self
-                    .associated_header_source_symbol(crate_ref, file_id, offset)?
-                    .or_else(|| Self::narrowest_source_symbol(body_roots)))
+                Ok(
+                    match self.associated_header_source_symbol(crate_ref, file_id, offset)? {
+                        Some(symbol) => vec![symbol],
+                        None => Self::narrowest_source_symbols(body_roots),
+                    },
+                )
             }
-            Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbol(
-                SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,
+            Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbols(
+                index.symbols_at(crate_ref, file_id, offset)?,
             )),
         }
     }
@@ -329,7 +356,7 @@ impl<'a> Analysis<'a> {
             &syntax,
             current_offset,
         )?;
-        Ok(Self::narrowest_source_symbol(symbols))
+        Ok(Self::narrowest_source_symbols(symbols).into_iter().next())
     }
 
     /// Find saved semantics for a current header token that has one matching saved declaration.
@@ -349,16 +376,30 @@ impl<'a> Analysis<'a> {
             file_id,
             association.saved_span().start,
         )?;
-        Ok(Self::narrowest_source_symbol(symbols)
+        Ok(Self::narrowest_source_symbols(symbols)
+            .into_iter()
+            .next()
             .and_then(|symbol| symbol.for_associated_header(association.current_span())))
     }
 
-    fn narrowest_source_symbol(symbols: Vec<SourceSymbol>) -> Option<SourceSymbol> {
-        // Overlapping syntax is common around type paths and expressions. The narrowest span is
-        // the best proxy for the thing the user actually placed the cursor on.
+    fn narrowest_source_symbols(mut symbols: Vec<SourceSymbol>) -> Vec<SourceSymbol> {
+        // Overlapping syntax is common around type paths and expressions. Keep the first candidate
+        // at the narrowest span, unless it is macro input with several expanded uses of that token.
+        let Some((selected_index, selected)) = symbols
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, candidate)| candidate.span().len())
+        else {
+            return symbols;
+        };
+        if !matches!(selected.surface(), IndexedSourceSurface::MacroArgument) {
+            return vec![symbols.swap_remove(selected_index)];
+        }
+        let span = selected.span();
+        symbols.retain(|symbol| {
+            symbol.span() == span && matches!(symbol.surface(), IndexedSourceSurface::MacroArgument)
+        });
         symbols
-            .into_iter()
-            .min_by_key(|candidate| candidate.span().len())
     }
 
     /// Resolves a previously found symbol to navigation targets.

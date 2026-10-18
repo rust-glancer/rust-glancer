@@ -40,6 +40,7 @@ mod folding_flow;
 mod formatting_flow;
 mod global_operation_flow;
 mod hover_links;
+mod macro_navigation;
 mod rename_flow;
 mod save_flow;
 mod utils;

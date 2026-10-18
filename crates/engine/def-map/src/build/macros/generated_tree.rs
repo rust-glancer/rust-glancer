@@ -7,19 +7,19 @@
 
 use anyhow::{Context as _, Result};
 use rg_arena::Arena;
-use rg_ir_model::{FileId, Span};
+use rg_ir_model::{PackageSlot, Span};
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternBlockItem, ExternCrateItem, FromAst,
     FunctionItem, ImplItem, ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem,
     MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem,
-    MacroRulesAst, MacroRulesContext, MaybeFromAst, ModuleItem, ModuleSource, OuterDocs,
-    StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
-    UserFacingAttrs, VisibilityLevel,
+    MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource,
+    OuterDocs, StaticItem, StructItem, TraitItem, TraitItemContext, TypeAliasItem, UnionItem,
+    UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{LineIndex, syntax_edition};
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, TextRange,
     ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
 use rg_text::{Name, NameInterner, RustEdition};
@@ -33,9 +33,10 @@ use crate::source::GeneratedSourceData;
 
 /// Lowers one parsed macro expansion into retained generated item payloads.
 pub(super) struct GeneratedSourceLowering<'a> {
+    package: PackageSlot,
     origin: &'a GeneratedOrigin,
     interner: &'a mut NameInterner,
-    edition: RustEdition,
+    fallback_span: TtSpan,
     span_map: ExpansionSpanMap,
     line_index: LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
@@ -43,6 +44,7 @@ pub(super) struct GeneratedSourceLowering<'a> {
 
 impl<'a> GeneratedSourceLowering<'a> {
     pub(super) fn lower(
+        package: PackageSlot,
         origin: &'a GeneratedOrigin,
         expansion: ExpansionSyntax,
         interner: &'a mut NameInterner,
@@ -53,10 +55,22 @@ impl<'a> GeneratedSourceLowering<'a> {
         let line_index = LineIndex::new(&source_text);
         let file = ast::MacroItems::cast(parse.syntax_node())
             .context("while attempting to cast macro expansion syntax root")?;
+        // Unmapped tokens belong to the invocation as a whole. Prepare this once so nested
+        // calls and definitions can borrow the token map without rebuilding their fallback.
+        let fallback_span = SpanFactory::new(
+            u32::try_from(package.0).expect("package slot should fit macro span storage"),
+            u32::try_from(origin.file_id.0).expect("file id should fit macro span storage"),
+            syntax_edition(edition),
+        )
+        .span_for(TextRange::new(
+            origin.span.start.into(),
+            origin.span.end.into(),
+        ));
         let mut lowering = Self {
+            package,
             origin,
             interner,
-            edition,
+            fallback_span,
             span_map,
             line_index,
             items: Arena::new(),
@@ -165,13 +179,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 ))
             }
             ast::Item::MacroCall(item) => {
-                let span_map = self.span_map.clone();
-                let origin_file_id = self.origin.file_id;
-                let origin_span = self.origin.span;
-                let edition = self.edition;
-                let mut span_for_range = move |range| {
-                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
-                };
+                let mut span_for_range = Self::span_mapper(&self.span_map, self.fallback_span);
                 let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                     &item,
                     MacroCallContext {
@@ -183,13 +191,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 Some(self.alloc_documented_item(kind, None, None, VisibilityLevel::Private, &item))
             }
             ast::Item::MacroDef(item) => {
-                let span_map = self.span_map.clone();
-                let origin_file_id = self.origin.file_id;
-                let origin_span = self.origin.span;
-                let edition = self.edition;
-                let mut span_for_range = move |range| {
-                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
-                };
+                let mut span_for_range = Self::span_mapper(&self.span_map, self.fallback_span);
                 let kind = ItemKind::MacroDefinition(<MacroDefinitionItem as FromAst<
                     MacroDefAst,
                 >>::from_ast(
@@ -204,13 +206,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item))
             }
             ast::Item::MacroRules(item) => {
-                let span_map = self.span_map.clone();
-                let origin_file_id = self.origin.file_id;
-                let origin_span = self.origin.span;
-                let edition = self.edition;
-                let mut span_for_range = move |range| {
-                    Self::tt_span_for_range(&span_map, origin_file_id, origin_span, edition, range)
-                };
+                let mut span_for_range = Self::span_mapper(&self.span_map, self.fallback_span);
                 let kind = ItemKind::MacroDefinition(<MacroDefinitionItem as FromAst<
                     MacroRulesAst,
                 >>::from_ast(
@@ -339,19 +335,8 @@ impl<'a> GeneratedSourceLowering<'a> {
                         self.alloc_documented_item(kind, name, name_range, visibility, &item)
                     }
                     ast::ExternItem::MacroCall(item) => {
-                        let span_map = self.span_map.clone();
-                        let origin_file_id = self.origin.file_id;
-                        let origin_span = self.origin.span;
-                        let edition = self.edition;
-                        let mut span_for_range = move |range| {
-                            Self::tt_span_for_range(
-                                &span_map,
-                                origin_file_id,
-                                origin_span,
-                                edition,
-                                range,
-                            )
-                        };
+                        let mut span_for_range =
+                            Self::span_mapper(&self.span_map, self.fallback_span);
                         let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                             &item,
                             MacroCallContext {
@@ -390,7 +375,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
             // Legacy macro-use affects the parent's textual macro scope after the generated module
             // is collected, so it must survive the late-source pause too.
-            macro_use: rg_item_tree::MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
             path_override: rg_parse::module_path_override(item),
             source,
         })
@@ -462,19 +447,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 ast::AssocItem::MacroCall(item) => {
                     // A generated associated-item macro remains attached to the same trait or
                     // impl. Retain it so the macro fixed point can expand nested helper macros.
-                    let span_map = self.span_map.clone();
-                    let origin_file_id = self.origin.file_id;
-                    let origin_span = self.origin.span;
-                    let edition = self.edition;
-                    let mut span_for_range = move |range| {
-                        Self::tt_span_for_range(
-                            &span_map,
-                            origin_file_id,
-                            origin_span,
-                            edition,
-                            range,
-                        )
-                    };
+                    let mut span_for_range = Self::span_mapper(&self.span_map, self.fallback_span);
                     let kind = ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
                         MacroCallContext {
@@ -523,9 +496,9 @@ impl<'a> GeneratedSourceLowering<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
-        text_range: rg_syntax::TextRange,
+        text_range: TextRange,
     ) -> ItemTreeId {
         self.alloc_item_with_docs(kind, name, name_range, visibility, None, text_range)
     }
@@ -534,7 +507,7 @@ impl<'a> GeneratedSourceLowering<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         item: &T,
     ) -> ItemTreeId
@@ -559,10 +532,10 @@ impl<'a> GeneratedSourceLowering<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<rg_syntax::TextRange>,
+        name_range: Option<TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        _text_range: rg_syntax::TextRange,
+        _text_range: TextRange,
     ) -> ItemTreeId {
         let span = self.origin.span;
         let name_span = name_range
@@ -586,29 +559,16 @@ impl<'a> GeneratedSourceLowering<'a> {
         })
     }
 
-    fn source_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
+    fn source_span_for_range(&self, range: TextRange) -> Option<Span> {
         self.span_map
-            .span_for_range_in_file(range, self.origin.file_id.0)
+            .span_for_range_in_file(range, self.package.0, self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))
     }
 
-    fn tt_span_for_range(
+    fn span_mapper(
         span_map: &ExpansionSpanMap,
-        origin_file_id: FileId,
-        origin_span: Span,
-        edition: RustEdition,
-        range: rg_syntax::TextRange,
-    ) -> TtSpan {
-        if let Some(span) = span_map.span_for_range(range) {
-            return span;
-        }
-
-        let text_range =
-            rg_syntax::TextRange::new(origin_span.start.into(), origin_span.end.into());
-        SpanFactory::new(
-            u32::try_from(origin_file_id.0).expect("file id should fit macro span storage"),
-            syntax_edition(edition),
-        )
-        .span_for(text_range)
+        fallback_span: TtSpan,
+    ) -> impl Fn(TextRange) -> TtSpan + Copy + '_ {
+        move |range| span_map.span_for_range(range).unwrap_or(fallback_span)
     }
 }

@@ -643,6 +643,7 @@ impl MacroExpansionAttempt {
                 .expect("non-declarative macro returned after explicit dispatch"),
             path_text,
             args,
+            call_package: state.crate_ref.package,
             call_file_id: call.file_id,
             call_span: call.span,
             call_edition: state.edition,

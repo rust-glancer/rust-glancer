@@ -12,6 +12,7 @@ use rg_ir_view::{
     },
     ty::IndexedType,
 };
+use rg_std::UniqueVec;
 
 use crate::{
     Analysis, SymbolKind,
@@ -42,13 +43,24 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 SourceSymbol::plain_declaration(link.declaration, crate_ref, file_id, link.span),
             );
         }
-        let Some(source_symbol) = self
+        let symbols = self
             .0
-            .source_symbol_at_for_query(crate_ref, file_id, offset)?
-        else {
-            return Ok(None);
-        };
-        self.hover_for_source_symbol(crate_ref, source_symbol)
+            .source_symbols_at_for_query(crate_ref, file_id, offset)?;
+        // A repeated argument may have different meanings at its expanded uses. Show each result,
+        // while folding identical hover blocks back into one entry for the written token.
+        let mut range = None;
+        let mut blocks = UniqueVec::new();
+        for symbol in symbols {
+            let Some(hover) = self.hover_for_source_symbol(crate_ref, symbol)? else {
+                continue;
+            };
+            range.get_or_insert(hover.range);
+            blocks.extend(hover.blocks);
+        }
+        Ok(range.map(|range| HoverInfo {
+            range,
+            blocks: blocks.into_vec(),
+        }))
     }
 
     fn hover_for_source_symbol(
@@ -64,7 +76,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let edition = self.0.view_db().crate_edition(crate_ref)?;
         let details = DeclarationDetailsView::new(self.0.view_db(), edition);
         let type_renderer = TypeRenderer::new(self.0.view_db(), edition);
-        let mut blocks = Vec::new();
+        let mut blocks = UniqueVec::new();
 
         for declaration in declarations {
             let Some(details) = details.details_for_declaration(declaration, &context)? else {
@@ -73,9 +85,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             let block = self
                 .hover_block(declaration, details)
                 .context("resolve hover documentation")?;
-            if !blocks.contains(&block) {
-                blocks.push(block);
-            }
+            blocks.push(block);
         }
 
         if blocks.is_empty()
@@ -85,7 +95,10 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             blocks.push(block);
         }
 
-        Ok((!blocks.is_empty()).then_some(HoverInfo { range, blocks }))
+        Ok((!blocks.is_empty()).then_some(HoverInfo {
+            range,
+            blocks: blocks.into_vec(),
+        }))
     }
 
     fn module_display_name_for_symbol(symbol: &SymbolAt) -> Option<String> {

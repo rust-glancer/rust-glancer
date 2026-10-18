@@ -91,7 +91,7 @@ impl TypeRefContext {
 pub(super) struct TypePathSite<'body> {
     pub(super) scope: ScopeId,
     pub(super) visible_bindings: usize,
-    pub(super) file_id: FileId,
+    pub(super) source: BodySource,
     pub(super) owner_item: Option<ItemTreeId>,
     pub(super) path: &'body TypePath,
     /// Whether this path may name a const because it fills one whole generic argument.
@@ -100,9 +100,13 @@ pub(super) struct TypePathSite<'body> {
 
 /// Structural views over lowered body syntax used by source scans.
 ///
-/// This type only discovers where patterns and type references were written. It does not decide
+/// This type only discovers pattern and type-reference sites. It does not decide
 /// whether a path is a completion site, a reference, or a declaration; each scanner applies that
 /// policy after receiving a site.
+///
+/// With `include_macro_arguments`, the walks also visit generated syntax. The caller still checks
+/// each name against the body's source map: one generated node can mix copied input with names
+/// from the macro template.
 pub(super) struct BodyScanSites<'body> {
     body: BodyView<'body>,
 }
@@ -120,10 +124,14 @@ impl<'body> BodyScanSites<'body> {
         &self,
         file_id: Option<FileId>,
         offset: Option<u32>,
+        include_macro_arguments: bool,
         mut visit: impl FnMut(PatWalkSite<'body>),
     ) {
         self.for_each_pattern_site(|site| {
-            if !site.source.is_written_in_selected_file(file_id) {
+            if !site.source.is_written_in_selected_file(file_id)
+                && !(include_macro_arguments
+                    && file_id.is_none_or(|file| site.source.file_id == file))
+            {
                 return;
             }
             if offset.is_some_and(|offset| !site.source.span.touches(offset)) {
@@ -131,7 +139,10 @@ impl<'body> BodyScanSites<'body> {
             }
 
             walk_pat(self.body, site.scope, site.pat, &mut |walk_site| {
-                if walk_site.data.source.is_written_in_selected_file(file_id) {
+                if walk_site.data.source.is_written_in_selected_file(file_id)
+                    || include_macro_arguments
+                        && file_id.is_none_or(|file| walk_site.data.source.file_id == file)
+                {
                     visit(walk_site);
                 }
             });
@@ -147,10 +158,14 @@ impl<'body> BodyScanSites<'body> {
     pub(super) fn walk_type_paths(
         &self,
         file_id: Option<FileId>,
+        include_macro_arguments: bool,
         mut visit: impl FnMut(TypePathSite<'body>),
     ) {
         self.for_each_type_ref_site(|site| {
-            if !site.source.is_written_in_selected_file(file_id) {
+            if !site.source.is_written_in_selected_file(file_id)
+                && !(include_macro_arguments
+                    && file_id.is_none_or(|file| site.source.file_id == file))
+            {
                 return;
             }
 
@@ -158,7 +173,7 @@ impl<'body> BodyScanSites<'body> {
                 visit(TypePathSite {
                     scope: site.scope,
                     visible_bindings: site.visible_bindings,
-                    file_id: site.source.file_id,
+                    source: site.source,
                     owner_item: site.owner_item,
                     path,
                     position,
@@ -379,13 +394,7 @@ where
     fn walk_pattern_path_type_refs(&mut self) {
         let sites = self.sites;
         sites.for_each_pattern_site(|site| {
-            if !site.source.is_written() {
-                return;
-            }
             walk_pat(sites.body, site.scope, site.pat, &mut |walk_site| {
-                if !walk_site.data.source.is_written() {
-                    return;
-                }
                 if let Some(path) = walk_site.data.kind.path() {
                     self.walk_decl_body_path_type_refs(
                         path,
@@ -573,10 +582,6 @@ where
     }
 
     fn emit_type_ref(&mut self, context: TypeRefContext, ty: &'body TypeRef) {
-        if !context.source.is_written() {
-            return;
-        }
-
         (self.visit)(TypeRefSite {
             scope: context.scope,
             visible_bindings: context.visible_bindings,

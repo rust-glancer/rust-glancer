@@ -73,6 +73,7 @@ mod goto_type_definition;
 mod hover;
 mod inference;
 mod inlay_hints;
+mod macro_navigation;
 mod raw_identifiers;
 mod references;
 mod rename;

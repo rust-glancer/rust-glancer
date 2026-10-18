@@ -102,7 +102,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                 continue;
             }
 
-            BodyScanSites::new(body).walk_type_paths(Some(self.file_id), |site| {
+            BodyScanSites::new(body).walk_type_paths(Some(self.file_id), false, |site| {
                 let Some(binding) = site_at(site.path, self.offset) else {
                     return;
                 };
@@ -130,7 +130,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         best: &mut NarrowestSourceSite<PathCompletionSite>,
     ) {
         let sites = BodyScanSites::new(body);
-        sites.walk_type_paths(Some(self.file_id), |site| {
+        sites.walk_type_paths(Some(self.file_id), false, |site| {
             if let Some(completion_site) =
                 self.site_for_type_path(body_ref, site.scope, site.path, site.position)
             {
@@ -172,7 +172,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         }
 
         let sites = BodyScanSites::new(body);
-        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+        sites.walk_pats(Some(self.file_id), Some(self.offset), false, |site| {
             self.scan_pat_data(body_ref, site.scope, site.data, best);
         });
     }

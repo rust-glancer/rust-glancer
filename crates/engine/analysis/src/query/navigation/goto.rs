@@ -2,6 +2,7 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId};
+use rg_std::UniqueVec;
 
 use super::{NavigationTargetProjection, SymbolResolver};
 use crate::{Analysis, documentation::SourceDocumentationQuery, model::NavigationTarget};
@@ -33,10 +34,15 @@ impl<'a, 'db> GotoResolver<'a, 'db> {
                 .into_iter()
                 .collect());
         }
-        let Some(symbol) = self.0.symbol_at_for_query(crate_ref, file_id, offset)? else {
-            return Ok(Vec::new());
-        };
-
-        SymbolResolver::new(self.0.view_db()).resolve_symbol(symbol)
+        // One written macro argument may refer to several declarations after expansion.
+        let mut targets = UniqueVec::new();
+        let resolver = SymbolResolver::new(self.0.view_db());
+        for source in self
+            .0
+            .source_symbols_at_for_query(crate_ref, file_id, offset)?
+        {
+            targets.extend(resolver.resolve_symbol(source.into_symbol())?);
+        }
+        Ok(targets.into_vec())
     }
 }
