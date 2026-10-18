@@ -686,7 +686,7 @@ impl BodyLowering<'_> {
         let expr = self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind });
         // Const evaluation needs the token's value, not just its type category. Capture it while
         // syntax is available, without keeping the syntax tree or payload in the saved Body IR.
-        if matches!(self.owner, BodyOwner::Const(_))
+        if matches!(self.owner, BodyOwner::Const(_) | BodyOwner::Static(_))
             && let ast::LiteralKind::IntNumber(number) = literal.kind()
             && number
                 .suffix()

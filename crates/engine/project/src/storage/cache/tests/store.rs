@@ -17,6 +17,8 @@ fn stores_package_cache_artifacts_on_disk() {
 pub struct App;
 pub const CAPACITY: usize = 2 * 8;
 pub const LABEL: &str = "a  b";
+pub static SLOTS: usize = 1 << 10;
+pub static STATIC_LABEL: &str = "static  label";
 "#,
     );
     let project = fixture.build_project();
@@ -76,6 +78,31 @@ pub const LABEL: &str = "a  b";
             .and_then(|data| data.initializer_preview.as_deref()),
         Some(r#""a  b""#),
         "initializer preview survives the cache roundtrip verbatim",
+    );
+    let statics = semantic_ir
+        .crate_items(CrateId(0))
+        .expect("cached crate should exist")
+        .statics();
+    let slots = statics
+        .iter()
+        .find(|data| data.name.as_str() == "SLOTS")
+        .expect("cached static should exist");
+    assert_eq!(
+        slots.value.as_deref(),
+        Some(&EvaluatedConstValue::UnsignedInt {
+            value: 1024,
+            ty: UnsignedIntTy::Usize
+        }),
+        "static initial value survives the cache roundtrip",
+    );
+    assert_eq!(slots.initializer_preview.as_deref(), Some("1 << 10"));
+    assert_eq!(
+        statics
+            .iter()
+            .find(|data| data.name.as_str() == "STATIC_LABEL")
+            .and_then(|data| data.initializer_preview.as_deref()),
+        Some(r#""static  label""#),
+        "static initializer preview survives the cache roundtrip verbatim",
     );
     assert_eq!(loaded.probe().header.package.package.0, 0);
     assert_eq!(loaded.probe().header.package.name, "app");

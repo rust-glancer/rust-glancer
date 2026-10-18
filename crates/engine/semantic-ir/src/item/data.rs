@@ -194,7 +194,7 @@ pub struct ConstData {
     pub value: Option<Box<EvaluatedConstValue>>,
 }
 
-/// Module-level static item.
+/// Static declaration and its optional evaluated initializer.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StaticData {
     pub local_def: LocalDefRef,
@@ -207,4 +207,8 @@ pub struct StaticData {
     pub docs: Option<Documentation>,
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
+    /// Short initializer source for display alongside any evaluated value.
+    pub initializer_preview: Option<String>,
+    /// Compile-time initial value, even for mutable statics; runtime contents may differ.
+    pub value: Option<Box<EvaluatedConstValue>>,
 }

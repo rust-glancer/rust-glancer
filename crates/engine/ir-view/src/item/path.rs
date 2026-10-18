@@ -10,8 +10,8 @@ use anyhow::Context as _;
 use rg_body_ir::BodyOwner;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
-    TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstOrStaticRef, ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef,
+    StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_semantic_ir::{EnumVariantData, ItemStoreQuery};
 use rg_text::RustEdition;
@@ -124,30 +124,47 @@ impl<'a, 'db> PathView<'a, 'db> {
 
     /// Return the full path for a const item.
     pub fn const_path(&self, const_ref: ConstRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = ItemStoreQuery::new(self.db).const_data(const_ref)? else {
-            return Ok(None);
-        };
-        let name = self.syntax.identifier(&data.name);
-        let mut owner = self.path_for_owner(const_ref.origin, data.owner)?;
-        // A current root const owns a new declaration so its initializer value can change.
-        // Its temporary module still represents the saved containing module for display.
-        if owner.is_none()
-            && let DefMapRef::Body(body_ref) = const_ref.origin
-            && self.db.is_current_body(body_ref)
-            && let Some(body) = self.db.body_ir.body(body_ref)?
-            && body.owner() == BodyOwner::Const(const_ref)
-        {
-            owner = self.module_path(body.fallback_module())?;
-        }
-        Ok(owner.map(|owner| format!("{owner}::{name}")))
+        self.initializer_path(const_ref.into())
     }
 
     /// Return the full path for a static item.
     pub fn static_path(&self, static_ref: StaticRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = ItemStoreQuery::new(self.db).static_data(static_ref)? else {
-            return Ok(None);
+        self.initializer_path(static_ref.into())
+    }
+
+    fn initializer_path(&self, item: ConstOrStaticRef) -> anyhow::Result<Option<String>> {
+        let items = ItemStoreQuery::new(self.db);
+        let (owner, name, body_owner) = match item {
+            ConstOrStaticRef::Const(item) => {
+                let Some(data) = items.const_data(item)? else {
+                    return Ok(None);
+                };
+                (data.owner, &data.name, BodyOwner::Const(item))
+            }
+            ConstOrStaticRef::Static(item) => {
+                let Some(data) = items.static_data(item)? else {
+                    return Ok(None);
+                };
+                (
+                    ItemOwner::Module(data.owner),
+                    &data.name,
+                    BodyOwner::Static(item),
+                )
+            }
         };
-        self.path_in_module(data.owner, &data.name)
+        let name = self.syntax.identifier(name);
+        let mut owner = self.path_for_owner(item.origin(), owner)?;
+        // A current root initializer owns a new declaration so its value can change.
+        // Its temporary module still represents the saved containing module for display.
+        if owner.is_none()
+            && let DefMapRef::Body(body_ref) = item.origin()
+            && self.db.is_current_body(body_ref)
+            && let Some(body) = self.db.body_ir.body(body_ref)?
+            && body.owner() == body_owner
+        {
+            owner = self.module_path(body.fallback_module())?;
+        }
+        Ok(owner.map(|owner| format!("{owner}::{name}")))
     }
 
     /// Return the full path for an enum variant.

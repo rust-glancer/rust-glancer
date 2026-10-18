@@ -34,7 +34,7 @@ pub(super) enum BodySemanticStage {
 /// Time spent in each shared semantic stage.
 pub(super) struct BodySemanticTimings {
     pub(super) impl_headers: Duration,
-    pub(super) const_values: Duration,
+    pub(super) initializer_values: Duration,
     pub(super) pattern_bindings: Duration,
     pub(super) bodies: Duration,
 }
@@ -196,7 +196,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         let semantic_timings =
             self.resolve_semantics(def_map, semantic_ir, &item_lookup_query, |_| Ok(()))?;
         let body_local_impl_headers_ms = semantic_timings.impl_headers.as_millis();
-        let const_values_ms = semantic_timings.const_values.as_millis();
+        let initializer_values_ms = semantic_timings.initializer_values.as_millis();
         let pattern_bindings_ms = semantic_timings.pattern_bindings.as_millis();
         let bodies_ms = semantic_timings.bodies.as_millis();
 
@@ -212,7 +212,7 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
             body_local_items_ms,
             item_lookup_query_ms,
             body_local_impl_headers_ms,
-            const_values_ms,
+            initializer_values_ms,
             pattern_bindings_ms,
             bodies_ms,
             finish_ms,

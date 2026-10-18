@@ -139,6 +139,22 @@ pub struct StaticRef {
     pub id: StaticId,
 }
 
+/// A const or static declaration whose initializer can supply a stored compile-time value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
+pub enum ConstOrStaticRef {
+    Const(ConstRef),
+    Static(StaticRef),
+}
+
+impl ConstOrStaticRef {
+    pub fn origin(self) -> DefMapRef {
+        match self {
+            Self::Const(item) => item.origin,
+            Self::Static(item) => item.origin,
+        }
+    }
+}
+
 /// Definition whose signature can introduce or inherit generic parameters.
 ///
 /// Consts and statics do not declare their own parameters in stable Rust, but associated items can

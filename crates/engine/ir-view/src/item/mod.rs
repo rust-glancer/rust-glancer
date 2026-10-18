@@ -1,7 +1,7 @@
 //! Item and declaration projections over the indexed stores.
 
-pub mod const_value;
 pub mod declaration;
 pub mod details;
 pub mod documentation;
+pub mod initializer;
 pub mod path;

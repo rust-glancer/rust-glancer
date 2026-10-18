@@ -419,4 +419,6 @@ pub struct ConstItem {
 pub struct StaticItem {
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
+    /// Bounded initializer source for display. This is not an evaluated value or semantic input.
+    pub initializer_preview: Option<String>,
 }

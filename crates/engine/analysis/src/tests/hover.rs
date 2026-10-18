@@ -234,6 +234,123 @@ fn hovers_with_bounded_const_initializer_previews() {
 }
 
 #[test]
+fn hovers_with_static_initializers() {
+    check_analysis(
+        r##"
+        //- /src/lib.rs crate:analysis_hover_static_values
+        mod defaults;
+        use defaults::CAPACITY;
+        type Size = usize;
+
+        /// Initial number of slots.
+        pub static SL$0OTS: Size = 1 << 10; // hover("static declaration value")
+        pub static LI$0TERAL: usize = 2; // hover("static literal without redundant value")
+        pub static mut COU$0NTER: Size = 7 * 60 + 17; // hover("mutable static initial value")
+
+        pub enum Mode { Auto }
+        pub static MO$0DE: Mode = Mode::Auto; // hover("static initializer path")
+        pub static LA$0BEL: &str = r#"a  b"#; // hover("static string initializer spacing")
+        pub static LO$0NG: &str = "This initializer is longer than the preview budget, so it should be omitted from hover altogether instead of being truncated into a string literal that no longer represents the source."; // hover("omit long static initializer")
+
+        pub fn demo() {
+            static LOCAL: usize = { 8 / 2 + 1 };
+            static LOCAL_LABEL: &str = "local  label";
+            let _ = LO$0CAL; // hover("body-local static value")
+            let _ = LOCAL_LA$0BEL; // hover("body-local static initializer preview")
+            let _ = SL$0OTS; // hover("static reference value")
+            let _ = CAPA$0CITY; // hover("imported static value")
+        }
+
+        //- /src/defaults.rs
+        pub static CAPACITY: usize = 0x10 + 0o10 + 0b10;
+        "##,
+        expect![[r##"
+            // static declaration value
+            range: 6:12-6:17
+            block:
+              kind: static
+              path: analysis_hover_static_values::SLOTS
+              signature:
+                pub static SLOTS: Size = 1 << 10; // 1024
+              docs:
+                Initial number of slots.
+
+            // static literal without redundant value
+            range: 7:12-7:19
+            block:
+              kind: static
+              path: analysis_hover_static_values::LITERAL
+              signature:
+                pub static LITERAL: usize = 2
+
+            // mutable static initial value
+            range: 8:16-8:23
+            block:
+              kind: static
+              path: analysis_hover_static_values::COUNTER
+              signature:
+                pub static mut COUNTER: Size = 7 * 60 + 17; // 437
+
+            // static initializer path
+            range: 11:12-11:16
+            block:
+              kind: static
+              path: analysis_hover_static_values::MODE
+              signature:
+                pub static MODE: Mode = Mode::Auto
+
+            // static string initializer spacing
+            range: 12:12-12:17
+            block:
+              kind: static
+              path: analysis_hover_static_values::LABEL
+              signature:
+                pub static LABEL: &str = r#"a  b"#
+
+            // omit long static initializer
+            range: 13:12-13:16
+            block:
+              kind: static
+              path: analysis_hover_static_values::LONG
+              signature:
+                pub static LONG: &str
+
+            // body-local static value
+            range: 18:13-18:18
+            block:
+              kind: static
+              signature:
+                static LOCAL: usize = { 8 / 2 + 1 }; // 5
+
+            // body-local static initializer preview
+            range: 19:13-19:24
+            block:
+              kind: static
+              signature:
+                static LOCAL_LABEL: &str = "local  label"
+
+            // static reference value
+            range: 20:13-20:18
+            block:
+              kind: static
+              path: analysis_hover_static_values::SLOTS
+              signature:
+                pub static SLOTS: Size = 1 << 10; // 1024
+              docs:
+                Initial number of slots.
+
+            // imported static value
+            range: 21:13-21:21
+            block:
+              kind: static
+              path: analysis_hover_static_values::defaults::CAPACITY
+              signature:
+                pub static CAPACITY: usize = 0x10 + 0o10 + 0b10; // 26
+        "##]],
+    );
+}
+
+#[test]
 fn hovers_with_formatted_function_signatures() {
     check_analysis(
         r#"
@@ -550,7 +667,7 @@ fn hovers_over_more_body_local_items() {
             block:
               kind: static
               signature:
-                static CURRENT: GlobalId
+                static CURRENT: GlobalId = GlobalId
               docs:
                 Current id.
 

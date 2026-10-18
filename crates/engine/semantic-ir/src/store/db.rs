@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{
-    ConstRef, CrateRef, EvaluatedConstValue, ImplRef, PackageSlot, TraitDefRef, TypeDefRef,
+    ConstOrStaticRef, CrateRef, EvaluatedConstValue, ImplRef, PackageSlot, TraitDefRef, TypeDefRef,
 };
 use rg_package_store::{PackageStore, PackageSubset};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -17,30 +17,31 @@ use crate::{
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
 /// signatures, and enough resolution metadata to answer LSP-shaped questions without parsing AST
-/// again. Concrete const values stay with their declarations; initializer bodies live in `rg_body_ir`.
+/// again. Const and static initial values stay with their declarations; initializer bodies live in
+/// `rg_body_ir`.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct SemanticIrDb {
     packages: PackageStore<SemanticPackage>,
 }
 
 impl SemanticIrDb {
-    /// Save results computed for this saved generation's crate-owned const declarations.
+    /// Save results computed for this saved generation's crate-owned const and static declarations.
     /// The coordinator computes them with read-only queries, then installs them before publication.
     /// Body-local and current declaration results go directly into their local ItemStores instead.
-    pub fn apply_const_values(
+    pub fn apply_initializer_values(
         &mut self,
-        values: impl IntoIterator<Item = (ConstRef, EvaluatedConstValue)>,
+        values: impl IntoIterator<Item = (ConstOrStaticRef, EvaluatedConstValue)>,
     ) {
-        for (konst, value) in values {
-            let crate_ref = konst
-                .origin
+        for (item, value) in values {
+            let crate_ref = item
+                .origin()
                 .as_crate_ref()
-                .expect("saved const should have a crate origin");
+                .expect("saved initializer should have a crate origin");
             self.packages
                 .make_mut(crate_ref.package)
                 .and_then(|package| package.crate_items_mut(crate_ref.crate_id))
-                .expect("evaluated const should belong to a rebuilt item store")
-                .set_const_value(konst.id, value);
+                .expect("evaluated initializer should belong to a rebuilt item store")
+                .set_initializer_value(item, value);
         }
     }
 

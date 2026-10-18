@@ -128,9 +128,9 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .context("while attempting to rebuild affected semantic IR packages")?;
     drop(generated_items);
 
-    // Dependencies need const values even when their function bodies are skipped. Install the
+    // Dependencies need initializer values even when their function bodies are skipped. Install the
     // results with the declarations before publishing the saved generation.
-    let const_values = BodyIrBuilder::new(
+    let initializer_values = BodyIrBuilder::new(
         &state.parse,
         &def_map,
         &semantic_ir,
@@ -142,8 +142,8 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &rebuild_subset,
     )
     .worker_limit(state.indexing_preference.body_ir_worker_limit())
-    .evaluate_consts()?;
-    semantic_ir.apply_const_values(const_values);
+    .evaluate_initializers()?;
+    semantic_ir.apply_initializer_values(initializer_values);
 
     let body_builder = BodyIrBuilder::new(
         &state.parse,

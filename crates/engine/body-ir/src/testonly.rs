@@ -57,7 +57,7 @@ impl BodyIrFixture {
                 .collect(),
         ));
 
-        let const_values = BodyIrBuilder::new(
+        let initializer_values = BodyIrBuilder::new(
             semantic_ir.parse_db(),
             semantic_ir.def_map_db(),
             semantic_ir.semantic_ir_db(),
@@ -68,11 +68,11 @@ impl BodyIrFixture {
             SemanticIrLoader::resident_only("fixture Semantic IR"),
             &subset,
         )
-        .evaluate_consts()
-        .expect("fixture const values should build");
+        .evaluate_initializers()
+        .expect("fixture initializer values should build");
         semantic_ir
             .semantic_ir_db_mut()
-            .apply_const_values(const_values);
+            .apply_initializer_values(initializer_values);
 
         // Every fixture package is selected, so provisional coverage is replaced before reads.
         // Construction returns one CrateBodies per target; the fixture groups them into packages.

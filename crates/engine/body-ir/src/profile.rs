@@ -5,7 +5,7 @@ use rg_profile::{ProfileDescriptor, declare_metrics};
 declare_metrics! {
     pub(crate) mod metric {
         scope "body_ir.const_eval" {
-            /// Crate-owned const initializer bodies submitted for semantic evaluation.
+            /// Crate-owned const and static initializer bodies submitted for semantic evaluation.
             counter SAVED_CONST_INITIALIZERS = "saved.initializers";
             /// Submitted initializers that produced a concrete value for ItemStore.
             counter SAVED_CONST_KNOWN_VALUES = "saved.known_values";
@@ -13,7 +13,7 @@ declare_metrics! {
             duration SAVED_CONST_LOWERING = "saved.timings.lowering";
             /// Saved initializer evaluation, including lookup construction and type resolution.
             duration SAVED_CONST_EVALUATION = "saved.timings.evaluation";
-            /// Body-local and current-root const initializers submitted for semantic evaluation.
+            /// Body-local and current-root const and static initializers submitted for evaluation.
             counter LOCAL_CONST_INITIALIZERS = "local.initializers";
             /// Submitted initializers that produced a concrete value for their local ItemStore.
             counter LOCAL_CONST_KNOWN_VALUES = "local.known_values";

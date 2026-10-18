@@ -36,7 +36,7 @@ impl BodyIrMaterializationPlan {
 #[derive(Debug, Clone, Copy)]
 pub(super) enum BodyIrMaterialization<'a> {
     /// Lower declaration initializers for evaluation, regardless of function-body indexing policy.
-    ConstInitializers,
+    DeclarationInitializers,
     /// Lower every body selected by the build policy.
     ConfiguredBodies(BodyIrBuildPolicy),
     /// Create empty entries that record which targets still need body analysis. This lets
@@ -65,7 +65,7 @@ impl BodyIrMaterialization<'_> {
     ) -> CrateBodiesCoverage {
         match self {
             // This transient worklist is never published as body coverage.
-            Self::ConstInitializers => CrateBodiesCoverage::Complete,
+            Self::DeclarationInitializers => CrateBodiesCoverage::Complete,
             Self::ConfiguredBodies(policy) => {
                 if policy.should_lower_target(parse_package, parse_target) {
                     CrateBodiesCoverage::Complete
@@ -113,7 +113,7 @@ impl BodyIrMaterialization<'_> {
 
     pub(super) fn should_lower_body_file(self, crate_ref: CrateRef, file_id: FileId) -> bool {
         match self {
-            Self::ConfiguredBodies(_) | Self::ConstInitializers => true,
+            Self::ConfiguredBodies(_) | Self::DeclarationInitializers => true,
             Self::CoverageOnly(_) => false,
             Self::Selected { files, crates } => {
                 crates.contains(&crate_ref)
@@ -127,7 +127,9 @@ impl BodyIrMaterialization<'_> {
     /// Include this crate in the build output. Exact selections omit unrelated targets.
     pub(super) fn selects_crate(self, crate_ref: CrateRef) -> bool {
         match self {
-            Self::ConfiguredBodies(_) | Self::CoverageOnly(_) | Self::ConstInitializers => true,
+            Self::ConfiguredBodies(_) | Self::CoverageOnly(_) | Self::DeclarationInitializers => {
+                true
+            }
             Self::Selected { files, crates } => {
                 crates.contains(&crate_ref) || files.iter().any(|file| file.crate_ref == crate_ref)
             }

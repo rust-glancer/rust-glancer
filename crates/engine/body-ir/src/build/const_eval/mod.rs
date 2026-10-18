@@ -1,4 +1,4 @@
-//! Const evaluation over ordinary lowered bodies.
+//! Const and static initializer evaluation over ordinary lowered bodies.
 //!
 //! Saved declarations use a temporary initializer worklist even if function bodies are skipped.
 //! Local and editor declarations reuse bodies already being built for their lexical context.
@@ -8,7 +8,7 @@
 use std::time::{Duration, Instant};
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{BodyRef, ConstRef, CrateRef, EvaluatedConstValue, ExprId};
+use rg_ir_model::{BodyRef, ConstOrStaticRef, CrateRef, EvaluatedConstValue, ExprId};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{
@@ -30,12 +30,14 @@ use crate::{
 const SLOW_CRATE_EVALUATION: Duration = Duration::from_secs(1);
 
 impl BodyIrBuilder<'_, '_> {
-    /// Evaluate saved const declarations without requiring function-body indexing.
+    /// Evaluate saved const and static declarations without requiring function-body indexing.
     ///
     /// Initializers use ordinary body lowering and semantic type queries. Only their final values
     /// escape; the coordinator installs them in ItemStore before publishing the saved generation.
-    /// This visits consts in the selected packages regardless of body policy or file selection.
-    pub fn evaluate_consts(self) -> anyhow::Result<Vec<(ConstRef, EvaluatedConstValue)>> {
+    /// This visits initializers in the selected packages regardless of body policy or file selection.
+    pub fn evaluate_initializers(
+        self,
+    ) -> anyhow::Result<Vec<(ConstOrStaticRef, EvaluatedConstValue)>> {
         let packages = Self::normalized_package_slots(self.packages);
         let semantic_ir = self
             .semantic_ir
@@ -50,7 +52,7 @@ impl BodyIrBuilder<'_, '_> {
             self.parse,
             &def_map,
             &semantic_ir,
-            BodyIrMaterialization::ConstInitializers,
+            BodyIrMaterialization::DeclarationInitializers,
             &packages,
             self.interners,
             self.worker_limit,
@@ -80,7 +82,7 @@ impl BodyIrBuilder<'_, '_> {
                     &self.cancellation,
                 )?;
                 for (id, body) in bodies.bodies().iter_with_ids() {
-                    rg_std::check_cancel!(self.cancellation, "saved const values");
+                    rg_std::check_cancel!(self.cancellation, "saved initializer values");
                     let context = BodyResolutionContext::new(
                         &def_map,
                         &semantic_ir,
@@ -92,7 +94,7 @@ impl BodyIrBuilder<'_, '_> {
                         &lookup,
                         self.cancellation.clone(),
                     );
-                    if let Some(value) = context.evaluate_const(body)? {
+                    if let Some(value) = context.evaluate_initializer(body)? {
                         values.push(value);
                     }
                 }
@@ -105,7 +107,7 @@ impl BodyIrBuilder<'_, '_> {
                         initializer_count = bodies.bodies().len(),
                         known_values = values.len() - known_before,
                         elapsed_ms = elapsed.as_millis(),
-                        "slow saved const evaluation"
+                        "slow saved initializer evaluation"
                     );
                 }
             }
@@ -164,14 +166,22 @@ where
     /// The declaration's annotation is interpreted by the same lowerer as body type inference,
     /// including aliases, generic arguments and `Self`. Evaluation only consumes its result.
     /// For `type Size = usize; const N: Size = 2 + 2;`, the evaluator receives `usize`.
-    pub(crate) fn evaluate_const(
+    pub(crate) fn evaluate_initializer(
         &self,
         lowered: &LoweredBodyData,
-    ) -> anyhow::Result<Option<(ConstRef, EvaluatedConstValue)>> {
-        let BodyOwner::Const(konst) = lowered.body().owner() else {
-            return Ok(None);
+    ) -> anyhow::Result<Option<(ConstOrStaticRef, EvaluatedConstValue)>> {
+        let (item, ty) = match lowered.body().owner() {
+            BodyOwner::Const(item) => (
+                ConstOrStaticRef::Const(item),
+                self.signatures().const_ty(item)?,
+            ),
+            BodyOwner::Static(item) => (
+                ConstOrStaticRef::Static(item),
+                self.signatures().static_ty(item)?,
+            ),
+            BodyOwner::Function(_) => return Ok(None),
         };
-        let Some(ty) = self.signatures().const_ty(konst)? else {
+        let Some(ty) = ty else {
             return Ok(None);
         };
         // An annotation such as `<Buffer as Limits>::Size` can still be a projection. Normalize
@@ -183,9 +193,9 @@ where
         };
         let pointer_width = self
             .def_map_source()
-            .target_pointer_width(konst.origin.origin_crate())?;
+            .target_pointer_width(item.origin().origin_crate())?;
         Ok(ConstEvaluationQuery::new(lowered, pointer_width)
             .evaluate_expr(lowered.body().root_expr(), ty)
-            .map(|value| (konst, value)))
+            .map(|value| (item, value)))
     }
 }

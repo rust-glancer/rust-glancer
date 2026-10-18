@@ -365,24 +365,13 @@ impl FromAst for ConstItem {
     type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
     fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
-        // Capture only short initializers while syntax is available. Keep the text verbatim:
-        // collapsing whitespace would change string literals and the extent of line comments.
-        let initializer_preview = item.body().and_then(|body| {
-            const MAX_BYTES: u32 = 160;
-            const MAX_LINES: usize = 3;
-            if u32::from(body.syntax().text_range().len()) > MAX_BYTES {
-                return None;
-            }
-            let text = body.syntax().text().to_string();
-            (text.lines().count() <= MAX_LINES).then_some(text)
-        });
         Self {
             generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             ty: item
                 .ty()
                 .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
             has_value: item.eq_token().is_some(),
-            initializer_preview,
+            initializer_preview: item.body().and_then(initializer_preview),
         }
     }
 }
@@ -397,8 +386,21 @@ impl FromAst for StaticItem {
                 .ty()
                 .map(|ty| TypeRef::from_ast(&ty, (line_index, interner))),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
+            initializer_preview: item.body().and_then(initializer_preview),
         }
     }
+}
+
+// Capture only short initializers while syntax is available. Keep the text verbatim:
+// collapsing whitespace would change string literals and the extent of line comments.
+fn initializer_preview(body: ast::Expr) -> Option<String> {
+    const MAX_BYTES: u32 = 160;
+    const MAX_LINES: usize = 3;
+    if u32::from(body.syntax().text_range().len()) > MAX_BYTES {
+        return None;
+    }
+    let text = body.syntax().text().to_string();
+    (text.lines().count() <= MAX_LINES).then_some(text)
 }
 
 fn param_list_from_ast(

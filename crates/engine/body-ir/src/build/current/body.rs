@@ -166,10 +166,13 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         for selected_owner in current_owners {
             rg_std::check_cancel!(cancellation, "current body roots");
             let association_started = Instant::now();
-            // An initializer is part of a const's semantic declaration. Reusing only its saved
+            // An initializer is part of a const or static's declaration. Reusing only its saved
             // header would also reuse the saved value, so collect the current declaration too.
             // This also keeps an unknown current initializer from exposing the old saved result.
-            let saved_root = if matches!(selected_owner, SyntaxBodyOwner::Const(_)) {
+            let saved_root = if matches!(
+                selected_owner,
+                SyntaxBodyOwner::Const(_) | SyntaxBodyOwner::Static(_)
+            ) {
                 ExpectedUnique::Empty
             } else {
                 self.find_saved_root(&selected_owner, &saved_owners)
@@ -432,7 +435,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             lowering_us,
             local_items_us,
             impl_headers_us = semantic_timings.impl_headers.as_micros(),
-            const_values_us = semantic_timings.const_values.as_micros(),
+            initializer_values_us = semantic_timings.initializer_values.as_micros(),
             pattern_bindings_us = semantic_timings.pattern_bindings.as_micros(),
             resolution_us = semantic_timings.bodies.as_micros(),
             total_us = started.elapsed().as_micros(),

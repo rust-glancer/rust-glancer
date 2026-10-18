@@ -85,7 +85,7 @@ impl BodyIrBuildProgress {
 /// Installing these results in a [`BodyIrDb`](crate::BodyIrDb) is the caller's responsibility,
 /// so body analysis can run independently of changes to the project's existing bodies.
 ///
-/// `evaluate_consts` returns saved declaration values even when body analysis is deferred. The
+/// `evaluate_initializers` returns saved declaration values even when body analysis is deferred. The
 /// caller installs these in Semantic IR separately from the body products.
 pub struct BodyIrBuilder<'db, 'names> {
     parse: &'db ParseDb,

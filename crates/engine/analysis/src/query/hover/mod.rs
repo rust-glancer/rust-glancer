@@ -7,8 +7,8 @@ use rg_ir_model::{CrateRef, FileId, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
     item::{
-        const_value::ConstValueView,
         details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+        initializer::InitializerView,
     },
     ty::IndexedType,
 };
@@ -135,9 +135,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         });
         // Initializer details belong to hover. Shared declaration signatures used for completion
         // and generated code omit both evaluated values and source previews.
-        if let DeclarationRef::Item(SemanticItemRef::Const(konst)) = declaration
+        let initializer = match declaration {
+            DeclarationRef::Item(SemanticItemRef::Const(item)) => Some(item.into()),
+            DeclarationRef::Item(SemanticItemRef::Static(item)) => Some(item.into()),
+            _ => None,
+        };
+        if let Some(initializer) = initializer
             && let Some(signature) = &mut signature
-            && let Some(value) = ConstValueView::new(self.0.view_db()).render(konst)?
+            && let Some(value) = InitializerView::new(self.0.view_db()).render(initializer)?
         {
             signature.push_str(" = ");
             signature.push_str(&value);

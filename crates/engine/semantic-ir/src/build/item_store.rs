@@ -421,6 +421,8 @@ where
             docs: item.docs.clone(),
             ty: declaration.ty.clone(),
             mutability: declaration.mutability,
+            initializer_preview: declaration.initializer_preview.clone(),
+            value: None,
         })
     }
 }

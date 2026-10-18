@@ -251,7 +251,7 @@ fn build_package_with_interner(
             .context("store must be present")?;
         let functions = store
             .functions_with_refs()
-            .filter(|_| !matches!(scope, BodyIrMaterialization::ConstInitializers))
+            .filter(|_| !matches!(scope, BodyIrMaterialization::DeclarationInitializers))
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
         let consts = store
@@ -271,7 +271,6 @@ fn build_package_with_interner(
         let statics = store
             .statics()
             .iter_with_ids()
-            .filter(|_| !matches!(scope, BodyIrMaterialization::ConstInitializers))
             .map(|(id, data)| {
                 (
                     StaticRef {
@@ -415,7 +414,7 @@ fn validate_selected_files(
         }
         BodyIrMaterialization::ConfiguredBodies(_)
         | BodyIrMaterialization::CoverageOnly(_)
-        | BodyIrMaterialization::ConstInitializers => {}
+        | BodyIrMaterialization::DeclarationInitializers => {}
     }
 
     Ok(())
