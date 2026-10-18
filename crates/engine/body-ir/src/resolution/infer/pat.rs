@@ -58,6 +58,10 @@ where
                     None => self.cx.unknown(),
                 },
             };
+            // A parameter such as `(left, right): T::Item` needs the projected tuple shape
+            // before its bindings can be read. Normalize once here and retain the same slots
+            // while pending trait goals and pattern projection pass evidence to each other.
+            let ty = self.inference.table().normalize(ty);
             if let Some(pat) = param.pat {
                 self.infer_pattern(pat, &ty)
                     .context("infer parameter pattern")?;

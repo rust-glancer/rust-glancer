@@ -2410,6 +2410,84 @@ pub fn use_it(user: User, error: Error) {
 }
 
 #[test]
+fn resolves_impl_self_associated_types_in_signatures() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:analysis_impl_self_aliases
+pub trait FromAst<Mode = ()> {
+    type AstNode: ?Sized;
+    type Context<'a>;
+    fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self;
+}
+pub struct Params<T>(T);
+impl<T> FromAst for Params<T> {
+    type AstNode = T;
+    type Context<'a> = (&'a u32, &'a mut u64);
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Con$0text<'_>) -> Self { // goto("impl alias declaration")
+        item$0; // ty("impl generic alias")
+        (line_index, interner)$0; // ty("impl lifetime alias")
+        loop {}
+    }
+}
+pub trait Convert {
+    type Output;
+    fn convert(output: Self::Output) -> Self::Output;
+}
+impl Convert for u8 {
+    type Output = (u16, bool);
+    fn convert((number, flag): Self::Output) -> Self::Output {
+        (number, flag)$0 // ty("primitive impl alias")
+    }
+}
+"#,
+        expect![[r#"
+            type_alias Context @ 9:10-9:17 // impl alias declaration
+            &param T // impl generic alias
+            (&u32, &mut u64) // impl lifetime alias
+            (u16, bool) // primitive impl alias
+        "#]],
+    );
+}
+
+#[test]
+fn normalizes_associated_types_in_parameter_patterns() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:analysis_parameter_projections
+pub trait Source {
+    type Item;
+    type Context<'a>;
+}
+pub struct Factory;
+impl Source for Factory {
+    type Item = (u16, bool);
+    type Context<'a> = (&'a u32, &'a mut u64);
+}
+pub fn qualified((number, flag): <Factory as Source>::Item) {
+    (number, flag)$0; // ty("qualified tuple parameter")
+}
+pub fn lifetime((line_index, interner): <Factory as Source>::Context<'_>) {
+    (line_index, interner)$0; // ty("qualified lifetime parameter")
+}
+pub fn generic<T: Source<Item = (u16, bool)>>(value: T::Item, (number, flag): T::Item) {
+    value$0; // ty("generic binding parameter")
+    (number, flag)$0; // ty("generic tuple parameter")
+}
+pub fn nested((number, flag): (<Factory as Source>::Item, u8)) {
+    (number, flag)$0; // ty("nested parameter projection")
+}
+"#,
+        expect![[r#"
+            (u16, bool) // qualified tuple parameter
+            (&u32, &mut u64) // qualified lifetime parameter
+            (u16, bool) // generic binding parameter
+            (u16, bool) // generic tuple parameter
+            ((u16, bool), u8) // nested parameter projection
+        "#]],
+    );
+}
+
+#[test]
 fn late_associated_type_evidence_reaches_destructured_bindings_and_members() {
     check_analysis(
         r#"

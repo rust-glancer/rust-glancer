@@ -78,11 +78,11 @@ pub fn use_it(value: ItemOf<Iter<User>>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 param value `value`: ItemOf<Iter<User>> => projection type trait body_alias_projection_fixture[lib]::crate::Iterator::Item<nominal struct body_alias_projection_fixture[lib]::crate::Iter<nominal struct body_alias_projection_fixture[lib]::crate::User>> @ 14:15-14:20
+            - v0 param value `value`: ItemOf<Iter<User>> => nominal struct body_alias_projection_fixture[lib]::crate::User @ 14:15-14:20
             body
             expr e1 block s1 => () @ 14:42-16:2
               stmt s0 expr; @ 15:5-15:11
-                expr e0 path value -> local v0 => projection type trait body_alias_projection_fixture[lib]::crate::Iterator::Item<nominal struct body_alias_projection_fixture[lib]::crate::Iter<nominal struct body_alias_projection_fixture[lib]::crate::User>> @ 15:5-15:10
+                expr e0 path value -> local v0 => nominal struct body_alias_projection_fixture[lib]::crate::User @ 15:5-15:10
         "#]],
     );
 }

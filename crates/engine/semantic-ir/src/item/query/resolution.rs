@@ -61,7 +61,7 @@ where
         }
 
         Ok(Self::type_resolution_from_items(
-            self.semantic_items_for_path(context.module, path)?,
+            self.semantic_items_for_type_path(context, path)?,
         ))
     }
 
@@ -84,7 +84,7 @@ where
         ))
     }
 
-    /// Resolves a type-position path into item refs while preserving `Self` handling.
+    /// Resolves a type-position path into item refs while preserving `Self` and its aliases.
     pub fn semantic_items_for_type_path(
         &self,
         context: TypePathContext,
@@ -100,6 +100,17 @@ where
                 TypePathResolution::Unknown => None,
             };
             return Ok(item.into_iter().collect());
+        }
+
+        // In `impl FromAst for Params`, `Self::Context` names an alias in that impl, not a
+        // module entry. Read its declaration directly so this also works for primitive receivers
+        // and aliases in the impl's own bounds, without needing to prove those bounds first.
+        if let Some((prefix, name)) = path.split_prefix_name()
+            && prefix.is_self_type()
+            && let Some(SelfTypeOwner::Impl(impl_ref)) = context.self_owner
+            && let Some(alias) = self.items.impl_associated_type_by_name(impl_ref, name)?
+        {
+            return Ok([SemanticItemRef::TypeAlias(alias)].into_iter().collect());
         }
 
         self.semantic_items_for_path(context.module, path)
