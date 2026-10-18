@@ -133,8 +133,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             }
             _ => signature,
         });
-        // Values are hover details, not part of the shared declaration signature used for
-        // completion and generated code. Unknown initializers leave the header unchanged.
+        // Initializer details belong to hover. Shared declaration signatures used for completion
+        // and generated code omit both evaluated values and source previews.
         if let DeclarationRef::Item(SemanticItemRef::Const(konst)) = declaration
             && let Some(signature) = &mut signature
             && let Some(value) = ConstValueView::new(self.0.view_db()).render(konst)?

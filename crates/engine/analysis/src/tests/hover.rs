@@ -33,6 +33,11 @@ fn hovers_with_evaluated_const_values() {
             let _ = CAPA$0CITY; // hover("imported const value")
         }
 
+        pub const LI$0TERAL: usize = 2; // hover("literal without redundant value")
+        pub const BI$0TS: usize = 1 << 10; // hover("bit shift and evaluated value")
+        pub const INTERVAL_SE$0CS: usize = 7 * 60 + 17; // hover("interval and evaluated value")
+        pub const HE$0X: usize = 0xff; // hover("hexadecimal and decimal value")
+
         //- /src/sizes.rs
         pub const CAPACITY: usize = 0x10 + 0o10 + 0b10;
         "#,
@@ -43,7 +48,7 @@ fn hovers_with_evaluated_const_values() {
               kind: const
               path: analysis_hover_const_values::SLOTS
               signature:
-                pub const SLOTS: Size = 16
+                pub const SLOTS: Size = (2 + 2) * 4; // 16
               docs:
                 Number of slots.
 
@@ -53,7 +58,7 @@ fn hovers_with_evaluated_const_values() {
               kind: const
               path: analysis_hover_const_values::SLOTS
               signature:
-                pub const SLOTS: Size = 16
+                pub const SLOTS: Size = (2 + 2) * 4; // 16
               docs:
                 Number of slots.
 
@@ -63,7 +68,7 @@ fn hovers_with_evaluated_const_values() {
               kind: const
               path: analysis_hover_const_values::Buffer::CAPACITY
               signature:
-                pub const CAPACITY: usize = 16
+                pub const CAPACITY: usize = 1 << (2 + 2u8); // 16
 
             // trait default const value
             range: 22:21-22:28
@@ -71,14 +76,14 @@ fn hovers_with_evaluated_const_values() {
               kind: const
               path: analysis_hover_const_values::Limit::DEFAULT
               signature:
-                const DEFAULT: usize = 247
+                const DEFAULT: usize = 0xff & !(1 << 3); // 247
 
             // body-local const value
             range: 23:13-23:18
             block:
               kind: const
               signature:
-                const LOCAL: usize = 5
+                const LOCAL: usize = { 8 / 2 + 1 }; // 5
 
             // imported const value
             range: 24:13-24:21
@@ -86,8 +91,145 @@ fn hovers_with_evaluated_const_values() {
               kind: const
               path: analysis_hover_const_values::sizes::CAPACITY
               signature:
-                pub const CAPACITY: usize = 26
+                pub const CAPACITY: usize = 0x10 + 0o10 + 0b10; // 26
+
+            // literal without redundant value
+            range: 27:11-27:18
+            block:
+              kind: const
+              path: analysis_hover_const_values::LITERAL
+              signature:
+                pub const LITERAL: usize = 2
+
+            // bit shift and evaluated value
+            range: 28:11-28:15
+            block:
+              kind: const
+              path: analysis_hover_const_values::BITS
+              signature:
+                pub const BITS: usize = 1 << 10; // 1024
+
+            // interval and evaluated value
+            range: 29:11-29:24
+            block:
+              kind: const
+              path: analysis_hover_const_values::INTERVAL_SECS
+              signature:
+                pub const INTERVAL_SECS: usize = 7 * 60 + 17; // 437
+
+            // hexadecimal and decimal value
+            range: 30:11-30:14
+            block:
+              kind: const
+              path: analysis_hover_const_values::HEX
+              signature:
+                pub const HEX: usize = 0xff; // 255
         "#]],
+    );
+}
+
+#[test]
+fn hovers_with_bounded_const_initializer_previews() {
+    check_analysis(
+        r##"
+        //- /src/lib.rs crate:analysis_hover_const_previews
+        mod defaults;
+        use defaults::NAME;
+
+        pub enum Mode { Auto }
+        pub const MO$0DE: Mode = Mode::Auto; // hover("const initializer path")
+        impl Mode {
+            pub const DEFAULT: Self = Self::Auto;
+        }
+        pub const PAT$0TERN: &str = r#"a  b"#; // hover("string initializer spacing")
+        pub const BLOCK: &str = { // Preserve this comment.
+            "a  b"
+        };
+        pub const LO$0NG: &str = "This initializer is longer than the preview budget, so it should be omitted from hover altogether instead of being truncated into a string literal that no longer represents the source."; // hover("omit long initializer")
+        pub const TALL: &str = {
+            // First line.
+            // Second line.
+            "value"
+        };
+
+        pub fn demo() {
+            let _ = BLO$0CK; // hover("short initializer block")
+            let _ = TA$0LL; // hover("omit tall initializer")
+            const LOCAL: Mode = Mode::Auto;
+            let _ = LO$0CAL; // hover("body-local initializer preview")
+            let _ = Mode::DE$0FAULT; // hover("associated initializer preview")
+            let _ = NA$0ME; // hover("imported initializer preview")
+        }
+
+        //- /src/defaults.rs
+        pub const NAME: &str = "default";
+        "##,
+        expect![[r##"
+            // const initializer path
+            range: 5:11-5:15
+            block:
+              kind: const
+              path: analysis_hover_const_previews::MODE
+              signature:
+                pub const MODE: Mode = Mode::Auto
+
+            // string initializer spacing
+            range: 9:11-9:18
+            block:
+              kind: const
+              path: analysis_hover_const_previews::PATTERN
+              signature:
+                pub const PATTERN: &str = r#"a  b"#
+
+            // omit long initializer
+            range: 13:11-13:15
+            block:
+              kind: const
+              path: analysis_hover_const_previews::LONG
+              signature:
+                pub const LONG: &str
+
+            // short initializer block
+            range: 21:13-21:18
+            block:
+              kind: const
+              path: analysis_hover_const_previews::BLOCK
+              signature:
+                pub const BLOCK: &str = { // Preserve this comment.
+                    "a  b"
+                }
+
+            // omit tall initializer
+            range: 22:13-22:17
+            block:
+              kind: const
+              path: analysis_hover_const_previews::TALL
+              signature:
+                pub const TALL: &str
+
+            // body-local initializer preview
+            range: 24:13-24:18
+            block:
+              kind: const
+              signature:
+                const LOCAL: Mode = Mode::Auto
+
+            // associated initializer preview
+            range: 25:19-25:26
+            block:
+              kind: const
+              path: analysis_hover_const_previews::Mode::DEFAULT
+              signature:
+                pub const DEFAULT: Self = Self::Auto
+
+            // imported initializer preview
+            range: 26:13-26:17
+            block:
+              kind: const
+              path: analysis_hover_const_previews::defaults::NAME
+              signature:
+                pub const NAME: &str = "default"
+        "##]],
     );
 }
 
@@ -399,7 +541,7 @@ fn hovers_over_more_body_local_items() {
             block:
               kind: const
               signature:
-                const DEFAULT: Alias
+                const DEFAULT: Alias = GlobalId
               docs:
                 Local default id.
 
@@ -623,7 +765,7 @@ pub fn use_it(bytes: [u8; 4]) {
               kind: const
               path: runtime::MAX
               signature:
-                pub const MAX: u32
+                pub const MAX: u32 = 0
               docs:
                 Largest represented value.
 

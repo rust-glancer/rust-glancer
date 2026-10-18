@@ -14,6 +14,7 @@ async fn const_hover_uses_current_initializer_values() {
 
         //- /src/lib.rs
         pub const CAPACITY: usize = 4;
+        pub const ENABLED: bool = false;
         pub fn inspect() {}
         "#,
     )
@@ -26,12 +27,15 @@ async fn const_hover_uses_current_initializer_values() {
             2,
             r#"
 pub const CAPA$module$CITY: usize = 2 * 8;
+pub const ENA$preview$BLED: bool = true;
 pub fn inspect() {
     struct Buffer;
     impl Buffer {
         pub const CAPACITY: usize = 1 << 5;
     }
     const LOCAL: usize = { 2 + 3 };
+    const LABEL: &str = "a  b";
+    let _ = LA$local_preview$BEL;
     let _ = LO$local$CAL;
     let _ = Buffer::CAPA$associated$CITY;
 }
@@ -46,6 +50,8 @@ pub fn inspect() {
                 LspQuery::hover("edited module const value", "module"),
                 LspQuery::hover("new associated const value", "associated"),
                 LspQuery::hover("new body-local const value", "local"),
+                LspQuery::hover("edited const initializer preview", "preview"),
+                LspQuery::hover("new body-local initializer preview", "local_preview"),
             ],
             expect![[r#"
                 // edited module const value
@@ -54,21 +60,37 @@ pub fn inspect() {
                   ```rust
                   lsp_const_values::CAPACITY
 
-                  pub const CAPACITY: usize = 16
+                  pub const CAPACITY: usize = 2 * 8; // 16
                   ```
 
                 // new associated const value
-                range: /src/lib.rs:9:20-9:28
+                range: /src/lib.rs:12:20-12:28
                 markdown:
                   ```rust
-                  pub const CAPACITY: usize = 32
+                  pub const CAPACITY: usize = 1 << 5; // 32
                   ```
 
                 // new body-local const value
-                range: /src/lib.rs:8:12-8:17
+                range: /src/lib.rs:11:12-11:17
                 markdown:
                   ```rust
-                  const LOCAL: usize = 5
+                  const LOCAL: usize = { 2 + 3 }; // 5
+                  ```
+
+                // edited const initializer preview
+                range: /src/lib.rs:2:10-2:17
+                markdown:
+                  ```rust
+                  lsp_const_values::ENABLED
+
+                  pub const ENABLED: bool = true
+                  ```
+
+                // new body-local initializer preview
+                range: /src/lib.rs:10:12-10:17
+                markdown:
+                  ```rust
+                  const LABEL: &str = "a  b"
                   ```
             "#]],
         )
@@ -78,7 +100,10 @@ pub fn inspect() {
     fixture
         .check_dirty_queries(
             &current,
-            &[LspQuery::hover("saved initializer value", "module")],
+            &[
+                LspQuery::hover("saved initializer value", "module"),
+                LspQuery::hover("saved initializer preview", "preview"),
+            ],
             expect![[r#"
                 // saved initializer value
                 range: /src/lib.rs:1:10-1:18
@@ -86,7 +111,16 @@ pub fn inspect() {
                   ```rust
                   lsp_const_values::CAPACITY
 
-                  pub const CAPACITY: usize = 16
+                  pub const CAPACITY: usize = 2 * 8; // 16
+                  ```
+
+                // saved initializer preview
+                range: /src/lib.rs:2:10-2:17
+                markdown:
+                  ```rust
+                  lsp_const_values::ENABLED
+
+                  pub const ENABLED: bool = true
                   ```
             "#]],
         )

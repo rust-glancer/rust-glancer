@@ -186,6 +186,8 @@ pub struct ConstData {
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
     pub signature: ConstSignature,
+    /// Short initializer source for display alongside any evaluated value.
+    pub initializer_preview: Option<String>,
     /// Filled after declaration collection. `None` also covers unsupported or unevaluated
     /// initializers; the declaration still provides its name and type. Boxing avoids reserving
     /// value storage on declarations with no known result.

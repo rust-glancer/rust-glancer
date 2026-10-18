@@ -16,6 +16,7 @@ fn stores_package_cache_artifacts_on_disk() {
 //- /src/lib.rs crate:app
 pub struct App;
 pub const CAPACITY: usize = 2 * 8;
+pub const LABEL: &str = "a  b";
 "#,
     );
     let project = fixture.build_project();
@@ -53,6 +54,28 @@ pub const CAPACITY: usize = 2 * 8;
             ty: UnsignedIntTy::Usize
         }),
         "evaluated initializer value survives the cache roundtrip",
+    );
+    assert_eq!(
+        semantic_ir
+            .crate_items(CrateId(0))
+            .and_then(|items| items
+                .consts()
+                .iter()
+                .find(|data| data.name.as_str() == "CAPACITY"))
+            .and_then(|data| data.initializer_preview.as_deref()),
+        Some("2 * 8"),
+        "evaluated const also retains its source initializer in the cache",
+    );
+    assert_eq!(
+        semantic_ir
+            .crate_items(CrateId(0))
+            .and_then(|items| items
+                .consts()
+                .iter()
+                .find(|data| data.name.as_str() == "LABEL"))
+            .and_then(|data| data.initializer_preview.as_deref()),
+        Some(r#""a  b""#),
+        "initializer preview survives the cache roundtrip verbatim",
     );
     assert_eq!(loaded.probe().header.package.package.0, 0);
     assert_eq!(loaded.probe().header.package.name, "app");
