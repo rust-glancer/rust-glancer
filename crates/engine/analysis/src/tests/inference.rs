@@ -2263,6 +2263,78 @@ pub fn borrowed_mut(holder: &mut Holder) {
 }
 
 #[test]
+fn projects_borrowed_tuple_and_slice_patterns() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:analysis_borrowed_structural_patterns
+pub fn slices(shared: &[u8], mutable: &mut [u16], array: &[bool; 2]) {
+    if let [first, second] = shared {
+        first$0; // ty("shared slice first")
+        second$0; // ty("shared slice second")
+    }
+    if let [first, ..] = mutable {
+        first$0; // ty("mutable slice element")
+    }
+    let [first, second] = array;
+    first$0; // ty("borrowed array first")
+    second$0; // ty("borrowed array second")
+}
+
+pub fn tuples(shared: &(u8, bool), mutable: &mut (u16, bool)) {
+    let (first, second) = shared;
+    first$0; // ty("shared tuple first")
+    second$0; // ty("shared tuple second")
+    let (first, second) = mutable;
+    first$0; // ty("mutable tuple first")
+    second$0; // ty("mutable tuple second")
+}
+
+pub fn nested(array: &mut [(u8, bool); 1], shared: &&mut [u16; 1]) {
+    let [(first, second)] = array;
+    first$0; // ty("nested tuple first")
+    second$0; // ty("nested tuple second")
+    let [first] = shared;
+    first$0; // ty("shared borrow through mutable reference")
+}
+
+pub fn missing<T>() -> T { loop {} }
+pub fn accept_slice(value: &[u8]) {}
+pub fn accept_tuple(value: (u16, bool)) {}
+
+pub fn deferred() {
+    let slice = missing();
+    if let [first, ..] = &slice {
+        first$0; // ty("deferred slice element")
+    }
+    accept_slice(slice);
+    let tuple = missing();
+    let (first, second) = &tuple;
+    first$0; // ty("deferred tuple first")
+    second$0; // ty("deferred tuple second")
+    accept_tuple(tuple);
+}
+"#,
+        expect![[r#"
+            &u8 // shared slice first
+            &u8 // shared slice second
+            &mut u16 // mutable slice element
+            &bool // borrowed array first
+            &bool // borrowed array second
+            &u8 // shared tuple first
+            &bool // shared tuple second
+            &mut u16 // mutable tuple first
+            &mut bool // mutable tuple second
+            &mut u8 // nested tuple first
+            &mut bool // nested tuple second
+            &u16 // shared borrow through mutable reference
+            &u8 // deferred slice element
+            &u16 // deferred tuple first
+            &bool // deferred tuple second
+        "#]],
+    );
+}
+
+#[test]
 fn uses_simple_assignments_as_equality_evidence() {
     check_analysis(
         r#"

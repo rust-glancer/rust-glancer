@@ -137,13 +137,15 @@ where
             return Ok(true);
         };
 
-        // Record and variant patterns project through references. Resolve each exposed slot:
-        // `&?T` can already contain a known record, or still need evidence before its fields exist.
-        // Keep the record's generic arguments live so later binding uses can constrain them.
-        // TODO: Support implicit reference matching for tuple and slice patterns too.
+        // Destructuring patterns project through references: `[first, ..]` against `&[T]`
+        // binds `first: &T`. Resolve each exposed slot: `&?T` may still need evidence before
+        // we can project its fields. Keep generic arguments live so binding uses can constrain them.
         if matches!(
             data.kind,
-            PatKind::Record { .. } | PatKind::TupleStruct { .. }
+            PatKind::Record { .. }
+                | PatKind::TupleStruct { .. }
+                | PatKind::Tuple { .. }
+                | PatKind::Slice { .. }
         ) {
             while let TyShape::Reference {
                 inner, mutability, ..
