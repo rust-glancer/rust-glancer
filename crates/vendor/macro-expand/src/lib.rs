@@ -11,13 +11,14 @@ mod builtins;
 mod mbe;
 
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, Parse, SyntaxNode, ast};
+use rg_syntax::{AstNode as _, Parse, SyntaxNode, TextRange, ast};
 pub use rg_tt::{span::Edition, tt::TopSubtree};
 use rg_tt::{
     span::SyntaxContext,
     syntax_bridge::{
         ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree, token_tree_to_syntax_node,
     },
+    tt::{Delimiter, DelimiterKind, Ident, Leaf, Punct, Spacing, TopSubtreeBuilder},
 };
 
 pub use self::builtins::{CfgSelect, CfgSelectArm};
@@ -184,6 +185,31 @@ pub struct ExpansionSyntax {
 }
 
 impl ExpansionSyntax {
+    /// Parse builtin input as a leading expression followed by positional or named arguments.
+    ///
+    /// Both `format_args!(template, values...)` and `assert!(condition, message...)` fit the
+    /// parser's `builtin#format_args` grammar. Wrapping tokens keeps their original source spans,
+    /// including expressions forwarded through declarative macros.
+    pub fn from_builtin_arguments(args: &TopSubtree) -> Self {
+        let delimiter = args.top_subtree().delimiter;
+        let mut generated = delimiter.open;
+        // Wrapper names are parser scaffolding. Empty ranges prevent them from looking like
+        // copied input tokens when the body source map checks their origin and length.
+        generated.range = TextRange::empty(generated.range.start());
+        let mut builder = TopSubtreeBuilder::new(Delimiter::invisible_spanned(generated));
+        builder.push(Leaf::Ident(Ident::new("builtin", generated)));
+        builder.push(Leaf::Punct(Punct {
+            char: '#',
+            spacing: Spacing::Alone,
+            span: generated,
+        }));
+        builder.push(Leaf::Ident(Ident::new("format_args", generated)));
+        builder.open(DelimiterKind::Parenthesis, delimiter.open);
+        builder.extend_with_tt(args.view().token_trees());
+        builder.close(delimiter.close);
+        Self::from_token_tree(builder.build(), ExpansionParseKind::Expr)
+    }
+
     /// Parses an expanded token tree using the requested syntax entry point.
     pub fn from_token_tree(token_tree: TopSubtree, parse_kind: ExpansionParseKind) -> Self {
         let mut span_to_edition = |ctx: SyntaxContext| ctx.edition();

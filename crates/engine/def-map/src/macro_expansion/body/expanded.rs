@@ -165,7 +165,11 @@ pub enum BodyMacroExprExpansion {
     /// Declarative macro expansion produced syntax that body lowering should lower recursively.
     Expanded(ExpandedBodyMacro<ast::Expr>),
     /// Compiler-provided expression macro that has no declarative transcriber to execute.
-    Builtin(BuiltinMacroExprKind),
+    Builtin {
+        kind: BuiltinMacroExprKind,
+        /// Parsed input expressions, with the same token provenance as declarative output.
+        arguments: Option<ExpandedBodyMacro<ast::FormatArgsExpr>>,
+    },
 }
 
 /// Result of body macro lookup plus the position-specific expansion, if one was produced.

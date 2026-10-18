@@ -736,15 +736,19 @@ pub mod shadow {
             - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 4:9-4:13
             - v1 let args_nl `args_nl` => nominal struct core[lib]::crate::fmt::Arguments @ 5:9-5:16
             body
-            expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 3:17-7:2
+            expr e5 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 3:17-7:2
               stmt s0 let v0 @ 4:5-4:38
                 initializer
-                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 4:16-4:37
+                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 4:16-4:37
+                    arg
+                      expr e0 literal string `"hello"` => &str @ 4:29-4:36
               stmt s1 let v1 @ 5:5-5:44
                 initializer
-                  expr e1 builtin_macro format_args_nl => nominal struct core[lib]::crate::fmt::Arguments @ 5:19-5:43
+                  expr e3 builtin_macro format_args_nl => nominal struct core[lib]::crate::fmt::Arguments @ 5:19-5:43
+                    arg
+                      expr e2 literal string `"hello"` => &str @ 5:35-5:42
               tail
-                expr e2 path args_nl -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 6:5-6:12
+                expr e4 path args_nl -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 6:5-6:12
 
 
             body b1 fn body_format_family_fixture[lib]::crate::qualified @ 9:1-12:2
@@ -754,12 +758,14 @@ pub mod shadow {
             bindings
             - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 10:9-10:13
             body
-            expr e2 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 9:20-12:2
+            expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 9:20-12:2
               stmt s0 let v0 @ 10:5-10:43
                 initializer
-                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 10:16-10:42
+                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 10:16-10:42
+                    arg
+                      expr e0 literal string `"hello"` => &str @ 10:34-10:41
               tail
-                expr e1 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 11:5-11:9
+                expr e2 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 11:5-11:9
 
 
             body b2 fn body_format_family_fixture[lib]::crate::aliased @ 14:1-18:2
@@ -770,15 +776,19 @@ pub mod shadow {
             - v0 let direct `direct` => nominal struct core[lib]::crate::fmt::Arguments @ 15:9-15:15
             - v1 let aliased `aliased` => nominal struct core[lib]::crate::fmt::Arguments @ 16:9-16:16
             body
-            expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 14:18-18:2
+            expr e5 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 14:18-18:2
               stmt s0 let v0 @ 15:5-15:40
                 initializer
-                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 15:18-15:39
+                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 15:18-15:39
+                    arg
+                      expr e0 literal string `"hello"` => &str @ 15:31-15:38
               stmt s1 let v1 @ 16:5-16:44
                 initializer
-                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 16:19-16:43
+                  expr e3 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 16:19-16:43
+                    arg
+                      expr e2 literal string `"hello"` => &str @ 16:35-16:42
               tail
-                expr e2 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 17:5-17:12
+                expr e4 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 17:5-17:12
 
 
             body b3 fn body_format_family_fixture[lib]::crate::library @ 20:1-23:2
@@ -788,12 +798,16 @@ pub mod shadow {
             bindings
             - v0 let args `args` => nominal struct core[lib]::crate::fmt::Arguments @ 21:9-21:13
             body
-            expr e2 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 20:18-23:2
+            expr e4 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 20:18-23:2
               stmt s0 let v0 @ 21:5-21:39
                 initializer
-                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 21:16-21:38
+                  expr e2 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 21:16-21:38
+                    arg
+                      expr e0 literal string `"hello {}"` => &str @ 21:24-21:34
+                    arg
+                      expr e1 literal int `1` => i32 @ 21:36-21:37
               tail
-                expr e1 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 22:5-22:9
+                expr e3 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 22:5-22:9
 
 
             body b4 fn body_format_family_fixture[lib]::crate::shadow::local_format @ 38:5-41:6

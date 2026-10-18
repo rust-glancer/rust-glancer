@@ -89,3 +89,9 @@ macro_rules! option_env {
 macro_rules! stringify {
     ($($args:tt)*) => {{ /* compiler built-in */ }};
 }
+
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! assert {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}

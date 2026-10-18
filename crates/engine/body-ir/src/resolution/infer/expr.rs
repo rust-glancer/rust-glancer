@@ -7,11 +7,14 @@
 
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
-use rg_ir_model::{ExprId, FieldKey, StmtId, identity::DeclarationRef};
+use rg_ir_model::{BuiltinMacroExprKind, ExprId, FieldKey, StmtId, identity::DeclarationRef};
 use rg_item_tree::LangItem;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
-use rg_ty::solver::{AdtTy, List, TraitApplication, Ty, TyShape};
+use rg_ty::{
+    PrimitiveTy,
+    solver::{AdtTy, List, TraitApplication, Ty, TyShape},
+};
 
 use super::{BodyInference, deferred::DeferredKind};
 use crate::body::{
@@ -704,7 +707,16 @@ where
                     .inference
                     .set_expr_ty(expr, self.lower(&rg_ty::ty_for_literal(kind))),
             },
-            ExprKind::BuiltinMacro { kind } => {
+            ExprKind::BuiltinMacro { kind, ref args } => {
+                for (index, arg) in args.iter().enumerate() {
+                    let expected = if kind == BuiltinMacroExprKind::Assert && index == 0 {
+                        self.cx.primitive(PrimitiveTy::Bool)
+                    } else {
+                        self.cx.unknown()
+                    };
+                    self.infer_expr(*arg, &expected)
+                        .context("infer builtin macro argument")?;
+                }
                 let ty = self.builtin_macro_ty(kind);
                 self.inference.set_expr_ty(expr, ty);
             }

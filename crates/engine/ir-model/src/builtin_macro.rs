@@ -17,6 +17,8 @@ use wincode::{SchemaRead, SchemaWrite};
 #[memsize(leaf)]
 #[shrink(leaf)]
 pub enum BuiltinMacroExprKind {
+    #[display("assert")]
+    Assert,
     #[display("cfg")]
     Cfg,
     #[display("column")]
@@ -48,6 +50,7 @@ pub enum BuiltinMacroExprKind {
 impl BuiltinMacroExprKind {
     pub fn from_macro_name(name: &str) -> Option<Self> {
         Some(match name {
+            "assert" => Self::Assert,
             "cfg" => Self::Cfg,
             "column" => Self::Column,
             "concat" => Self::Concat,

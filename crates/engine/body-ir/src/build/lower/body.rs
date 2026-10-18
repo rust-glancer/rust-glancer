@@ -363,11 +363,36 @@ impl BodyLowering<'_> {
                     }),
                 )
             }
-            BodyMacroExprExpansion::Builtin(kind) => Some(self.alloc_expr_with_source(
-                call_source,
-                scope,
-                ExprKind::BuiltinMacro { kind },
-            )),
+            BodyMacroExprExpansion::Builtin { kind, arguments } => {
+                // Builtin input is parsed separately, so lower it with its own token map just as
+                // we lower declarative output. The surrounding builtin keeps its intrinsic type.
+                let args = arguments
+                    .map(|arguments| {
+                        self.with_expanded_macro(call_source, arguments, |this, syntax| {
+                            // TODO: Resolve implicit captures inside format strings, such as `{user}`.
+                            // Named argument labels belong to formatting; only their values are
+                            // ordinary expressions in the caller's lexical scope.
+                            let mut args = Vec::new();
+                            for arg in syntax
+                                .template()
+                                .into_iter()
+                                .chain(syntax.args().filter_map(|arg| arg.expr()))
+                            {
+                                let Some(arg) = this.cfg.enabled_syntax(arg) else {
+                                    continue;
+                                };
+                                args.push(this.lower_expr(arg, scope));
+                            }
+                            args
+                        })
+                    })
+                    .unwrap_or_default();
+                Some(self.alloc_expr_with_source(
+                    call_source,
+                    scope,
+                    ExprKind::BuiltinMacro { kind, args },
+                ))
+            }
         }
     }
 }

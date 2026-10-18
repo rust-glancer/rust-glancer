@@ -840,7 +840,13 @@ impl CrateBodyIrSnapshot<'_> {
                     self.render_expr(body, *inner, depth + 2, dump);
                 }
             }
-            ExprKind::BuiltinMacro { .. } => {}
+            ExprKind::BuiltinMacro { args, .. } => {
+                for arg in args {
+                    writeln!(dump, "{}arg", Self::indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *arg, depth + 2, dump);
+                }
+            }
             ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
                 if let Some(value) = value {
                     writeln!(dump, "{}value", Self::indent(depth + 1))
@@ -999,7 +1005,7 @@ impl CrateBodyIrSnapshot<'_> {
                 format!("record {path}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
-            ExprKind::BuiltinMacro { kind } => format!("builtin_macro {kind}"),
+            ExprKind::BuiltinMacro { kind, .. } => format!("builtin_macro {kind}"),
             ExprKind::Literal { kind } => {
                 format!("literal {kind} `{}`", self.render_source_text(data.source))
             }

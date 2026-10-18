@@ -1,6 +1,9 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{
+    AnalysisQuery, check_analysis_queries, check_analysis_queries_with_fake_sysroot,
+    check_analysis_with_fake_sysroot,
+};
 
 const FIXTURE: &str = r#"
 //- /src/lib.rs crate:macro_navigation
@@ -313,6 +316,133 @@ pub fn demo(user: User) {
                 pub r#type: u32
 
             field r#type @ 1:23-1:29 // raw field argument
+        "#]],
+    );
+}
+
+#[test]
+fn builtin_macro_arguments_keep_expression_meanings() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:builtin_navigation
+use std::format_args as arguments;
+pub struct User { pub id: u32 }
+pub struct Profile;
+impl User {
+    pub fn profile(&self) -> Profile { Profile }
+    pub fn valid(&self) -> bool { true }
+}
+pub fn identity<T, U>(value: T) -> T { value }
+macro_rules! forward { ($($value:tt)*) => { $($value)* }; }
+pub fn demo(user: User) {
+    let _ = format!("{}", $receiver$user.id);
+    let _ = format!("{}", user.$field$id);
+    let _ = format!("{named}", named = user.$named$id);
+    assert!(user.$condition$valid(), "{}", user.$message$id);
+    let _ = forward!(format!("{}", forward!(user.$nested$id)));
+    let _ = format!("{:?}", user.$method$profile());
+    let _ = format_args_nl!("{}", user.$newline$id);
+    let _ = arguments!("{}", $alias$user.id);
+    let _ = format!("{:?}", (|left: User, right: User| left.$closure$id)(user, user));
+    let _ = format!("{}", identity::<User, Profile>(user).$generic$id);
+}
+"#,
+        &[
+            AnalysisQuery::hover("format receiver", "receiver").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("format receiver", "receiver").in_lib("builtin_navigation"),
+            AnalysisQuery::hover("format field", "field").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("format field", "field").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("named format value", "named").in_lib("builtin_navigation"),
+            AnalysisQuery::hover("assert condition", "condition").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("assert condition", "condition").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("assert message value", "message").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("nested macro value", "nested").in_lib("builtin_navigation"),
+            AnalysisQuery::hover("format method", "method").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("format method", "method").in_lib("builtin_navigation"),
+            AnalysisQuery::goto_type("format method return type", "method")
+                .in_lib("builtin_navigation"),
+            AnalysisQuery::goto("newline format value", "newline").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("aliased builtin value", "alias").in_lib("builtin_navigation"),
+            AnalysisQuery::goto("closure with comma-separated parameters", "closure")
+                .in_lib("builtin_navigation"),
+            AnalysisQuery::goto("call with comma-separated type arguments", "generic")
+                .in_lib("builtin_navigation"),
+        ],
+        expect![[r#"
+            // format receiver
+            range: 11:27-11:31
+            block:
+              kind: variable
+              signature:
+                let user: User
+
+            local user @ 10:13-10:17 // format receiver
+
+            // format field
+            range: 12:32-12:34
+            block:
+              kind: field
+              path: builtin_navigation::User
+              signature:
+                pub id: u32
+
+            field id @ 2:23-2:25 // format field
+            field id @ 2:23-2:25 // named format value
+
+            // assert condition
+            range: 14:18-14:23
+            block:
+              kind: method
+              path: builtin_navigation::User::valid
+              signature:
+                pub fn valid(&self) -> bool
+
+            fn valid @ 6:12-6:17 // assert condition
+            field id @ 2:23-2:25 // assert message value
+            field id @ 2:23-2:25 // nested macro value
+
+            // format method
+            range: 16:34-16:41
+            block:
+              kind: method
+              path: builtin_navigation::User::profile
+              signature:
+                pub fn profile(&self) -> Profile
+
+            fn profile @ 5:12-5:19 // format method
+            struct Profile @ 3:12-3:19 // format method return type
+            field id @ 2:23-2:25 // newline format value
+            local user @ 10:13-10:17 // aliased builtin value
+            field id @ 2:23-2:25 // closure with comma-separated parameters
+            field id @ 2:23-2:25 // call with comma-separated type arguments
+        "#]],
+    );
+}
+
+#[test]
+fn builtin_assert_constrains_its_condition_and_preserves_shadowing() {
+    check_analysis_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:builtin_inference
+pub fn make<T>() -> T { loop {} }
+pub struct User;
+pub fn demo() {
+    let value = make();
+    let assertion$0 = assert!(val$1ue); // ty("assert result").in_lib("builtin_inference"), ty("assert condition expectation").in_lib("builtin_inference")
+    let arguments$0 = format_args!("{}", value); // ty("format result").in_lib("builtin_inference")
+}
+pub mod custom {
+    macro_rules! assert { ($value:expr) => { $value }; }
+    pub fn demo(user: super::User) {
+        let value$0 = assert!(user); // ty("user-defined assert result").in_lib("builtin_inference")
+    }
+}
+"#,
+        expect![[r#"
+            () // assert result
+            bool // assert condition expectation
+            nominal struct core[lib]::crate::fmt::Arguments // format result
+            nominal struct builtin_inference[lib]::crate::User // user-defined assert result
         "#]],
     );
 }

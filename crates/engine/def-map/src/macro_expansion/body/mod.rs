@@ -5,7 +5,7 @@
 //! visibility and token conversion next to the def-map query it relies on.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
+use rg_ir_model::{BuiltinMacroExprKind, CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
 use rg_std::ExpectedUnique;
@@ -73,7 +73,30 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             BodyMacroCallee::Builtin {
                 kind: BuiltinMacroKind::Expr(kind),
                 ..
-            } => Some(BodyMacroExprExpansion::Builtin(*kind)),
+            } => {
+                let arguments = match kind {
+                    BuiltinMacroExprKind::Assert
+                    | BuiltinMacroExprKind::FormatArgs
+                    | BuiltinMacroExprKind::FormatArgsNl => resolved_call
+                        .invocation(&site, ast_call)
+                        .and_then(|invocation| {
+                            let ExpansionSyntax { parse, span_map } =
+                                ExpansionSyntax::from_builtin_arguments(invocation.args());
+                            ExpandedBodyMacro::new(
+                                parse,
+                                span_map,
+                                invocation.call_package(),
+                                site.dollar_crate_for_expansion()?,
+                            )
+                            .cast_root_or_child::<ast::FormatArgsExpr>()
+                        }),
+                    _ => None,
+                };
+                Some(BodyMacroExprExpansion::Builtin {
+                    kind: *kind,
+                    arguments,
+                })
+            }
             BodyMacroCallee::Builtin {
                 kind: BuiltinMacroKind::CfgSelect,
                 ..

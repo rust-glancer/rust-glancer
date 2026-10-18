@@ -17,6 +17,7 @@ impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I> {
     /// Return the type supplied by a recognized compiler builtin.
     pub(super) fn builtin_macro_ty(&self, kind: BuiltinMacroExprKind) -> Ty<'s> {
         match kind {
+            BuiltinMacroExprKind::Assert => self.cx.unit(),
             BuiltinMacroExprKind::Cfg => self.cx.primitive(PrimitiveTy::Bool),
             BuiltinMacroExprKind::Column | BuiltinMacroExprKind::Line => self
                 .cx
