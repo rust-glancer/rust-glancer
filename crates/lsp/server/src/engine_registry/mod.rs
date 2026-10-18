@@ -147,6 +147,10 @@ impl EngineRegistry {
         let path = NormalizedPathBuf::from_absolute(path).with_context(|| {
             format!("while normalizing opened document path {}", path.display())
         })?;
+        // Yes, we do run `cargo locate-project` while holding the lock when a document opens.
+        // It takes less than 100 ms, so waiting here is fine and keeps routing simple.
+        // Doing giga-pupa-idiomatic code because Synchronous Operations Under Mutex Are Bad(tm)
+        // makes no sense here until evidence proves otherwise (so far nobody complained).
         let owner = {
             let mut inner = self.inner.lock().await;
             DocumentOwner::new(&mut inner, &path)?
