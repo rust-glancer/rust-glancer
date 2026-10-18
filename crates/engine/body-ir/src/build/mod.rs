@@ -4,6 +4,7 @@
 //! Semantic IR. [`CurrentSourceBuilder`] handles editor text for one request, preparing the
 //! declarations and bodies needed by that request against the saved project.
 
+mod const_eval;
 mod current;
 mod local_items;
 mod lower;
@@ -83,6 +84,9 @@ impl BodyIrBuildProgress {
 /// [`Self::build`] or receive them package by package with [`Self::build_with_package_priority`].
 /// Installing these results in a [`BodyIrDb`](crate::BodyIrDb) is the caller's responsibility,
 /// so body analysis can run independently of changes to the project's existing bodies.
+///
+/// `evaluate_consts` returns saved declaration values even when body analysis is deferred. The
+/// caller installs these in Semantic IR separately from the body products.
 pub struct BodyIrBuilder<'db, 'names> {
     parse: &'db ParseDb,
     def_map: &'db DefMapDb,

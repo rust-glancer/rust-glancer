@@ -11,8 +11,11 @@
 //! bounds. `lookup` finds declarations by path or receiver type. `solver` owns temporary inference,
 //! receiver adjustment, and trait proof; `trait_selection` freezes results for
 //! editor queries.
+//!
+//! `const_eval` shares expression evaluation between declaration initializers and consts used in
+//! types. Its frontend adapters let both use the compilation target's arithmetic rules.
 
-mod const_eval;
+pub mod const_eval;
 mod context;
 mod generic_arg;
 pub mod lookup;

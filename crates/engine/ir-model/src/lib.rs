@@ -6,6 +6,7 @@
 
 mod body_source;
 mod builtin_macro;
+mod const_value;
 mod field;
 mod ids;
 mod literal;
@@ -18,6 +19,7 @@ mod span;
 pub use self::{
     body_source::BodySource,
     builtin_macro::BuiltinMacroExprKind,
+    const_value::EvaluatedConstValue,
     field::FieldKey,
     ids::{
         body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},

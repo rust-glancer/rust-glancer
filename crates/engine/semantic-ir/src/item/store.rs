@@ -1,8 +1,8 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
-    ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TraitDefRef, TraitId,
-    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+    ConstId, ConstRef, CrateRef, DefMapRef, EnumId, EvaluatedConstValue, FunctionId, FunctionRef,
+    ImplId, ImplRef, ItemId, LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId,
+    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
 };
 use rg_item_tree::{GenericParams, LangItem};
 use rg_std::{ExpectedUnique, MemorySize, Shrink};
@@ -164,6 +164,10 @@ impl ItemStore {
 
     pub fn consts(&self) -> &Arena<ConstId, ConstData> {
         &self.consts
+    }
+
+    pub fn set_const_value(&mut self, id: ConstId, value: EvaluatedConstValue) {
+        self.consts[id].value = Some(Box::new(value));
     }
 
     pub fn statics(&self) -> &Arena<StaticId, StaticData> {

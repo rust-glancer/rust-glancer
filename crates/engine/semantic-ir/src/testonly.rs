@@ -70,6 +70,10 @@ impl SemanticIrFixture {
         &self.semantic_ir
     }
 
+    pub fn semantic_ir_db_mut(&mut self) -> &mut SemanticIrDb {
+        &mut self.semantic_ir
+    }
+
     pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
         self.def_map.resident_def_map(crate_ref)
     }

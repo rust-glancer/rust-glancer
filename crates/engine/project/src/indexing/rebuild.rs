@@ -114,7 +114,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     state.parse.seal_sources();
     let macro_expansion_limit_summary =
         MacroExpansionLimitBuildSummary::capture(&def_map, packages.as_slice());
-    let semantic_ir = state
+    let mut semantic_ir = state
         .semantic_ir
         .build_packages(
             &item_tree,
@@ -127,6 +127,23 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         )
         .context("while attempting to rebuild affected semantic IR packages")?;
     drop(generated_items);
+
+    // Dependencies need const values even when their function bodies are skipped. Install the
+    // results with the declarations before publishing the saved generation.
+    let const_values = BodyIrBuilder::new(
+        &state.parse,
+        &def_map,
+        &semantic_ir,
+        packages.as_slice(),
+        &packages_to_reallocate,
+        &mut state.names,
+        loaders.def_map.clone(),
+        loaders.semantic_ir.clone(),
+        &rebuild_subset,
+    )
+    .worker_limit(state.indexing_preference.body_ir_worker_limit())
+    .evaluate_consts()?;
+    semantic_ir.apply_const_values(const_values);
 
     let body_builder = BodyIrBuilder::new(
         &state.parse,

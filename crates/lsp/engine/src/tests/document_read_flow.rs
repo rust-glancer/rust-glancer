@@ -3,6 +3,99 @@ use expect_test::expect;
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
+async fn const_hover_uses_current_initializer_values() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_const_values"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub const CAPACITY: usize = 4;
+        pub fn inspect() {}
+        "#,
+    )
+    .await;
+
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let current = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            r#"
+pub const CAPA$module$CITY: usize = 2 * 8;
+pub fn inspect() {
+    struct Buffer;
+    impl Buffer {
+        pub const CAPACITY: usize = 1 << 5;
+    }
+    const LOCAL: usize = { 2 + 3 };
+    let _ = LO$local$CAL;
+    let _ = Buffer::CAPA$associated$CITY;
+}
+"#,
+        )
+        .await;
+
+    fixture
+        .check_dirty_queries(
+            &current,
+            &[
+                LspQuery::hover("edited module const value", "module"),
+                LspQuery::hover("new associated const value", "associated"),
+                LspQuery::hover("new body-local const value", "local"),
+            ],
+            expect![[r#"
+                // edited module const value
+                range: /src/lib.rs:1:10-1:18
+                markdown:
+                  ```rust
+                  lsp_const_values::CAPACITY
+
+                  pub const CAPACITY: usize = 16
+                  ```
+
+                // new associated const value
+                range: /src/lib.rs:9:20-9:28
+                markdown:
+                  ```rust
+                  pub const CAPACITY: usize = 32
+                  ```
+
+                // new body-local const value
+                range: /src/lib.rs:8:12-8:17
+                markdown:
+                  ```rust
+                  const LOCAL: usize = 5
+                  ```
+            "#]],
+        )
+        .await;
+
+    fixture.did_save_dirty(&current).await;
+    fixture
+        .check_dirty_queries(
+            &current,
+            &[LspQuery::hover("saved initializer value", "module")],
+            expect![[r#"
+                // saved initializer value
+                range: /src/lib.rs:1:10-1:18
+                markdown:
+                  ```rust
+                  lsp_const_values::CAPACITY
+
+                  pub const CAPACITY: usize = 16
+                  ```
+            "#]],
+        )
+        .await;
+
+    fixture.shutdown().await;
+}
+
+#[tokio::test]
 async fn document_reads_combine_current_locals_with_saved_global_semantics() {
     let fixture = LspEngineFixture::initialized(
         r#"

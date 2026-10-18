@@ -3,10 +3,13 @@
 mod formatting;
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, identity::DeclarationRef};
+use rg_ir_model::{CrateRef, FileId, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_view::{
     display::ty_label::TypeRenderer,
-    item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+    item::{
+        const_value::ConstValueView,
+        details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+    },
     ty::IndexedType,
 };
 
@@ -124,12 +127,21 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let (kind, path, signature, docs) = details.into_parts();
         // Item previews can contain elided fields (`...`), so retain their existing layout.
         // Function headers have no preview limit and benefit from Rust-aware line wrapping.
-        let signature = signature.map(|signature| match kind {
+        let mut signature = signature.map(|signature| match kind {
             SymbolKind::Function | SymbolKind::Method => {
                 formatting::function_signature(&signature).unwrap_or(signature)
             }
             _ => signature,
         });
+        // Values are hover details, not part of the shared declaration signature used for
+        // completion and generated code. Unknown initializers leave the header unchanged.
+        if let DeclarationRef::Item(SemanticItemRef::Const(konst)) = declaration
+            && let Some(signature) = &mut signature
+            && let Some(value) = ConstValueView::new(self.0.view_db()).render(konst)?
+        {
+            signature.push_str(" = ");
+            signature.push_str(&value);
+        }
         let doc_links = match &docs {
             Some(docs) => DocumentationLinkResolver::new(self.0.view_db())
                 .resolve(declaration, docs)

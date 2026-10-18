@@ -297,6 +297,23 @@ pub(super) fn build(
         // released. Batch indexing therefore includes configured Body IR before finishing the
         // batch, even when the project would otherwise start early. Lower peak memory delays the
         // queryable project boundary rather than retaining a second global Body IR pass.
+        // Dependencies need const values even when their function bodies are skipped. Install the
+        // results with the declarations before publishing the saved generation.
+        let const_values = BodyIrBuilder::new(
+            &parse,
+            &def_map,
+            &semantic_ir,
+            batch.as_slice(),
+            &resident_packages,
+            &mut names,
+            loaders.def_map.clone(),
+            loaders.semantic_ir.clone(),
+            &rebuild_subset,
+        )
+        .worker_limit(indexing_preference.body_ir_worker_limit())
+        .evaluate_consts()?;
+        semantic_ir.apply_const_values(const_values);
+
         let products = BodyIrBuilder::new(
             &parse,
             &def_map,

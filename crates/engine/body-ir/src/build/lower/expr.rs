@@ -1,6 +1,6 @@
 //! Expression lowering for syntax that Body IR models directly.
 
-use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, ScopeId, Span};
+use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, PrimitiveTy, ScopeId, Span};
 use rg_item_tree::{FromAst as _, GenericArg, MaybeFromAst as _};
 use rg_syntax::{
     AstNode as _,
@@ -13,7 +13,7 @@ use rg_syntax::{
 
 use super::body::BodyLowering;
 use crate::body::{
-    BindingData, BindingKind, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,
+    BindingData, BindingKind, BodyOwner, ClosureParamData, ExprKind, ExprWrapperKind, MatchArmData,
     RecordExprField, RecordExprSpread,
 };
 
@@ -683,8 +683,19 @@ impl BodyLowering<'_> {
 
     fn lower_literal(&mut self, literal: ast::Literal, scope: ScopeId) -> ExprId {
         let kind = Self::literal_kind_from_ast(&literal);
-
-        self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
+        let expr = self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind });
+        // Const evaluation needs the token's value, not just its type category. Capture it while
+        // syntax is available, without keeping the syntax tree or payload in the saved Body IR.
+        if matches!(self.owner, BodyOwner::Const(_))
+            && let ast::LiteralKind::IntNumber(number) = literal.kind()
+            && number
+                .suffix()
+                .is_none_or(|suffix| PrimitiveTy::from_integer_suffix(Some(suffix)).is_some())
+            && let Ok(value) = number.value()
+        {
+            self.builder.integer_literals.push((expr, value));
+        }
+        expr
     }
 
     /// Lower a macro expression by first trying expression-position expansion.

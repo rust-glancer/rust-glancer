@@ -7,6 +7,7 @@
 use std::fmt::Write as _;
 
 use anyhow::Context as _;
+use rg_body_ir::BodyOwner;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
@@ -127,9 +128,18 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         let name = self.syntax.identifier(&data.name);
-        Ok(self
-            .path_for_owner(const_ref.origin, data.owner)?
-            .map(|owner| format!("{owner}::{name}")))
+        let mut owner = self.path_for_owner(const_ref.origin, data.owner)?;
+        // A current root const owns a new declaration so its initializer value can change.
+        // Its temporary module still represents the saved containing module for display.
+        if owner.is_none()
+            && let DefMapRef::Body(body_ref) = const_ref.origin
+            && self.db.is_current_body(body_ref)
+            && let Some(body) = self.db.body_ir.body(body_ref)?
+            && body.owner() == BodyOwner::Const(const_ref)
+        {
+            owner = self.module_path(body.fallback_module())?;
+        }
+        Ok(owner.map(|owner| format!("{owner}::{name}")))
     }
 
     /// Return the full path for a static item.

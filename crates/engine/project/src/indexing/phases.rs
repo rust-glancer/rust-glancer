@@ -236,7 +236,7 @@ pub(super) fn build(
     // --------------------
     let baseline_semantic_ir =
         SemanticIrDb::from_package_store(PackageStore::all_offloaded(parse.package_count()));
-    let semantic_ir = baseline_semantic_ir
+    let mut semantic_ir = baseline_semantic_ir
         .build_packages(
             &item_tree,
             &def_map,
@@ -287,6 +287,23 @@ pub(super) fn build(
         .map(PackageEntry::offloaded_with)
         .collect();
     let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(body_ir_entries));
+    // Dependencies need const values even when their function bodies are skipped. Install the
+    // results with the declarations before publishing the saved generation.
+    let const_values = BodyIrBuilder::new(
+        &parse,
+        &def_map,
+        &semantic_ir,
+        build_plan.source_packages.as_slice(),
+        &source_packages_to_reallocate,
+        &mut names,
+        loaders.def_map.clone(),
+        loaders.semantic_ir.clone(),
+        &rebuild_subset,
+    )
+    .worker_limit(indexing_preference.body_ir_worker_limit())
+    .evaluate_consts()?;
+    semantic_ir.apply_const_values(const_values);
+
     let body_builder = BodyIrBuilder::new(
         &parse,
         &def_map,

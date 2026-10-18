@@ -1,7 +1,7 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, FileId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
-    Span, TraitDefRef, TypeDefRef,
+    AssocItemId, EvaluatedConstValue, FileId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef,
+    ModuleRef, Mutability, Span, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
@@ -174,7 +174,7 @@ pub struct TypeAliasData {
     pub signature: TypeAliasSignature,
 }
 
-/// Const signature and optional value body owner.
+/// Const declaration and its optional evaluated initializer.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
@@ -186,6 +186,10 @@ pub struct ConstData {
     pub visibility: VisibilityLevel,
     pub docs: Option<Documentation>,
     pub signature: ConstSignature,
+    /// Filled after declaration collection. `None` also covers unsupported or unevaluated
+    /// initializers; the declaration still provides its name and type. Boxing avoids reserving
+    /// value storage on declarations with no known result.
+    pub value: Option<Box<EvaluatedConstValue>>,
 }
 
 /// Module-level static item.

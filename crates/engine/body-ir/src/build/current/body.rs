@@ -1,10 +1,11 @@
 //! Builds Body IR for function, const, and static bodies from the text in the editor.
 //!
 //! We do not rebuild a project after every keystroke. Instead, this module finds the nearest
-//! enclosing function, const, or static. A declaration with the same saved header keeps its saved
-//! identity. A new or changed declaration instead gets a request-only item, including the
-//! enclosing impl or trait header needed by an associated function or const. Either declaration
-//! becomes the root of the same small body worklist used by saved builds.
+//! enclosing function, const, or static. Functions and statics with the same saved header keep their
+//! saved identity. Const roots also rebuild their declaration because it owns the initializer value.
+//! A new or changed declaration gets a request-only item, including the enclosing impl or trait
+//! header needed by an associated function or const. Either declaration becomes the root of the
+//! same small body worklist used by saved builds.
 //!
 //! The saved project still supplies module declarations, traits, and crate-wide indexes. Locals,
 //! expressions, scopes, body-local impls, and nested bodies come from the current text. For a body
@@ -165,7 +166,14 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         for selected_owner in current_owners {
             rg_std::check_cancel!(cancellation, "current body roots");
             let association_started = Instant::now();
-            let saved_root = self.find_saved_root(&selected_owner, &saved_owners);
+            // An initializer is part of a const's semantic declaration. Reusing only its saved
+            // header would also reuse the saved value, so collect the current declaration too.
+            // This also keeps an unknown current initializer from exposing the old saved result.
+            let saved_root = if matches!(selected_owner, SyntaxBodyOwner::Const(_)) {
+                ExpectedUnique::Empty
+            } else {
+                self.find_saved_root(&selected_owner, &saved_owners)
+            };
             association_us += association_started.elapsed().as_micros();
             checkpoint(CurrentSourceBuildCheckpoint::OwnerAssociated)
                 .context("check current-body work after owner association")?;

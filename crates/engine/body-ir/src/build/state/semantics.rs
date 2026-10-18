@@ -12,6 +12,7 @@ use super::{
     BodySemanticStage, BodySemanticTimings, CrateBodyBuildState, SLOW_CRATE_RESOLUTION_PHASE,
 };
 use crate::{
+    BodyOwner,
     build::{pattern_binding::PatternBindingQuery, query_source::BodyBuildQuerySource},
     resolution::{BodyResolutionContext, InferenceContext},
 };
@@ -24,8 +25,8 @@ impl CrateBodyBuildState<'_> {
     /// Run the semantic stages in the same order for saved and current worklists.
     ///
     /// Lowering and body-local item discovery decide which bodies belong to the worklist. From
-    /// this point onward both build modes use exactly these stages: impl headers first, ambiguous
-    /// pattern bindings next, then expression facts.
+    /// this point onward both build modes use exactly these stages: impl headers first, const
+    /// values next, ambiguous pattern bindings next, then expression facts.
     pub(crate) fn resolve_semantics(
         &mut self,
         def_map: &DefMapReadTxn<'_>,
@@ -39,6 +40,8 @@ impl CrateBodyBuildState<'_> {
         Self::report_slow_semantic_stage("body_local_impl_headers", impl_headers, None);
         checkpoint(BodySemanticStage::ImplHeaders)
             .context("check body work after resolving body-local impl headers")?;
+
+        self.evaluate_const_items(def_map, semantic_ir, item_lookup_query)?;
 
         let started = Instant::now();
         self.materialize_pattern_bindings(def_map, semantic_ir, item_lookup_query)?;
@@ -202,6 +205,62 @@ impl CrateBodyBuildState<'_> {
             body.compact_bindings(&active);
         }
 
+        Ok(())
+    }
+
+    /// Evaluate consts whose declarations belong to body-local item stores before body inference.
+    ///
+    /// In `fn f() { const N: usize = 2 + 2; }`, the initializer has its own const body, but the
+    /// declaration and value belong to f's local ItemStore. The const's origin tells us which
+    /// store receives the result. Current root declarations use the same routing.
+    fn evaluate_const_items(
+        &mut self,
+        def_map: &DefMapReadTxn<'_>,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+        item_lookup_query: &ItemLookupQuery<'_>,
+    ) -> anyhow::Result<()> {
+        let source = BodyBuildQuerySource::new(
+            def_map,
+            semantic_ir,
+            self.crate_ref,
+            &self.body_slots,
+            &self.body_local_items,
+        );
+        let mut values = Vec::new();
+        for (body_id, lowered) in self.crate_bodies.bodies().iter_with_ids() {
+            let body = lowered.body();
+            // Saved crate declarations are evaluated separately. This worklist only publishes facts
+            // for declarations owned by a body, including request-local const roots.
+            let BodyOwner::Const(konst) = body.owner() else {
+                continue;
+            };
+            let DefMapRef::Body(owner) = konst.origin else {
+                continue;
+            };
+            let Some(&slot) = self.body_slots.get(&owner) else {
+                continue;
+            };
+            let body_ref = self.body_refs[body_id];
+            let context = BodyResolutionContext::new(
+                &source,
+                &source,
+                body_ref,
+                body,
+                item_lookup_query,
+                self.cancellation.clone(),
+            );
+            rg_std::check_cancel!(self.cancellation, "local const values");
+            if let Some((konst, value)) = context.evaluate_const(lowered)? {
+                values.push((slot, konst.id, value));
+            }
+        }
+        // Apply results after the read-only walk, so no query observes a partially filled store.
+        for (body, konst, value) in values {
+            self.body_local_items[body]
+                .as_mut()
+                .expect("evaluated const should have a local item store")
+                .set_const_value(konst, value);
+        }
         Ok(())
     }
 

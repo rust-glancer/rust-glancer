@@ -3,6 +3,95 @@ use expect_test::expect;
 use super::utils::{check_analysis, check_analysis_with_fake_sysroot};
 
 #[test]
+fn hovers_with_evaluated_const_values() {
+    check_analysis(
+        r#"
+        //- /src/lib.rs crate:analysis_hover_const_values
+        mod sizes;
+        use sizes::CAPACITY;
+
+        type Size = usize;
+        /// Number of slots.
+        pub const SL$0OTS: Size = (2 + 2) * 4; // hover("const declaration value")
+
+        pub struct Buffer;
+        impl Buffer {
+            pub const CAPACITY: usize = 1 << (2 + 2u8);
+        }
+
+        pub trait Limit {
+            const DEFAULT: usize = 0xff & !(1 << 3);
+        }
+        impl Limit for Buffer {}
+
+        pub fn demo() {
+            const LOCAL: usize = { 8 / 2 + 1 };
+            let _ = SL$0OTS; // hover("const reference value")
+            let _ = Buffer::CAPA$0CITY; // hover("associated const value")
+            let _ = Buffer::DE$0FAULT; // hover("trait default const value")
+            let _ = LO$0CAL; // hover("body-local const value")
+            let _ = CAPA$0CITY; // hover("imported const value")
+        }
+
+        //- /src/sizes.rs
+        pub const CAPACITY: usize = 0x10 + 0o10 + 0b10;
+        "#,
+        expect![[r#"
+            // const declaration value
+            range: 6:11-6:16
+            block:
+              kind: const
+              path: analysis_hover_const_values::SLOTS
+              signature:
+                pub const SLOTS: Size = 16
+              docs:
+                Number of slots.
+
+            // const reference value
+            range: 20:13-20:18
+            block:
+              kind: const
+              path: analysis_hover_const_values::SLOTS
+              signature:
+                pub const SLOTS: Size = 16
+              docs:
+                Number of slots.
+
+            // associated const value
+            range: 21:21-21:29
+            block:
+              kind: const
+              path: analysis_hover_const_values::Buffer::CAPACITY
+              signature:
+                pub const CAPACITY: usize = 16
+
+            // trait default const value
+            range: 22:21-22:28
+            block:
+              kind: const
+              path: analysis_hover_const_values::Limit::DEFAULT
+              signature:
+                const DEFAULT: usize = 247
+
+            // body-local const value
+            range: 23:13-23:18
+            block:
+              kind: const
+              signature:
+                const LOCAL: usize = 5
+
+            // imported const value
+            range: 24:13-24:21
+            block:
+              kind: const
+              path: analysis_hover_const_values::sizes::CAPACITY
+              signature:
+                pub const CAPACITY: usize = 26
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_with_formatted_function_signatures() {
     check_analysis(
         r#"

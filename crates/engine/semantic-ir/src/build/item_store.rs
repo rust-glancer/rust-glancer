@@ -397,6 +397,7 @@ where
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             signature: ConstSignature::from_item(declaration),
+            value: None,
         })
     }
 

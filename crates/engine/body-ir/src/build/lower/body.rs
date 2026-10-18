@@ -17,7 +17,7 @@ use super::{
 use crate::body::{BodyMacroCallData, BodyOwner, BodySource, ExprData, ExprKind};
 
 pub(super) struct BodyLowering<'a> {
-    owner: BodyOwner,
+    pub(super) owner: BodyOwner,
     owner_module: ModuleRef,
     fallback_module: ModuleRef,
     body_source: BodySource,

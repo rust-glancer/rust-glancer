@@ -2,6 +2,7 @@ mod utils;
 
 mod body_local_items;
 mod closures;
+mod const_values;
 mod control_flow;
 mod expressions;
 mod inference;
