@@ -182,6 +182,10 @@ impl ProjectCoordinator {
             tracing::info!("sysroot source discovery disabled");
             None
         };
+        // Protocol fixtures supply the shared fake std explicitly, without changing process-wide
+        // toolchain discovery or adding test configuration to the client protocol.
+        #[cfg(test)]
+        let sysroot = configuration.sysroot_sources.clone().or(sysroot);
 
         // The faster path stops at its early-start boundary. Lower-memory indexing uses the same
         // builder contract but completes Body IR inside each package batch before returning.

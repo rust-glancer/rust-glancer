@@ -446,3 +446,173 @@ pub mod custom {
         "#]],
     );
 }
+
+#[test]
+fn format_captures_use_lexical_scope_and_literal_source_ranges() {
+    check_analysis_queries_with_fake_sysroot(
+        r###"
+//- /src/lib.rs crate:format_captures
+use std::format_args as arguments;
+pub struct User;
+impl User {
+    pub fn show(&self) { let _ = format!("{$self_capture$self:?}"); }
+}
+macro_rules! forward { ($value:expr) => { $value }; }
+pub fn demo(user: User, café: u32, number: f64, width: usize, precision: usize, r#type: u8) {
+    let _ = format_args!("hello {$local$user:?}");
+    let _ = arguments!(r##"{{escaped}} {$raw$user:?}"##);
+    let _ = format_args!("\t☕ {$unicode$caf\u{e9}}");
+    let _ = format_args!("\u{7b}$escaped_braces$user\u{7d}");
+    let _ = format_args!("continued\
+        {$continued$user  }");
+    let _ = format_args!("{number:>$width$width$.$precision$precision$}");
+    let _ = format!("{label} {$named_sibling$user:?}", label = 42);
+    let _ = format!("{$keyword$type}");
+    assert!(true, "bad {$assert_capture$user:?}");
+    let _ = forward!(format!("{$nested$user:?}"));
+    let _ = format_args_nl!("{$newline$user:?}");
+    {
+        let user = 10u64;
+        let _ = format!("{$shadow$user}");
+    }
+}
+"###,
+        &[
+            AnalysisQuery::hover("implicit local", "local").in_lib("format_captures"),
+            AnalysisQuery::goto("implicit local", "local").in_lib("format_captures"),
+            AnalysisQuery::goto_type("implicit local type", "local").in_lib("format_captures"),
+            AnalysisQuery::goto("raw string and escaped braces", "raw").in_lib("format_captures"),
+            AnalysisQuery::hover("escaped Unicode identifier", "unicode").in_lib("format_captures"),
+            AnalysisQuery::goto("escaped Unicode identifier", "unicode").in_lib("format_captures"),
+            AnalysisQuery::goto("escaped opening and closing braces", "escaped_braces")
+                .in_lib("format_captures"),
+            AnalysisQuery::hover("line continuation and trailing whitespace", "continued")
+                .in_lib("format_captures"),
+            AnalysisQuery::hover("width capture", "width").in_lib("format_captures"),
+            AnalysisQuery::goto("width capture", "width").in_lib("format_captures"),
+            AnalysisQuery::goto("precision capture", "precision").in_lib("format_captures"),
+            AnalysisQuery::goto("capture beside explicit named argument", "named_sibling")
+                .in_lib("format_captures"),
+            AnalysisQuery::goto("raw identifier binding", "keyword").in_lib("format_captures"),
+            AnalysisQuery::goto("assert message capture", "assert_capture")
+                .in_lib("format_captures"),
+            AnalysisQuery::goto("nested macro capture", "nested").in_lib("format_captures"),
+            AnalysisQuery::goto("newline formatting capture", "newline").in_lib("format_captures"),
+            AnalysisQuery::hover("shadowed local capture", "shadow").in_lib("format_captures"),
+            AnalysisQuery::goto("shadowed local capture", "shadow").in_lib("format_captures"),
+            AnalysisQuery::hover("self capture", "self_capture").in_lib("format_captures"),
+        ],
+        expect![[r#"
+            // implicit local
+            range: 8:34-8:38
+            block:
+              kind: variable
+              signature:
+                let user: User
+
+            local user @ 7:13-7:17 // implicit local
+            struct User @ 2:12-2:16 // implicit local type
+            local user @ 7:13-7:17 // raw string and escaped braces
+
+            // escaped Unicode identifier
+            range: 10:34-10:43
+            block:
+              kind: variable
+              signature:
+                let café: u32
+
+            local café @ 7:25-7:30 // escaped Unicode identifier
+            local user @ 7:13-7:17 // escaped opening and closing braces
+
+            // line continuation and trailing whitespace
+            range: 13:10-13:14
+            block:
+              kind: variable
+              signature:
+                let user: User
+
+            // width capture
+            range: 14:36-14:41
+            block:
+              kind: variable
+              signature:
+                let width: usize
+
+            local width @ 7:50-7:55 // width capture
+            local precision @ 7:64-7:73 // precision capture
+            local user @ 7:13-7:17 // capture beside explicit named argument
+            local r#type @ 7:82-7:88 // raw identifier binding
+            local user @ 7:13-7:17 // assert message capture
+            local user @ 7:13-7:17 // nested macro capture
+            local user @ 7:13-7:17 // newline formatting capture
+
+            // shadowed local capture
+            range: 22:27-22:31
+            block:
+              kind: variable
+              signature:
+                let user: u64
+
+            local user @ 21:13-21:17 // shadowed local capture
+
+            // self capture
+            range: 4:44-4:48
+            block:
+              kind: variable
+              signature:
+                let self: &User
+        "#]],
+    );
+}
+
+#[test]
+fn format_captures_keep_each_nested_expansion_meaning() {
+    check_analysis_queries_with_fake_sysroot(
+        r#"
+//- /macros/src/lib.rs crate:capture_macros root:macros
+#[macro_export]
+macro_rules! inner {
+    ($name:ident, $template:literal) => {{
+        let $name = $crate::First;
+        let first = format_args!($template);
+        let $name = $crate::Second;
+        let second = format_args!($template);
+        (first, second)
+    }};
+}
+#[macro_export]
+macro_rules! outer { ($($input:tt)*) => { $crate::inner!($($input)*) }; }
+pub struct First;
+pub struct Second;
+
+//- /app/src/lib.rs crate:capture_consumer root:app deps:capture_macros
+pub fn demo() {
+    let _ = capture_macros::outer!(value, "{$capture$value:?}");
+}
+"#,
+        &[
+            AnalysisQuery::hover("distinct capture meanings", "capture").in_lib("capture_consumer"),
+            AnalysisQuery::goto("capture binding", "capture").in_lib("capture_consumer"),
+            AnalysisQuery::goto_type("distinct capture types", "capture")
+                .in_lib("capture_consumer"),
+        ],
+        expect![[r#"
+            // distinct capture meanings
+            range: 2:45-2:50
+            block:
+              kind: variable
+              signature:
+                let value: First
+            block:
+              kind: variable
+              signature:
+                let value: Second
+
+            local value @ 2:36-2:41 // capture binding
+
+            // distinct capture types
+            struct First @ 13:12-13:17
+            struct Second @ 14:12-14:18
+        "#]],
+    );
+}

@@ -116,12 +116,22 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
 }
 
 impl ExpandedBodyMacro<SyntaxNode> {
-    /// Type syntax retains ranges of name nodes, which may include parser-inserted whitespace.
-    /// Recover the one real token without treating a compound generated range as an argument.
+    /// Remap one token, a range within it, or a name node with parser-inserted whitespace.
+    /// Compound generated ranges still cannot pass as copied arguments.
     pub fn source_for_range(&self, call_source: BodySource, range: TextRange) -> Option<Span> {
         let mut token = self.syntax.token_at_offset(range.start()).right_biased()?;
         while token.kind().is_trivia() && token.text_range().end() <= range.end() {
             token = token.next_token()?;
+        }
+        // A format capture such as `user` in `"{user}"` occupies part of one literal token.
+        // First prove that the entire token was copied unchanged, then retain the inner offsets.
+        if token.text_range().contains_range(range) {
+            let source = self.source_for_token_range(call_source, token.text_range())?;
+            let start = source.start + u32::from(range.start() - token.text_range().start());
+            return Some(Span {
+                start,
+                end: start + u32::from(range.len()),
+            });
         }
         if !range.contains_range(token.text_range()) {
             return None;

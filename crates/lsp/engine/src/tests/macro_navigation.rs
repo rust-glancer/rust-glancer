@@ -169,3 +169,63 @@ edition = "2024"
         .await;
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn format_capture_navigation_tracks_unsaved_strings() {
+    let fixture = LspEngineFixture::initialized_with_fake_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "lsp_format_captures"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn demo(user: &str) {
+    let _ = format!("🦀 {us$0e$1r}"); // hover("saved capture"), goto("saved capture definition")
+}
+"#,
+    )
+    .await;
+    fixture
+        .check(expect![[r#"
+        // saved capture
+        range: /src/lib.rs:1:25-1:29
+        markdown:
+          ```rust
+          let user: &str
+          ```
+
+        /src/lib.rs:0:12-0:16 // saved capture definition
+    "#]])
+        .await;
+    fixture.did_open_saved("src/lib.rs", 1).await;
+    let dirty = fixture
+        .did_change_full(
+            "src/lib.rs",
+            2,
+            r#"
+pub fn demo(user: &str) {
+    let current = 1u64;
+    let _ = format!("🦀 {curr$0e$1nt}"); // hover("dirty capture"), goto("dirty capture definition")
+}
+"#,
+        )
+        .await;
+    fixture
+        .check_dirty(
+            &dirty,
+            expect![[r#"
+        // dirty capture
+        range: /src/lib.rs:3:25-3:32
+        markdown:
+          ```rust
+          let current: u64
+          ```
+
+        /src/lib.rs:2:8-2:15 // dirty capture definition
+    "#]],
+        )
+        .await;
+    fixture.shutdown().await;
+}

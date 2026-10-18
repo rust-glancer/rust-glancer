@@ -7,6 +7,8 @@ use rg_lsp_proto::{
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
 use rg_project::{IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy};
+#[cfg(test)]
+use rg_workspace::SysrootSources;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
 
 /// Project settings after client-facing enum and option shapes have been removed.
@@ -18,6 +20,8 @@ pub(crate) struct ProjectConfiguration {
     pub(super) indexing_preference: IndexingPerformancePreference,
     pub(super) package_batch_size: PackageBatchSize,
     pub(super) discover_sysroot: bool,
+    #[cfg(test)]
+    pub(crate) sysroot_sources: Option<SysrootSources>,
 }
 
 impl From<AnalysisConfig> for ProjectConfiguration {
@@ -66,6 +70,8 @@ impl From<AnalysisConfig> for ProjectConfiguration {
             indexing_preference,
             package_batch_size,
             discover_sysroot: matches!(config.sysroot_discovery, ProtoSysrootDiscovery::Auto),
+            #[cfg(test)]
+            sysroot_sources: None,
         }
     }
 }

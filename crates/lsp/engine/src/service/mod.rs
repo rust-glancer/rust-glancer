@@ -51,6 +51,27 @@ impl Service {
             diagnostics,
         }
     }
+
+    /// Keep diagnostics and engine setup together when using translated project settings.
+    pub(crate) async fn initialize_project(
+        self,
+        root: PathBuf,
+        config: EngineConfig,
+        configuration: ProjectConfiguration,
+    ) -> EngineResult<ProjectInitialization> {
+        self.diagnostics
+            .configure(root.clone(), config.diagnostics, config.analysis)
+            .await;
+        self.engine
+            .request(|respond_to| EngineCommand::Initialize {
+                root,
+                configuration,
+                inlay_hints: config.inlay_hints,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
 }
 
 impl EngineService for Service {
@@ -60,19 +81,8 @@ impl EngineService for Service {
         root: PathBuf,
         config: EngineConfig,
     ) -> EngineResult<ProjectInitialization> {
-        let analysis = config.analysis;
-        self.diagnostics
-            .configure(root.clone(), config.diagnostics, analysis.clone())
-            .await;
-        self.engine
-            .request(|respond_to| EngineCommand::Initialize {
-                root,
-                configuration: ProjectConfiguration::from(analysis),
-                inlay_hints: config.inlay_hints,
-                respond_to,
-            })
-            .await
-            .map_err(EngineError::from)
+        let configuration = ProjectConfiguration::from(config.analysis.clone());
+        self.initialize_project(root, config, configuration).await
     }
 
     async fn initialized(self, _: context::Context) -> EngineResult<()> {

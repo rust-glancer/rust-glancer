@@ -107,6 +107,7 @@ rustc-hash = "2.1.2"
 rustc_abi = { package = "ra-ap-rustc_abi", version = "=0.166.0", default-features = false }
 rustc_index = { package = "ra-ap-rustc_index", version = "=0.166.0", default-features = false }
 rustc_next_trait_solver = { package = "ra-ap-rustc_next_trait_solver", version = "=0.166.0", default-features = false }
+rustc_parse_format = { package = "ra-ap-rustc_parse_format", version = "=0.166.0" }
 rustc_type_ir = { package = "ra-ap-rustc_type_ir", version = "=0.166.0", default-features = false }
 rustc-literal-escaper = "=0.0.7"
 rustc_apfloat = "=0.2.3"

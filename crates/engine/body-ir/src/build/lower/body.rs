@@ -203,7 +203,7 @@ impl BodyLowering<'_> {
         source_for(self.body_source.file_id, syntax)
     }
 
-    /// Translate a token range from expansion text back to the original macro argument.
+    /// Translate a range within one expansion token back to the original macro argument.
     ///
     /// Path segments and member names store spans without a separate `BodySource`. They need
     /// the same copied-token check as expression sources; template tokens get the whole call span.
@@ -369,21 +369,7 @@ impl BodyLowering<'_> {
                 let args = arguments
                     .map(|arguments| {
                         self.with_expanded_macro(call_source, arguments, |this, syntax| {
-                            // TODO: Resolve implicit captures inside format strings, such as `{user}`.
-                            // Named argument labels belong to formatting; only their values are
-                            // ordinary expressions in the caller's lexical scope.
-                            let mut args = Vec::new();
-                            for arg in syntax
-                                .template()
-                                .into_iter()
-                                .chain(syntax.args().filter_map(|arg| arg.expr()))
-                            {
-                                let Some(arg) = this.cfg.enabled_syntax(arg) else {
-                                    continue;
-                                };
-                                args.push(this.lower_expr(arg, scope));
-                            }
-                            args
+                            this.lower_builtin_macro_args(kind, syntax, scope)
                         })
                     })
                     .unwrap_or_default();

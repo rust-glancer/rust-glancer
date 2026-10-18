@@ -11,6 +11,7 @@ use std::{
 
 mod body;
 mod builder;
+mod builtin_macro;
 mod crate_lowering;
 mod declaration;
 mod expr;

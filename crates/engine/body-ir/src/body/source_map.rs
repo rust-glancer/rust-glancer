@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use rg_ir_model::Span;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
@@ -20,15 +22,23 @@ impl BodySourceMap {
     }
 
     pub(crate) fn finish(&mut self) {
+        // Nested parses can see `>>` as one token or two closing angle brackets. Keep the
+        // enclosing range when copied ranges nest, so retained ends increase with their starts.
         self.macro_arguments
-            .sort_unstable_by_key(|span| (span.start, span.end));
-        self.macro_arguments.dedup();
+            .sort_unstable_by_key(|span| (span.start, Reverse(span.end)));
+        self.macro_arguments
+            .dedup_by(|later, earlier| earlier.contains_span(*later));
         self.macro_arguments.shrink_to_fit();
     }
 
     pub fn is_macro_argument(&self, span: Span) -> bool {
-        self.macro_arguments
-            .binary_search_by_key(&(span.start, span.end), |span| (span.start, span.end))
-            .is_ok()
+        // A name inside a string literal shares the token's provenance. Because retained ends
+        // increase, the last range starting before this name reaches as far as any earlier range.
+        let end = self
+            .macro_arguments
+            .partition_point(|token| token.start <= span.start);
+        self.macro_arguments[..end]
+            .last()
+            .is_some_and(|token| token.contains_span(span))
     }
 }

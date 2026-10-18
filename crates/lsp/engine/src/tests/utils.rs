@@ -20,10 +20,11 @@ use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
     DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
     FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
-    QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
-    SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
+    ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
+    ServiceNotification, SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
 };
 use rg_parse::LineIndex;
+use rg_workspace::SysrootSources;
 use tarpc::context;
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_path_for_snapshot,
@@ -35,7 +36,8 @@ use test_fixture::{
 };
 
 use crate::{
-    MemoryControl, Service, ServiceNotificationsSink, service::ServiceNotificationPublisher,
+    MemoryControl, Service, ServiceNotificationsSink, engine::ProjectConfiguration,
+    service::ServiceNotificationPublisher,
 };
 
 pub(super) struct LspEngineFixture {
@@ -62,6 +64,23 @@ impl LspEngineFixture {
 
     pub(super) async fn initialized(fixture: &str) -> Self {
         Self::initialized_with_engine_config(fixture, Self::engine_config()).await
+    }
+
+    pub(super) async fn initialized_with_fake_sysroot(source: &str) -> Self {
+        let mut fixture = Self::new(source);
+        fixture.fixture = fixture.fixture.with_fake_sysroot();
+        let sysroot = SysrootSources::from_library_root(fixture.fixture.path("sysroot/library"))
+            .expect("fake sysroot should be complete");
+        let config = Self::engine_config();
+        let mut configuration = ProjectConfiguration::from(config.analysis.clone());
+        configuration.sysroot_sources = Some(sysroot);
+        let initialization = fixture
+            .service
+            .clone()
+            .initialize_project(fixture.fixture.path(""), config, configuration)
+            .await
+            .expect("fixture LSP engine should initialize");
+        fixture.finish_initialization(initialization).await
     }
 
     pub(super) async fn initialized_with_cfg_test(fixture: &str, enabled: bool) -> Self {
@@ -107,17 +126,21 @@ impl LspEngineFixture {
             .initialize(context::current(), fixture.fixture.path(""), config)
             .await
             .expect("fixture LSP engine should initialize");
+        fixture.finish_initialization(initialization).await
+    }
+
+    async fn finish_initialization(self, initialization: ProjectInitialization) -> Self {
         // The startup response says whether any worker needs to be awaited. Bodyless projects,
         // cached projects, and lower-memory builds can already be fully indexed here.
         if initialization.has_deferred_indexing {
             tokio::time::timeout(
                 Duration::from_secs(5),
-                fixture.notifications.wait_for_deferred_indexing(),
+                self.notifications.wait_for_deferred_indexing(),
             )
             .await
             .expect("fixture deferred indexing should finish");
         }
-        fixture
+        self
     }
 
     pub(super) fn engine_config() -> EngineConfig {

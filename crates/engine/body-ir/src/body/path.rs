@@ -42,6 +42,18 @@ impl BodyPath {
         }
     }
 
+    pub fn unqualified_name(name: Name, span: Span) -> Self {
+        Self::new(
+            span,
+            false,
+            vec![BodyPathSegment::new(
+                BodyPathSegmentKind::Name(name),
+                span,
+                None,
+            )],
+        )
+    }
+
     /// Returns the compact path form used by the current body resolver.
     ///
     /// This is `None` for rich syntax that has no honest DefMap-path equivalent, such as
