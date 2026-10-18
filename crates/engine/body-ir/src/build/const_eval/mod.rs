@@ -5,6 +5,8 @@
 //! Both paths resolve annotation types through the body context and use the shared `rg_ty`
 //! evaluator. Concrete results go to the declaration's ItemStore; the expression inputs can be dropped.
 
+use std::time::{Duration, Instant};
+
 use rg_def_map::DefMapSource;
 use rg_ir_model::{BodyRef, ConstRef, CrateRef, EvaluatedConstValue, ExprId};
 use rg_package_store::PackageStoreError;
@@ -21,9 +23,11 @@ use super::{
     materialization::BodyIrMaterialization,
 };
 use crate::{
-    BodyOwner, ExprBlockKind, ExprKind, ExprWrapperKind, LiteralKind,
+    BodyOwner, ExprBlockKind, ExprKind, ExprWrapperKind, LiteralKind, profile::metric,
     resolution::BodyResolutionContext,
 };
+
+const SLOW_CRATE_EVALUATION: Duration = Duration::from_secs(1);
 
 impl BodyIrBuilder<'_, '_> {
     /// Evaluate saved const declarations without requiring function-body indexing.
@@ -41,6 +45,7 @@ impl BodyIrBuilder<'_, '_> {
             .read_txn_for_subset(self.def_map_loader, self.subset);
         // Keep initializer inputs transient even when function-body analysis is deferred.
         // TODO: Reuse this worklist when ordinary body indexing immediately follows.
+        let lowering_timer = metric::SAVED_CONST_LOWERING.start_timer();
         let lowered = lower::build_selected_packages(
             self.parse,
             &def_map,
@@ -52,16 +57,22 @@ impl BodyIrBuilder<'_, '_> {
             None,
             &self.cancellation,
         )?;
+        drop(lowering_timer);
+        let _evaluation_timer = metric::SAVED_CONST_EVALUATION.start_timer();
         // Each initializer needs its own crate's names and impls. Reuse dependency lookup work
         // across those contexts while resolving their declaration types.
         let cache = ItemLookupQueryCache::new();
         let mut values = Vec::new();
+        let mut initializers = 0;
         for (package, crates) in lowered {
             for (crate_id, bodies) in crates {
                 if bodies.bodies().is_empty() {
                     continue;
                 }
                 let crate_ref = CrateRef { package, crate_id };
+                let started = Instant::now();
+                let known_before = values.len();
+                initializers += bodies.bodies().len();
                 let lookup = ItemLookupQuery::build_with_cache(
                     &ItemStoreQuery::new(&semantic_ir),
                     crate_ref,
@@ -85,8 +96,23 @@ impl BodyIrBuilder<'_, '_> {
                         values.push(value);
                     }
                 }
+                // Attribute unusual evaluation cost to a crate without logging every initializer.
+                let elapsed = started.elapsed();
+                if elapsed >= SLOW_CRATE_EVALUATION {
+                    tracing::debug!(
+                        package = package.0,
+                        crate_id = crate_id.0,
+                        initializer_count = bodies.bodies().len(),
+                        known_values = values.len() - known_before,
+                        elapsed_ms = elapsed.as_millis(),
+                        "slow saved const evaluation"
+                    );
+                }
             }
         }
+        // Publish aggregate counts once, keeping profiling out of the expression walk.
+        metric::SAVED_CONST_INITIALIZERS.add(initializers as u64);
+        metric::SAVED_CONST_KNOWN_VALUES.add(values.len() as u64);
         Ok(values)
     }
 }

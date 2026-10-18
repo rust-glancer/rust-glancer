@@ -14,6 +14,7 @@ use super::{
 use crate::{
     BodyOwner,
     build::{pattern_binding::PatternBindingQuery, query_source::BodyBuildQuerySource},
+    profile::metric,
     resolution::{BodyResolutionContext, InferenceContext},
 };
 
@@ -41,7 +42,11 @@ impl CrateBodyBuildState<'_> {
         checkpoint(BodySemanticStage::ImplHeaders)
             .context("check body work after resolving body-local impl headers")?;
 
+        let started = Instant::now();
         self.evaluate_const_items(def_map, semantic_ir, item_lookup_query)?;
+        let const_values = started.elapsed();
+        metric::LOCAL_CONST_EVALUATION.record(const_values);
+        Self::report_slow_semantic_stage("const_values", const_values, None);
 
         let started = Instant::now();
         self.materialize_pattern_bindings(def_map, semantic_ir, item_lookup_query)?;
@@ -58,6 +63,7 @@ impl CrateBodyBuildState<'_> {
 
         Ok(BodySemanticTimings {
             impl_headers,
+            const_values,
             pattern_bindings,
             bodies,
         })
@@ -227,6 +233,7 @@ impl CrateBodyBuildState<'_> {
             &self.body_local_items,
         );
         let mut values = Vec::new();
+        let mut initializers = 0;
         for (body_id, lowered) in self.crate_bodies.bodies().iter_with_ids() {
             let body = lowered.body();
             // Saved crate declarations are evaluated separately. This worklist only publishes facts
@@ -250,10 +257,13 @@ impl CrateBodyBuildState<'_> {
                 self.cancellation.clone(),
             );
             rg_std::check_cancel!(self.cancellation, "local const values");
+            initializers += 1;
             if let Some((konst, value)) = context.evaluate_const(lowered)? {
                 values.push((slot, konst.id, value));
             }
         }
+        metric::LOCAL_CONST_INITIALIZERS.add(initializers);
+        metric::LOCAL_CONST_KNOWN_VALUES.add(values.len() as u64);
         // Apply results after the read-only walk, so no query observes a partially filled store.
         for (body, konst, value) in values {
             self.body_local_items[body]

@@ -432,6 +432,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             lowering_us,
             local_items_us,
             impl_headers_us = semantic_timings.impl_headers.as_micros(),
+            const_values_us = semantic_timings.const_values.as_micros(),
             pattern_bindings_us = semantic_timings.pattern_bindings.as_micros(),
             resolution_us = semantic_timings.bodies.as_micros(),
             total_us = started.elapsed().as_micros(),

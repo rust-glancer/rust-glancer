@@ -1,9 +1,25 @@
-//! Profile descriptors for body inference and resolution.
+//! Profile descriptors for body inference, resolution, and const evaluation.
 
 use rg_profile::{ProfileDescriptor, declare_metrics};
 
 declare_metrics! {
     pub(crate) mod metric {
+        scope "body_ir.const_eval" {
+            /// Crate-owned const initializer bodies submitted for semantic evaluation.
+            counter SAVED_CONST_INITIALIZERS = "saved.initializers";
+            /// Submitted initializers that produced a concrete value for ItemStore.
+            counter SAVED_CONST_KNOWN_VALUES = "saved.known_values";
+            /// Wall time spent lowering the temporary saved initializer worklist.
+            duration SAVED_CONST_LOWERING = "saved.timings.lowering";
+            /// Saved initializer evaluation, including lookup construction and type resolution.
+            duration SAVED_CONST_EVALUATION = "saved.timings.evaluation";
+            /// Body-local and current-root const initializers submitted for semantic evaluation.
+            counter LOCAL_CONST_INITIALIZERS = "local.initializers";
+            /// Submitted initializers that produced a concrete value for their local ItemStore.
+            counter LOCAL_CONST_KNOWN_VALUES = "local.known_values";
+            /// Evaluation and publication in local stores; excludes ordinary body lowering.
+            duration LOCAL_CONST_EVALUATION = "local.timings.evaluation";
+        }
         scope "body_ir.resolution" {
             /// Expressions whose syntax-directed inference rule was evaluated.
             counter EXPRESSION_VISITS = "expression_visits";
