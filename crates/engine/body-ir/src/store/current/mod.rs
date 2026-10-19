@@ -52,10 +52,10 @@ pub(crate) struct SelectedImpl {
 /// enters saved crate indexes or package artifacts.
 #[derive(Debug, Default)]
 pub struct CurrentSourceStore {
-    pub(crate) masked_files: HashSet<(CrateRef, FileId)>,
+    pub(crate) masked_file: Option<(CrateRef, FileId)>,
     pub(crate) bodies: Vec<CurrentBody>,
-    pub(crate) impls: Vec<CurrentImplData>,
-    pub(crate) selected_impls: Vec<SelectedImpl>,
+    pub(crate) declaration_impl: Option<CurrentImplData>,
+    pub(crate) selected_impl: Option<SelectedImpl>,
 }
 
 impl CurrentSourceStore {
@@ -69,7 +69,7 @@ impl CurrentSourceStore {
                 .all(|body| origins.insert(body.body_ref())),
             "current source contains one body identity more than once",
         );
-        for current in &self.impls {
+        if let Some(current) = &self.declaration_impl {
             let DefMapRef::Body(origin) = current.impl_ref.origin else {
                 anyhow::bail!("current impl must belong to a request-local origin");
             };
@@ -86,15 +86,14 @@ impl CurrentSourceStore {
     }
 
     pub(crate) fn masks_file(&self, crate_ref: CrateRef, file: FileId) -> bool {
-        self.masked_files.contains(&(crate_ref, file))
+        self.masked_file == Some((crate_ref, file))
     }
 
     /// A whole-crate saved body value cannot include rebuilt bodies or file masks.
     /// Adding only header declarations does not change that body inventory.
     pub(crate) fn affects_crate(&self, crate_ref: CrateRef) -> bool {
-        self.masked_files
-            .iter()
-            .any(|(owner, _)| *owner == crate_ref)
+        self.masked_file
+            .is_some_and(|(owner, _)| owner == crate_ref)
             || self
                 .bodies
                 .iter()
@@ -115,9 +114,9 @@ impl CurrentSourceStore {
         };
         self.contains_body(body_ref)
             || self
-                .impls
-                .iter()
-                .any(|current| current.impl_ref.origin == origin)
+                .declaration_impl
+                .as_ref()
+                .is_some_and(|current| current.impl_ref.origin == origin)
     }
 
     pub(crate) fn items(&self, origin: DefMapRef) -> Option<&BodyLocalItems> {
@@ -129,9 +128,9 @@ impl CurrentSourceStore {
             .find(|body| body.body_ref() == body_ref)
             .map(CurrentBody::local_items)
             .or_else(|| {
-                self.impls
-                    .iter()
-                    .find(|current| current.impl_ref.origin == origin)
+                self.declaration_impl
+                    .as_ref()
+                    .filter(|current| current.impl_ref.origin == origin)
                     .map(|current| &current.items)
             })
     }
@@ -152,7 +151,7 @@ impl CurrentSourceStore {
             })
             .map(|body| DefMapRef::Body(body.body_ref()))
             .chain(
-                self.impls
+                self.declaration_impl
                     .iter()
                     .filter(move |current| {
                         current.impl_ref.origin.origin_crate() == crate_ref
@@ -164,9 +163,9 @@ impl CurrentSourceStore {
     }
 
     pub(crate) fn declaration_fallback(&self, module: ModuleRef) -> Option<ModuleRef> {
-        self.impls
-            .iter()
-            .find(|current| current.impl_ref.origin == module.origin)
+        self.declaration_impl
+            .as_ref()
+            .filter(|current| current.impl_ref.origin == module.origin)
             .map(|current| current.fallback_module)
     }
 
@@ -176,9 +175,9 @@ impl CurrentSourceStore {
         file: FileId,
         span: Span,
     ) -> Option<ImplRef> {
-        self.selected_impls
-            .iter()
-            .find(|selected| {
+        self.selected_impl
+            .as_ref()
+            .filter(|selected| {
                 selected.impl_ref.origin.origin_crate() == crate_ref
                     && selected.source.file_id == file
                     && selected.source.span == span

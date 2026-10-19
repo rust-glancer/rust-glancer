@@ -1,11 +1,9 @@
 //! Exact request text together with the derived source data shared by editor queries.
 //!
-//! A document can be interpreted in several crates, sometimes with different Rust editions. The
-//! text itself does not change between those interpretations. `CurrentSource` builds its line
-//! index once and keeps one ordinary parse for each required edition, so body analysis, hover,
-//! inlay hints, and completion all read the same request-owned source.
+//! The selected crate supplies one Rust edition. Body analysis, hover, inlay hints, and completion
+//! read the same request-owned text, line index, and ordinary parse.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use rg_ir_model::Span;
 use rg_source::SourceRevision;
@@ -23,27 +21,22 @@ pub struct CurrentSource {
     text: Arc<str>,
     revision: SourceRevision,
     line_index: LineIndex,
-    syntax_by_edition: HashMap<RustEdition, SyntaxParse<SourceFile>>,
+    syntax: SyntaxParse<SourceFile>,
 }
 
 impl CurrentSource {
-    /// Parse the source once for every edition needed by this request.
-    pub fn new(text: impl Into<Arc<str>>, editions: impl IntoIterator<Item = RustEdition>) -> Self {
+    /// Parse the source using the selected crate's edition.
+    pub fn new(text: impl Into<Arc<str>>, edition: RustEdition) -> Self {
         let text = text.into();
         let revision = SourceRevision::from_bytes(text.as_bytes());
         let line_index = LineIndex::new(&text);
-        let mut syntax_by_edition = HashMap::new();
-        for edition in editions {
-            syntax_by_edition
-                .entry(edition)
-                .or_insert_with(|| parse_source_file(&text, edition));
-        }
+        let syntax = parse_source_file(&text, edition);
 
         Self {
             text,
             revision,
             line_index,
-            syntax_by_edition,
+            syntax,
         }
     }
 
@@ -59,9 +52,8 @@ impl CurrentSource {
         &self.line_index
     }
 
-    /// Return the ordinary parse for one semantic interpretation of this source.
-    pub fn parse(&self, edition: RustEdition) -> Option<&SyntaxParse<SourceFile>> {
-        self.syntax_by_edition.get(&edition)
+    pub fn parse(&self) -> &SyntaxParse<SourceFile> {
+        &self.syntax
     }
 
     /// Read a span known to belong to this exact source.

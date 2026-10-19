@@ -1,7 +1,4 @@
-//! Routes saved source files to their crate interpretations and exposes their captured text.
-//!
-//! One physical path can belong to several crates. File queries preserve those interpretations
-//! and use the saved source inventory for text and line indexes.
+//! Selects one crate interpretation for editor queries and exposes saved source text.
 
 use std::{path::Path, sync::Arc};
 
@@ -19,14 +16,13 @@ use crate::selection::subset;
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// The same file can be reachable from more than one crate, for example when a package library
-/// and binary both declare `mod shared;`. Unreachable parsed-cache files are intentionally omitted
-/// by path lookups, because LSP queries need a current crate context to answer semantic questions.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+/// A shared module can belong to several crates. Editor queries use the first owner in saved
+/// package/target order, even when another owner is already materialized or could answer differently.
+/// Unreachable parsed files have no semantic context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
-    pub package: PackageSlot,
+    pub crate_ref: CrateRef,
     pub file: FileId,
-    pub crates: Vec<CrateRef>,
 }
 
 impl<'a> ProjectSnapshot<'a> {
@@ -122,23 +118,23 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(Some(parsed_file.line_index()?))
     }
 
-    /// Returns current analysis contexts for a saved filesystem path.
-    pub fn file_contexts_for_path(
+    /// Returns the selected analysis context for a saved filesystem path.
+    pub fn file_context_for_path(
         &self,
         path: impl AsRef<Path>,
-    ) -> anyhow::Result<Vec<FileContext>> {
+    ) -> anyhow::Result<Option<FileContext>> {
         let path = path.as_ref();
         let canonical_path = path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
-        self.file_contexts_for_source_path(&canonical_path)
+        self.file_context_for_source_path(&canonical_path)
     }
 
-    /// Returns current analysis contexts for an already-selected project-source identity.
-    pub fn file_contexts_for_source_path(
+    /// Returns the selected analysis context for an already-selected project-source identity.
+    pub fn file_context_for_source_path(
         &self,
         source_path: &Path,
-    ) -> anyhow::Result<Vec<FileContext>> {
+    ) -> anyhow::Result<Option<FileContext>> {
         let candidates = self.state.file_refs_for_path(source_path);
 
         let package_slots = candidates
@@ -146,24 +142,23 @@ impl<'a> ProjectSnapshot<'a> {
             .map(|file| file.package)
             .collect::<Vec<_>>();
         let def_map = self.shallow_def_map(&package_slots);
-        let mut contexts = Vec::new();
 
         for file in candidates {
-            let crates = def_map
+            let Some(crate_ref) = def_map
                 .crates_for_file(file.package, file.file)
-                .context("while attempting to find crate ownership for source file")?;
-            if crates.is_empty() {
+                .context("find crate ownership for source file")?
+                .into_iter()
+                .next()
+            else {
                 continue;
-            }
-
-            contexts.push(FileContext {
-                package: file.package,
+            };
+            return Ok(Some(FileContext {
+                crate_ref,
                 file: file.file,
-                crates,
-            });
+            }));
         }
 
-        Ok(contexts)
+        Ok(None)
     }
 
     /// Returns crate contexts whose module tree contains a package-local file.

@@ -25,7 +25,7 @@ use crate::{
 ///
 /// A file is paired with a [`CrateRef`] because the same source may be compiled by several Cargo
 /// targets with different imports or cfg options. A hover usually needs one such file; reference
-/// search may need both selected files and entire crates. Pass the selection to
+/// search may need selected files or entire crates. Pass the selection to
 /// [`SplitIndexing::materialize`] or [`SplitIndexing::prepare`].
 #[derive(Debug, Clone, Copy)]
 pub enum AnalysisSurface<'a> {
@@ -33,12 +33,6 @@ pub enum AnalysisSurface<'a> {
     Files(&'a [(CrateRef, FileId)]),
     /// Request body analysis for every file in these crates.
     Crates(&'a [CrateRef]),
-    /// Prepare both selections in one build. A whole-crate request includes any listed files
-    /// from that crate, so those files do not need separate products.
-    FilesAndCrates {
-        files: &'a [(CrateRef, FileId)],
-        crates: &'a [CrateRef],
-    },
 }
 
 impl<'a> AnalysisSurface<'a> {
@@ -46,7 +40,6 @@ impl<'a> AnalysisSurface<'a> {
         match self {
             Self::Files(files) => (files, &[]),
             Self::Crates(crates) => (&[], crates),
-            Self::FilesAndCrates { files, crates } => (files, crates),
         }
     }
 }

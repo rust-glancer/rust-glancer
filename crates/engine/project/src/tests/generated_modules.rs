@@ -181,7 +181,7 @@ pub struct Ordinary;
             HostObservation::workspace_symbols("Deep"),
             HostObservation::workspace_symbols("Nested"),
             HostObservation::workspace_symbols("Ordinary"),
-            HostObservation::file_contexts("generated module source", "src/custom_imp.rs"),
+            HostObservation::file_context("generated module source", "src/custom_imp.rs"),
             HostObservation::type_names_at(
                 "generated reexport",
                 "generated_module_fixture",
@@ -200,7 +200,7 @@ pub struct Ordinary;
             - module ordinary @ generated_module_fixture[lib] src/platform.rs
             - struct Ordinary @ generated_module_fixture[lib] src/platform/ordinary.rs
 
-            file contexts `generated module source`
+            file context `generated module source`
             - generated_module_fixture src/custom_imp.rs -> generated_module_fixture[lib]
 
             type names at `generated reexport`
@@ -240,13 +240,13 @@ pub struct Nested;
     fixture.check(
         &[
             HostObservation::workspace_symbols("Nested"),
-            HostObservation::file_contexts("nested generated source", "src/models/child.rs"),
+            HostObservation::file_context("nested generated source", "src/models/child.rs"),
         ],
         expect![[r#"
             workspace symbols `Nested`
             - struct Nested @ generated_inline_context_fixture[lib] src/models/child.rs
 
-            file contexts `nested generated source`
+            file context `nested generated source`
             - generated_inline_context_fixture src/models/child.rs -> generated_inline_context_fixture[lib]
         "#]],
     );
@@ -387,7 +387,7 @@ pub struct DefinitionSite;
         &[
             HostObservation::workspace_symbols("CallSite"),
             HostObservation::workspace_symbols("DefinitionSite"),
-            HostObservation::file_contexts("nested call-site source", "src/outer/child/mod.rs"),
+            HostObservation::file_context("nested call-site source", "src/outer/child/mod.rs"),
         ],
         expect![[r#"
             workspace symbols `CallSite`
@@ -396,7 +396,7 @@ pub struct DefinitionSite;
             workspace symbols `DefinitionSite`
             - <none>
 
-            file contexts `nested call-site source`
+            file context `nested call-site source`
             - generated_dependency_context_fixture src/outer/child/mod.rs -> generated_dependency_context_fixture[lib]
         "#]],
     );
@@ -457,8 +457,8 @@ pub struct RightLate;
             HostObservation::workspace_symbols("RightOrdinary"),
             HostObservation::workspace_symbols("LeftLate"),
             HostObservation::workspace_symbols("RightLate"),
-            HostObservation::file_contexts("left generated source", "src/left/late.rs"),
-            HostObservation::file_contexts("right generated source", "src/right/late.rs"),
+            HostObservation::file_context("left generated source", "src/left/late.rs"),
+            HostObservation::file_context("right generated source", "src/right/late.rs"),
         ],
         expect![[r#"
             workspace symbols `LeftOrdinary`
@@ -473,10 +473,10 @@ pub struct RightLate;
             workspace symbols `RightLate`
             - struct RightLate @ generated_include_context_fixture[lib] src/right/late.rs
 
-            file contexts `left generated source`
+            file context `left generated source`
             - generated_include_context_fixture src/left/late.rs -> generated_include_context_fixture[lib]
 
-            file contexts `right generated source`
+            file context `right generated source`
             - generated_include_context_fixture src/right/late.rs -> generated_include_context_fixture[lib]
         "#]],
     );
@@ -611,7 +611,7 @@ pub struct Shared;
 
     fixture.check(
         &[
-            HostObservation::file_contexts("shared source", "src/shared.rs"),
+            HostObservation::file_context("shared source", "src/shared.rs"),
             HostObservation::type_names_at(
                 "library first alias",
                 "generated_multi_target_fixture",
@@ -635,8 +635,8 @@ pub struct Shared;
             HostObservation::workspace_symbols("missing"),
         ],
         expect![[r#"
-            file contexts `shared source`
-            - generated_multi_target_fixture src/shared.rs -> generated_multi_target_fixture[bin], generated_multi_target_fixture[lib]
+            file context `shared source`
+            - generated_multi_target_fixture src/shared.rs -> generated_multi_target_fixture[lib]
 
             type names at `library first alias`
             - Shared
@@ -693,7 +693,7 @@ pub struct Appeared;
 "#,
         &[
             HostObservation::workspace_symbols("Appeared"),
-            HostObservation::file_contexts("created generated source", "src/optional.rs"),
+            HostObservation::file_context("created generated source", "src/optional.rs"),
         ],
         expect![[r#"
             changed files
@@ -708,7 +708,7 @@ pub struct Appeared;
             workspace symbols `Appeared`
             - struct Appeared @ generated_module_update_fixture[lib] src/optional.rs
 
-            file contexts `created generated source`
+            file context `created generated source`
             - generated_module_update_fixture src/optional.rs -> generated_module_update_fixture[lib]
         "#]],
     );
@@ -747,7 +747,7 @@ pub struct RootOnly;
 "#,
         &[
             HostObservation::workspace_symbols("Renamed"),
-            HostObservation::file_contexts("pruned generated source", "src/optional.rs"),
+            HostObservation::file_context("pruned generated source", "src/optional.rs"),
         ],
         expect![[r#"
             changed files
@@ -762,7 +762,7 @@ pub struct RootOnly;
             workspace symbols `Renamed`
             - <none>
 
-            file contexts `pruned generated source`
+            file context `pruned generated source`
             - <none>
         "#]],
     );

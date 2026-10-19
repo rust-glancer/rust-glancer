@@ -12,10 +12,8 @@
 use std::{path::Path, time::Instant};
 
 use anyhow::Context as _;
-use rg_analysis::{
-    Analysis as QueryAnalysis, ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget,
-};
-use rg_ir_model::{CrateRef, FileId, PackageSlot};
+use rg_analysis::{ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget};
+use rg_ir_model::{CrateRef, PackageSlot};
 use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
 use rg_project::{AnalysisSurface, FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
@@ -49,91 +47,77 @@ impl ReferenceSearchPlan {
 }
 
 impl QueryRunner<'_> {
-    /// Materialize the union of exact-file and whole-crate coverage selected by all contexts.
-    fn ensure_reference_plans(
+    /// Materialize the one origin plan, retaining its cross-crate search scope.
+    fn ensure_reference_plan(
         &mut self,
         query: &'static str,
-        plans: &[ReferenceSearchPlan],
+        plan: &ReferenceSearchPlan,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<()> {
-        let started = Instant::now();
-        let mut files = UniqueVec::<(CrateRef, FileId)>::new();
-        let mut targets = UniqueVec::<CrateRef>::new();
-
-        // `None` means the scan needs whole crates. A present file list means text prefiltering has
-        // already narrowed that portion of the scan to exact files.
-        for plan in plans {
-            rg_std::check_cancel!(cancellation, "reference coverage planning");
-            match &plan.files {
-                Some(plan_files) => {
-                    files.extend(plan_files.iter().map(|file| (file.crate_ref, file.file_id)));
-                }
-                None => targets.extend(plan.targets.iter().copied()),
+        match &plan.files {
+            Some(files) => {
+                let files = files
+                    .iter()
+                    .map(|file| (file.crate_ref, file.file_id))
+                    .collect::<Vec<_>>();
+                self.project.materialize_saved_project(
+                    AnalysisSurface::Files(&files),
+                    &cancellation.token(),
+                )
             }
-        }
-
-        let files = files.into_vec();
-        let targets = targets.into_vec();
-        self.project
-            .materialize_saved_project(
-                AnalysisSurface::FilesAndCrates {
-                    files: &files,
-                    crates: &targets,
-                },
+            None => self.project.materialize_saved_project(
+                AnalysisSurface::Crates(&plan.targets),
                 &cancellation.token(),
-            )
-            .with_context(|| format!("prepare {query} reference scan"))?;
-        tracing::trace!(
-            query,
-            file_count = files.len(),
-            target_count = targets.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "analysis surface prepared for reference scan"
-        );
+            ),
+        }
+        .with_context(|| format!("prepare {query} reference scan"))?;
         Ok(())
     }
 
-    /// Decide what a reference query must scan before loading its deferred package data.
-    ///
-    /// Loading can replace package payloads, so references borrowed from the first snapshot cannot
-    /// survive that step. Keep only the owned scan plan, take a new snapshot after loading, and
-    /// resolve the cursor again there.
-    fn reference_search_plans_for_position(
+    /// Keep owned identities and scan coverage across materialization, which replaces saved payloads.
+    fn reference_search_plan_for_position(
         &mut self,
         path: &Path,
         position: gen_lsp_types::Position,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Vec<ReferenceSearchPlan>> {
-        let project = self
+    ) -> anyhow::Result<Option<(FileContext, u32, ReferenceSearchPlan)>> {
+        let snapshot = self
             .project
             .saved_snapshot()
             .context("borrow saved project for reference planning")?;
-        let crate_offsets = Self::crate_offsets(project, path, position)
-            .context("resolve reference-search position")?;
-        let analysis = project
-            .full_analysis(cancellation.token())
+        let Some((context, offset)) = Self::file_offset(snapshot, path, position)? else {
+            return Ok(None);
+        };
+        let analysis = snapshot
+            .analysis_for_crates(&[context.crate_ref], cancellation.token())
             .context("load reference-search analysis")?;
-        let mut plans = Vec::new();
-
-        for (context, crate_ref, offset) in crate_offsets {
-            rg_std::check_cancel!(cancellation, "reference contexts");
-            plans.push(
-                Self::reference_search_plan(
-                    project,
-                    &analysis,
-                    &context,
-                    crate_ref,
-                    offset,
-                    cancellation,
-                )
-                .context("build reference-search plan")?,
-            );
-        }
-
-        Ok(plans)
+        let declaration_targets = analysis
+            .goto_definition(context.crate_ref, context.file, offset)
+            .context("resolve reference declaration")?
+            .into_iter()
+            .map(|target| target.crate_ref)
+            .collect::<Vec<_>>();
+        let targets = snapshot
+            .reference_search_crates(
+                context.crate_ref.package,
+                &declaration_targets,
+                &cancellation.token(),
+            )
+            .context("plan reference search crates")?;
+        let labels = analysis
+            .reference_search_labels(context.crate_ref, context.file, offset)
+            .context("collect reference-search labels")?;
+        let files = snapshot
+            .reference_search_files_matching_labels(&targets, &labels, &cancellation.token())
+            .context("prefilter reference-search files")?;
+        Ok(Some((
+            context,
+            offset,
+            ReferenceSearchPlan { targets, files },
+        )))
     }
 
-    /// Find references across all crate contexts selected for this cursor.
+    /// Find references to the symbol resolved in the selected cursor context.
     pub(crate) fn references(
         &mut self,
         input: GlobalPositionSnapshot,
@@ -152,48 +136,37 @@ impl QueryRunner<'_> {
         let started = Instant::now();
         self.ensure_path("references", &path, cancellation)
             .context("prepare references path")?;
-        let search_plans = self
-            .reference_search_plans_for_position(&path, position, cancellation)
-            .context("plan references query")?;
-        self.ensure_reference_plans("references", &search_plans, cancellation)
-            .context("materialize references search")?;
+        let Some((context, offset, search_plan)) = self
+            .reference_search_plan_for_position(&path, position, cancellation)
+            .context("plan references query")?
+        else {
+            return Ok(Vec::new());
+        };
+        self.ensure_reference_plan("references", &search_plan, cancellation)?;
         let snapshot = self
             .project
             .saved_snapshot()
             .context("borrow saved project for references")?;
-        let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-            .context("resolve references position")?;
         let analysis = snapshot
             .full_analysis(cancellation.token())
             .context("load references analysis")?;
         let mut locations = UniqueVec::new();
 
-        for (context, crate_ref, offset) in crate_offsets {
-            rg_std::check_cancel!(cancellation, "reference contexts");
-            let search_plan = Self::reference_search_plan(
-                snapshot,
-                &analysis,
-                &context,
-                crate_ref,
-                offset,
-                cancellation,
-            )
-            .context("build references search plan")?;
-            let reference_query = search_plan.query(include_declaration);
-
-            for reference in analysis
-                .references(crate_ref, context.file, offset, reference_query)
-                .context("find references")?
-            {
-                rg_std::check_cancel!(cancellation, "reference locations");
-                let Some(location) = references_proto::location_for_reference(snapshot, &reference)
-                    .context("convert reference location")?
-                else {
-                    continue;
-                };
-                locations.push(location);
-            }
+        // The search still visits several crates, which can share physical source locations.
+        let reference_query = search_plan.query(include_declaration);
+        for reference in analysis
+            .references(context.crate_ref, context.file, offset, reference_query)
+            .context("find references")?
+        {
+            rg_std::check_cancel!(cancellation, "reference locations");
+            let Some(location) = references_proto::location_for_reference(snapshot, &reference)
+                .context("convert reference location")?
+            else {
+                continue;
+            };
+            locations.push(location);
         }
+
         let locations = locations.into_vec();
 
         tracing::trace!(
@@ -231,39 +204,30 @@ impl QueryRunner<'_> {
             .project
             .saved_snapshot()
             .context("borrow saved project for prepare rename")?;
-        let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-            .context("resolve prepare-rename position")?;
-        let analysis_crates = crate_offsets
-            .iter()
-            .map(|(_, crate_ref, _)| *crate_ref)
-            .collect::<Vec<_>>();
-        let analysis = snapshot
-            .analysis_for_crates(&analysis_crates, cancellation.token())
-            .context("load prepare-rename analysis")?;
-        let mut response = None;
-
-        for (context, crate_ref, offset) in crate_offsets {
-            rg_std::check_cancel!(cancellation, "reference contexts");
-            if !snapshot.package_is_workspace_member(context.package) {
-                continue;
-            }
-            let Some(rename_target) = analysis
-                .prepare_rename(crate_ref, context.file, offset)
-                .context("resolve rename target")?
-            else {
-                continue;
-            };
-            if !Self::rename_target_matches_source(snapshot, context.package, &rename_target)
-                .context("verify rename target source")?
-            {
-                continue;
-            }
-
-            response = rename_proto::prepare_rename(snapshot, context.package, rename_target)
-                .map(Some)
-                .context("convert prepare-rename response")?;
-            break;
+        let Some((context, offset)) = Self::file_offset(snapshot, &path, position)? else {
+            return Ok(None);
+        };
+        if !snapshot.package_is_workspace_member(context.crate_ref.package) {
+            return Ok(None);
         }
+        let analysis = snapshot
+            .analysis_for_crates(&[context.crate_ref], cancellation.token())
+            .context("load prepare-rename analysis")?;
+        let Some(rename_target) = analysis
+            .prepare_rename(context.crate_ref, context.file, offset)
+            .context("resolve rename target")?
+        else {
+            return Ok(None);
+        };
+        if !Self::rename_target_matches_source(snapshot, context.crate_ref.package, &rename_target)?
+        {
+            return Ok(None);
+        }
+        let response = Some(rename_proto::prepare_rename(
+            snapshot,
+            context.crate_ref.package,
+            rename_target,
+        )?);
 
         tracing::trace!(
             path = %path.display(),
@@ -277,7 +241,7 @@ impl QueryRunner<'_> {
         Ok(response)
     }
 
-    /// Build one all-or-nothing workspace edit from every matching crate context.
+    /// Build one all-or-nothing workspace edit for the selected symbol.
     ///
     /// The scan includes declarations, deduplicates identical edits reached through shared source,
     /// and verifies all old text after analysis before converting anything to protocol edits.
@@ -299,51 +263,47 @@ impl QueryRunner<'_> {
         let started = Instant::now();
         self.ensure_path("rename", &path, cancellation)
             .context("prepare rename path")?;
-        let search_plans = self
-            .reference_search_plans_for_position(&path, position, cancellation)
-            .context("plan rename references")?;
-        self.ensure_reference_plans("rename", &search_plans, cancellation)
-            .context("materialize rename search")?;
+        let Some((context, offset, search_plan)) = self
+            .reference_search_plan_for_position(&path, position, cancellation)
+            .context("plan rename references")?
+        else {
+            return Ok(None);
+        };
+        if !self
+            .project
+            .saved_snapshot()?
+            .package_is_workspace_member(context.crate_ref.package)
+        {
+            return Ok(None);
+        }
+        self.ensure_reference_plan("rename", &search_plan, cancellation)?;
         let snapshot = self
             .project
             .saved_snapshot()
             .context("borrow saved project for rename")?;
-        let crate_offsets =
-            Self::crate_offsets(snapshot, &path, position).context("resolve rename position")?;
         let analysis = snapshot
             .full_analysis(cancellation.token())
             .context("load rename analysis")?;
-        let mut edits = UniqueVec::new();
-
-        for (context, crate_ref, offset) in crate_offsets {
-            rg_std::check_cancel!(cancellation, "reference contexts");
-            if !snapshot.package_is_workspace_member(context.package) {
-                continue;
-            }
-            let search_plan = Self::reference_search_plan(
-                snapshot,
-                &analysis,
-                &context,
-                crate_ref,
+        let Some(rename_result) = analysis
+            .rename(
+                context.crate_ref,
+                context.file,
                 offset,
-                cancellation,
+                &new_name,
+                search_plan.query(true),
             )
-            .context("build rename search plan")?;
-            let reference_query = search_plan.query(true);
-            let Some(rename_result) = analysis
-                .rename(crate_ref, context.file, offset, &new_name, reference_query)
-                .context("compute rename edits")?
-            else {
-                continue;
-            };
-
-            if !Self::rename_target_matches_source(snapshot, context.package, &rename_result.target)
-                .context("verify rename target source")?
-            {
-                continue;
-            }
-            edits.extend(rename_result.edits);
+            .context("compute rename edits")?
+        else {
+            return Ok(None);
+        };
+        if !Self::rename_target_matches_source(
+            snapshot,
+            context.crate_ref.package,
+            &rename_result.target,
+        )? {
+            return Ok(None);
         }
+        let edits = rename_result.edits;
 
         let edit = match Self::verified_rename_edits(snapshot, edits, cancellation)
             .context("verify rename edit sources")?
@@ -389,33 +349,28 @@ impl QueryRunner<'_> {
         else {
             return Ok(Vec::new());
         };
-        let mut highlights = UniqueVec::new();
+        let mut highlights = Vec::new();
         let offset = current.offset();
 
-        for target in &current.targets {
-            rg_std::check_cancel!(cancellation, "highlight contexts");
-            for reference in current
-                .analysis
-                .references(
-                    target.crate_ref,
-                    target.context.file,
-                    offset,
-                    ReferenceQuery::file_scoped(target.crate_ref, target.context.file),
-                )
-                .context("find current document references")?
-            {
-                if reference.crate_ref.package != target.context.package
-                    || reference.file_id != target.context.file
-                {
-                    continue;
-                }
-                highlights.push(references_proto::document_highlight_for_current_document(
-                    current.source.line_index(),
-                    reference.span,
-                ));
-            }
+        let target = current.target;
+        rg_std::check_cancel!(cancellation, "document highlights");
+        for reference in current
+            .analysis
+            .references(
+                target.crate_ref,
+                target.file,
+                offset,
+                ReferenceQuery::file_scoped(target.crate_ref, target.file),
+            )
+            .context("find current document references")?
+        {
+            rg_std::check_cancel!(cancellation, "highlight conversion");
+            highlights.push(references_proto::document_highlight_for_current_document(
+                current.source.line_index(),
+                reference.span,
+            ));
         }
-        let highlights = highlights.into_vec();
+
         tracing::trace!(
             path = %path.display(),
             line = position.line,
@@ -427,34 +382,6 @@ impl QueryRunner<'_> {
         );
 
         Ok(highlights)
-    }
-
-    /// Resolve the declaration scope and choose a safe text-prefiltered file set when possible.
-    fn reference_search_plan(
-        snapshot: ProjectSnapshot<'_>,
-        analysis: &QueryAnalysis<'_>,
-        context: &FileContext,
-        crate_ref: CrateRef,
-        offset: u32,
-        cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<ReferenceSearchPlan> {
-        let declaration_targets = analysis
-            .goto_definition(crate_ref, context.file, offset)
-            .context("resolve reference declaration")?
-            .into_iter()
-            .map(|target| target.crate_ref)
-            .collect::<Vec<_>>();
-        let targets = snapshot
-            .reference_search_crates(context.package, &declaration_targets, &cancellation.token())
-            .context("plan reference search crates")?;
-        let labels = analysis
-            .reference_search_labels(crate_ref, context.file, offset)
-            .context("collect reference-search labels")?;
-        let files = snapshot
-            .reference_search_files_matching_labels(&targets, &labels, &cancellation.token())
-            .context("prefilter reference-search files")?;
-
-        Ok(ReferenceSearchPlan { targets, files })
     }
 
     /// Check that the selected declaration still contains the placeholder seen by analysis.
@@ -476,7 +403,7 @@ impl QueryRunner<'_> {
     /// verified collection for the caller to classify separately.
     fn verified_rename_edits(
         snapshot: ProjectSnapshot<'_>,
-        edits: UniqueVec<RenameEdit>,
+        edits: Vec<RenameEdit>,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<Vec<RenameEdit>>> {
         for edit in &edits {
@@ -514,6 +441,6 @@ impl QueryRunner<'_> {
             }
         }
 
-        Ok(Some(edits.into_vec()))
+        Ok(Some(edits))
     }
 }

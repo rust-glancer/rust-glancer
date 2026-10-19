@@ -60,7 +60,7 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
             .analysis
             .current_source(self.crate_ref.package, self.file_id)
             .filter(|source| source.text() == self.source_text)
-            .and_then(|source| source.parse(edition))
+            .map(|source| source.parse())
             .map_or_else(
                 || rg_parse::parse_source_file(self.source_text, edition).tree(),
                 |parse| parse.tree(),

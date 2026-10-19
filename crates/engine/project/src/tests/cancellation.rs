@@ -153,20 +153,12 @@ fn untouched() {{ let value = {name}::value(); }}
                     ("tests/requested.rs", &mut requested),
                     ("tests/untouched.rs", &mut untouched),
                 ] {
-                    let contexts = project
+                    let context = project
                         .snapshot()
-                        .file_contexts_for_path(fixture.path(&format!("{name}/{path}")))
-                        .expect("fixture context resolves");
-                    let target = contexts
-                        .into_iter()
-                        .flat_map(|context| context.crates)
-                        .find(|target| {
-                            project.state.parse.packages()[target.package.0]
-                                .targets()
-                                .get(target.crate_id.0)
-                                .is_some_and(|target| target.src_path.ends_with(path))
-                        })
-                        .expect("source is a Cargo target root");
+                        .file_context_for_path(fixture.path(&format!("{name}/{path}")))
+                        .expect("fixture context resolves")
+                        .expect("target root has a context");
+                    let target = context.crate_ref;
                     targets.push(target);
                 }
             }

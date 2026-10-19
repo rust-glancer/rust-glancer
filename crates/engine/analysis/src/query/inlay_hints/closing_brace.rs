@@ -69,10 +69,7 @@ impl ClosingBraceCandidate {
         let mut candidates = Vec::new();
         match source.current() {
             Some(source) => {
-                let edition = analysis.view_db().crate_edition(crate_ref)?;
-                let Some(syntax) = source.parse(edition).map(|parse| parse.tree()) else {
-                    return Ok(candidates);
-                };
+                let syntax = source.parse().tree();
                 for symbol in Analysis::document_symbols_from_syntax(&syntax) {
                     Self::collect_document_symbol(file_id, &symbol, &mut candidates);
                 }

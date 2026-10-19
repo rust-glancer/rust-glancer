@@ -46,31 +46,17 @@ fn secondary_targets_stay_deferred_and_materialize_one_exact_crate() {
         .build()
         .expect("multi-target early-start project should build");
 
-    let target_for_path = |project: &Project, path: &str| {
+    let selected_target_for_path = |project: &Project, path: &str| {
         project
             .snapshot()
-            .file_contexts_for_path(fixture.path(path))
+            .file_context_for_path(fixture.path(path))
             .expect("target source path should resolve")
-            .into_iter()
-            .flat_map(|context| context.crates)
-            .find(|crate_ref| {
-                let package = project
-                    .state
-                    .def_map
-                    .resident_package(crate_ref.package)
-                    .expect("workspace def map should stay resident");
-                let crate_data = package
-                    .crate_data(crate_ref.crate_id)
-                    .expect("target crate should have definition data");
-                project.state.parse_db().packages()[crate_ref.package.0]
-                    .target(crate_data.cargo_target())
-                    .is_some_and(|target| target.src_path.ends_with(path))
-            })
-            .expect("source path should identify one semantic target")
+            .expect("target root has a context")
+            .crate_ref
     };
-    let library = target_for_path(&project, "src/lib.rs");
-    let first_test = target_for_path(&project, "tests/first.rs");
-    let second_test = target_for_path(&project, "tests/second.rs");
+    let library = selected_target_for_path(&project, "src/lib.rs");
+    let first_test = selected_target_for_path(&project, "tests/first.rs");
+    let second_test = selected_target_for_path(&project, "tests/second.rs");
     project
         .split_indexing()
         .finish()
@@ -245,15 +231,17 @@ pub fn shared_value() -> usize { 1 }
         .expect("shared-source early-start project should build");
     let context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path("src/shared.rs"))
+        .file_context_for_path(fixture.path("src/shared.rs"))
         .expect("shared source contexts should resolve")
-        .pop()
         .expect("shared source should have one package context");
-    assert_eq!(context.crates.len(), 3);
+    let owners = project
+        .snapshot()
+        .crates_for_file(context.crate_ref.package, context.file)
+        .expect("all shared-source owners should resolve");
+    assert_eq!(owners.len(), 3);
 
     let target_named = |name: &str| {
-        context
-            .crates
+        owners
             .iter()
             .copied()
             .find(|crate_ref| {
@@ -273,8 +261,7 @@ pub fn shared_value() -> usize { 1 }
     };
     let first_test = target_named("first-shared");
     let second_test = target_named("second-shared");
-    let library = context
-        .crates
+    let library = owners
         .iter()
         .copied()
         .find(|crate_ref| *crate_ref != first_test && *crate_ref != second_test)
@@ -295,7 +282,7 @@ pub fn shared_value() -> usize { 1 }
     let bodies = project
         .state
         .body_ir
-        .resident_package(context.package)
+        .resident_package(context.crate_ref.package)
         .expect("workspace Body IR should stay resident");
     assert_eq!(
         bodies
@@ -328,7 +315,7 @@ pub fn shared_value() -> usize { 1 }
     let bodies = project
         .state
         .body_ir
-        .resident_package(context.package)
+        .resident_package(context.crate_ref.package)
         .expect("updated shared-source Body IR should stay resident");
     assert_eq!(
         bodies
@@ -369,7 +356,7 @@ pub fn shared_value() -> usize { 1 }
     let bodies = project
         .state
         .body_ir
-        .resident_package(context.package)
+        .resident_package(context.crate_ref.package)
         .expect("rematerialized shared-source Body IR should stay resident");
     assert_eq!(
         bodies
@@ -406,31 +393,17 @@ fn offloaded_secondary_target_materialization_rewrites_exact_cached_coverage() {
         .build()
         .expect("offloadable multi-target project should build");
 
-    let target_for_path = |project: &Project, path: &str| {
+    let selected_target_for_path = |project: &Project, path: &str| {
         project
             .snapshot()
-            .file_contexts_for_path(fixture.path(path))
+            .file_context_for_path(fixture.path(path))
             .expect("target source path should resolve")
-            .into_iter()
-            .flat_map(|context| context.crates)
-            .find(|crate_ref| {
-                let package = project
-                    .state
-                    .def_map
-                    .resident_package(crate_ref.package)
-                    .expect("target discovery should run before package offload");
-                let crate_data = package
-                    .crate_data(crate_ref.crate_id)
-                    .expect("target crate should have definition data");
-                project.state.parse_db().packages()[crate_ref.package.0]
-                    .target(crate_data.cargo_target())
-                    .is_some_and(|target| target.src_path.ends_with(path))
-            })
-            .expect("source path should identify one semantic target")
+            .expect("target root has a context")
+            .crate_ref
     };
-    let library = target_for_path(&project, "src/lib.rs");
-    let first_test = target_for_path(&project, "tests/first.rs");
-    let second_test = target_for_path(&project, "tests/second.rs");
+    let library = selected_target_for_path(&project, "src/lib.rs");
+    let first_test = selected_target_for_path(&project, "tests/first.rs");
+    let second_test = selected_target_for_path(&project, "tests/second.rs");
 
     let first_test_file = ProjectFixture::file_id_for_path_in(
         project.state.parse_db(),

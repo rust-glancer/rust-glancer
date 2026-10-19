@@ -28,11 +28,9 @@ pub(crate) use self::{
     syntax::CompletionSyntaxContext,
 };
 
-/// One parsed and classified editor buffer shared across semantic crate interpretations.
+/// Parsed and classified editor text used by the selected completion query.
 ///
-/// A source path can belong to several crates. Those interpretations need different semantic
-/// lookup, but the incomplete text at the cursor is identical. Preparing this value once lets
-/// every `CompletionQuery` reuse the same speculative tree and normalized syntax domain.
+/// Preparing the speculative tree separately keeps syntax recovery outside semantic resolution.
 pub struct CompletionSource<'source> {
     offset: u32,
     syntax: CompletionSyntaxContext<'source>,
@@ -120,7 +118,7 @@ impl<'a> CompletionQuery<'a> {
         self
     }
 
-    /// Reuses syntax prepared once for all semantic interpretations of this source position.
+    /// Reuses the speculative syntax prepared for this source position.
     pub fn with_completion_source(mut self, completion_source: &'a CompletionSource<'a>) -> Self {
         self.source_text = Some(completion_source.source_text());
         self.completion_source = Some(completion_source);

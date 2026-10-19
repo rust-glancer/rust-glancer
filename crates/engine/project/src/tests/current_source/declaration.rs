@@ -40,7 +40,7 @@ $impl_start$impl<Local> Service<Local> for Wor$header$ker<Local> {
 }
 
 #[test]
-fn current_impl_queries_share_context_across_targets_and_residency() {
+fn current_impl_queries_use_each_selected_target_and_residency() {
     for policy in [
         PackageResidencyPolicy::AllResident,
         PackageResidencyPolicy::AllOffloadable,
@@ -48,38 +48,43 @@ fn current_impl_queries_share_context_across_targets_and_residency() {
         let fixture = ProjectFixture::build_with_package_residency_policy(SAVED, policy);
         let snapshot = fixture.project().snapshot();
         let context = snapshot
-            .file_contexts_for_path(fixture.path("src/shared.rs"))
+            .file_context_for_path(fixture.path("src/shared.rs"))
             .expect("shared file contexts should resolve")
-            .pop()
             .expect("shared file has a context");
-        let targets = context
-            .crates
-            .iter()
-            .map(|crate_ref| (*crate_ref, context.file))
-            .collect::<Vec<_>>();
-        assert_eq!(targets.len(), 2);
+        let owners = snapshot
+            .crates_for_file(context.crate_ref.package, context.file)
+            .expect("shared file owners should resolve");
+        assert_eq!(owners.len(), 2);
         let before = fixture.project().stats();
         let current = current();
 
-        for marker in ["header", "signature", "receiver", "members"] {
-            let offset = u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
-            let source = snapshot
-                .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
-                .expect("capture source");
-            let (analysis, summary) = snapshot
-                .analysis_for_current_source(
-                    &targets,
-                    source,
-                    CurrentSourceSelection::AtOffset(offset),
-                    CancellationToken::new(),
-                    |_| Ok(()),
-                )
-                .expect("prepare declarations and bodies");
-            assert!(summary.is_complete(), "{marker}: {summary:?}");
-            let completion = CompletionSource::new(current.text(), offset)
-                .expect("completion source should parse");
+        // Each request prepares one owner; cfg and source associations never merge.
+        for crate_ref in owners {
+            let target = (crate_ref, context.file);
+            for marker in ["header", "signature", "receiver", "members"] {
+                let offset =
+                    u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
+                let source = snapshot
+                    .prepare_current_source(
+                        target,
+                        current.text(),
+                        &rg_std::CancellationToken::new(),
+                    )
+                    .expect("capture source");
+                let (analysis, summary) = snapshot
+                    .analysis_for_current_source(
+                        target,
+                        source,
+                        CurrentSourceSelection::AtOffset(offset),
+                        CancellationToken::new(),
+                        |_| Ok(()),
+                    )
+                    .expect("prepare declarations and bodies");
+                assert!(summary.is_complete(), "{marker}: {summary:?}");
+                let completion = CompletionSource::new(current.text(), offset)
+                    .expect("completion source should parse");
 
-            for &(crate_ref, file) in &targets {
+                let (crate_ref, file) = target;
                 let labels = analysis
                     .completions_at(
                         CompletionQuery::new(crate_ref, file, offset)
@@ -182,19 +187,13 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
     let fixture = ProjectFixture::build(SAVED);
     let snapshot = fixture.project().snapshot();
     let context = snapshot
-        .file_contexts_for_path(fixture.path("src/shared.rs"))
+        .file_context_for_path(fixture.path("src/shared.rs"))
         .expect("shared file contexts should resolve")
-        .pop()
         .expect("shared file has a context");
-    let targets = context
-        .crates
-        .iter()
-        .map(|crate_ref| (*crate_ref, context.file))
-        .collect::<Vec<_>>();
+    let owners = snapshot
+        .crates_for_file(context.crate_ref.package, context.file)
+        .expect("shared file owners should resolve");
     let current = current();
-    let source = snapshot
-        .prepare_current_source(&targets, current.text(), &rg_std::CancellationToken::new())
-        .expect("capture source");
     let txn = fixture
         .project()
         .state
@@ -212,36 +211,37 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
             .expect("fixture offset fits u32"),
     };
 
-    // A cancelled build never installs partial declarations. The next preparation starts from
-    // the same frozen readers and can still answer the complete member query.
-    for (marker, cancel) in [("header", true), ("header", false), ("receiver", false)] {
-        let offset = u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
-        let mut builder = db.current_source_builder(source.source());
-        let mut enabled_targets = Vec::new();
-        for &(crate_ref, file) in &targets {
-            let package = fixture
-                .project()
-                .state
-                .parse_db()
-                .package(crate_ref.package.0)
-                .expect("parse package exists");
-            let defs = fixture
-                .project()
-                .state
-                .def_map
-                .resident_package(crate_ref.package)
-                .expect("definitions exist");
-            let cargo_target = defs
-                .crate_data(crate_ref.crate_id)
-                .expect("crate exists")
-                .cargo_target();
-            enabled_targets.push(
-                package
-                    .target(cargo_target)
-                    .expect("target exists")
-                    .enables_test_cfg(),
-            );
-            let result = builder.prepare_target(
+    // A cancelled build never installs partial declarations. Every retry starts a fresh target build.
+    let mut enabled_targets = Vec::new();
+    for crate_ref in owners {
+        let file = context.file;
+        let source = snapshot
+            .prepare_current_source((crate_ref, file), current.text(), &CancellationToken::new())
+            .expect("capture source");
+        let package = fixture
+            .project()
+            .state
+            .parse_db()
+            .package(crate_ref.package.0)
+            .expect("parse package exists");
+        let defs = fixture
+            .project()
+            .state
+            .def_map
+            .resident_package(crate_ref.package)
+            .expect("definitions exist");
+        let cargo_target = defs
+            .crate_data(crate_ref.crate_id)
+            .expect("crate exists")
+            .cargo_target();
+        let test_cfg = package
+            .target(cargo_target)
+            .expect("target exists")
+            .enables_test_cfg();
+        enabled_targets.push(test_cfg);
+        for (marker, cancel) in [("header", true), ("header", false), ("receiver", false)] {
+            let offset = u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
+            let result = db.current_source_builder(source.source()).build_target(
                 package,
                 crate_ref,
                 file,
@@ -263,18 +263,11 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
                     format!("{:#}", result.expect_err("preparation should cancel"))
                         .contains("cancel declaration preparation")
                 );
-                break;
+                continue;
             }
-            result.expect("current target should prepare");
-        }
-        if cancel {
-            continue;
-        }
-        let (store, summary) = builder.finish().expect("freeze current context");
-        assert!(summary.is_complete());
-        let prepared = db.clone().with_current_source(store);
-        assert!(enabled_targets.contains(&true) && enabled_targets.contains(&false));
-        for (&(crate_ref, file), test_cfg) in targets.iter().zip(enabled_targets) {
+            let (store, summary) = result.expect("current target should prepare");
+            assert!(summary.is_complete());
+            let prepared = db.clone().with_current_source(store);
             let impl_ref = prepared
                 .selected_current_impl(crate_ref, file, impl_span)
                 .expect("complete impl was selected");
@@ -293,4 +286,5 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
             assert_eq!(labels, expected, "{marker}, cfg(test)={test_cfg}");
         }
     }
+    assert!(enabled_targets.contains(&true) && enabled_targets.contains(&false));
 }

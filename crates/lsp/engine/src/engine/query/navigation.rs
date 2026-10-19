@@ -1,9 +1,7 @@
 //! Definition, type-definition, and implementation navigation queries.
 //!
-//! All three features have the same LSP-side shape: prepare the source file, ask each applicable
-//! crate context for semantic targets, convert those targets to locations, and keep the first copy
-//! of locations reached through multiple crate roots. `NavigationQuery` only selects the semantic
-//! operation inside that shared flow.
+//! Each feature resolves the cursor in one selected crate, then converts its semantic destinations
+//! to editor locations. A single interpretation can still have several destinations.
 
 use std::{
     collections::HashMap,
@@ -78,45 +76,45 @@ impl QueryRunner<'_> {
         else {
             return Ok(Vec::new());
         };
+        // Different declarations can project to the same physical location.
         let mut locations = UniqueVec::new();
         let mut omitted_unsafe_target = false;
         let mut destinations =
             CapturedNavigationDocuments::new(current.snapshot, &documents, cancellation.token());
         let offset = current.offset();
 
-        for source in &current.targets {
-            let targets = match query {
-                CurrentNavigationQuery::Definition => current
-                    .analysis
-                    .goto_definition(source.crate_ref, source.context.file, offset)
-                    .context("resolve definition targets")?,
-                CurrentNavigationQuery::TypeDefinition => current
-                    .analysis
-                    .goto_type_definition(source.crate_ref, source.context.file, offset)
-                    .context("resolve type-definition targets")?,
-            };
+        let source = current.target;
+        let targets = match query {
+            CurrentNavigationQuery::Definition => current
+                .analysis
+                .goto_definition(source.crate_ref, source.file, offset)
+                .context("resolve definition targets")?,
+            CurrentNavigationQuery::TypeDefinition => current
+                .analysis
+                .goto_type_definition(source.crate_ref, source.file, offset)
+                .context("resolve type-definition targets")?,
+        };
 
-            for target in targets {
-                let location = match destinations
-                    .location_for_target(
-                        &target,
-                        (source.context.package, source.context.file),
-                        document,
-                        current.source.line_index(),
-                        current.analysis.current_source_view(),
-                    )
-                    .context("convert navigation target for captured documents")?
-                {
-                    CapturedTargetLocation::Ready(location) => Some(location),
-                    CapturedTargetLocation::Unsafe => {
-                        omitted_unsafe_target = true;
-                        None
-                    }
-                    CapturedTargetLocation::Unavailable => None,
-                };
-                if let Some(location) = location {
-                    locations.push(location);
+        for target in targets {
+            let location = match destinations
+                .location_for_target(
+                    &target,
+                    (source.crate_ref.package, source.file),
+                    document,
+                    current.source.line_index(),
+                    current.analysis.current_source_view(),
+                )
+                .context("convert navigation target for captured documents")?
+            {
+                CapturedTargetLocation::Ready(location) => Some(location),
+                CapturedTargetLocation::Unsafe => {
+                    omitted_unsafe_target = true;
+                    None
                 }
+                CapturedTargetLocation::Unavailable => None,
+            };
+            if let Some(location) = location {
+                locations.push(location);
             }
         }
 
@@ -164,31 +162,30 @@ impl QueryRunner<'_> {
             .project
             .saved_snapshot()
             .context("borrow saved project for implementation navigation")?;
-        let crate_offsets = Self::crate_offsets(snapshot, &path, position)
-            .context("resolve implementation position")?;
-        let analysis_crates = crate_offsets
-            .iter()
-            .map(|(_, crate_ref, _)| *crate_ref)
-            .collect::<Vec<_>>();
+        let Some((context, offset)) = Self::file_offset(snapshot, &path, position)
+            .context("resolve implementation position")?
+        else {
+            return Ok(Vec::new());
+        };
         let analysis = snapshot
-            .analysis_for_crates(&analysis_crates, cancellation.token())
+            .analysis_for_crates(&[context.crate_ref], cancellation.token())
             .context("load implementation analysis")?;
+        // Different declarations can project to the same physical location.
         let mut locations = UniqueVec::new();
 
-        for (context, crate_ref, offset) in crate_offsets {
-            for target in analysis
-                .goto_implementation(crate_ref, context.file, offset)
-                .context("resolve implementation targets")?
-            {
-                rg_std::check_cancel!(cancellation, "implementation locations");
-                let Some(location) = navigation_proto::location_for_target(snapshot, &target)
-                    .context("convert implementation target")?
-                else {
-                    continue;
-                };
-                locations.push(location);
-            }
+        for target in analysis
+            .goto_implementation(context.crate_ref, context.file, offset)
+            .context("resolve implementation targets")?
+        {
+            rg_std::check_cancel!(cancellation, "implementation locations");
+            let Some(location) = navigation_proto::location_for_target(snapshot, &target)
+                .context("convert implementation target")?
+            else {
+                continue;
+            };
+            locations.push(location);
         }
+
         let locations = locations.into_vec();
 
         tracing::trace!(
@@ -393,7 +390,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         };
         let source = self
             .snapshot
-            .prepare_document_source(&[(crate_ref, file)], document.text(), &self.cancellation)
+            .prepare_document_source((crate_ref, file), document.text(), &self.cancellation)
             .context("prepare open navigation destination source")?;
 
         Ok(CapturedNavigationSource::Open(Box::new(

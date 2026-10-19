@@ -1,6 +1,6 @@
 //! Runs editor queries against one saved project.
 //!
-//! A feature method first finds every crate context in which the target file appears. It loads any
+//! A feature method selects the first owning crate for the document. It loads any
 //! saved package data needed by the feature, prepares selected bodies and declarations from the
 //! editor text, runs `rg_analysis`, and converts the result to LSP types. Current semantics belong
 //! only to that request; they do not turn the saved project into an unsaved copy.
@@ -19,7 +19,7 @@ use std::{path::Path, sync::Arc, time::Instant};
 use anyhow::Context as _;
 use rg_analysis::{
     Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger, CompletionQuery,
-    CompletionSource, InlayHint as AnalysisInlayHint,
+    CompletionSource,
 };
 use rg_ir_model::Span;
 use rg_lsp_proto::{
@@ -121,19 +121,16 @@ impl<'a> QueryRunner<'a> {
 
         for document in input.documents() {
             rg_std::check_cancel!(cancellation, "open document safety");
-            let contexts = Self::file_contexts(snapshot, document.source_path())
-                .context("resolve open document for global-operation safety")?;
-            if contexts.is_empty() {
+            let Some(context) = Self::file_context(snapshot, document.source_path())
+                .context("resolve open document for global-operation safety")?
+            else {
                 return Ok(Some(document.path().to_path_buf()));
-            }
-            for context in contexts {
-                rg_std::check_cancel!(cancellation, "saved source safety");
-                let saved = snapshot
-                    .file_source_text(context.package, context.file)
-                    .context("load saved source for global-operation safety")?;
-                if !saved.is_some_and(|source| source.as_ref() == document.text()) {
-                    return Ok(Some(document.path().to_path_buf()));
-                }
+            };
+            let saved = snapshot
+                .file_source_text(context.crate_ref.package, context.file)
+                .context("load saved source for global-operation safety")?;
+            if !saved.is_some_and(|source| source.as_ref() == document.text()) {
+                return Ok(Some(document.path().to_path_buf()));
             }
         }
 
@@ -154,42 +151,30 @@ impl<'a> QueryRunner<'a> {
     ) -> anyhow::Result<Option<DocumentAnalysis<'project>>> {
         let started = Instant::now();
 
-        // Resolve every saved interpretation, then choose its source coordinate space once. Exact
+        // Select one saved interpretation, then choose its source coordinate space once. Exact
         // text returns before current syntax or declaration associations are built.
-        let (targets, source_targets, source, source_selection) = {
+        let (target, source, source_selection) = {
             let snapshot = self
                 .project
                 .saved_snapshot()
                 .context("borrow saved project for document analysis")?;
-            let targets = Self::file_contexts(snapshot, document.source_path())
-                .context("resolve document contexts")?
-                .into_iter()
-                .flat_map(|context| {
-                    context
-                        .crates
-                        .clone()
-                        .into_iter()
-                        .map(move |crate_ref| DocumentTarget {
-                            context: context.clone(),
-                            crate_ref,
-                        })
-                })
-                .collect::<Vec<_>>();
-            if targets.is_empty() {
+            let Some(target) = Self::file_context(snapshot, document.source_path())
+                .context("resolve document context")?
+            else {
                 return Ok(None);
-            }
-            let source_targets = targets
-                .iter()
-                .map(|target| (target.crate_ref, target.context.file))
-                .collect::<Vec<_>>();
+            };
             let source = snapshot
-                .prepare_document_source(&source_targets, document.text(), &cancellation.token())
+                .prepare_document_source(
+                    (target.crate_ref, target.file),
+                    document.text(),
+                    &cancellation.token(),
+                )
                 .context("prepare document source")?;
             let Some(source_selection) = selection.to_current_source_selection(source.line_index())
             else {
                 return Ok(None);
             };
-            (targets, source_targets, source, source_selection)
+            (target, source, source_selection)
         };
 
         let prepared = match source {
@@ -197,13 +182,9 @@ impl<'a> QueryRunner<'a> {
                 // Exact text needs the ordinary saved bodies for this file. They are normally
                 // resident or lazy-loadable; during early startup this may finish the file's
                 // deferred Body IR before borrowing the read-only analysis snapshot.
-                let files = targets
-                    .iter()
-                    .map(|target| (target.crate_ref, target.context.file))
-                    .collect::<UniqueVec<_>>();
                 self.project
                     .materialize_saved_project(
-                        AnalysisSurface::Files(files.as_slice()),
+                        AnalysisSurface::Files(&[(target.crate_ref, target.file)]),
                         &cancellation.token(),
                     )
                     .context("prepare exact saved document analysis")?;
@@ -213,17 +194,13 @@ impl<'a> QueryRunner<'a> {
                     .project
                     .saved_snapshot()
                     .context("borrow exact saved document analysis")?;
-                let crates = targets
-                    .iter()
-                    .map(|target| target.crate_ref)
-                    .collect::<UniqueVec<_>>();
                 let analysis = snapshot
-                    .analysis_for_crates(crates.as_slice(), cancellation.token())
+                    .analysis_for_crates(&[target.crate_ref], cancellation.token())
                     .context("load exact saved document analysis")?;
                 DocumentAnalysis {
                     snapshot,
                     analysis,
-                    targets,
+                    target,
                     source: DocumentAnalysisSource::SavedExact(line_index),
                     selection: source_selection,
                 }
@@ -237,7 +214,7 @@ impl<'a> QueryRunner<'a> {
                 let source = source_view.shared_source();
                 let (analysis, build_summary) = snapshot
                     .analysis_for_current_source(
-                        &source_targets,
+                        (target.crate_ref, target.file),
                         source_view,
                         source_selection,
                         cancellation.token(),
@@ -258,7 +235,7 @@ impl<'a> QueryRunner<'a> {
                 DocumentAnalysis {
                     snapshot,
                     analysis,
-                    targets,
+                    target,
                     source: DocumentAnalysisSource::Current(source),
                     selection: source_selection,
                 }
@@ -269,53 +246,33 @@ impl<'a> QueryRunner<'a> {
             query,
             source = prepared.source.name(),
             selection = ?prepared.selection,
-            target_count = prepared.targets.len(),
+            crate_ref = ?prepared.target.crate_ref,
             elapsed_us = started.elapsed().as_micros(),
             "document analysis prepared"
         );
         Ok(Some(prepared))
     }
 
-    /// Load deferred package data for every saved file identity of one source path.
-    ///
-    /// A path can appear in several crate roots. Preserve every exact crate/file interpretation so
-    /// preparing a shared source does not implicitly materialize sibling Cargo targets.
+    /// Materialize the selected file interpretation, including a deferred secondary target.
     fn ensure_path(
         &mut self,
         query: &'static str,
         path: &Path,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<()> {
-        let started = Instant::now();
-
-        // Resolve the path before mutating the project. One file can have several crate contexts,
-        // and each interpretation has independent deferred Body IR coverage.
-        let files = {
-            let snapshot = self
-                .project
-                .saved_snapshot()
-                .context("borrow saved project")?;
-            Self::file_contexts(snapshot, path)
-                .context("resolve query path")?
-                .into_iter()
-                .flat_map(|context| {
-                    let file = context.file;
-                    context
-                        .crates
-                        .into_iter()
-                        .map(move |crate_ref| (crate_ref, file))
-                })
-                .collect::<Vec<_>>()
+        let snapshot = self
+            .project
+            .saved_snapshot()
+            .context("borrow saved project")?;
+        let Some(target) = Self::file_context(snapshot, path)? else {
+            return Ok(());
         };
         self.project
-            .materialize_saved_project(AnalysisSurface::Files(&files), &cancellation.token())
+            .materialize_saved_project(
+                AnalysisSurface::Files(&[(target.crate_ref, target.file)]),
+                &cancellation.token(),
+            )
             .with_context(|| format!("prepare {query} query path"))?;
-        tracing::trace!(
-            query,
-            file_count = files.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "analysis surface prepared for query path"
-        );
         Ok(())
     }
 
@@ -351,52 +308,43 @@ impl<'a> QueryRunner<'a> {
 
         rg_std::check_cancel!(cancellation, "after completion syntax preparation");
 
+        let mut completions = Vec::new();
+        let target = current.target;
         rg_std::check_cancel!(cancellation, "before semantic completion");
+        let mut query = CompletionQuery::new(target.crate_ref, target.file, offset)
+            .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
+                snippet_support: client_capabilities.snippet_support,
+            });
+        query = match completion_source.as_ref() {
+            Some(source) => query.with_completion_source(source),
+            None => query.with_source_text(source_text),
+        };
+        let analysis_compute_started = Instant::now();
+        let items = current
+            .analysis
+            .completions_at(query)
+            .context("compute completions")?;
+        let analysis_compute_us = analysis_compute_started.elapsed().as_micros();
 
-        let mut completions = UniqueVec::new();
-        let mut analysis_compute_us = 0_u128;
-        let mut protocol_conversion_us = 0_u128;
-        for target in &current.targets {
-            rg_std::check_cancel!(cancellation, "before completion crate interpretation");
-            let mut query = CompletionQuery::new(target.crate_ref, target.context.file, offset)
-                .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
-                    snippet_support: client_capabilities.snippet_support,
-                });
-            query = match completion_source.as_ref() {
-                Some(source) => query.with_completion_source(source),
-                None => query.with_source_text(source_text),
-            };
-            let analysis_compute_started = Instant::now();
-            let items = current
-                .analysis
-                .completions_at(query)
-                .context("compute completions")?;
-            analysis_compute_us += analysis_compute_started.elapsed().as_micros();
-
-            // A crate query is synchronous. If it was overtaken, discard its items before
-            // conversion and before starting another crate interpretation.
-            rg_std::check_cancel!(cancellation, "after completion crate interpretation");
-            let protocol_conversion_started = Instant::now();
-            for (index, item) in items.into_iter().enumerate() {
-                if index % 64 == 0 {
-                    rg_std::check_cancel!(cancellation, "completion conversion");
-                }
-                completions.push(completion::completion_item(
-                    item,
-                    current.source.line_index(),
-                ));
+        // Discard cancelled work before converting its result.
+        rg_std::check_cancel!(cancellation, "after semantic completion");
+        let protocol_conversion_started = Instant::now();
+        for (index, item) in items.into_iter().enumerate() {
+            if index % 64 == 0 {
+                rg_std::check_cancel!(cancellation, "completion conversion");
             }
-            protocol_conversion_us += protocol_conversion_started.elapsed().as_micros();
+            completions.push(completion::completion_item(
+                item,
+                current.source.line_index(),
+            ));
         }
+        let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
 
-        let completions = completions.into_vec();
         let source_name = current.source.name();
-        let crate_count = current.targets.len();
         let analysis_drop_started = Instant::now();
         drop(current);
         let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
         tracing::trace!(
-            crate_count,
             result_count = completions.len(),
             source = source_name,
             document_analysis_us,
@@ -420,12 +368,6 @@ impl<'a> QueryRunner<'a> {
     }
 
     /// Return source actions with complete edits for the captured document and selected range.
-    ///
-    /// The request range enters as LSP UTF-16 positions. This method maps it to the captured
-    /// source's UTF-8 offsets, asks every applicable crate interpretation for transport-neutral
-    /// actions, then attaches the same captured document version during protocol conversion. One
-    /// source file may belong to several crate targets, so all target interpretations are checked
-    /// and equivalent actions are kept only once.
     pub(super) fn code_action(
         &mut self,
         input: DocumentRangeSnapshot,
@@ -461,8 +403,7 @@ impl<'a> QueryRunner<'a> {
             return Ok(Vec::new());
         }
 
-        // 2. Translate protocol filters once, then run analysis for every crate target that owns
-        // this source file. `UniqueVec` removes the same action found through multiple targets.
+        // 2. Translate protocol filters and query the selected crate interpretation.
         let request_kinds = request_context.kinds();
         let kinds = CodeActionKinds::none()
             .with_quick_fix(request_kinds.quick_fix())
@@ -472,25 +413,21 @@ impl<'a> QueryRunner<'a> {
             CodeActionRequestTrigger::Automatic => CodeActionTrigger::Automatic,
             CodeActionRequestTrigger::Unspecified => CodeActionTrigger::Unspecified,
         };
-        let mut actions = UniqueVec::new();
-        for target in &current.targets {
-            rg_std::check_cancel!(cancellation, "before code action crate interpretation");
-            let query = CodeActionQuery::new(
-                target.crate_ref,
-                target.context.file,
-                Span { start, end },
-                document.text(),
-            )
-            .with_kinds(kinds)
-            .with_trigger(trigger);
-            actions.extend(
-                current
-                    .analysis
-                    .code_actions(query)
-                    .context("compute code actions")?,
-            );
-            rg_std::check_cancel!(cancellation, "after code action crate interpretation");
-        }
+        let target = current.target;
+        rg_std::check_cancel!(cancellation, "before code action analysis");
+        let query = CodeActionQuery::new(
+            target.crate_ref,
+            target.file,
+            Span { start, end },
+            document.text(),
+        )
+        .with_kinds(kinds)
+        .with_trigger(trigger);
+        let actions = current
+            .analysis
+            .code_actions(query)
+            .context("compute code actions")?;
+        rg_std::check_cancel!(cancellation, "after code action analysis");
 
         // 3. Convert UTF-8 edits only after analysis is finished, attaching the URI and captured
         // document version to every action.
@@ -517,7 +454,7 @@ impl<'a> QueryRunner<'a> {
         Ok(lsp_actions)
     }
 
-    /// Return the first usable hover from the path's possible crate contexts.
+    /// Return hover information from the selected crate context.
     ///
     /// A hover is read from one document, but its item links can point into other open files.
     /// The input includes those documents so links can follow declarations moved by unsaved edits.
@@ -545,26 +482,20 @@ impl<'a> QueryRunner<'a> {
             return Ok(None);
         };
 
-        let mut hover = None;
-        // Destination source is prepared only when a link points to that file. Keep this
-        // conversion shared with goto requests so both features use the same editor positions.
+        let target = current.target;
         let mut destinations =
             CapturedNavigationDocuments::new(current.snapshot, &documents, cancellation.token());
-        let offset = current.offset();
-        for target in &current.targets {
-            let info = current
-                .analysis
-                .hover(target.crate_ref, target.context.file, offset)
-                .context("compute hover")?;
-            let Some(info) = info else {
-                continue;
-            };
-            let Some(value) = hover::hover(info, current.source.line_index(), |destination| {
+        let hover = if let Some(info) = current
+            .analysis
+            .hover(target.crate_ref, target.file, current.offset())
+            .context("compute hover")?
+        {
+            hover::hover(info, current.source.line_index(), |destination| {
                 Ok(
                     match destinations
                         .location_for_target(
                             destination,
-                            (target.context.package, target.context.file),
+                            (target.crate_ref.package, target.file),
                             document,
                             current.source.line_index(),
                             current.analysis.current_source_view(),
@@ -579,12 +510,9 @@ impl<'a> QueryRunner<'a> {
                 )
             })
             .context("render hover documentation")?
-            else {
-                continue;
-            };
-            hover = Some(value);
-            break;
-        }
+        } else {
+            None
+        };
 
         tracing::trace!(
             path = %path.display(),
@@ -701,7 +629,7 @@ impl<'a> QueryRunner<'a> {
         Ok(Some(edits))
     }
 
-    /// Merge inlay hints from every crate context covering the requested source range.
+    /// Compute inlay hints in the selected crate context for the requested source range.
     pub(super) fn inlay_hint(
         &mut self,
         input: DocumentRangeSnapshot,
@@ -723,21 +651,13 @@ impl<'a> QueryRunner<'a> {
             return Ok(Vec::new());
         };
         let text_range = current.range();
-        let mut hints = UniqueVec::<AnalysisInlayHint>::new();
-        for target in &current.targets {
-            rg_std::check_cancel!(cancellation, "before inlay hint crate interpretation");
-            hints.extend(
-                current
-                    .analysis
-                    .inlay_hints(
-                        target.crate_ref,
-                        target.context.file,
-                        Some(text_range),
-                        max_length,
-                    )
-                    .context("compute current body inlay hints")?,
-            );
-        }
+        let target = current.target;
+        rg_std::check_cancel!(cancellation, "before inlay hint analysis");
+        let hints = current
+            .analysis
+            .inlay_hints(target.crate_ref, target.file, Some(text_range), max_length)
+            .context("compute current body inlay hints")?;
+
         let mut lsp_hints = hints
             .into_iter()
             .enumerate()
@@ -810,13 +730,6 @@ impl<'a> QueryRunner<'a> {
     }
 }
 
-/// One way the target file appears in the saved project's crate graph.
-#[derive(Debug)]
-struct DocumentTarget {
-    context: FileContext,
-    crate_ref: rg_ir_model::CrateRef,
-}
-
 /// Editor coordinates used to choose the current bodies needed by one query.
 enum DocumentSelection {
     Position(gen_lsp_types::Position),
@@ -855,7 +768,7 @@ impl DocumentSelection {
 /// needs the captured line index, so this smaller value keeps exactly what protocol conversion
 /// needs. It does not make another saved/current source decision.
 enum DocumentAnalysisSource {
-    /// The captured text is identical to every saved file interpretation.
+    /// The captured text is identical to the selected saved file.
     SavedExact(LineIndex),
     /// The captured text differs, so matching bodies were rebuilt for this request.
     Current(Arc<CurrentSource>),
@@ -877,11 +790,11 @@ impl DocumentAnalysisSource {
     }
 }
 
-/// Analysis, source selection, and crate contexts prepared for one document query.
+/// Analysis and source selection prepared for one document query.
 struct DocumentAnalysis<'project> {
     snapshot: ProjectSnapshot<'project>,
     analysis: Analysis<'project>,
-    targets: Vec<DocumentTarget>,
+    target: FileContext,
     source: DocumentAnalysisSource,
     selection: CurrentSourceSelection,
 }

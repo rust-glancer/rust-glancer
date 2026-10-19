@@ -156,7 +156,7 @@ impl<'analysis, 'db, 'source> CodeActionResolver<'analysis, 'db, 'source> {
                 .analysis
                 .current_source(self.query.crate_ref.package, self.query.file_id)
                 .filter(|source| source.text() == self.query.source_text)
-                .and_then(|source| source.parse(edition))
+                .map(|source| source.parse())
                 .map_or_else(
                     || rg_parse::parse_source_file(self.query.source_text, edition).tree(),
                     |parse| parse.tree(),

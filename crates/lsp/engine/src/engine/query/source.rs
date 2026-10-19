@@ -1,17 +1,8 @@
-//! Maps LSP paths and UTF-16 positions onto project file/crate contexts.
-//!
-//! One physical Rust file is not necessarily one semantic query location. A shared module may be
-//! reachable from several crate roots, and a workspace path can have package-local file identities.
-//! These helpers expand that fan-out first, then convert the editor's UTF-16 position with the line
-//! index belonging to each file context.
-//!
-//! For example, `src/shared.rs` included by both a library and a binary produces two crate/offset
-//! entries for one editor cursor. Analysis may answer differently under each crate's cfg and scope.
+//! Selects one saved crate/file context and converts editor positions in that file.
 
 use std::path::Path;
 
 use anyhow::Context as _;
-use rg_ir_model::CrateRef;
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_text::RustEdition;
 
@@ -19,110 +10,42 @@ use super::QueryRunner;
 use crate::proto::position;
 
 impl QueryRunner<'_> {
-    /// Expand one LSP cursor into every `(file context, crate, byte offset)` interpretation.
-    ///
-    /// Invalid UTF-16 positions are skipped per context instead of failing the whole request. This
-    /// lets another valid owner of the same path still answer the query.
-    pub(super) fn crate_offsets(
+    /// Resolve the cursor only in the selected owner. Invalid positions have no query result.
+    pub(super) fn file_offset(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
         position: gen_lsp_types::Position,
-    ) -> anyhow::Result<Vec<(FileContext, CrateRef, u32)>> {
-        let mut crates = Vec::new();
-
-        let contexts =
-            Self::file_contexts(snapshot, path).context("resolve query file contexts")?;
-        for context in contexts {
-            let Some(offset) = Self::offset_for_context(snapshot, &context, position)
-                .context("convert query position")?
-            else {
-                tracing::trace!(
-                    path = %path.display(),
-                    line = position.line,
-                    character = position.character,
-                    package = ?context.package,
-                    file = ?context.file,
-                    "could not convert LSP position to file offset"
-                );
-                continue;
-            };
-
-            for crate_ref in &context.crates {
-                crates.push((context.clone(), *crate_ref, offset));
-            }
-        }
-
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            crate_offset_count = crates.len(),
-            "resolved request crate offsets"
-        );
-
-        Ok(crates)
+    ) -> anyhow::Result<Option<(FileContext, u32)>> {
+        let Some(context) = Self::file_context(snapshot, path)? else {
+            return Ok(None);
+        };
+        let Some(line_index) = snapshot.file_line_index(context.crate_ref.package, context.file)?
+        else {
+            return Ok(None);
+        };
+        Ok(line_index
+            .offset_from_utf16_position(position::parse_position(position))
+            .map(|offset| (context, offset)))
     }
 
-    /// Find every package-local project identity for an already-selected source path.
-    pub(super) fn file_contexts(
+    pub(super) fn file_context(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
-    ) -> anyhow::Result<Vec<FileContext>> {
-        let contexts = snapshot
-            .file_contexts_for_source_path(path)
-            .context("resolve project file contexts")?;
-        let target_count = contexts
-            .iter()
-            .map(|context| context.crates.len())
-            .sum::<usize>();
-        tracing::trace!(
-            path = %path.display(),
-            context_count = contexts.len(),
-            target_count,
-            "resolved file contexts"
-        );
-
-        Ok(contexts)
+    ) -> anyhow::Result<Option<FileContext>> {
+        let context = snapshot
+            .file_context_for_source_path(path)
+            .context("resolve project file context")?;
+        tracing::trace!(path = %path.display(), ?context, "selected file context");
+        Ok(context)
     }
 
-    /// Resolve the Rust edition used to parse a source path.
-    ///
-    /// A routed document normally inherits its owning package's edition. Standalone Rust files
-    /// have no package metadata, so syntax-only queries parse them with the newest supported
-    /// edition instead of rejecting the request.
+    /// Standalone Rust files have no owner and use the newest supported edition for syntax queries.
     pub(super) fn rust_edition_for_path(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
     ) -> anyhow::Result<RustEdition> {
-        let contexts =
-            Self::file_contexts(snapshot, path).context("resolve edition file contexts")?;
-        Ok(contexts
-            .first()
-            .and_then(|context| snapshot.package_edition(context.package))
+        Ok(Self::file_context(snapshot, path)?
+            .and_then(|context| snapshot.package_edition(context.crate_ref.package))
             .unwrap_or(RustEdition::Edition2024))
-    }
-
-    /// Convert one editor position with the line index owned by this file context.
-    fn offset_for_context(
-        snapshot: ProjectSnapshot<'_>,
-        context: &FileContext,
-        position: gen_lsp_types::Position,
-    ) -> anyhow::Result<Option<u32>> {
-        let Some(line_index) = snapshot
-            .file_line_index(context.package, context.file)
-            .context("load position line index")?
-        else {
-            return Ok(None);
-        };
-        let offset = line_index.offset_from_utf16_position(position::parse_position(position));
-        tracing::trace!(
-            package = ?context.package,
-            file = ?context.file,
-            line = position.line,
-            character = position.character,
-            offset = ?offset,
-            "converted LSP position to file offset"
-        );
-        Ok(offset)
     }
 }

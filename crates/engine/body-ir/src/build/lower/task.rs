@@ -128,17 +128,10 @@ impl<'a> BodyTaskLowering<'a> {
         lowered: &mut Vec<LoweredBodyTask>,
         macro_expansion: &mut dyn BodyMacroExpansionContext,
     ) -> anyhow::Result<()> {
-        if let BodyTaskSource::Current {
-            package,
-            file,
-            source,
-        } = self.source
+        if let BodyTaskSource::Current { file, source, .. } = self.source
             && file == file_id
         {
-            let syntax = source
-                .parse(package.edition())
-                .context("current body task source was not parsed for the package edition")?
-                .tree();
+            let syntax = source.parse().tree();
             return self.lower_file_tasks_from_syntax(
                 file_id,
                 tasks,

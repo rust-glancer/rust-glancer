@@ -5,9 +5,7 @@ use rg_analysis::WorkspaceSymbol;
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
 use test_fixture::fixture_path_for_snapshot;
 
-use crate::{
-    AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
-};
+use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, testonly::ProjectFixture};
 
 pub(super) struct HostFixture {
     fixture: ProjectFixture,
@@ -58,27 +56,21 @@ impl HostFixture {
 
     pub(super) fn document_symbol_names(&self, relative_path: &str) -> Vec<String> {
         let snapshot = self.fixture.project().snapshot();
-        let contexts = snapshot
-            .file_contexts_for_path(self.fixture.path(relative_path))
-            .expect("fixture path should resolve to file contexts");
-        let targets = contexts
-            .iter()
-            .flat_map(|context| context.crates.iter().copied())
-            .collect::<Vec<_>>();
+        let Some(context) = snapshot
+            .file_context_for_path(self.fixture.path(relative_path))
+            .expect("fixture path should resolve to a file context")
+        else {
+            return Vec::new();
+        };
         let analysis = snapshot
-            .analysis_for_crates(&targets, rg_std::CancellationToken::new())
+            .analysis_for_crates(&[context.crate_ref], rg_std::CancellationToken::new())
             .expect("fixture analysis should materialize");
+        let outline = analysis
+            .document_symbols(context.crate_ref, context.file)
+            .expect("fixture document symbols should resolve");
         let mut names = Vec::new();
-
-        for context in contexts {
-            for target in context.crates {
-                let outline = analysis
-                    .document_symbols(target, context.file)
-                    .expect("fixture document symbols should resolve");
-                for symbol in outline.symbols {
-                    push_document_symbol_names(&symbol, &mut names);
-                }
-            }
+        for symbol in outline.symbols {
+            push_document_symbol_names(&symbol, &mut names);
         }
 
         names.sort();
@@ -254,7 +246,7 @@ impl HostFixture {
                     label,
                     relative_path,
                 } => {
-                    self.render_file_contexts(project, label, relative_path, &mut dump);
+                    self.render_file_context(project, label, relative_path, &mut dump);
                 }
                 HostObservation::TypeNamesAt {
                     label,
@@ -304,50 +296,35 @@ impl HostFixture {
         }
     }
 
-    fn render_file_contexts(
+    fn render_file_context(
         &self,
         project: &Project,
         label: &str,
         relative_path: &str,
         dump: &mut String,
     ) {
-        writeln!(dump, "file contexts `{label}`").expect("string writes should not fail");
+        writeln!(dump, "file context `{label}`").expect("string writes should not fail");
 
-        let mut contexts = project
+        let Some(context) = project
             .snapshot()
-            .file_contexts_for_path(self.fixture.path(relative_path))
-            .expect("fixture path should resolve to file contexts");
-        contexts.sort_by(|left, right| {
-            self.file_context_key(project, left)
-                .cmp(&self.file_context_key(project, right))
-        });
-
-        if contexts.is_empty() {
+            .file_context_for_path(self.fixture.path(relative_path))
+            .expect("fixture path should resolve to a file context")
+        else {
             writeln!(dump, "- <none>").expect("string writes should not fail");
             return;
-        }
-
-        for context in contexts {
-            let package = self.package(project, context.package);
-            let path = package
-                .file_path(context.file)
-                .expect("file context should have a parsed path");
-            let mut targets = context
-                .crates
-                .iter()
-                .map(|target| self.render_crate_ref(project, *target))
-                .collect::<Vec<_>>();
-            targets.sort();
-
-            writeln!(
-                dump,
-                "- {} {} -> {}",
-                package.package_name(),
-                self.display_path(path),
-                targets.join(", ")
-            )
-            .expect("string writes should not fail");
-        }
+        };
+        let package = self.package(project, context.crate_ref.package);
+        let path = package
+            .file_path(context.file)
+            .expect("file context has a parsed path");
+        writeln!(
+            dump,
+            "- {} {} -> {}",
+            package.package_name(),
+            self.display_path(path),
+            self.render_crate_ref(project, context.crate_ref)
+        )
+        .expect("string writes should not fail");
     }
 
     fn render_type_names_at(
@@ -398,14 +375,6 @@ impl HostFixture {
             self.render_crate_ref(project, symbol.crate_ref),
             self.symbol_path(project, symbol),
         )
-    }
-
-    fn file_context_key(&self, project: &Project, context: &FileContext) -> (String, String) {
-        let package = self.package(project, context.package);
-        let path = package
-            .file_path(context.file)
-            .expect("file context should have a parsed path");
-        (package.package_name().to_string(), self.display_path(path))
     }
 
     fn symbol_path(&self, project: &Project, symbol: &WorkspaceSymbol) -> String {
@@ -539,7 +508,7 @@ impl<'a> HostObservation<'a> {
         Self::WorkspaceSymbols { query }
     }
 
-    pub(super) fn file_contexts(label: &'a str, relative_path: &'a str) -> Self {
+    pub(super) fn file_context(label: &'a str, relative_path: &'a str) -> Self {
         Self::FileContexts {
             label,
             relative_path,

@@ -36,7 +36,7 @@ impl<'a> SemanticTokensEncoder<'a> {
 
     /// Choose nonoverlapping highlights, then encode their positions and colors for the editor.
     ///
-    /// Several crate interpretations can color the same source. Earlier starts take precedence,
+    /// Highlight providers can overlap within one source. Earlier starts take precedence,
     /// then shorter ranges at the same start; identical ranges retain their input order. Once
     /// a highlight is accepted, later highlights overlapping it are skipped in full.
     pub(crate) fn encode(mut self, mut highlights: Vec<Highlight>) -> SemanticTokens {

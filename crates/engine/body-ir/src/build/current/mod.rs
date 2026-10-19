@@ -9,8 +9,6 @@ mod saved_identity;
 mod syntax_owner;
 mod types;
 
-use std::collections::HashMap;
-
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
@@ -31,14 +29,14 @@ use crate::{
     store::current::{CurrentImplData, CurrentImplRole, SelectedImpl},
 };
 
-/// Unavailable crate interpretations and body spans rebuilt for one current-source request.
+/// Unavailable bodies and rebuilt spans within the selected current-source file.
 ///
 /// A cursor on an impl header can be fully prepared without rebuilding a body, so an empty
 /// body-span list does not by itself mean preparation was unavailable.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CurrentSourceBuildSummary {
-    unavailable: Vec<(CrateRef, CurrentSourceUnavailable)>,
-    rebuilt_body_spans: Vec<(CrateRef, FileId, Span)>,
+    unavailable: Vec<CurrentSourceUnavailable>,
+    rebuilt_body_spans: Vec<Span>,
 }
 
 impl CurrentSourceBuildSummary {
@@ -46,19 +44,18 @@ impl CurrentSourceBuildSummary {
         self.unavailable.is_empty()
     }
 
-    pub fn rebuilt_body_spans(&self) -> &[(CrateRef, FileId, Span)] {
+    pub fn rebuilt_body_spans(&self) -> &[Span] {
         &self.rebuilt_body_spans
     }
 
-    pub fn unavailable(&self) -> &[(CrateRef, CurrentSourceUnavailable)] {
+    pub fn unavailable(&self) -> &[CurrentSourceUnavailable] {
         &self.unavailable
     }
 }
 
 /// Construct one request's selected bodies and declarations using the same saved readers.
 ///
-/// Each target contributes its own semantic interpretation of the captured source. The builder
-/// owns temporary identities across all targets and releases unfinished work if preparation fails.
+/// The builder is consumed by one target build, so unfinished work cannot enter a query.
 pub struct CurrentSourceBuilder<'request, 'db> {
     def_map: &'request DefMapReadTxn<'db>,
     semantic_ir: &'request SemanticIrReadTxn<'db>,
@@ -66,9 +63,6 @@ pub struct CurrentSourceBuilder<'request, 'db> {
     source: &'request CurrentSource,
     lookup_cache: ItemLookupQueryCache,
     cancellation: rg_std::CancellationToken,
-    next_body_ids: HashMap<CrateRef, usize>,
-    current: CurrentSourceStore,
-    summary: CurrentSourceBuildSummary,
 }
 
 impl rg_std::Cancelable for CurrentSourceBuilder<'_, '_> {
@@ -93,17 +87,14 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             source,
             lookup_cache,
             cancellation,
-            next_body_ids: HashMap::new(),
-            current: CurrentSourceStore::default(),
-            summary: CurrentSourceBuildSummary::default(),
         }
     }
 
-    /// Add one exact crate/file interpretation using the request's captured bytes.
+    /// Build and freeze the selected crate/file interpretation using the captured bytes.
     #[allow(clippy::too_many_arguments)]
     #[rg_std::cancelable("prepare current target")]
-    pub fn prepare_target(
-        &mut self,
+    pub fn build_target(
+        self,
         package: &rg_parse::Package,
         crate_ref: CrateRef,
         file: FileId,
@@ -111,7 +102,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         source_changed: bool,
         selection: CurrentSourceSelection,
         mut checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<(CurrentSourceStore, CurrentSourceBuildSummary)> {
         let mut checkpoint = |phase| {
             checkpoint(phase).context("observe current preparation")?;
             rg_std::check_cancel!(self.cancellation, "current preparation phase");
@@ -130,7 +121,8 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             .context("current crate has no parse target")?;
         let cfg = CfgEvaluator::new(package.cfg_options(), target.enables_test_cfg());
 
-        let ids = &mut self.next_body_ids;
+        let mut next_body_id = None;
+        let mut current = CurrentSourceStore::default();
         let saved_bodies = self.saved_bodies;
         let mut built = CurrentBodyBuilder::new(
             package,
@@ -147,7 +139,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             self.cancellation.clone(),
         )
         .build(
-            || Self::allocate_body(ids, saved_bodies, crate_ref),
+            || Self::allocate_body(&mut next_body_id, saved_bodies, crate_ref),
             &mut checkpoint,
         )
         .context("prepare selected current bodies")?;
@@ -155,10 +147,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         // A cursor's impl is a separate query requirement from its nearest expression body.
         // Preparing it here lets completion and actions remain read-only even for new impls.
         if let CurrentSourceSelection::AtOffset(offset) = selection {
-            let parse = self
-                .source
-                .parse(package.edition())
-                .context("current source was not parsed for the target edition")?;
+            let parse = self.source.parse();
             let mut candidates = Vec::new();
             for (index, node) in parse.tree().syntax().descendants().enumerate() {
                 if index % 64 == 0 {
@@ -253,12 +242,9 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         .module_for_inline_path(crate_ref, file, &module_path)
                         .context("match current impl module to saved semantics")?
                     {
-                        let body_ref = Self::allocate_body(
-                            &mut self.next_body_ids,
-                            self.saved_bodies,
-                            crate_ref,
-                        )
-                        .context("allocate current impl identity")?;
+                        let body_ref =
+                            Self::allocate_body(&mut next_body_id, self.saved_bodies, crate_ref)
+                                .context("allocate current impl identity")?;
                         let mut items = BodySourceItems::default();
                         let mut interner = NameInterner::new();
                         let root = CurrentDeclarationBuilder {
@@ -296,7 +282,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             impl_ref
                         };
                         selected_impl = selected_impl.or(Some(impl_ref));
-                        self.current.impls.push(CurrentImplData {
+                        current.declaration_impl = Some(CurrentImplData {
                             source,
                             impl_ref,
                             fallback_module,
@@ -314,51 +300,37 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                     }
                 }
                 if let Some(impl_ref) = selected_impl {
-                    self.current
-                        .selected_impls
-                        .push(SelectedImpl { source, impl_ref });
+                    current.selected_impl = Some(SelectedImpl { source, impl_ref });
                 }
             }
             checkpoint(CurrentSourceBuildCheckpoint::DeclarationsPrepared)
                 .context("check current-source work after declaration preparation")?;
         }
         if source_changed {
-            self.current.masked_files.insert((crate_ref, file));
+            current.masked_file = Some((crate_ref, file));
         }
-        self.summary.rebuilt_body_spans.extend(
-            built
-                .bodies
-                .iter()
-                .map(|body| (crate_ref, file, body.source_span())),
-        );
-        self.summary.unavailable.extend(
-            built
-                .unavailable
-                .into_iter()
-                .map(|reason| (crate_ref, reason)),
-        );
-        self.current.bodies.extend(built.bodies);
-        Ok(())
-    }
-
-    /// No mutable preparation state reaches a query or a saved package artifact.
-    pub fn finish(self) -> anyhow::Result<(CurrentSourceStore, CurrentSourceBuildSummary)> {
+        let summary = CurrentSourceBuildSummary {
+            rebuilt_body_spans: built.bodies.iter().map(|body| body.source_span()).collect(),
+            unavailable: built.unavailable,
+        };
+        current.bodies = built.bodies;
+        // Validate before publishing any temporary identities to the request.
         rg_std::check_cancel!(self.cancellation, "finish current preparation");
-        self.current
+        current
             .validate()
             .context("validate current-source storage")?;
-        Ok((self.current, self.summary))
+        Ok((current, summary))
     }
 
     /// Bodies and declaration-only stores share the `DefMapRef::Body` namespace. Allocate from
-    /// one sequence per crate, after its saved body ids, so each store has a distinct origin.
+    /// one sequence after the selected crate's saved body ids, so each store has a distinct origin.
     fn allocate_body(
-        next: &mut HashMap<CrateRef, usize>,
+        next: &mut Option<usize>,
         saved: &BodyIrReadTxn<'_>,
         crate_ref: CrateRef,
     ) -> anyhow::Result<BodyRef> {
-        let id = match next.get(&crate_ref) {
-            Some(id) => *id,
+        let id = match *next {
+            Some(id) => id,
             None => {
                 saved
                     .first_synthetic_body_ref(crate_ref)
@@ -367,8 +339,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                     .0
             }
         };
-        next.insert(
-            crate_ref,
+        *next = Some(
             id.checked_add(1)
                 .context("request-only body identity overflowed")?,
         );

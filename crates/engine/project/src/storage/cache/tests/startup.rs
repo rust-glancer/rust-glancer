@@ -329,15 +329,10 @@ pub struct Kept;
     let marker = fixture.markers().position("usage");
     let snapshot = project.snapshot();
     let context = snapshot
-        .file_contexts_for_path(fixture.path(&marker.path))
+        .file_context_for_path(fixture.path(&marker.path))
         .expect("app source should resolve to a file context")
-        .pop()
         .expect("app source should have one file context");
-    let target = context
-        .crates
-        .first()
-        .copied()
-        .expect("app source should belong to one target");
+    let target = context.crate_ref;
     let analysis = snapshot
         .full_analysis(rg_std::CancellationToken::new())
         .expect("rebuilt project analysis should materialize");

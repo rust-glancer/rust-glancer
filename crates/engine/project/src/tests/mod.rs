@@ -892,9 +892,8 @@ pub fn second() -> usize {
 
     let lib_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path("src/lib.rs"))
+        .file_context_for_path(fixture.path("src/lib.rs"))
         .expect("lib file contexts should resolve")
-        .pop()
         .expect("lib file should have one context");
     let lib_path = fixture
         .path("src/lib.rs")
@@ -910,7 +909,7 @@ pub fn second() -> usize {
     project
         .split_indexing()
         .materialize(
-            AnalysisSurface::Files(&[(lib_context.crates[0], lib_context.file)]),
+            AnalysisSurface::Files(&[(lib_context.crate_ref, lib_context.file)]),
             &rg_std::CancellationToken::new(),
         )
         .expect("lib file deferred analysis should materialize");
@@ -927,9 +926,8 @@ pub fn second() -> usize {
 
     let other_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path("src/other.rs"))
+        .file_context_for_path(fixture.path("src/other.rs"))
         .expect("other file contexts should resolve")
-        .pop()
         .expect("other file should have one context");
     let other_path = fixture
         .path("src/other.rs")
@@ -945,7 +943,7 @@ pub fn second() -> usize {
     project
         .split_indexing()
         .materialize(
-            AnalysisSurface::Files(&[(other_context.crates[0], other_context.file)]),
+            AnalysisSurface::Files(&[(other_context.crate_ref, other_context.file)]),
             &rg_std::CancellationToken::new(),
         )
         .expect("other file deferred analysis should materialize");
@@ -996,21 +994,15 @@ pub fn demo(user: User) -> usize {
     let subject = fixture.markers().position("subject");
     let lib_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path(&subject.path))
+        .file_context_for_path(fixture.path(&subject.path))
         .expect("subject file contexts should resolve")
-        .pop()
         .expect("subject file should have one context");
     let other_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path("src/other.rs"))
+        .file_context_for_path(fixture.path("src/other.rs"))
         .expect("other file contexts should resolve")
-        .pop()
         .expect("other file should have one context");
-    let target = lib_context
-        .crates
-        .first()
-        .copied()
-        .expect("subject file should belong to one target");
+    let target = lib_context.crate_ref;
 
     let search_files = {
         let snapshot = project.snapshot();
@@ -1025,7 +1017,7 @@ pub fn demo(user: User) -> usize {
             .collect::<Vec<_>>();
         let search_targets = snapshot
             .reference_search_crates(
-                lib_context.package,
+                lib_context.crate_ref.package,
                 &declaration_targets,
                 &rg_std::CancellationToken::new(),
             )
@@ -1138,20 +1130,15 @@ pub fn dep_value() -> usize {
     let dep_ref = fixture.markers().position("dep_ref");
     let dep_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path(&dep_ref.path))
+        .file_context_for_path(fixture.path(&dep_ref.path))
         .expect("dependency file contexts should resolve")
-        .pop()
         .expect("dependency file should have one context");
-    let dep_target = dep_context
-        .crates
-        .first()
-        .copied()
-        .expect("dependency file should belong to one target");
+    let dep_target = dep_context.crate_ref;
 
     project
         .split_indexing()
         .materialize(
-            AnalysisSurface::Crates(&dep_context.crates),
+            AnalysisSurface::Crates(&[dep_context.crate_ref]),
             &rg_std::CancellationToken::new(),
         )
         .expect("on-demand dependency deferred indexing should succeed");
@@ -1337,26 +1324,20 @@ pub fn helper() -> usize {
     let app_ref = fixture.markers().position("app_ref");
     let lib_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path(&app_ref.path))
+        .file_context_for_path(fixture.path(&app_ref.path))
         .expect("lib file contexts should resolve")
-        .pop()
         .expect("lib file should have one context");
     let helper_context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path("helper/src/lib.rs"))
+        .file_context_for_path(fixture.path("helper/src/lib.rs"))
         .expect("helper file contexts should resolve")
-        .pop()
         .expect("helper file should have one context");
-    let app_target = lib_context
-        .crates
-        .first()
-        .copied()
-        .expect("app file should belong to one target");
+    let app_target = lib_context.crate_ref;
 
     project
         .split_indexing()
         .materialize(
-            AnalysisSurface::Files(&[(lib_context.crates[0], lib_context.file)]),
+            AnalysisSurface::Files(&[(lib_context.crate_ref, lib_context.file)]),
             &rg_std::CancellationToken::new(),
         )
         .expect("lib file deferred analysis should materialize");
@@ -1367,7 +1348,7 @@ pub fn helper() -> usize {
     project
         .split_indexing()
         .materialize(
-            AnalysisSurface::Files(&[(helper_context.crates[0], helper_context.file)]),
+            AnalysisSurface::Files(&[(helper_context.crate_ref, helper_context.file)]),
             &rg_std::CancellationToken::new(),
         )
         .expect("helper deferred indexing should apply residency");
@@ -1414,15 +1395,10 @@ pub fn value() -> usize {
     let reference = fixture.markers().position("ref");
     let context = project
         .snapshot()
-        .file_contexts_for_path(fixture.path(&reference.path))
+        .file_context_for_path(fixture.path(&reference.path))
         .expect("fixture file contexts should resolve")
-        .pop()
         .expect("fixture file should have one context");
-    let target = context
-        .crates
-        .first()
-        .copied()
-        .expect("fixture file should belong to one target");
+    let target = context.crate_ref;
 
     project
         .split_indexing()
@@ -1432,7 +1408,7 @@ pub fn value() -> usize {
         project
             .state
             .body_ir
-            .resident_package(context.package)
+            .resident_package(context.crate_ref.package)
             .is_none(),
         "finished all-offloadable package should return to lazy cache-backed residency",
     );
@@ -1448,7 +1424,7 @@ pub fn value() -> usize {
         project
             .state
             .body_ir
-            .resident_package(context.package)
+            .resident_package(context.crate_ref.package)
             .is_none(),
         "file-local preparation should not rebuild a finished offloaded package from source",
     );
@@ -1859,9 +1835,9 @@ fn main() {}
     );
 
     fixture.check(
-        &[HostObservation::file_contexts("tool file", "src/tool.rs")],
+        &[HostObservation::file_context("tool file", "src/tool.rs")],
         expect![[r#"
-            file contexts `tool file`
+            file context `tool file`
             - <none>
         "#]],
     );
@@ -1878,7 +1854,7 @@ edition = "2024"
 name = "tool"
 path = "src/tool.rs"
 "#,
-        &[HostObservation::file_contexts("tool file", "src/tool.rs")],
+        &[HostObservation::file_context("tool file", "src/tool.rs")],
         expect![[r#"
             changed files
             - <none>
@@ -1890,7 +1866,7 @@ path = "src/tool.rs"
             - target_fixture[bin]
             - target_fixture[lib]
 
-            file contexts `tool file`
+            file context `tool file`
             - target_fixture src/tool.rs -> target_fixture[bin]
         "#]],
     );
@@ -2081,7 +2057,7 @@ pub struct Lib;
 #[test]
 fn smoke() {}
 "#,
-        &[HostObservation::file_contexts(
+        &[HostObservation::file_context(
             "smoke test",
             "tests/smoke.rs",
         )],
@@ -2096,7 +2072,7 @@ fn smoke() {}
             - autotarget_fixture[lib]
             - autotarget_fixture[test]
 
-            file contexts `smoke test`
+            file context `smoke test`
             - autotarget_fixture tests/smoke.rs -> autotarget_fixture[test]
         "#]],
     );
@@ -2192,7 +2168,7 @@ version = "0.1.0"
 }
 
 #[test]
-fn resolves_lsp_file_contexts_from_paths() {
+fn selects_lsp_file_context_from_paths() {
     let fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -2219,22 +2195,22 @@ pub struct Orphan;
 
     fixture.check(
         &[
-            HostObservation::file_contexts("lib root", "src/lib.rs"),
-            HostObservation::file_contexts("bin root", "src/main.rs"),
-            HostObservation::file_contexts("shared module", "src/shared.rs"),
-            HostObservation::file_contexts("orphan file", "src/orphan.rs"),
+            HostObservation::file_context("lib root", "src/lib.rs"),
+            HostObservation::file_context("bin root", "src/main.rs"),
+            HostObservation::file_context("shared module", "src/shared.rs"),
+            HostObservation::file_context("orphan file", "src/orphan.rs"),
         ],
         expect![[r#"
-            file contexts `lib root`
+            file context `lib root`
             - file_context_fixture src/lib.rs -> file_context_fixture[lib]
 
-            file contexts `bin root`
+            file context `bin root`
             - file_context_fixture src/main.rs -> file_context_fixture[bin]
 
-            file contexts `shared module`
-            - file_context_fixture src/shared.rs -> file_context_fixture[bin], file_context_fixture[lib]
+            file context `shared module`
+            - file_context_fixture src/shared.rs -> file_context_fixture[lib]
 
-            file contexts `orphan file`
+            file context `orphan file`
             - <none>
         "#]],
     );

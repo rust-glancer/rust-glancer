@@ -124,10 +124,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // Selection deliberately stops at syntax: it does not yet decide which semantic
         // declaration, if any, owns each body.
         let parse_started = Instant::now();
-        let current_parse = self
-            .current_source
-            .parse(self.parse_package.edition())
-            .context("current source was not parsed for this package edition")?;
+        let current_parse = self.current_source.parse();
         let syntax_errors = current_parse.errors();
         let syntax = current_parse.tree();
         checkpoint(CurrentSourceBuildCheckpoint::SourceParsed)

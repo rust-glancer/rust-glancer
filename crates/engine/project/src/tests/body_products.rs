@@ -66,12 +66,10 @@ impl Fixture {
         let context = self
             .project
             .snapshot()
-            .file_contexts_for_path(self.source.path(path))
+            .file_context_for_path(self.source.path(path))
             .expect("fixture path resolves")
-            .into_iter()
-            .next()
             .expect("fixture file has a context");
-        (context.crates[0], context.file)
+        (context.crate_ref, context.file)
     }
 
     fn assert_local_type(&self, marker: &str) {

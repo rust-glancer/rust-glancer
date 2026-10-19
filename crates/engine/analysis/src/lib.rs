@@ -13,7 +13,7 @@ mod source_symbol;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
@@ -119,7 +119,7 @@ impl<'a> Analysis<'a> {
     ) -> anyhow::Result<Option<SourceFile>> {
         let edition = self.view_db().crate_edition(crate_ref)?;
         if let Some(source) = self.current_source(crate_ref.package, file) {
-            return Ok(source.parse(edition).map(|parsed| parsed.tree()));
+            return Ok(Some(source.parse().tree()));
         }
         Ok(self
             .saved_source_text_for_file(crate_ref.package, file)?
@@ -228,10 +228,7 @@ impl<'a> Analysis<'a> {
         let Some(source) = self.current_source(crate_ref.package, file) else {
             return Ok(None);
         };
-        let edition = self.view_db.crate_edition(crate_ref)?;
-        let Some(syntax) = source.parse(edition).map(|parse| parse.tree()) else {
-            return Ok(None);
-        };
+        let syntax = source.parse().tree();
         let Some(cursor) = DeclarationHeaderCursor::at(&syntax, current_offset) else {
             return Ok(None);
         };
@@ -374,11 +371,7 @@ impl<'a> Analysis<'a> {
         let Some(source) = self.current_source(crate_ref.package, file_id) else {
             return Ok(None);
         };
-        let edition = self.view_db.crate_edition(crate_ref)?;
-        let Some(parse) = source.parse(edition) else {
-            return Ok(None);
-        };
-        let syntax = parse.tree();
+        let syntax = source.parse().tree();
         let symbols = SourceSymbolIndex::new(self.view_db()).current_module_use_symbols_at(
             crate_ref,
             file_id,
@@ -663,75 +656,59 @@ pub enum SavedSourceRelationship {
     Different,
 }
 
-/// Current request source paired explicitly with each saved file interpretation that may use it.
+/// Current request source paired with the selected saved file identity.
 ///
-/// The source and its derived syntax are shared across crate interpretations. Each interpretation
-/// retains its own equality proof and declaration associations, because saved file identity and
-/// semantic ownership remain package-specific.
+/// The identity check keeps queries into other files on their saved source coordinates.
 #[derive(Debug, Clone)]
 pub struct CurrentSourceView {
     source: Arc<CurrentSource>,
-    interpretations: HashMap<(PackageSlot, FileId), CurrentSourceInterpretation>,
+    package: PackageSlot,
+    file: FileId,
+    relationship: SavedSourceRelationship,
+    associations: Arc<DeclarationAssociationIndex>,
 }
 
 impl CurrentSourceView {
-    pub fn new(source: Arc<CurrentSource>) -> Self {
-        Self {
-            source,
-            interpretations: HashMap::new(),
-        }
-    }
-
-    /// Pair this source with one saved file without hiding which coordinate space is in use.
-    pub fn add_saved_interpretation(
-        &mut self,
+    pub fn new(
+        source: Arc<CurrentSource>,
         package: PackageSlot,
         file: FileId,
         relationship: SavedSourceRelationship,
         associations: Arc<DeclarationAssociationIndex>,
-    ) {
-        self.interpretations.insert(
-            (package, file),
-            CurrentSourceInterpretation {
-                relationship,
-                associations,
-            },
-        );
+    ) -> Self {
+        Self {
+            source,
+            package,
+            file,
+            relationship,
+            associations,
+        }
     }
 
-    /// Return the immutable editor source shared by every saved interpretation in this view.
     pub fn source(&self) -> &CurrentSource {
         &self.source
     }
 
-    /// Clone the shared source handle without copying its text or parsed syntax trees.
+    /// Clone the shared source handle without copying its text or parsed syntax tree.
     pub fn shared_source(&self) -> Arc<CurrentSource> {
         Arc::clone(&self.source)
     }
 
-    /// Tell whether the editor text is byte-for-byte equal to this saved file interpretation.
     pub fn relationship(
         &self,
         package: PackageSlot,
         file: FileId,
     ) -> Option<SavedSourceRelationship> {
-        Some(self.interpretations.get(&(package, file))?.relationship)
+        (self.package == package && self.file == file).then_some(self.relationship)
     }
 
-    /// Return the conservative declaration pairs prepared for this saved interpretation.
     pub fn declaration_associations(
         &self,
         package: PackageSlot,
         file: FileId,
     ) -> Option<&DeclarationAssociationIndex> {
-        Some(&self.interpretations.get(&(package, file))?.associations)
+        (self.package == package && self.file == file).then_some(&self.associations)
     }
-}
-
-#[derive(Debug, Clone)]
-struct CurrentSourceInterpretation {
-    relationship: SavedSourceRelationship,
-    associations: Arc<DeclarationAssociationIndex>,
 }
 
 /// Saved-source companion to the indexed facts used by `Analysis`.
