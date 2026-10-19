@@ -1,6 +1,7 @@
 //! Abstract Syntax Tree, layered on top of untyped `SyntaxNode`s
 
 mod expr_ext;
+mod format_string;
 mod generated;
 mod node_ext;
 mod operators;
@@ -14,6 +15,7 @@ use either::Either;
 
 pub use self::{
     expr_ext::{ArrayExprKind, BlockModifier, CallableExpr, ElseBranch, LiteralKind},
+    format_string::{FormatStringPart, FormatStringPartKind},
     generated::{nodes::*, tokens::*},
     node_ext::{
         AttrKind, CfgAtomKey, FieldKind, Macro, NameLike, NameOrNameRef, PathSegmentKind,

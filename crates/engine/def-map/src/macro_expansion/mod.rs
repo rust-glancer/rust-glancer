@@ -7,6 +7,7 @@ mod body;
 
 pub use self::body::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
-    BodyMacroExprExpansion, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
-    BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
+    BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
+    BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
+    ExpandedBodyMacro,
 };

@@ -1,14 +1,17 @@
-//! Body-facing declarative macro expansion.
+//! Resolve and expand macros found inside bodies.
 //!
-//! Body lowering needs expansion as an input to syntax lowering, but it should not know about the
-//! token-tree and macro-engine crates directly. This facade keeps body-specific frozen def-map
-//! visibility and token conversion next to the def-map query it relies on.
+//! Body lowering and source queries share this expansion code. It resolves macro names, expands calls,
+//! and keeps token origins so nested expansions can still point back to the caller's text.
+//! Body lowering turns the generated syntax into Body IR; source queries can inspect it
+//! directly when they only need the locations of copied input tokens.
+
+use std::{cell::Cell, rc::Rc};
 
 use anyhow::Context as _;
 use rg_ir_model::{BuiltinMacroExprKind, CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
-use rg_std::ExpectedUnique;
+use rg_std::{CancellationToken, ExpectedUnique};
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
@@ -16,6 +19,7 @@ use crate::{DefMapQuery, DefMapReadTxn, MacroDefinitionView, ScopeResolutionEnv}
 
 mod call;
 mod expanded;
+mod format;
 
 use self::call::{BodyMacroCallee, BodyMacroInvocation, ResolvedBodyMacroCall};
 pub use self::{
@@ -27,6 +31,25 @@ pub use self::{
     },
 };
 
+const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
+
+/// Counts one level of nested macro expansion.
+///
+/// Keep this guard alive while visiting the generated syntax: it may contain another macro call.
+/// Dropping the guard restores the previous depth, including when visiting stops early.
+pub struct BodyMacroExpansionScope(Rc<Cell<usize>>);
+
+impl Drop for BodyMacroExpansionScope {
+    fn drop(&mut self) {
+        self.0.set(
+            self.0
+                .get()
+                .checked_sub(1)
+                .expect("balanced macro expansion depth"),
+        );
+    }
+}
+
 /// Expands body macro calls using frozen def-map visibility.
 ///
 /// Declarative macros return generated syntax. Compiler builtins use the same lookup path, but
@@ -34,14 +57,29 @@ pub use self::{
 pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefMapReadTxn<'db>,
     runtime: MacroExpansionRuntime,
+    depth: Rc<Cell<usize>>,
+    cancellation: CancellationToken,
 }
 
 impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
-    pub fn new(def_maps: &'txn DefMapReadTxn<'db>) -> Self {
+    pub fn new(def_maps: &'txn DefMapReadTxn<'db>, cancellation: CancellationToken) -> Self {
         Self {
             def_maps,
             runtime: MacroExpansionRuntime::default(),
+            depth: Rc::new(Cell::new(0)),
+            cancellation,
         }
+    }
+
+    /// Enter one expansion level, or stop at the recursion limit.
+    /// Hold the returned guard until all nested calls in this expansion have been visited.
+    pub fn expansion_scope(&self) -> Option<BodyMacroExpansionScope> {
+        let depth = self.depth.get();
+        if depth >= BODY_MACRO_EXPANSION_DEPTH_LIMIT {
+            return None;
+        }
+        self.depth.set(depth + 1);
+        Some(BodyMacroExpansionScope(Rc::clone(&self.depth)))
     }
 
     /// Resolves one expression-position macro call to generated syntax or a builtin marker.

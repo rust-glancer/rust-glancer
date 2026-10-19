@@ -28,7 +28,6 @@ rg_semantic_ir.workspace = true
 rg_text.workspace = true
 rg_ty.workspace = true
 rg_wincode_utils.workspace = true
-rustc_parse_format.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]

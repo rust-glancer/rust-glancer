@@ -311,8 +311,12 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let lowering_started = Instant::now();
         let mut lowered =
             LoweredCrateBodies::with_coverage(CrateBodiesCoverage::files(vec![self.file]));
-        let mut macro_expansion =
-            BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
+        let mut macro_expansion = BodyMacroExpansion::new(
+            self.parse_package,
+            self.def_map,
+            self.cfg,
+            cancellation.clone(),
+        );
         let lowered_roots = BodyTaskLowering::new(
             task_source,
             &mut lowered,

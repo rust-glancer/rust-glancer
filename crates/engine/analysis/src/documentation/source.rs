@@ -248,14 +248,14 @@ impl<'a, 'db> SourceDocumentationQuery<'a, 'db> {
         file: FileId,
         link_offset: Option<u32>,
     ) -> anyhow::Result<Option<SourceFile>> {
+        if link_offset.is_none() || self.0.current_source(crate_ref.package, file).is_some() {
+            return self.0.source_syntax(crate_ref, file);
+        }
         let edition = self
             .0
             .view_db()
             .crate_edition(crate_ref)
             .context("read documentation edition")?;
-        if let Some(source) = self.0.current_source(crate_ref.package, file) {
-            return Ok(source.parse(edition).map(|parsed| parsed.tree()));
-        }
         let Some(text) = self
             .0
             .saved_source_text_for_file(crate_ref.package, file)

@@ -24,7 +24,8 @@ use rg_ir_view::{
     ty::IndexedType,
 };
 use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext, ParseDb,
+    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext,
+    ParseDb, parse_source_file,
 };
 use rg_syntax::SourceFile;
 
@@ -64,6 +65,19 @@ impl rg_std::Cancelable for Analysis<'_> {
 }
 
 impl<'a> Analysis<'a> {
+    /// Highlight names and formatting punctuation in strings passed to formatting builtins.
+    /// Macro expansion handles aliases and wrappers; no body analysis is needed.
+    pub fn format_string_highlights(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+        range: Option<Span>,
+    ) -> anyhow::Result<Vec<Highlight>> {
+        self.run_query("format string highlighting", || {
+            query::highlight::FormatStringHighlighter::new(self).highlight(crate_ref, file, range)
+        })
+    }
+
     /// Highlight documentation in the request's source, using saved declarations for link targets.
     /// Examples need syntax only; this operation does not require current or saved body analysis.
     pub fn documentation_highlights(
@@ -95,6 +109,21 @@ impl<'a> Analysis<'a> {
 
     pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
         &self.view_db
+    }
+
+    /// Use the editor's parsed source when available; otherwise parse the saved file.
+    pub(crate) fn source_syntax(
+        &self,
+        crate_ref: CrateRef,
+        file: FileId,
+    ) -> anyhow::Result<Option<SourceFile>> {
+        let edition = self.view_db().crate_edition(crate_ref)?;
+        if let Some(source) = self.current_source(crate_ref.package, file) {
+            return Ok(source.parse(edition).map(|parsed| parsed.tree()));
+        }
+        Ok(self
+            .saved_source_text_for_file(crate_ref.package, file)?
+            .map(|text| parse_source_file(&text, edition).tree()))
     }
 
     /// Kernels may finish their last unit as cancellation arrives. Check both sides of the

@@ -28,8 +28,9 @@ pub use self::{
     },
     macro_expansion::{
         BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
-        BodyMacroExprExpansion, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
-        BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, ExpandedBodyMacro,
+        BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
+        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
+        ExpandedBodyMacro,
     },
     map::{DefMap, DefMapBuilder, PartialDefMap},
     module::{ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin},

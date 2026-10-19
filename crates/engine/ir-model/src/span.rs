@@ -29,6 +29,15 @@ impl Span {
         self.start <= other.start && other.end <= self.end
     }
 
+    /// Returns the shared byte range, excluding empty intersections.
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        let span = Self {
+            start: self.start.max(other.start),
+            end: self.end.min(other.end),
+        };
+        (!span.is_empty()).then_some(span)
+    }
+
     /// Returns true when `offset` is inside the range or exactly at its end.
     pub fn touches(self, offset: u32) -> bool {
         self.start <= offset && offset <= self.end

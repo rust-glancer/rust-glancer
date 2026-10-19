@@ -43,4 +43,5 @@ mod hover_links;
 mod macro_navigation;
 mod rename_flow;
 mod save_flow;
+mod semantic_tokens_flow;
 mod utils;

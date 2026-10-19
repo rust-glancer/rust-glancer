@@ -9,12 +9,14 @@
 //! inputs distinct instead of forcing scanners to choose a navigation result.
 
 use anyhow::Context as _;
+use rg_def_map::BodyMacroExpander;
 use rg_ir_model::{
     BodyBindingRef, CrateRef, FieldKey, FileId, GenericDefRef, ModuleRef, Path, Span,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::TypePathContext;
+use rg_syntax::SourceFile;
 
 use super::scan::{
     BindingSurface, BodyCursorScanner, BodySourceCandidate, BodySourceScanner,
@@ -306,6 +308,19 @@ pub struct SourceOccurrenceView<'a, 'db> {
 impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
+    }
+
+    /// Find caller-written format templates through macro expansion, without loading bodies.
+    pub fn format_string_spans(
+        &self,
+        package: &rg_parse::Package,
+        crate_ref: CrateRef,
+        file: FileId,
+        syntax: &SourceFile,
+        range: Option<Span>,
+    ) -> anyhow::Result<Vec<Span>> {
+        BodyMacroExpander::new(&self.db.def_map, self.db.cancellation().clone())
+            .format_string_spans(package, crate_ref, file, syntax, range)
     }
 
     /// Returns the named source spelling selected by an expression, when the expression has one.

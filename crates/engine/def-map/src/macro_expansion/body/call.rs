@@ -12,6 +12,7 @@ use rg_tt::{
     syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
 };
 
+use super::ExpandedBodyMacro;
 use crate::MacroDefinitionView;
 
 /// Source context carried from one body macro invocation to the next.
@@ -91,6 +92,25 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
 
     pub(super) fn cfg(&self) -> Option<CfgEvaluator<'cfg>> {
         self.cfg
+    }
+
+    /// Prepare to visit calls found in this expansion's output.
+    ///
+    /// Keep the original written call's file and range. The nested syntax has generated offsets,
+    /// so its tokens need this expansion's map to recover original argument positions.
+    /// Its `$crate` paths belong to the macro definition that produced the output.
+    pub(super) fn in_expansion<T>(&self, expanded: &ExpandedBodyMacro<T>) -> Self {
+        Self {
+            origin: BodyMacroCallOrigin::Generated {
+                dollar_crate: expanded.dollar_crate(),
+                source_map: expanded.source_map(),
+            },
+            ..self.clone()
+        }
+    }
+
+    pub(super) fn source(&self) -> BodySource {
+        self.source
     }
 
     pub(super) fn path_text(&self, call: &ast::MacroCall) -> Option<String> {

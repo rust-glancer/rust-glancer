@@ -104,6 +104,7 @@ impl<'a> SemanticTokensEncoder<'a> {
             },
             HighlightKind::Keyword => SemanticTokenTypes::Keyword,
             HighlightKind::String => SemanticTokenTypes::String,
+            HighlightKind::FormatSpecifier => SemanticTokenTypes::new("formatSpecifier"),
             HighlightKind::Number => SemanticTokenTypes::Number,
             HighlightKind::Operator => SemanticTokenTypes::Operator,
             HighlightKind::Comment => SemanticTokenTypes::Comment,

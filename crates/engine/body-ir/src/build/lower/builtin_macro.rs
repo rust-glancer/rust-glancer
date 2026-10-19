@@ -1,18 +1,16 @@
 //! Builtin inputs and implicit references written inside format strings.
 
-use std::ops::Range;
-
 use rg_ir_model::{BuiltinMacroExprKind, ExprId, ScopeId};
 use rg_syntax::{
-    AstNode as _, TextRange, TextSize,
-    ast::{self, AstToken as _, HasName as _, IsString as _},
+    AstNode as _, TextRange,
+    ast::{self, AstToken as _, FormatStringPartKind, HasName as _},
 };
-use rustc_parse_format::{Count, ParseMode, Parser, Piece, Position};
 
 use super::body::BodyLowering;
 use crate::body::{BodyPath, BodySource, ExprKind};
 
 impl BodyLowering<'_> {
+    /// Lower written arguments and add variable references for captures such as `{user}`.
     pub(super) fn lower_builtin_macro_args(
         &mut self,
         kind: BuiltinMacroExprKind,
@@ -52,91 +50,34 @@ impl BodyLowering<'_> {
         let ast::LiteralKind::String(string) = template.kind() else {
             return args;
         };
-        let Ok(value) = string.value() else {
-            return args;
-        };
-        let style = string.is_raw().then(|| {
-            string
-                .text()
-                .bytes()
-                .skip(1)
-                .take_while(|&byte| byte == b'#')
-                .count()
-        });
-        // Supplying the original literal lets rustc's parser report ranges before unescaping,
-        // including Unicode escapes and line continuations. Offsets count the token's quote prefix.
-        let parser = Parser::new(
-            &value,
-            style,
-            Some(string.text().to_owned()),
-            false,
-            ParseMode::Format,
-        );
-        for piece in parser {
-            let Piece::NextArgument(argument) = piece else {
-                continue;
+        string.format_parts(|part| {
+            let FormatStringPartKind::Name(name) = part.kind else {
+                return;
             };
-            let captures = [
-                match argument.position {
-                    Position::ArgumentNamed(name) => Some((name, argument.position_span)),
-                    _ => None,
-                },
-                match argument.format.width {
-                    Count::CountIsName(name, range) => Some((name, range)),
-                    _ => None,
-                },
-                match argument.format.precision {
-                    Count::CountIsName(name, range) => Some((name, range)),
-                    _ => None,
-                },
-            ];
-            for (name, range) in captures.into_iter().flatten() {
-                // `{name}` refers to an explicit formatting label when one was supplied; it does
-                // not capture a same-named local. Its value was already lowered above.
-                if named.iter().any(|explicit| explicit.as_str() == name) {
-                    continue;
-                }
-                args.push(self.lower_format_capture(&string, name, range, source, scope));
+            // In `format!("{user}", user = expr)`, `user` refers to `expr`, not a local.
+            // That argument is already in `args`; only implicit captures need another path.
+            if !named.iter().any(|explicit| explicit.as_str() == name) {
+                let range = part.range + string.syntax().text_range().start();
+                args.push(self.lower_format_capture(name, range, source, scope));
             }
-        }
+        });
         args
     }
 
     fn lower_format_capture(
         &mut self,
-        string: &ast::String,
         name: &str,
-        range: Range<usize>,
+        range: TextRange,
         mut source: BodySource,
         scope: ScopeId,
     ) -> ExprId {
-        let range = TextRange::new(
-            TextSize::try_from(range.start).expect("literal offset fits syntax storage"),
-            TextSize::try_from(range.end).expect("literal offset fits syntax storage"),
-        );
-        // The parser's position range includes trailing whitespace in `{name  }`. Trim decoded
-        // whitespace while preserving the full source spelling of an escaped identifier character.
-        let snippet = &string.text()[range];
-        let mut end = range.start();
-        if string.is_raw() {
-            end += TextSize::of(snippet.trim_end());
-        } else {
-            string.unescape(snippet, |character_range, character| {
-                if character.is_ok_and(|character| !character.is_whitespace()) {
-                    end = range.start()
-                        + TextSize::try_from(character_range.end)
-                            .expect("literal offset fits syntax storage");
-                }
-            });
-        }
-        let range = TextRange::new(range.start(), end) + string.syntax().text_range().start();
         let span = self.source_span(range);
         source.span = span;
         let name = self.interner.intern(name);
         let path = BodyPath::unqualified_name(name, span);
-        // Captures are ordinary value paths. Reuse lexical lookup, inference, and source queries
-        // instead of teaching each editor feature how to interpret a format string.
-        // TODO: Apply `usize` expectations to width and precision inputs during inference.
+        // Treat `{user}` like a `user` expression here. Normal name lookup then finds
+        // the right local, and hover and navigation can use the same path.
+        // TODO: Require width and precision captures to have type `usize` during inference.
         self.alloc_expr_with_source(source, scope, ExprKind::Path { path })
     }
 }

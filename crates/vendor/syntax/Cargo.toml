@@ -21,6 +21,7 @@ itertools.workspace = true
 ra-ap-rustc_lexer.workspace = true
 rustc-hash.workspace = true
 rustc-literal-escaper.workspace = true
+rustc_parse_format.workspace = true
 smol_str.workspace = true
 text-size.workspace = true
 tracing.workspace = true

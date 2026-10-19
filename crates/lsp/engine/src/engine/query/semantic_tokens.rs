@@ -8,8 +8,10 @@ use super::{QueryCancellation, QueryRunError, QueryRunner};
 use crate::proto::{position, semantic_tokens::SemanticTokensEncoder};
 
 impl QueryRunner<'_> {
-    /// Documentation needs captured syntax and saved declaration identities. In particular, a
-    /// whole-file token request must not select every function body for materialization.
+    /// Highlight documentation and format-string placeholders in the editor's captured text.
+    ///
+    /// Both features need source syntax and saved declarations, but neither needs function-body
+    /// analysis. Format highlighting follows macro expansions without resolving expression types.
     pub(crate) fn semantic_tokens(
         &mut self,
         document: EditorDocumentSnapshot,
@@ -33,6 +35,8 @@ impl QueryRunner<'_> {
         if targets.is_empty() {
             return Ok(gen_lsp_types::SemanticTokens::default());
         }
+        // Use saved source when it matches the editor; otherwise prepare the edited syntax once
+        // and share it between documentation and format highlighting.
         let source = snapshot
             .prepare_document_source(&targets, document.text(), &cancellation.token())
             .context("prepare highlighted document source")?;
@@ -73,6 +77,7 @@ impl QueryRunner<'_> {
                     .documentation_highlights(crate_ref, file, range)
                     .context("highlight source documentation")?,
             );
+            highlights.extend(analysis.format_string_highlights(crate_ref, file, range)?);
         }
         rg_std::check_cancel!(cancellation, "encode documentation highlights");
         Ok(SemanticTokensEncoder::new(document.text(), &line_index).encode(highlights))

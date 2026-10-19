@@ -15,6 +15,7 @@ pub enum HighlightKind {
     Symbol(SymbolKind),
     Keyword,
     String,
+    FormatSpecifier,
     Number,
     Operator,
     Comment,

@@ -57,7 +57,10 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
             for link in MarkdownLink::extract(&docs.text) {
                 rg_std::check_cancel!(self.0, "documentation link highlighting");
                 let spans = docs.source_ranges(file, link.range.clone());
-                if spans.iter().all(|span| Self::clip(*span, range).is_none()) {
+                if spans
+                    .iter()
+                    .all(|span| span.intersection(range.unwrap_or(*span)).is_none())
+                {
                     continue;
                 }
                 let Some(declaration) = source
@@ -75,7 +78,7 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
                 highlights.extend(
                     spans
                         .into_iter()
-                        .filter_map(|span| Self::clip(span, range))
+                        .filter_map(|span| span.intersection(range.unwrap_or(span)))
                         .map(|span| Highlight {
                             span,
                             kind: HighlightKind::Symbol(kind),
@@ -95,7 +98,7 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
                     highlights.extend(
                         docs.source_ranges(file, markdown_range)
                             .into_iter()
-                            .filter_map(|span| Self::clip(span, range))
+                            .filter_map(|span| span.intersection(range.unwrap_or(span)))
                             .map(|span| Highlight {
                                 span,
                                 kind,
@@ -108,17 +111,5 @@ impl<'a, 'db> DocumentationHighlighter<'a, 'db> {
         highlights.sort_by_key(|highlight| (highlight.span.start, highlight.span.end));
         highlights.dedup();
         Ok(highlights)
-    }
-
-    fn clip(span: Span, range: Option<Span>) -> Option<Span> {
-        let span = if let Some(range) = range {
-            Span {
-                start: span.start.max(range.start),
-                end: span.end.min(range.end),
-            }
-        } else {
-            span
-        };
-        (!span.is_empty()).then_some(span)
     }
 }

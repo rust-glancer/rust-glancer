@@ -21,6 +21,23 @@
     "workspaceContains:Cargo.toml"
   ],
   "contributes": {
+    "semanticTokenTypes": [
+      {
+        "id": "formatSpecifier",
+        "superType": "string",
+        "description": "Formatting syntax inside a Rust format string."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "rust",
+        "scopes": {
+          "formatSpecifier": [
+            "constant.other.placeholder.rust"
+          ]
+        }
+      }
+    ],
     "languages": [
       {
         "id": "rust",

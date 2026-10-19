@@ -21,6 +21,7 @@ pub const SEMANTIC_TOKEN_TYPES: &[SemanticTokenTypes] = &[
     SemanticTokenTypes::Number,
     SemanticTokenTypes::Operator,
     SemanticTokenTypes::Comment,
+    SemanticTokenTypes::new("formatSpecifier"),
 ];
 
 pub const SEMANTIC_TOKEN_MODIFIERS: &[SemanticTokenModifiers] = &[

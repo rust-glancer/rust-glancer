@@ -54,7 +54,8 @@ impl CrateBodyBuildState<'_> {
             self.parse_package.cfg_options(),
             parse_target.enables_test_cfg(),
         );
-        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map, cfg);
+        let mut macro_expansion =
+            BodyMacroExpansion::new(self.parse_package, def_map, cfg, self.cancellation.clone());
         while self.body_local_items.len() < self.crate_bodies.bodies().len() {
             let body = self.body_local_items.next_id();
             let body_ref = self.body_ref(body);

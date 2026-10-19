@@ -42,8 +42,12 @@ pub(super) struct CrateLowering<'a> {
 impl<'a> CrateLowering<'a> {
     pub(super) fn lower(mut self) -> anyhow::Result<LoweredCrateBodies> {
         let tasks = self.selected_body_tasks()?;
-        let mut macro_expansion =
-            BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
+        let mut macro_expansion = BodyMacroExpansion::new(
+            self.parse_package,
+            self.def_map,
+            self.cfg,
+            self.cancellation.clone(),
+        );
         BodyTaskLowering::new(
             BodyTaskSource::Saved(self.parse_package),
             &mut self.crate_bodies,

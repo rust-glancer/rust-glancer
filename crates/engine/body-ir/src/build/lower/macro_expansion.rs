@@ -4,20 +4,17 @@
 //! that lets it ask def-map for macro expansion while keeping the expansion cache, parse package,
 //! and recursion guard outside the lowering context itself.
 
-use std::{cell::Cell, rc::Rc};
-
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander as DefMapBodyMacroExpander,
-    BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome,
-    BodyMacroTypeExpansionOutcome, DefMapReadTxn,
+    BodyMacroExpansionScope, BodyMacroExprExpansionOutcome, BodyMacroPatExpansionOutcome,
+    BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome, DefMapReadTxn,
 };
 use rg_ir_model::ModuleRef;
+use rg_std::CancellationToken;
 use rg_syntax::ast;
 
 use crate::body::BodySource;
-
-const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 
 pub(crate) trait BodyMacroExpansionContext {
     /// Enter one nested expansion step, returning `None` when the recursion cap is reached.
@@ -78,28 +75,11 @@ pub(crate) trait BodyMacroExpansionContext {
     ) -> anyhow::Result<Option<BodyMacroTypeExpansionOutcome>>;
 }
 
-/// RAII guard that keeps recursive macro expansion depth balanced across early returns.
-pub(crate) struct BodyMacroExpansionScope {
-    depth: Rc<Cell<usize>>,
-}
-
-impl Drop for BodyMacroExpansionScope {
-    fn drop(&mut self) {
-        let depth = self.depth.get();
-        self.depth.set(
-            depth
-                .checked_sub(1)
-                .expect("body macro expansion depth should be balanced"),
-        );
-    }
-}
-
 /// Keeps macro expansion cache and recursion policy out of the mechanical body lowering context.
 pub(crate) struct BodyMacroExpansion<'ctx, 'db> {
     parse_package: &'ctx rg_parse::Package,
     expander: DefMapBodyMacroExpander<'db, 'ctx>,
     cfg: CfgEvaluator<'ctx>,
-    depth: Rc<Cell<usize>>,
 }
 
 impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
@@ -107,12 +87,12 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
         parse_package: &'ctx rg_parse::Package,
         def_maps: &'ctx DefMapReadTxn<'db>,
         cfg: CfgEvaluator<'ctx>,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             parse_package,
-            expander: DefMapBodyMacroExpander::new(def_maps),
+            expander: DefMapBodyMacroExpander::new(def_maps, cancellation),
             cfg,
-            depth: Rc::new(Cell::new(0)),
         }
     }
 
@@ -128,14 +108,7 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
 
 impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
     fn expansion_scope(&self) -> Option<BodyMacroExpansionScope> {
-        let depth = self.depth.get();
-        if depth >= BODY_MACRO_EXPANSION_DEPTH_LIMIT {
-            return None;
-        }
-        self.depth.set(depth + 1);
-        Some(BodyMacroExpansionScope {
-            depth: Rc::clone(&self.depth),
-        })
+        self.expander.expansion_scope()
     }
 
     fn expand_expr_call(
