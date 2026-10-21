@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.0](https://github.com/rust-glancer/rust-glancer/compare/v0.3.0...v0.4.0) (2026-10-21)
+
+
+### Features
+
+* Auto traits and impl polarity ([#252](https://github.com/rust-glancer/rust-glancer/issues/252)) ([1dcb1fd](https://github.com/rust-glancer/rust-glancer/commit/1dcb1fd1cc8da4473f5fadd8393a28921c481ff1))
+* Basic const evaluation ([#244](https://github.com/rust-glancer/rust-glancer/issues/244)) ([e7ea5be](https://github.com/rust-glancer/rust-glancer/commit/e7ea5be36f2941f30ae507bf7d10f29b0f485025))
+* Basic dyn trait support ([#249](https://github.com/rust-glancer/rust-glancer/issues/249)) ([bac823d](https://github.com/rust-glancer/rust-glancer/commit/bac823d748d274ea0821f55447257b365b77d154))
+* Better const evaluation ([#264](https://github.com/rust-glancer/rust-glancer/issues/264)) ([0c871d6](https://github.com/rust-glancer/rust-glancer/commit/0c871d65f3603012b40c77b5b729099023739141))
+* Better inlay hints ([#260](https://github.com/rust-glancer/rust-glancer/issues/260)) ([3c19eb7](https://github.com/rust-glancer/rust-glancer/commit/3c19eb78f37c70e7b5c3515f65d99ff1de9d1460))
+* Resolve/normalize Self-based associated types in signatures/parameters ([#263](https://github.com/rust-glancer/rust-glancer/issues/263)) ([4a4053d](https://github.com/rust-glancer/rust-glancer/commit/4a4053df44822cbf06704edbe51abf1a6c782c37))
+* Richer support for arguments in macro expansions ([#266](https://github.com/rust-glancer/rust-glancer/issues/266)) ([9d68b1e](https://github.com/rust-glancer/rust-glancer/commit/9d68b1efb47703f56767643610802e4591a55188))
+* Support tuple/slice pattern destructing ([#262](https://github.com/rust-glancer/rust-glancer/issues/262)) ([0d6b1a4](https://github.com/rust-glancer/rust-glancer/commit/0d6b1a40ec6463c47c0a5afe548af66494b343e5))
+
+
+### Bug Fixes
+
+* Better definition spans ([#259](https://github.com/rust-glancer/rust-glancer/issues/259)) ([e5e544c](https://github.com/rust-glancer/rust-glancer/commit/e5e544c52d0dd03af386c2844504c1724e9f32f7))
+* Fix closure explicit return types ([#250](https://github.com/rust-glancer/rust-glancer/issues/250)) ([c1457eb](https://github.com/rust-glancer/rust-glancer/commit/c1457ebcc18d673eb070a627deb175e9a049ff4a))
+* Fix inlay hints flickering ([#246](https://github.com/rust-glancer/rust-glancer/issues/246)) ([4877fcb](https://github.com/rust-glancer/rust-glancer/commit/4877fcb8c5d14bcc2046c94c98e3b6f40833201c))
+* Fix memory leak via mimalloc ([#269](https://github.com/rust-glancer/rust-glancer/issues/269)) ([92519d7](https://github.com/rust-glancer/rust-glancer/commit/92519d74b0bf41f2592168b4f1ad0e6de8f72b81))
+* Preserve references to unknown ([#248](https://github.com/rust-glancer/rust-glancer/issues/248)) ([688baa6](https://github.com/rust-glancer/rust-glancer/commit/688baa67a30046a93ade61e4478ce26be5c68da0))
+* Use a single target when file belongs to multiple targets ([#267](https://github.com/rust-glancer/rust-glancer/issues/267)) ([341c105](https://github.com/rust-glancer/rust-glancer/commit/341c105b6aea0a23f4f76dc0bf5f313f444b0a9c))
+
+
+### Performance Improvements
+
+* Faster faster references ([#254](https://github.com/rust-glancer/rust-glancer/issues/254)) ([c6a0f67](https://github.com/rust-glancer/rust-glancer/commit/c6a0f678394ea69ab19834dc27e731163e037eeb))
+* Optimize item lookup query creation ([#253](https://github.com/rust-glancer/rust-glancer/issues/253)) ([626dd41](https://github.com/rust-glancer/rust-glancer/commit/626dd418ac1734d3b46716bc250dec6515df2dd4))
+
+
+### Miscellaneous Chores
+
+* release 0.4.0 ([2a998d2](https://github.com/rust-glancer/rust-glancer/commit/2a998d2200986242cfdf3acb85136862337edec5))
+
 ## [0.3.0](https://github.com/rust-glancer/rust-glancer/compare/v0.2.0...v0.3.0) (2026-10-01)
 
 
