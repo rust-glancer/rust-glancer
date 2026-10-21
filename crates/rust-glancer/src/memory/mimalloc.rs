@@ -129,6 +129,30 @@ mod tests {
         assert!(unsafe { libmimalloc_sys::mi_option_is_enabled(DISALLOW_ARENA_ALLOC_OPTION) });
     }
 
+    // MSVC compiles mimalloc as C++, which gives this internal function C++ linkage.
+    // TODO: Check the MSVC build policy without depending on a mangled symbol name.
+    #[cfg(not(target_env = "msvc"))]
+    #[test]
+    fn allocator_leaves_os_address_selection_to_the_kernel() {
+        unsafe extern "C" {
+            fn _mi_os_get_aligned_hint(alignment: usize, size: usize) -> *mut std::ffi::c_void;
+        }
+
+        // Ordinary allocation tests also pass if environment overrides lose the build define.
+        // Initialize the calling thread's heap first: even with hints enabled, mimalloc returns
+        // no hint during early startup, before its address randomization is available.
+        ArenaFreeMiMalloc::configure();
+        let allocation = unsafe { libmimalloc_sys::mi_malloc(8) };
+        assert!(!allocation.is_null(), "allocator should initialize");
+        unsafe { libmimalloc_sys::mi_free(allocation) };
+
+        let hint = unsafe { _mi_os_get_aligned_hint(4 * 1024 * 1024, 4 * 1024 * 1024) };
+        assert!(
+            hint.is_null(),
+            "keep -DMI_NO_ALIGNED_HINT=1 in the native compiler flags"
+        );
+    }
+
     #[test]
     fn explicit_purge_collects_mimalloc_pages() {
         assert!(try_purge());

@@ -40,10 +40,12 @@ Rust Glancer supports two main allocators:
 
 `mimalloc` is the default one, since benchmarks show that it provides _significantly_
 better performance in nearly all the cases, while being generally as memory efficient
-as jemalloc. We use it without arenas and do not use purging: with arenas enabled, RSS
-is actually noticeably higher and performance boost is very modest, while purging, even
-though supported, does not change the situation much (most likely because purging in
-`mimalloc` does not purge process-wide, it only purges thread-local memory).
+as jemalloc. We use it without arenas: with arenas enabled, RSS is actually noticeably
+higher and performance boost is very modest. We also force collection with `mi_collect(true)`
+at indexing checkpoints and before the engine waits for work. This collects the calling
+thread's heap, including deferred frees and retired pages that might otherwise stay around
+until more allocator activity. The setup and collection live in the
+[`mimalloc` backend](https://github.com/rust-glancer/rust-glancer/blob/main/crates/rust-glancer/src/memory/mimalloc.rs).
 Additionally, unlike `jemalloc`, `mimalloc` supports more platforms, e.g. Windows and OpenBSD.
 
 `jemalloc` was used to build the application up until its first release, and for now it
@@ -52,6 +54,33 @@ but it's generally its only advantage right now. If `mimalloc` allocations are t
 you even with `lower-peak-memory`, you might consider building the app with `jemalloc` and try it.
 Otherwise, it's slower, and is mostly left "just in case"; there is a good chance that support
 will be removed in the future.
+
+#### Mimalloc address hints
+
+Disabling arenas also means that requests for fresh allocator pages reach the OS more often.
+Mimalloc normally suggests aligned virtual addresses for these requests, advancing through
+new address ranges each time. Its two-level page map needs a 64 KiB lookup table for each
+512 MiB address region it visits. Freeing an allocation clears entries in that table, but
+the table itself stays allocated until allocator teardown. Repeated queries can therefore
+grow idle RSS even when their allocations have been freed. `mi_collect(true)` cannot release
+these tables. See [issue #268](https://github.com/rust-glancer/rust-glancer/issues/268).
+
+We build mimalloc with `MI_NO_ALIGNED_HINT=1` to let the OS choose addresses and reuse freed
+ranges. Allocation alignment is still enforced: if a mapping is not aligned, mimalloc can
+request a larger mapping and use an aligned part of it. This can cost extra OS calls, but
+avoiding retained metadata matters more for our idle-memory goal. The switch allows address
+reuse; it does not make page-map tables reclaimable or guarantee a fixed metadata size.
+
+The define is supplied through `CFLAGS` and `CXXFLAGS` in
+[`.cargo/config.toml`](https://github.com/rust-glancer/rust-glancer/blob/main/.cargo/config.toml).
+Both are needed because the bindings compile mimalloc as C++ on MSVC. These flags also reach
+other native builds; the macro is specific to mimalloc. This keeps the allocator policy in
+the repository while using the published dependency unchanged.
+
+Cargo keeps existing environment values for these variables. If you set custom `CFLAGS` or
+`CXXFLAGS`, include `-DMI_NO_ALIGNED_HINT=1` in them. Build from the repository directory or
+one of its subdirectories so Cargo discovers the configuration; from elsewhere, pass
+`--config /path/to/rust-glancer/.cargo/config.toml` to Cargo explicitly.
 
 ### Startup cache loading
 

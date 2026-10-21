@@ -1,0 +1,8 @@
+[env]
+# Without arenas, mimalloc's advancing address hints keep visiting new virtual regions.
+# Their page-map tables survive freeing and collection, so idle memory keeps growing.
+# Let the OS reuse address ranges; mimalloc still enforces allocation alignment.
+# MSVC compiles mimalloc as C++, so both sets of compiler flags need the define.
+# Custom environment flags override these defaults and must keep this define.
+CFLAGS = "-DMI_NO_ALIGNED_HINT=1"
+CXXFLAGS = "-DMI_NO_ALIGNED_HINT=1"
