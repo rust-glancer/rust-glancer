@@ -107,38 +107,17 @@ impl WorkspaceWatcher {
         let (sender, mut receiver) = mpsc::unbounded_channel::<DebounceEventResult>();
         let callback_root = root.clone();
 
-        let mut debouncer = notify_debouncer_full::new_debouncer_opt(
-            WATCH_DEBOUNCE,
-            Some(WATCH_DEBOUNCE),
-            move |result| {
-                let Some(result) = Self::project_result(&callback_root, result) else {
-                    return;
-                };
-                if sender.send(result).is_err() {
-                    tracing::trace!(
-                        root = %callback_root.display(),
-                        "project watcher event dropped because receiver is gone"
-                    );
-                }
-            },
-            NoCache::new(),
-            NotifyConfig::default(),
-        )
-        .context("while attempting to create project filesystem watcher")?;
-
-        debouncer
-            .watch(root.as_path(), RecursiveMode::Recursive)
-            .with_context(|| {
-                format!(
-                    "while attempting to watch workspace root {}",
-                    root.display()
-                )
-            })?;
-        tracing::debug!(
-            root = %root.display(),
-            debounce_ms = WATCH_DEBOUNCE.as_millis(),
-            "watching workspace root for saved project changes"
-        );
+        let debouncer = Self::watch(&root, move |result| {
+            let Some(result) = Self::project_result(&callback_root, result) else {
+                return;
+            };
+            if sender.send(result).is_err() {
+                tracing::trace!(
+                    root = %callback_root.display(),
+                    "project watcher event dropped because receiver is gone"
+                );
+            }
+        })?;
 
         let forwarder_root = root.clone();
         let mut snapshot = ProjectPathSnapshot::scan(&forwarder_root);
@@ -169,6 +148,35 @@ impl WorkspaceWatcher {
             _debouncer: debouncer,
             _forwarder: forwarder,
         })
+    }
+
+    fn watch(
+        root: &NormalizedPathBuf,
+        callback: impl FnMut(DebounceEventResult) + Send + 'static,
+    ) -> anyhow::Result<ProjectDebouncer> {
+        let mut debouncer = notify_debouncer_full::new_debouncer_opt(
+            WATCH_DEBOUNCE,
+            Some(WATCH_DEBOUNCE),
+            callback,
+            NoCache::new(),
+            NotifyConfig::default().with_follow_symlinks(false),
+        )
+        .context("while attempting to create project filesystem watcher")?;
+
+        debouncer
+            .watch(root.as_path(), RecursiveMode::Recursive)
+            .with_context(|| {
+                format!(
+                    "while attempting to watch workspace root {}",
+                    root.display()
+                )
+            })?;
+        tracing::debug!(
+            root = %root.display(),
+            debounce_ms = WATCH_DEBOUNCE.as_millis(),
+            "watching workspace root for saved project changes"
+        );
+        Ok(debouncer)
     }
 
     fn project_result(
@@ -524,6 +532,93 @@ mod tests {
     use test_fixture::fixture_crate;
 
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn watcher_does_not_follow_symlinked_directories() {
+        use std::{io::ErrorKind, os::unix::fs::MetadataExt as _};
+
+        let fixture = fixture_crate(
+            r#"
+            //- /root/src/lib.rs
+            pub struct Local;
+
+            //- /external/nested/lib.rs
+            pub struct External;
+            "#,
+        );
+        let root = NormalizedPathBuf::from_absolute(fixture.path("root"))
+            .expect("watcher fixture root should normalize");
+        let external = fixture.path("external");
+        let nested = fixture.path("external/nested");
+        std::os::unix::fs::symlink(&external, root.as_path().join("linked"))
+            .expect("fixture symlink should be created");
+        let _debouncer =
+            WorkspaceWatcher::watch(&root, |_| {}).expect("fixture workspace should be watched");
+
+        // watch() registers the recursive watches before returning.
+        let mut watches = BTreeSet::new();
+        for entry in std::fs::read_dir("/proc/self/fdinfo")
+            .expect("process descriptor info should be readable")
+        {
+            let entry = entry.expect("descriptor entry should be readable");
+            let info = match std::fs::read_to_string(entry.path()) {
+                Ok(info) => info,
+                Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                Err(error) => panic!("failed to read descriptor info: {error}"),
+            };
+            for line in info.lines().filter(|line| line.starts_with("inotify wd:")) {
+                let mut sdev = None;
+                let mut ino = None;
+                for field in line.split_whitespace() {
+                    let Some((key, value)) = field.split_once(':') else {
+                        continue;
+                    };
+                    let slot = match key {
+                        "sdev" => &mut sdev,
+                        "ino" => &mut ino,
+                        _ => continue,
+                    };
+                    *slot = Some(
+                        u64::from_str_radix(value, 16)
+                            .expect("inotify watch device and inode should be hexadecimal"),
+                    );
+                }
+                watches.insert((
+                    sdev.expect("inotify watch should have a device"),
+                    ino.expect("inotify watch should have an inode"),
+                ));
+            }
+        }
+
+        let inode = |path: &Path| {
+            std::fs::metadata(path)
+                .expect("watcher fixture directory should have metadata")
+                .ino()
+        };
+        let root_ino = inode(root.as_path());
+        let source_ino = inode(&root.as_path().join("src"));
+        // fdinfo prints the kernel's device encoding, so take the device from the fixture's own
+        // watches instead of converting `st_dev`.
+        let devices = watches
+            .iter()
+            .filter(|&&(sdev, ino)| ino == root_ino && watches.contains(&(sdev, source_ino)))
+            .map(|&(sdev, _)| sdev)
+            .collect::<Vec<_>>();
+        let [sdev] = devices[..] else {
+            panic!("expected exactly one device watching the fixture root, got {devices:?}");
+        };
+        let external_ino = inode(&external);
+        let nested_ino = inode(&nested);
+        assert!(
+            !watches.contains(&(sdev, external_ino)),
+            "symlink destination should not have an inotify watch"
+        );
+        assert!(
+            !watches.contains(&(sdev, nested_ino)),
+            "nested symlink destination should not have an inotify watch"
+        );
+    }
 
     #[test]
     fn watcher_ingress_scopes_ignored_directories_to_workspace_root() {
