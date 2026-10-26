@@ -22,7 +22,7 @@ use super::{ImportApplicationStats, ModuleSetShape};
 use crate::{
     CrateResolutionEnv, ImportKind, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
     ModuleData, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
-    build::finalize::{FinalizeCrateStates, FinalizeResolutionEnv},
+    build::{crates::CrateBuildStore, resolution_env::BuildResolutionEnv},
 };
 
 // Below this size, dispatching module groups through a worker pool costs more than the import work.
@@ -65,7 +65,7 @@ impl ImportWorklist {
     /// A module without `use` items cannot gain import-derived bindings, so its direct scope needs no
     /// job. Imports stay in arena order inside a group: grouping changes which modules run, not the
     /// order in which one module's imports are replayed.
-    pub(crate) fn new(states: &FinalizeCrateStates) -> Self {
+    pub(crate) fn new(states: &CrateBuildStore) -> Self {
         let mut imports_by_module = FxHashMap::<ModuleRef, Vec<ImportId>>::default();
         for package_states in states.iter_dirty() {
             for state in package_states {
@@ -110,7 +110,7 @@ impl ImportWorklist {
     /// readers become the active modules for the next wave.
     pub(crate) fn apply_updates(
         &mut self,
-        states: &mut FinalizeCrateStates,
+        states: &mut CrateBuildStore,
         updates: Vec<ModuleImportUpdate>,
     ) -> ImportWaveOutcome {
         let evaluated = ModuleSetShape::from_sorted_modules(&self.active_modules);
@@ -138,7 +138,7 @@ impl ImportWorklist {
                 .as_crate_ref()
                 .expect("crate import should belong to a crate module");
             states
-                .crate_state_mut(crate_ref)
+                .crate_builder_mut(crate_ref)
                 .expect("active import module should belong to a dirty crate")
                 .def_map_builder
                 .apply_module_imports(
@@ -184,7 +184,7 @@ impl ImportWorklist {
     }
 }
 
-/// Results the finalization loop needs after one wave has been installed.
+/// Results scope construction needs after one wave has been installed.
 pub(crate) struct ImportWaveOutcome {
     /// Import and glob operations performed by the module jobs.
     pub(crate) stats: ImportApplicationStats,
@@ -221,15 +221,15 @@ impl ModuleImportUpdate {
     fn resolve(
         module: ModuleRef,
         imports: &[ImportId],
-        states: &FinalizeCrateStates,
-        env: &FinalizeResolutionEnv<'_>,
+        states: &CrateBuildStore,
+        env: &BuildResolutionEnv<'_>,
     ) -> anyhow::Result<Self> {
         let crate_ref = module
             .origin
             .as_crate_ref()
             .expect("crate import should belong to a crate module");
         let state = states
-            .crate_state(crate_ref)
+            .crate_builder(crate_ref)
             .expect("active import module should belong to a dirty crate");
         // Start from direct declarations. Replaying the whole group on this clean base means an
         // import which stopped resolving naturally disappears from the candidate.
@@ -325,8 +325,8 @@ impl ImportResolutionExecutor {
     pub(crate) fn apply_wave(
         &mut self,
         worklist: &ImportWorklist,
-        states: &FinalizeCrateStates,
-        env: &FinalizeResolutionEnv<'_>,
+        states: &CrateBuildStore,
+        env: &BuildResolutionEnv<'_>,
     ) -> anyhow::Result<Vec<ModuleImportUpdate>> {
         let resolve_module = |module: &ModuleRef| {
             ModuleImportUpdate::resolve(*module, worklist.imports_for(*module), states, env)

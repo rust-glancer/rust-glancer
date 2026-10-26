@@ -27,7 +27,7 @@ use rg_parse::ModuleFileContext;
 use rg_text::Name;
 use rg_tt::TopSubtree;
 
-use super::finalize::FinalizeCrateStates;
+use super::crates::CrateBuildStore;
 use crate::{MacroExpansionLimitGroup, profile::metric};
 
 mod attempts;
@@ -39,8 +39,8 @@ mod resolve;
 
 pub(super) use self::{
     attempts::{
-        MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
-        MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
+        MacroExpansionAttempt, MacroExpansionCursors, MacroExpansionScan, apply_expansion_attempts,
+        collect_expansion_attempts,
     },
     builtin_derive::BuiltinDeriveExpansion,
     expand::expand_expansion_attempts,
@@ -408,7 +408,7 @@ impl ItemOrder {
 }
 
 /// Captures a bounded report, then marks retryable calls as skipped after the guard fires.
-pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut FinalizeCrateStates) {
+pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut CrateBuildStore) {
     let mut skipped = 0;
     let mut remaining_groups = 64;
 

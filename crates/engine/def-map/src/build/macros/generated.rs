@@ -14,15 +14,14 @@ use rg_parse::ModuleFileContext;
 use rg_text::NameInterner;
 
 use super::{
-    ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroExpansionApplyResult,
-    generated_tree::GeneratedSourceLowering,
+    ItemOrder, MacroCallOrigin, MacroCallPlacement, generated_tree::GeneratedSourceLowering,
 };
 use crate::{
     ItemSource, MacroSourceFileRequest,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::{CrateState, DeclarationCollector},
-        finalize::FinalizeCrateStates,
+        collect::DeclarationCollector,
+        crates::{CrateBuildStore, CrateBuilder},
     },
     profile::metric,
 };
@@ -50,13 +49,13 @@ impl GeneratedOrigin {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn collect_syntax(
         self,
-        state: &mut CrateState,
+        state: &mut CrateBuilder,
         interner: &mut NameInterner,
         item_tree: &ItemTreeDb,
         resolutions: &MacroSourceFileResolutions,
         expansion: ExpansionSyntax,
         macro_name: Option<&str>,
-    ) -> Result<MacroExpansionApplyResult> {
+    ) -> Result<bool> {
         let timer = metric::TIMING_PARSE_GENERATED_SOURCES.start_timer();
         let errors = expansion.parse.errors();
         timer.finish();
@@ -126,7 +125,7 @@ pub(crate) struct PendingGeneratedInclude {
 /// Collect each answered module or include without replaying its surrounding expansion.
 pub(crate) fn apply_pending_macro_source_files(
     item_tree: &ItemTreeDb,
-    states: &mut FinalizeCrateStates,
+    states: &mut CrateBuildStore,
     resolutions: &MacroSourceFileResolutions,
 ) -> Result<()> {
     for (package_slot, states) in states.iter_dirty_mut_enumerated() {

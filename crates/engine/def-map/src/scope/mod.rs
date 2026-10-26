@@ -582,7 +582,7 @@ impl ScopeEntry {
 
 /// Borrowed view over either a mutable-build or frozen scope entry.
 ///
-/// Path resolution reads this common shape while finalization is still changing scopes and after
+/// Path resolution reads this common shape while construction is still changing scopes and after
 /// those scopes have been frozen. Keeping the storage distinction behind this view prevents the
 /// resolver from having separate mutable and retained lookup paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

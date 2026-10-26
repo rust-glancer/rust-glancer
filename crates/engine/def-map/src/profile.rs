@@ -1,4 +1,4 @@
-//! Metrics emitted while collecting and finalizing DefMaps.
+//! Metrics emitted while building DefMaps.
 //!
 //! Most metrics are standalone counters or timers declared below. Import resolution also records
 //! one table row per wave, so its column schema and the code which builds a row live together here.
@@ -85,8 +85,8 @@ pub(crate) fn record_import_resolution_pass(
 
 declare_metrics! {
     pub(crate) mod metric {
-        scope "def_map.finalization" {
-            /// Number of fixed-point rounds required to finalize all def maps.
+        scope "def_map.construction" {
+            /// Number of fixed-point rounds required to build all module scopes.
             counter ROUNDS = "rounds";
             /// Number of complete import fixed-point runs.
             counter IMPORT_RESOLUTION_RUNS = "import_resolution.runs";
@@ -94,14 +94,14 @@ declare_metrics! {
             counter IMPORT_RESOLUTION_PASSES = "import_resolution.passes";
             /// Per-pass import work and the part of the project whose resulting scopes changed.
             checkpoint IMPORT_RESOLUTION_PASS_CHECKPOINTS = "import_resolution.pass_checkpoints" [columns &super::IMPORT_RESOLUTION_PASS_COLUMNS, title "Import resolution passes"];
-            /// Number of macro-expansion passes performed during finalization.
+            /// Number of macro-expansion passes performed during scope construction.
             counter EXPANSION_PASSES = "expansion_passes";
-            /// Maximum number of macro-expansion passes allowed for one finalization run.
+            /// Maximum number of macro-expansion passes allowed for one construction run.
             gauge EXPANSION_PASS_LIMIT = "expansion_pass_limit" [Count];
-            /// Whether finalization stopped because the macro-expansion pass limit was reached.
+            /// Whether scope construction stopped because the macro-expansion pass limit was reached.
             gauge EXPANSION_PASS_LIMIT_REACHED = "expansion_pass_limit_reached" [None];
 
-            /// Time spent resolving import scopes during finalization.
+            /// Time spent resolving import scopes during scope construction.
             duration TIMING_RESOLVE_IMPORT_SCOPES = "timings.resolve_import_scopes";
             /// Time spent collecting macro expansion attempts.
             duration TIMING_COLLECT_EXPANSION_ATTEMPTS = "timings.collect_expansion_attempts";

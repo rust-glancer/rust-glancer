@@ -18,7 +18,7 @@ const PROFILE_ALIASES: &[ProfileAlias] = &[
     ProfileAlias {
         name: "macros",
         description: "def-map macro counters, timings, and by-name expansion tables",
-        selectors: &["def_map.finalization", "def_map.macros.by_name"],
+        selectors: &["def_map.construction", "def_map.macros.by_name"],
     },
     ProfileAlias {
         name: "memory:def-map",

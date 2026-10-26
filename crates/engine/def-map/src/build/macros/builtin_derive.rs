@@ -21,7 +21,7 @@ use rg_text::{Name, NameInterner, PackageNameInterners};
 use crate::{
     CrateResolutionEnv, GeneratedItemRef, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
     MacroDefinitionEnv, ScopeResolver,
-    build::{collect::CrateState, finalize::FinalizeCrateStates},
+    build::crates::{CrateBuildStore, CrateBuilder},
     source::GeneratedSourceData,
 };
 
@@ -39,7 +39,7 @@ impl BuiltinDeriveExpansion {
     /// Resolve enabled derives using the scopes left by import resolution and macro expansion.
     pub(crate) fn collect<E>(
         env: &E,
-        states: &FinalizeCrateStates,
+        states: &CrateBuildStore,
         item_tree: &ItemTreeDb,
         interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Vec<Self>>
@@ -115,9 +115,9 @@ impl BuiltinDeriveExpansion {
     }
 
     /// Add the impl to generated-item storage and the owning module's impl list.
-    pub(crate) fn apply(self, states: &mut FinalizeCrateStates) {
+    pub(crate) fn apply(self, states: &mut CrateBuildStore) {
         let state = states
-            .crate_state_mut(self.crate_ref)
+            .crate_builder_mut(self.crate_ref)
             .expect("derive belongs to a collected crate");
         let file_id = self.source.origin_file_id;
         let span = self.source.origin_span;
@@ -140,7 +140,7 @@ impl BuiltinDeriveExpansion {
     /// A derive can come from a source file or from another macro's output. Keep the original
     /// item-tree source alongside the item so the generated impl retains its source provenance.
     fn source_item<'a>(
-        state: &'a CrateState,
+        state: &'a CrateBuilder,
         item_tree: &'a ItemTreeDb,
         source: ItemSource,
     ) -> anyhow::Result<Option<(&'a ItemNode, ItemTreeRef)>> {
@@ -212,7 +212,7 @@ impl BuiltinDeriveExpansion {
     /// must not become guessed impls.
     // TODO: Remove this core-root requirement when generated trait references
     // carry compiler identities instead of paths.
-    fn trait_root(state: &CrateState, defining_crate: CrateRef) -> Option<&'static str> {
+    fn trait_root(state: &CrateBuilder, defining_crate: CrateRef) -> Option<&'static str> {
         if defining_crate == state.crate_ref {
             Some("crate")
         } else if state

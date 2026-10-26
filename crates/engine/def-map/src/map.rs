@@ -427,7 +427,7 @@ impl DefMapBuilder {
     }
 }
 
-/// Read-only view over a DefMap that is still being collected/finalized.
+/// Read-only view over a DefMap that is still being built.
 ///
 /// This facade is intentionally narrower than `DefMap`: it permits the build pipeline to inspect
 /// data allocated so far without making the object look like a frozen namespace map.
@@ -454,12 +454,12 @@ impl<'a> PartialDefMap<'a> {
         self.modules.len()
     }
 
-    /// Returns local definition data allocated so far during collection/finalization.
+    /// Returns local definition data allocated so far during construction.
     pub fn local_def(&self, local_def: LocalDefId) -> Option<&'a LocalDefData> {
         self.def_map.local_def(local_def)
     }
 
-    /// Returns enum variant data allocated so far during collection/finalization.
+    /// Returns enum variant data allocated so far during construction.
     pub fn local_enum_variant(
         &self,
         local_enum_variant: LocalEnumVariantId,
@@ -474,12 +474,12 @@ impl<'a> PartialDefMap<'a> {
         self.def_map.local_enum_variant_entries_for_enum(enum_def)
     }
 
-    /// Returns a declarative macro payload allocated so far during collection/finalization.
+    /// Returns a declarative macro payload allocated so far during construction.
     pub fn macro_definition(&self, local_def: LocalDefId) -> Option<&'a MacroDefinitionData> {
         self.def_map.macro_definition(local_def)
     }
 
-    /// Returns imports allocated so far during collection/finalization.
+    /// Returns imports allocated so far during construction.
     pub fn imports(&self) -> &'a [ImportData] {
         self.def_map.imports()
     }

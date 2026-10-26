@@ -11,7 +11,7 @@ use rg_text::Name;
 use super::{ItemOrder, MacroCallSite};
 use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
-    build::{collect::CrateState, finalize::FinalizeCrateStates},
+    build::crates::{CrateBuildStore, CrateBuilder},
 };
 
 /// Macro definition resolved through the ordinary macro namespace.
@@ -39,8 +39,8 @@ impl Eq for ResolvedMacroDefinition<'_> {}
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
-    states: &'a FinalizeCrateStates,
-    state: &'a CrateState,
+    states: &'a CrateBuildStore,
+    state: &'a CrateBuilder,
 }
 
 impl<'a, E> ItemMacroResolver<'a, E>
@@ -49,7 +49,7 @@ where
         + MacroDefinitionEnv
         + ?Sized,
 {
-    pub(super) fn new(env: &'a E, states: &'a FinalizeCrateStates, state: &'a CrateState) -> Self {
+    pub(super) fn new(env: &'a E, states: &'a CrateBuildStore, state: &'a CrateBuilder) -> Self {
         Self { env, states, state }
     }
 
@@ -247,7 +247,7 @@ where
             .def_ref
             .origin
             .as_crate_ref()
-            .and_then(|crate_ref| self.states.crate_state(crate_ref))
+            .and_then(|crate_ref| self.states.crate_builder(crate_ref))
             .and_then(|state| state.macro_definitions.get(&payload.def_ref.local_def))
             .map(|record| &record.order);
 

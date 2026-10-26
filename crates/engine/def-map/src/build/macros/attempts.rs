@@ -1,6 +1,6 @@
 //! Turns pending macro directives into executable expansion attempts.
 //!
-//! The finalization loop repeatedly asks this module to inspect macro calls against the current
+//! Scope construction repeatedly asks this module to inspect macro calls against the current
 //! scope snapshot, prepare any expansion work that can run outside the collector, and apply the
 //! generated syntax back into mutable crate state.
 
@@ -28,8 +28,8 @@ use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroSourceFileRequest,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::{CrateState, DeclarationCollector},
-        finalize::FinalizeCrateStates,
+        collect::DeclarationCollector,
+        crates::{CrateBuildStore, CrateBuilder},
     },
     profile::metric,
 };
@@ -72,7 +72,7 @@ pub(crate) struct MacroExpansionCursors {
 }
 
 impl MacroExpansionCursors {
-    pub(crate) fn capture(states: &FinalizeCrateStates) -> Self {
+    pub(crate) fn capture(states: &CrateBuildStore) -> Self {
         let mut macro_call_counts = HashMap::new();
 
         for package_states in states.iter_dirty() {
@@ -92,7 +92,7 @@ impl MacroExpansionCursors {
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
 pub(crate) fn collect_expansion_attempts<E>(
     env: &E,
-    states: &FinalizeCrateStates,
+    states: &CrateBuildStore,
     scan: MacroExpansionScan<'_>,
     runtime: &mut MacroExpansionRuntime,
     macro_source_file_resolutions: &MacroSourceFileResolutions,
@@ -140,22 +140,22 @@ where
     Ok(attempts)
 }
 
-/// Applies expansion results to crate state and reports whether visible scope facts were added.
+/// Apply expansion results to crate builders and return whether declaration facts were added.
 ///
 /// Source-backed builtin payloads that ItemTree lowered eagerly can be collected immediately. A
 /// generated `include!` has no such payload because its call did not exist during initial lowering;
 /// collection is deferred until the source loader has captured and lowered the file.
 pub(crate) fn apply_expansion_attempts(
     item_tree: &ItemTreeDb,
-    states: &mut FinalizeCrateStates,
+    states: &mut CrateBuildStore,
     interners: &mut PackageNameInterners,
     attempts: Vec<MacroExpansionAttempt>,
     macro_source_file_resolutions: &MacroSourceFileResolutions,
-) -> anyhow::Result<MacroExpansionApplyResult> {
-    let mut result = MacroExpansionApplyResult::default();
+) -> anyhow::Result<bool> {
+    let mut changed = false;
 
     for attempt in attempts {
-        let Some(state) = states.crate_state_mut(attempt.crate_ref) else {
+        let Some(state) = states.crate_builder_mut(attempt.crate_ref) else {
             continue;
         };
 
@@ -205,7 +205,7 @@ pub(crate) fn apply_expansion_attempts(
                 );
                 let directive_state = match collected {
                     Ok(collected) => {
-                        result.merge(collected);
+                        changed |= collected;
                         MacroDirectiveState::Expanded
                     }
                     Err(_) => MacroDirectiveState::Failed,
@@ -243,7 +243,7 @@ pub(crate) fn apply_expansion_attempts(
                 );
                 let directive_state = match collected {
                     Ok(collected) => {
-                        result.merge(collected);
+                        changed |= collected;
                         MacroDirectiveState::Expanded
                     }
                     Err(_) => MacroDirectiveState::Failed,
@@ -278,7 +278,7 @@ pub(crate) fn apply_expansion_attempts(
         );
         let directive_state = match collected {
             Ok(collected) => {
-                result.merge(collected);
+                changed |= collected;
                 MacroDirectiveState::Expanded
             }
             Err(_) => MacroDirectiveState::Failed,
@@ -288,23 +288,7 @@ pub(crate) fn apply_expansion_attempts(
         }
     }
 
-    Ok(result)
-}
-
-/// Whether applying a batch of expansion attempts changed the current def-map state.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct MacroExpansionApplyResult {
-    pub(crate) changed: bool,
-}
-
-impl MacroExpansionApplyResult {
-    pub(crate) fn mark_changed(&mut self) {
-        self.changed = true;
-    }
-
-    pub(crate) fn merge(&mut self, other: Self) {
-        self.changed |= other.changed;
-    }
+    Ok(changed)
 }
 
 /// One inspected macro directive, including the work/result and stats events it produced.
@@ -395,7 +379,7 @@ impl MacroExpansionAttempt {
         crate_ref: CrateRef,
         call_id: usize,
         call: &MacroCallSite,
-        state: &CrateState,
+        state: &CrateBuilder,
         path_text: &str,
         macro_source_file_resolutions: &MacroSourceFileResolutions,
     ) -> Self {
@@ -455,7 +439,7 @@ impl MacroExpansionAttempt {
         crate_ref: CrateRef,
         call_id: usize,
         call: &MacroCallSite,
-        state: &CrateState,
+        state: &CrateBuilder,
         path_text: &str,
     ) -> Self {
         let Some(BuiltinMacroItem::CfgSelect { arms }) = call.builtin.as_ref() else {
@@ -575,9 +559,9 @@ impl MacroExpansionAttempt {
 
     fn for_call<E>(
         env: &E,
-        states: &FinalizeCrateStates,
+        states: &CrateBuildStore,
         runtime: &mut MacroExpansionRuntime,
-        state: &CrateState,
+        state: &CrateBuilder,
         call_id: usize,
         call: &MacroCallSite,
         macro_source_file_resolutions: &MacroSourceFileResolutions,
@@ -677,7 +661,7 @@ impl MacroExpansionAttempt {
         crate_ref: CrateRef,
         call_id: usize,
         call: &MacroCallSite,
-        state: &CrateState,
+        state: &CrateBuilder,
         macro_name: &str,
         macro_source_file_resolutions: &MacroSourceFileResolutions,
     ) -> Self {

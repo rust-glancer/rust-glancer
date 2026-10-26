@@ -230,7 +230,7 @@ mod tests {
             .expect("macros profile alias should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
-            vec!["def_map.finalization", "def_map.macros.by_name"],
+            vec!["def_map.construction", "def_map.macros.by_name"],
             "the macros alias should collect aggregate timings, counters, and by-name stats",
         );
 
@@ -250,7 +250,7 @@ mod tests {
             selector_texts(&filter),
             vec![
                 build_checkpoints,
-                "def_map.finalization",
+                "def_map.construction",
                 "def_map.macros.by_name"
             ],
             "profile aliases should expand without blocking explicit selectors",

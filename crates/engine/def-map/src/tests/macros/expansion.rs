@@ -305,7 +305,7 @@ make_user!();
 fn stops_recursive_generated_macro_expansion_at_pass_limit() {
     let run = rg_profile::test_support::ProfileTest::start(
         profile_descriptors(),
-        "def_map.finalization,def_map.macros",
+        "def_map.construction,def_map.macros",
     );
     let project = utils::DefMapFixtureDb::build(
         r#"
@@ -339,7 +339,7 @@ pub struct After;
 
     target
         .entry("After")
-        .assert_type_exists("macro expansion limit should not abort def-map finalization");
+        .assert_type_exists("macro expansion limit should not abort DefMap construction");
     target
         .entry("FiniteResult")
         .assert_type_exists("an independent finite chain should complete before the limit");

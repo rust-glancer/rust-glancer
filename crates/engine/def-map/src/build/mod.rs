@@ -1,7 +1,7 @@
 //! Builds frozen def-map snapshots by replacing selected packages in a shaped baseline.
 //!
-//! Crate collection intentionally stops before cross-crate facts such as implicit roots,
-//! preludes, and imports are fully known. Selected packages receive fresh mutable `CrateState`s;
+//! Collection records direct declarations and raw imports before names from other modules and
+//! crates have been resolved. Selected packages receive fresh mutable `CrateBuilder`s;
 //! resolution reads every other package from the frozen baseline.
 //!
 //! Macro expansion can reveal real files after the initial Parse/ItemTree pass. For example,
@@ -12,13 +12,15 @@
 //! loader between expansion batches until the fixed point can be frozen.
 
 mod collect;
-mod finalize;
+mod crates;
 mod implicit_roots;
 mod imports;
 mod macro_source_files;
 mod macros;
 mod output;
 mod packages;
+mod resolution_env;
+mod scopes;
 
 pub(crate) use self::macro_source_files::MacroSourceFileResolutions;
 pub use self::{

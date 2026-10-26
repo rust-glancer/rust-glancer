@@ -1,12 +1,12 @@
 //! Scope-graph name lookup for DefMap-backed module scopes.
 //!
-//! DefMap finalization, body-local DefMap finalization, and ordinary queries all need the same
+//! DefMap construction, body-local resolution, and ordinary queries all need the same
 //! lookup rules while reading from different storage. This module owns those shared rules:
 //! lexical/body lookup, module path lookup, import expansion, visibility filtering, and the small
 //! macro-namespace queries needed before macro-specific precedence is applied.
 //!
 //! The resolver does not own scopes. It reads through `ScopeResolutionEnv` and
-//! `CrateResolutionEnv`, so finalization can pass current fixed-point snapshots while frozen
+//! `CrateResolutionEnv`, so construction can pass current fixed-point snapshots while frozen
 //! queries read persisted DefMaps.
 
 use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathRoot};
@@ -74,8 +74,8 @@ impl ImportResolution {
 
 /// Applies name lookup rules over one abstract scope source.
 ///
-/// `ScopeResolver` is storage-agnostic on purpose. During finalization the environment can expose
-/// partial builders plus the current fixed-point scope snapshot; after finalization the same lookup
+/// `ScopeResolver` is storage-agnostic on purpose. During construction the environment can expose
+/// partial builders plus the current fixed-point scope snapshot; after freezing the same lookup
 /// code reads frozen DefMaps through `DefMapQuery`.
 pub struct ScopeResolver<'env, E: ?Sized> {
     env: &'env E,

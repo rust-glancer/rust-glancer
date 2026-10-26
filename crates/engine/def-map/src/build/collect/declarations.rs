@@ -23,7 +23,6 @@ use rg_parse::ModuleFileContext;
 use rg_text::Name;
 use rg_workspace::TargetKind;
 
-use super::CrateState;
 use crate::{
     GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
     ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
@@ -31,10 +30,10 @@ use crate::{
     ModuleScope, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
+        crates::CrateBuilder,
         macros::{
             GeneratedOrigin, ItemOrder, MacroCallOrigin, MacroCallPlacement, MacroCallSite,
-            MacroDefinitionRecord, MacroExpansionApplyResult, MacroUseImport,
-            PendingGeneratedModule,
+            MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
         },
     },
     profile::metric,
@@ -44,20 +43,21 @@ use crate::{
 ///
 /// `origin` keeps the diagnostic parent of newly queued calls. `dollar_crate` applies only to
 /// generated syntax: entering a real child file or included fragment gives its definitions their
-/// own crate again. Lookup and macro execution happen outside this collector.
+/// own crate again. Lookup and macro execution happen outside this collector. Collection reports
+/// whether it added declaration facts or queued calls, so the caller knows when imports need replay.
 pub(crate) struct DeclarationCollector<'a> {
-    state: &'a mut CrateState,
+    state: &'a mut CrateBuilder,
     item_tree: &'a ItemTreePackage,
     resolutions: &'a MacroSourceFileResolutions,
     origin: MacroCallOrigin,
     dollar_crate: Option<CrateRef>,
-    result: MacroExpansionApplyResult,
+    changed: bool,
     active_files: HashSet<FileId>,
 }
 
 impl<'a> DeclarationCollector<'a> {
     pub(crate) fn new(
-        state: &'a mut CrateState,
+        state: &'a mut CrateBuilder,
         item_tree: &'a ItemTreePackage,
         resolutions: &'a MacroSourceFileResolutions,
         origin: MacroCallOrigin,
@@ -69,7 +69,7 @@ impl<'a> DeclarationCollector<'a> {
             resolutions,
             origin,
             dollar_crate,
-            result: MacroExpansionApplyResult::default(),
+            changed: false,
             active_files: HashSet::new(),
         }
     }
@@ -80,7 +80,7 @@ impl<'a> DeclarationCollector<'a> {
         module: ModuleId,
         file: FileId,
         context: Arc<ModuleFileContext>,
-    ) -> Result<MacroExpansionApplyResult> {
+    ) -> Result<bool> {
         self.collect_file_items(
             module,
             file,
@@ -88,7 +88,7 @@ impl<'a> DeclarationCollector<'a> {
             MacroCallPlacement::ModuleItems,
             context,
         )?;
-        Ok(self.result)
+        Ok(self.changed)
     }
 
     /// Splice a real include at its invocation, keeping its source refs and placement.
@@ -99,7 +99,7 @@ impl<'a> DeclarationCollector<'a> {
         order: ItemOrder,
         placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
-    ) -> Result<MacroExpansionApplyResult> {
+    ) -> Result<bool> {
         self.collect_file_items(
             module,
             file,
@@ -107,7 +107,7 @@ impl<'a> DeclarationCollector<'a> {
             placement,
             context,
         )?;
-        Ok(self.result)
+        Ok(self.changed)
     }
 
     /// Splice a builtin-selected subset already lowered in a real file.
@@ -120,7 +120,7 @@ impl<'a> DeclarationCollector<'a> {
         order: ItemOrder,
         placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
-    ) -> Result<MacroExpansionApplyResult> {
+    ) -> Result<bool> {
         // This subset still belongs to the active file. A child module pointing back to that
         // file must not re-enter its full contents while this fragment is being collected.
         self.active_files.insert(file);
@@ -137,15 +137,15 @@ impl<'a> DeclarationCollector<'a> {
             placement,
             context,
         )?;
-        Ok(self.result)
+        Ok(self.changed)
     }
 
     pub(crate) fn collect_expansion(
         mut self,
         origin: GeneratedOrigin,
         generated_source: GeneratedSourceId,
-    ) -> Result<MacroExpansionApplyResult> {
-        self.result.mark_changed();
+    ) -> Result<bool> {
+        self.changed = true;
         let items = self
             .state
             .def_map_builder
@@ -169,7 +169,7 @@ impl<'a> DeclarationCollector<'a> {
             origin.placement,
             origin.module_file_context,
         )?;
-        Ok(self.result)
+        Ok(self.changed)
     }
 
     /// Complete only the deferred module declaration; its surrounding expansion was already collected.
@@ -259,7 +259,7 @@ impl<'a> DeclarationCollector<'a> {
             if !self.is_item_enabled(&item) {
                 continue;
             }
-            self.result.mark_changed();
+            self.changed = true;
             let order = order_for(index);
             match placement {
                 MacroCallPlacement::ModuleItems => {
