@@ -609,3 +609,37 @@ pub struct TokenStream;
         .entry("FromMacroUse")
         .assert_missing("ambiguous prelude macros should block later fallback lookup");
 }
+
+#[test]
+fn generated_extern_crate_preserves_aliases_and_macro_use() {
+    utils::check_project_path_resolution(
+        r#"
+//- /dep/src/lib.rs crate:dep root:dep
+pub struct Dependency;
+#[macro_export]
+macro_rules! declare { () => { pub struct Generated; }; }
+
+//- /app/src/lib.rs crate:app root:app deps:dep
+macro_rules! import_dep {
+    () => { #[macro_use] extern crate dep as api; };
+}
+import_dep!();
+
+mod child { pub use api::Dependency; }
+pub use child::Dependency;
+declare!();
+"#,
+        &[
+            utils::PathResolutionQuery::lib("app", "crate", "api::Dependency").types(),
+            utils::PathResolutionQuery::lib("app", "crate::child", "api::Dependency").types(),
+            utils::PathResolutionQuery::lib("app", "crate", "Dependency").types(),
+            utils::PathResolutionQuery::lib("app", "crate", "Generated").types(),
+        ],
+        expect![[r#"
+            app [lib] crate resolves api::Dependency [types] -> struct dep[lib]::crate::Dependency
+            app [lib] crate::child resolves api::Dependency [types] -> struct dep[lib]::crate::Dependency
+            app [lib] crate resolves Dependency [types] -> struct dep[lib]::crate::Dependency
+            app [lib] crate resolves Generated [types] -> struct app[lib]::crate::Generated
+        "#]],
+    );
+}

@@ -736,9 +736,9 @@ pub(super) fn finalize_scopes(
                 apply_pending_macro_source_files(
                     item_tree,
                     states,
-                    interners,
                     &macro_source_file_resolutions,
                 )?;
+                states.censor_proc_macro_exports();
 
                 // Even a missing result belongs to a batch that may have added other declarations.
                 // Drain both its generated calls and the newly loaded calls before refreshing

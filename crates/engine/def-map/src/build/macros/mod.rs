@@ -36,7 +36,6 @@ mod expand;
 mod generated;
 mod generated_tree;
 mod resolve;
-mod source_fragment;
 
 pub(super) use self::{
     attempts::{
@@ -46,7 +45,8 @@ pub(super) use self::{
     builtin_derive::BuiltinDeriveExpansion,
     expand::expand_expansion_attempts,
     generated::{
-        PendingGeneratedInclude, PendingGeneratedModule, apply_pending_macro_source_files,
+        GeneratedOrigin, PendingGeneratedInclude, PendingGeneratedModule,
+        apply_pending_macro_source_files,
     },
 };
 

@@ -119,3 +119,45 @@ fn proc_macro_target_exports_only_direct_proc_macros() {
         "#]],
     );
 }
+
+#[test]
+fn registers_proc_macros_from_written_included_and_generated_functions() {
+    let declarations = r#"
+#[proc_macro]
+pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }
+#[proc_macro_derive(Stored)]
+pub fn stored(input: proc_macro::TokenStream) -> proc_macro::TokenStream { input }
+"#;
+    let sources = [
+        declarations.to_owned(),
+        format!("include!(\"items.rs\");\n//- /macros/src/items.rs\n{declarations}"),
+        format!("macro_rules! definitions {{ () => {{ {declarations} }}; }} definitions!();"),
+    ];
+    for source in sources {
+        let fixture = format!(
+            r#"
+//- /macros/src/lib.rs crate:fixture_macros root:macros kind:proc-macro
+{source}
+//- /app/src/lib.rs crate:app root:app deps:fixture_macros
+use fixture_macros::{{emit, Stored}};
+"#
+        );
+        utils::check_project_path_resolution_with_fake_sysroot(
+            &fixture,
+            &[
+                PathResolutionQuery::lib("app", "crate", "fixture_macros::emit").macros(),
+                PathResolutionQuery::lib("app", "crate", "fixture_macros::Stored").macros(),
+                PathResolutionQuery::lib("app", "crate", "emit").macros(),
+                PathResolutionQuery::lib("app", "crate", "Stored").macros(),
+                PathResolutionQuery::proc_macro("fixture_macros", "crate", "emit").values(),
+            ],
+            expect![[r#"
+                app [lib] crate resolves fixture_macros::emit [macros] -> macro_definition fixture_macros[proc-macro]::crate::emit
+                app [lib] crate resolves fixture_macros::Stored [macros] -> macro_definition fixture_macros[proc-macro]::crate::Stored
+                app [lib] crate resolves emit [macros] -> macro_definition fixture_macros[proc-macro]::crate::emit
+                app [lib] crate resolves Stored [macros] -> macro_definition fixture_macros[proc-macro]::crate::Stored
+                fixture_macros [proc-macro] crate resolves emit [values] -> fn fixture_macros[proc-macro]::crate::emit
+            "#]],
+        );
+    }
+}

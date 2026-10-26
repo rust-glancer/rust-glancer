@@ -21,14 +21,14 @@ use rg_text::PackageNameInterners;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
-    generated::{GeneratedCollector, GeneratedOrigin, PendingGeneratedInclude},
+    generated::{GeneratedOrigin, PendingGeneratedInclude},
     resolve::ItemMacroResolver,
-    source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroSourceFileRequest,
     build::{
-        MacroSourceFileResolution, MacroSourceFileResolutions, collect::CrateState,
+        MacroSourceFileResolution, MacroSourceFileResolutions,
+        collect::{CrateState, DeclarationCollector},
         finalize::FinalizeCrateStates,
     },
     profile::metric,
@@ -187,20 +187,22 @@ pub(crate) fn apply_expansion_attempts(
                             attempt.crate_ref.package.0
                         )
                     })?;
-                let collected = SourceFragmentCollector {
+                let collected = DeclarationCollector::new(
                     state,
-                    item_tree: item_tree_package,
-                    origin: SourceFragmentOrigin {
-                        module: attempt.origin.module,
-                        order: attempt.origin.order,
+                    item_tree_package,
+                    macro_source_file_resolutions,
+                    super::MacroCallOrigin::Generated {
                         parent_call: attempt.call_id,
-                        placement: attempt.origin.placement,
-                        module_file_context: attempt.origin.module_file_context,
                     },
-                    result: MacroExpansionApplyResult::default(),
-                    active_files: Default::default(),
-                }
-                .collect_file(file_id);
+                    None,
+                )
+                .collect_file(
+                    attempt.origin.module,
+                    file_id,
+                    attempt.origin.order,
+                    attempt.origin.placement,
+                    attempt.origin.module_file_context,
+                );
                 let directive_state = match collected {
                     Ok(collected) => {
                         result.merge(collected);
@@ -222,20 +224,23 @@ pub(crate) fn apply_expansion_attempts(
                             attempt.crate_ref.package.0
                         )
                     })?;
-                let collected = SourceFragmentCollector {
+                let collected = DeclarationCollector::new(
                     state,
-                    item_tree: item_tree_package,
-                    origin: SourceFragmentOrigin {
-                        module: attempt.origin.module,
-                        order: attempt.origin.order,
+                    item_tree_package,
+                    macro_source_file_resolutions,
+                    super::MacroCallOrigin::Generated {
                         parent_call: attempt.call_id,
-                        placement: attempt.origin.placement,
-                        module_file_context: attempt.origin.module_file_context,
                     },
-                    result: MacroExpansionApplyResult::default(),
-                    active_files: Default::default(),
-                }
-                .collect_fragment(file_id, &items);
+                    None,
+                )
+                .collect_fragment(
+                    attempt.origin.module,
+                    file_id,
+                    &items,
+                    attempt.origin.order,
+                    attempt.origin.placement,
+                    attempt.origin.module_file_context,
+                );
                 let directive_state = match collected {
                     Ok(collected) => {
                         result.merge(collected);
@@ -263,15 +268,14 @@ pub(crate) fn apply_expansion_attempts(
                     attempt.crate_ref.package.0
                 )
             })?;
-        let collected = GeneratedCollector {
+        let collected = attempt.origin.collect_syntax(
             state,
             interner,
             item_tree,
             macro_source_file_resolutions,
-            origin: attempt.origin,
-            result: MacroExpansionApplyResult::default(),
-        }
-        .collect_syntax(syntax, macro_name.as_deref());
+            syntax,
+            macro_name.as_deref(),
+        );
         let directive_state = match collected {
             Ok(collected) => {
                 result.merge(collected);
@@ -294,11 +298,11 @@ pub(crate) struct MacroExpansionApplyResult {
 }
 
 impl MacroExpansionApplyResult {
-    pub(super) fn mark_changed(&mut self) {
+    pub(crate) fn mark_changed(&mut self) {
         self.changed = true;
     }
 
-    pub(super) fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         self.changed |= other.changed;
     }
 }
