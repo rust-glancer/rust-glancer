@@ -59,7 +59,7 @@ pub(super) struct CrateState {
     pub(super) target_kind: TargetKind,
     /// Package-local files available to context-sensitive module traversal.
     ///
-    /// Resumable finalization refreshes this construction-only map after the project adds late
+    /// Construction refreshes this map after the source loader adds late
     /// source files. Frozen DefMaps retain only the selected `definition_file` ids.
     pub(super) known_module_files: Arc<KnownModuleFiles>,
     pub(super) def_map_builder: DefMapBuilder,
@@ -70,12 +70,12 @@ pub(super) struct CrateState {
     pub(super) textual_macro_scopes: TextualMacroScopes,
     pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
-    /// Requests emitted by the latest finalization step and cleared before the next resume.
+    /// Requests from the latest expansion batch, cleared after source loading.
     pub(super) macro_source_file_requests: Vec<MacroSourceFileRequest>,
     /// Generated module declarations waiting for the project boundary to capture their files.
     ///
     /// The surrounding macro has already been expanded and collected. Keeping this small
-    /// continuation lets construction resume without replaying that expansion or duplicating the
+    /// pending operation lets collection finish without replaying that expansion or duplicating the
     /// other items it produced.
     pub(super) pending_generated_modules: Vec<PendingGeneratedModule>,
     /// Builtin includes waiting for the project boundary to capture their source files.

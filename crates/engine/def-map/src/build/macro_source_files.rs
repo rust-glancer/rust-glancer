@@ -1,4 +1,4 @@
-//! Construction-only handshake for real files discovered after macro expansion.
+//! Source loading for real files discovered after macro expansion.
 //!
 //! Most expanded items can enter DefMap immediately because their complete syntax is in the macro
 //! output. Two useful examples explain why that is not always enough:
@@ -10,15 +10,14 @@
 //!
 //! The first expansion names a child file but does not contain it. The second names a file left by
 //! a Cargo build script. In both cases DefMap understands what the Rust construct means, but the
-//! project layer owns path lookup, source capture, and ItemTree lowering. DefMap therefore emits a
-//! [`MacroSourceFileRequest`], retains the exact semantic continuation, and pauses. The project
-//! loads or rejects a complete request batch, then resumes the same mutable
-//! [`crate::DefMapBuildSession`].
+//! project layer owns path lookup, source capture, and ItemTree lowering. DefMap calls an injected
+//! [`MacroSourceFileLoader`] with a complete request batch, then collects the loaded files before
+//! continuing its macro queue. Semantic state stays on the construction call stack during loading.
 //!
-//! The shared handshake should not hide the semantic difference between the examples. A `mod`
+//! The shared loading boundary should not hide the semantic difference between the examples. A `mod`
 //! answer creates a child module and supplies its new file-resolution context. An `include!`
 //! answer splices items from a real file into the caller's existing module and keeps the caller's
-//! module context. Requests and continuations are construction details and do not survive in the
+//! module context. Requests and pending collection are construction details and do not survive in the
 //! immutable DefMap.
 //!
 //! A “macro source file” is the real file at the far end of one of these edges. This keeps it
@@ -28,14 +27,28 @@
 use std::{collections::HashMap, sync::Arc};
 
 use rg_ir_model::{FileId, PackageSlot};
-use rg_item_tree::IncludePathExpression;
-use rg_parse::ModuleFileContext;
+use rg_item_tree::{IncludePathExpression, ItemTreeDb};
+use rg_parse::{ModuleFileContext, ParseDb};
+use rg_text::PackageNameInterners;
 
-use crate::DefMapBuildOutput;
+/// Captures and lowers a complete batch of real files needed by macro expansion.
+///
+/// Return one resolution per request, in the same order. A found file must already be captured in
+/// Parse and lowered in ItemTree under the requested module context. This boundary owns source
+/// access only; name resolution and collection remain inside DefMap construction.
+pub trait MacroSourceFileLoader {
+    fn load_files(
+        &mut self,
+        parse: &mut ParseDb,
+        item_tree: &mut ItemTreeDb,
+        interners: &mut PackageNameInterners,
+        requests: &[MacroSourceFileRequest],
+    ) -> anyhow::Result<Vec<MacroSourceFileResolution>>;
+}
 
 /// One coalesced project-layer lookup requested while DefMap is collecting expanded syntax.
 ///
-/// Request identity contains everything needed to repeat the lookup after a pause. Equal requests
+/// Request identity contains everything needed for source lookup. Equal requests
 /// can share one answer even when more than one expansion reached them.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MacroSourceFileRequest {
@@ -123,11 +136,10 @@ impl MacroSourceFileRequest {
 /// Settled project-layer result for one macro source-file request.
 ///
 /// Absence from the surrounding map means that the project has not handled the request yet.
-/// [`MacroSourceFileResolution::Missing`] means the lookup did finish but no usable source exists;
-/// that distinction lets a session reject incomplete request batches instead of silently moving
-/// past work that its caller forgot to perform.
+/// [`MacroSourceFileResolution::Missing`] means the lookup did finish but no usable source exists.
+/// Construction retains these results to coalesce repeated requests across expansion batches.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum MacroSourceFileResolution {
+pub enum MacroSourceFileResolution {
     /// A generated `mod` file plus the context for resolving children inside that module.
     Module {
         file_id: FileId,
@@ -139,14 +151,6 @@ pub(crate) enum MacroSourceFileResolution {
     Missing,
 }
 
-/// Resolutions retained by one mutable DefMap construction session.
+/// Resolutions retained during one synchronous DefMap build.
 pub(crate) type MacroSourceFileResolutions =
     HashMap<MacroSourceFileRequest, MacroSourceFileResolution>;
-
-/// One step of resumable DefMap construction.
-pub enum DefMapBuildProgress {
-    /// Construction paused until the project loads or rejects these macro source files.
-    NeedsMacroSourceFiles(Vec<MacroSourceFileRequest>),
-    /// Every macro source-file request has been resolved and the immutable snapshot is complete.
-    Complete(DefMapBuildOutput),
-}

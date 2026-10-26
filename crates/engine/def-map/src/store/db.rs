@@ -3,15 +3,13 @@
 use std::sync::Arc;
 
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_std::{MemorySize, Shrink};
-use rg_text::PackageNameInterners;
 use rg_workspace::{PackageOrigin, WorkspaceMetadata};
 
 use crate::{
-    DefMap, DefMapBuildSession, DefMapLoader, DefMapReadTxn, MacroExpansionLimitReport,
-    MacroExpansionPerformancePreference, PackageDefMaps, PackageDefMapsManifest,
+    DefMap, DefMapLoader, DefMapReadTxn, MacroExpansionLimitReport, PackageDefMaps,
+    PackageDefMapsManifest,
 };
 
 /// Frozen DefMaps for all parsed packages and semantic crates.
@@ -25,35 +23,6 @@ pub struct DefMapDb {
 }
 
 impl DefMapDb {
-    /// Starts replacing selected packages while retaining state across generated-source pauses.
-    ///
-    /// Reallocate frozen payloads when they will stay decoded after construction. Results headed
-    /// straight to a package artifact do not need that extra copy.
-    #[allow(clippy::too_many_arguments)]
-    pub fn start_package_build(
-        &self,
-        baseline_read: &DefMapReadTxn<'_>,
-        workspace: &WorkspaceMetadata,
-        parse: &rg_parse::ParseDb,
-        item_tree: &ItemTreeDb,
-        packages: &[PackageSlot],
-        reallocate_payloads: bool,
-        interners: &mut PackageNameInterners,
-        performance_preference: MacroExpansionPerformancePreference,
-    ) -> anyhow::Result<DefMapBuildSession> {
-        DefMapBuildSession::start(
-            self,
-            baseline_read,
-            workspace,
-            parse,
-            item_tree,
-            packages,
-            reallocate_payloads,
-            interners,
-            performance_preference,
-        )
-    }
-
     /// Builds the offloaded baseline used before selected source packages are replaced.
     ///
     /// Cache hits retain their compact directories. Source-built packages use `None` because

@@ -16,8 +16,8 @@
 //! Most generated items can be spliced immediately. A generated `mod child;` still needs its child
 //! file, while a generated `include!(...)` needs a real file whose items retain the include call's
 //! placement. For those two source edges, the collector keeps the corresponding semantic
-//! continuation and emits a project-owned lookup request. Project construction captures and lowers
-//! the file, then resumes this same expansion/finalization session.
+//! pending operation and emits a source request. The injected loader captures and lowers the file
+//! before construction continues the same macro queue.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -377,7 +377,7 @@ pub(super) struct MacroCallSite {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
-    /// Destination retained by nested calls and source-backed continuations.
+    /// Destination retained by nested calls and pending source collection.
     pub(super) placement: MacroCallPlacement,
     /// Logical filesystem base inherited by declarations emitted from this call.
     pub(super) module_file_context: Arc<ModuleFileContext>,

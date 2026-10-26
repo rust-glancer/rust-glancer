@@ -85,7 +85,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // workspace at once. Saved package rebuilds are usually smaller, so avoid adding extra
     // def-map/body purges to this path.
     // Keep Parse and ItemTree mutable until macro source-file requests stop adding files. This uses
-    // the same coordinator as fresh construction for both macro-generated modules and generated
+    // the same source loader as fresh construction for both macro-generated modules and generated
     // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
     // Early-start declarations stay decoded until Body IR is durable. Full builds only need
@@ -93,19 +93,20 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     let reallocate_payloads = state
         .split_indexing_mode
         .reallocate_payloads(state.package_residency_policy);
-    let def_map_output = macro_source_files::build_packages(
-        &state.def_map,
-        &old_def_map_txn,
-        &state.workspace,
-        Arc::make_mut(&mut state.parse),
-        &mut item_tree,
-        &packages,
-        reallocate_payloads,
-        &mut state.names,
-        state.indexing_preference.macro_expansion_preference(),
-        memory_hooks.as_ref(),
-    )
-    .context("while attempting to rebuild affected def-map packages")?;
+    let def_map_output = state
+        .def_map
+        .build_packages(
+            &old_def_map_txn,
+            &state.workspace,
+            Arc::make_mut(&mut state.parse),
+            &mut item_tree,
+            packages.as_slice(),
+            reallocate_payloads,
+            &mut state.names,
+            state.indexing_preference.macro_expansion_preference(),
+            &mut macro_source_files::MacroSourceFileLoader::new(&packages, memory_hooks.as_ref()),
+        )
+        .context("while attempting to rebuild affected def-map packages")?;
     let (def_map, generated_items) = def_map_output.into_parts();
     drop(old_def_map_txn);
     // The selected package file tables now contain only sources reachable from this rebuild,

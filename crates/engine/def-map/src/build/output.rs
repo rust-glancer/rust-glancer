@@ -1,4 +1,4 @@
-//! Outputs of one selected-package DefMap construction session.
+//! Outputs of one selected-package DefMap build.
 //!
 //! Frozen DefMap data and generated declaration payloads deliberately have different lifetimes.
 //! The former becomes saved project state. The latter exists only long enough for Semantic IR to
@@ -11,7 +11,7 @@ use rg_std::MemorySize;
 
 use crate::{DefMapDb, GeneratedItemStore};
 
-/// Generated declaration stores for the crates rebuilt by one DefMap session.
+/// Generated declaration stores for the crates rebuilt by one DefMap build.
 #[derive(Debug, Clone, Default, MemorySize)]
 pub struct GeneratedItemStores {
     crates: HashMap<CrateRef, GeneratedItemStore>,

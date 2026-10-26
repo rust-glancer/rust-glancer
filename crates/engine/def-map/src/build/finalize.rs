@@ -6,10 +6,9 @@
 //! back into the crate payloads. During package builds, selected package reads come from fresh
 //! crate states while other package reads fall through to the frozen baseline.
 //!
-//! Resumable package finalization can pause after a generated macro asks for an out-of-line module
-//! file. The project grows Parse and ItemTree, then calls this fixed-point machinery again with the
-//! source resolution; the macro runtime, expansion budget, mutable crate states, and settled scopes
-//! survive the pause.
+//! Generated modules and includes can require more real source files. An injected loader grows
+//! Parse and ItemTree between expansion batches while scopes, runtimes, and budgets stay on the
+//! construction stack.
 
 use std::sync::Arc;
 
@@ -20,7 +19,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
-use rg_parse::Package;
+use rg_parse::{Package, ParseDb};
 use rg_std::UniqueVec;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::{PackageOrigin, SysrootCrate, TargetKind, WorkspaceMetadata};
@@ -39,7 +38,8 @@ use super::{
 use crate::{
     CrateData, CrateResolutionEnv, DefMapReadTxn, GeneratedItemStores, LocalDefData,
     LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView,
-    MacroExpansionLimitReport, MacroSourceFileRequest, ModuleData, ModuleScopeBuilder, Namespace,
+    MacroExpansionLimitReport, MacroSourceFileLoader, MacroSourceFileRequest,
+    MacroSourceFileResolution, ModuleData, ModuleScopeBuilder, Namespace,
     PackageDefMaps as DefMapPackage, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv,
     ScopeResolver,
     profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
@@ -120,7 +120,7 @@ impl FinalizeCrateStates {
             })
     }
 
-    /// Clears requests emitted by the previous resumable construction step.
+    /// Clears the source batch after the loader has supplied its results.
     pub(super) fn clear_macro_source_file_requests(&mut self) {
         for package_states in self.iter_dirty_mut() {
             for state in package_states {
@@ -167,43 +167,6 @@ impl FinalizeCrateStates {
     fn base_scopes(&self) -> ScopeMatrix {
         ScopeMatrix::from_crate_states(self)
     }
-}
-
-/// Fixed-point machinery retained across project-owned source discovery pauses.
-///
-/// The expansion pass budget, macro runtime, and exact macro-worklist continuation survive every
-/// pause. Late source discovery therefore cannot reset the recursion guard, recompile macros
-/// already handled before a file request was emitted, or restart global import resolution merely
-/// because the project had to capture another source file.
-pub(super) struct FinalizeScopeSession {
-    macro_runtime: MacroExpansionRuntime,
-    import_executor: ImportResolutionExecutor,
-    /// Keeps profile run labels increasing across source-discovery pauses in this session.
-    import_resolution_runs: usize,
-    expansion_passes: usize,
-    continuation: Option<MacroExpansionContinuation>,
-}
-
-impl FinalizeScopeSession {
-    pub(super) fn new(performance_preference: MacroExpansionPerformancePreference) -> Self {
-        Self {
-            macro_runtime: MacroExpansionRuntime::new(performance_preference),
-            import_executor: ImportResolutionExecutor::new(performance_preference),
-            import_resolution_runs: 0,
-            expansion_passes: 0,
-            continuation: None,
-        }
-    }
-}
-
-/// The point immediately after an expansion batch requested project-owned source files.
-///
-/// The project may need several sequential source waves before the macro queue drains. Keeping the
-/// scopes and scan cursor from the requesting batch lets each loaded module join that same queue;
-/// imports are refreshed only after the cheap expansion chain can no longer continue.
-struct MacroExpansionContinuation {
-    current_scopes: ScopeMatrix,
-    next_scan_cursors: MacroExpansionCursors,
 }
 
 /// Import-resolution scopes for dirty packages.
@@ -736,76 +699,60 @@ pub(super) fn select_preludes(
 /// splice generated items back into the mutable crate states, and refresh imports whenever those
 /// generated items may have introduced new imports or exported names.
 ///
-/// At the start of a resumed call, resolved generated modules and includes are applied to the scope
-/// snapshot retained by the requesting macro batch. The newly collected calls then continue
-/// against that same snapshot. An unresolved source records a request and suspends finalization
-/// before another global import pass; freezing happens only after every request has been answered
-/// and the ordinary fixed point is stable.
-///
-/// Concretely, `make_module!() -> mod generated;` resumes by allocating the child module and
-/// collecting its file. `make_bindings!() -> include!(...)` resumes by inserting the included
-/// file's declarations into the call-site module. Neither answer restarts the macro expansion or
-/// the workspace-wide import state that preceded it.
+/// Source discovery happens inside the requesting macro batch. After loading, collect the real
+/// module/include into the same scopes and continue calls appended since before that batch. Import
+/// refresh waits until that queue drains, just as it does for directly generated declarations.
 pub(super) fn finalize_scopes(
     old: Option<&DefMapReadTxn<'_>>,
-    item_tree: &ItemTreeDb,
+    parse: &mut ParseDb,
+    item_tree: &mut ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
-    session: &mut FinalizeScopeSession,
-    macro_source_file_resolutions: Option<&MacroSourceFileResolutions>,
+    performance_preference: MacroExpansionPerformancePreference,
+    source_loader: &mut impl MacroSourceFileLoader,
 ) -> anyhow::Result<()> {
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
-    // A resumed build continues the macro pass that emitted the source request. A fresh build has
-    // no such pass, so it starts by resolving imports over directly collected declarations.
-    let (mut current_scopes, mut resumed_macro_pass) = match session.continuation.take() {
-        Some(MacroExpansionContinuation {
-            current_scopes,
-            next_scan_cursors,
-        }) => (current_scopes, Some(next_scan_cursors)),
-        None => (states.base_scopes(), None),
-    };
-
-    // The surrounding macro was collected before its real source became available. Apply the
-    // answered module/include before resuming its macro queue so declarations and calls from the
-    // loaded file are visible without an intervening workspace-wide import pass.
-    apply_pending_macro_source_files(
-        item_tree,
-        states,
-        interners,
-        &mut current_scopes,
-        macro_source_file_resolutions,
-    )?;
-    let mut current_unresolved_imports = None;
+    // One call owns the complete fixed point. Loading files cannot reset the expansion budget or
+    // discard compiled macros, import workers, or the scopes already produced by this build.
+    let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
+    let mut import_executor = ImportResolutionExecutor::new(performance_preference);
+    let mut import_resolution_runs = 0;
+    let mut expansion_passes = 0;
+    let mut macro_source_file_resolutions = MacroSourceFileResolutions::default();
+    let mut current_scopes = states.base_scopes();
 
     loop {
-        // Source capture resumes inside a macro pass. Every other iteration starts a normal fixed-
-        // point round by settling imports over all declarations collected so far.
-        let (mut next_scan_cursors, mut needs_import_refresh) =
-            if let Some(scan_cursors) = resumed_macro_pass.take() {
-                // Even a missing answer belongs to an expansion that may have added other imports or
-                // declarations. Continue new macro calls first, but require one import refresh before
-                // treating the retained scopes as stable.
-                (Some(scan_cursors), true)
-            } else {
-                metric::ROUNDS.inc();
-                let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
-                timer.finish();
-                current_scopes = resolved.scopes;
-                current_unresolved_imports = Some(resolved.unresolved_imports);
-                (None, false)
-            };
+        metric::ROUNDS.inc();
+        let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
+        let resolved = resolve_import_scopes(
+            old,
+            states,
+            &mut import_executor,
+            &mut import_resolution_runs,
+            current_scopes,
+        )?;
+        timer.finish();
+        current_scopes = resolved.scopes;
+        let mut current_unresolved_imports = Some(resolved.unresolved_imports);
+        let mut next_scan_cursors = None;
+        let mut needs_import_refresh = false;
 
         // Macro expansion can introduce more macro calls that are visible in the same scope
         // snapshot. Keep consuming that local queue before paying for another full import pass.
         loop {
-            if session.expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
+            if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
                 // Stop expanding but still freeze a coherent def-map. The final import refresh lets
                 // names generated before the cap settle into module scopes.
                 mark_retryable_macros_skipped_by_limit(states);
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                let resolved = resolve_import_scopes(old, states, session, current_scopes)?;
+                let resolved = resolve_import_scopes(
+                    old,
+                    states,
+                    &mut import_executor,
+                    &mut import_resolution_runs,
+                    current_scopes,
+                )?;
                 timer.finish();
                 freeze_resolved_scopes(
                     old,
@@ -818,7 +765,7 @@ pub(super) fn finalize_scopes(
                 return Ok(());
             }
 
-            session.expansion_passes += 1;
+            expansion_passes += 1;
             metric::EXPANSION_PASSES.inc();
 
             let timer = metric::TIMING_COLLECT_EXPANSION_ATTEMPTS.start_timer();
@@ -835,8 +782,8 @@ pub(super) fn finalize_scopes(
                     &env,
                     states,
                     scan,
-                    &mut session.macro_runtime,
-                    macro_source_file_resolutions,
+                    &mut macro_runtime,
+                    &macro_source_file_resolutions,
                 )?
             };
             timer.finish();
@@ -847,7 +794,7 @@ pub(super) fn finalize_scopes(
             {
                 // The runtime owns the worker pool and creates it lazily, so projects without
                 // expandable declarative macros do not pay its setup cost.
-                expand_expansion_attempts(&mut session.macro_runtime, &mut expansion_attempts)?;
+                expand_expansion_attempts(&mut macro_runtime, &mut expansion_attempts)?;
             }
 
             let scan_cursors_before_apply = MacroExpansionCursors::capture(states);
@@ -864,7 +811,7 @@ pub(super) fn finalize_scopes(
                     interners,
                     &mut current_scopes,
                     expansion_attempts,
-                    macro_source_file_resolutions,
+                    &macro_source_file_resolutions,
                 )?
             };
             timer.finish();
@@ -877,21 +824,53 @@ pub(super) fn finalize_scopes(
                 current_scopes.censor_proc_macro_exports(states);
             }
 
-            // A macro source-file request is an external source-loading effect, not a fixed-point
-            // boundary. Retain the exact post-batch state and return immediately; after Project
-            // supplies the files, calls appended by both the expansion and those files resume from
-            // the pre-batch cursor.
-            let needs_macro_source_files = states.iter_dirty().any(|package_states| {
-                package_states
-                    .iter()
-                    .any(|state| !state.macro_source_file_requests.is_empty())
-            });
-            if needs_macro_source_files {
-                session.continuation = Some(MacroExpansionContinuation {
-                    current_scopes,
-                    next_scan_cursors: scan_cursors_before_apply,
-                });
-                return Ok(());
+            // All lookup and item borrows have ended before the loader can grow Parse/ItemTree.
+            // Complete this batch before collecting real source into the requesting scopes.
+            let requests = states.macro_source_file_requests();
+            if !requests.is_empty() {
+                let resolutions = source_loader
+                    .load_files(parse, item_tree, interners, &requests)
+                    .context("load macro source files")?;
+                anyhow::ensure!(
+                    resolutions.len() == requests.len(),
+                    "macro source loader must return one result per request",
+                );
+                for (request, resolution) in requests.into_iter().zip(resolutions) {
+                    anyhow::ensure!(
+                        matches!(
+                            (&request, &resolution),
+                            (_, MacroSourceFileResolution::Missing)
+                                | (
+                                    MacroSourceFileRequest::Module { .. },
+                                    MacroSourceFileResolution::Module { .. }
+                                )
+                                | (
+                                    MacroSourceFileRequest::Include { .. },
+                                    MacroSourceFileResolution::Include { .. }
+                                )
+                        ),
+                        "macro source loader returned the wrong file kind for {}",
+                        request.description(),
+                    );
+                    macro_source_file_resolutions.insert(request, resolution);
+                }
+                states.clear_macro_source_file_requests();
+                states.refresh_known_module_files(parse.packages(), item_tree);
+                apply_pending_macro_source_files(
+                    item_tree,
+                    states,
+                    interners,
+                    &mut current_scopes,
+                    &macro_source_file_resolutions,
+                )?;
+
+                // Even a missing result belongs to a batch that may have added other declarations.
+                // Drain both its generated calls and the newly loaded calls before refreshing
+                // imports, then require matching import reports before anything can freeze.
+                current_unresolved_imports = None;
+                needs_import_refresh = true;
+                next_scan_cursors = Some(scan_cursors_before_apply);
+                continue;
             }
 
             if expansion.changed {
@@ -945,12 +924,13 @@ struct ResolvedImportScopes {
 fn resolve_import_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     states: &FinalizeCrateStates,
-    session: &mut FinalizeScopeSession,
+    import_executor: &mut ImportResolutionExecutor,
+    import_resolution_runs: &mut usize,
     mut current_scopes: ScopeMatrix,
 ) -> anyhow::Result<ResolvedImportScopes> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
-    session.import_resolution_runs += 1;
-    let run_index = session.import_resolution_runs;
+    *import_resolution_runs += 1;
+    let run_index = *import_resolution_runs;
     let mut pass_index = 0;
     let mut worklist = ImportWorklist::new(states);
 
@@ -963,8 +943,7 @@ fn resolve_import_scopes(
         // next wave; otherwise the result would depend on which worker happened to finish first.
         let updates = {
             let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
-            session
-                .import_executor
+            import_executor
                 .apply_wave(&worklist, states, &env)
                 .context("while attempting to resolve import wave")?
         };
@@ -1075,7 +1054,7 @@ pub(super) fn freeze_package(
 
     // Split each builder by moving its frozen DefMap into the package and its generated syntax into
     // the transient phase output. This avoids both cloning the expansion arena and materializing an
-    // intermediate collection that the session would immediately consume.
+    // intermediate collection that the caller would immediately consume.
     for state in package_states {
         if let Some(report) = &state.macro_expansion_limit {
             macro_expansion_limits.push(MacroExpansionLimitReport {

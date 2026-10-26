@@ -4,12 +4,12 @@
 //! preludes, and imports are fully known. Selected packages receive fresh mutable `CrateState`s;
 //! resolution reads every other package from the frozen baseline.
 //!
-//! Construction is resumable because macro expansion can reveal real files after the initial
-//! Parse/ItemTree pass. For example, expanded syntax may contain `mod generated;` or an
+//! Macro expansion can reveal real files after the initial Parse/ItemTree pass. For example,
+//! expanded syntax may contain `mod generated;` or an
 //! `include!(concat!(env!("OUT_DIR"), "/bindings.rs"))`. DefMap knows how those constructs affect
 //! modules and scopes, but source capture belongs to the project layer.
-//! `DefMapDb::start_package_build` therefore collects selected package state once, then the project
-//! alternates source discovery with session advances until the fixed point can be frozen.
+//! `DefMapDb::build_packages` collects selected package state once and calls an injected source
+//! loader between expansion batches until the fixed point can be frozen.
 
 mod collect;
 mod finalize;
@@ -18,11 +18,12 @@ mod imports;
 mod macro_source_files;
 mod macros;
 mod output;
-mod session;
+mod packages;
 
-pub(crate) use self::macro_source_files::{MacroSourceFileResolution, MacroSourceFileResolutions};
+pub(crate) use self::macro_source_files::MacroSourceFileResolutions;
 pub use self::{
-    macro_source_files::{DefMapBuildProgress, MacroSourceFileRequest},
+    macro_source_files::{
+        MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
+    },
     output::{DefMapBuildOutput, GeneratedItemStores},
-    session::DefMapBuildSession,
 };

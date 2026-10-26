@@ -164,23 +164,24 @@ pub(super) fn build(
         DefMapDb::from_offloaded_manifests(std::mem::take(&mut build_plan.def_map_manifests));
     let baseline_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-    // Macro expansion may now request an out-of-line module or include. Keep Parse and ItemTree
-    // mutable while the coordinator answers complete batches and resumes the same DefMap
-    // construction state. The coordinator preserves the semantic difference: modules receive a
-    // child context, while includes keep the call-site module context.
-    let def_map_output = macro_source_files::build_packages(
-        &baseline_def_map,
-        &baseline_def_map_txn,
-        workspace,
-        &mut parse,
-        &mut item_tree,
-        &build_plan.source_packages,
-        reallocate_payloads,
-        &mut names,
-        indexing_preference.macro_expansion_preference(),
-        memory_hooks,
-    )
-    .context("while attempting to build def map db")?;
+    // DefMap owns the complete fixed point. Its loader captures and lowers files at expansion
+    // batch boundaries while preserving module/include contexts and source validation.
+    let def_map_output = baseline_def_map
+        .build_packages(
+            &baseline_def_map_txn,
+            workspace,
+            &mut parse,
+            &mut item_tree,
+            build_plan.source_packages.as_slice(),
+            reallocate_payloads,
+            &mut names,
+            indexing_preference.macro_expansion_preference(),
+            &mut macro_source_files::MacroSourceFileLoader::new(
+                &build_plan.source_packages,
+                memory_hooks,
+            ),
+        )
+        .context("while attempting to build def map db")?;
     let (def_map, generated_items) = def_map_output.into_parts();
     drop(baseline_def_map_txn);
 

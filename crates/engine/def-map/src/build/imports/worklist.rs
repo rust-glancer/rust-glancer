@@ -307,7 +307,7 @@ impl ModuleImportUpdate {
 /// Small waves stay sequential because dispatch costs more than the work. Large waves may run in
 /// parallel because every job reads the same snapshot and returns an owned candidate. Each worker
 /// temporarily owns one rebuilt scope, so lower-peak-memory mode limits the pool to two workers.
-/// The pool lives only as long as the finalization session.
+/// The pool lives only as long as scope construction.
 pub(crate) struct ImportResolutionExecutor {
     performance_preference: MacroExpansionPerformancePreference,
     thread_pool: Option<rayon::ThreadPool>,

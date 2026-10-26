@@ -66,7 +66,7 @@ impl PackageBatchSchedule {
 
             // Building the complete unresolved remainder together keeps the cycle's crate roots
             // and any dependents waiting on them visible, matching the ordinary all-package DefMap
-            // session. This final batch may therefore be larger than the configured size.
+            // build. This final batch may therefore be larger than the configured size.
             let cycle_blocked = source_packages
                 .iter()
                 .filter(|package| pending.get(package.0).copied().unwrap_or(false))

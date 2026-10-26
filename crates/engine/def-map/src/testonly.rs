@@ -6,8 +6,8 @@ use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, Workspac
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    DefMap, DefMapBuildOutput, DefMapBuildProgress, DefMapDb, GeneratedItemStores,
-    MacroExpansionPerformancePreference,
+    DefMap, DefMapBuildOutput, DefMapDb, GeneratedItemStores, MacroExpansionPerformancePreference,
+    MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
 };
 
 /// End-to-end fixture for tests that need name resolution data.
@@ -62,14 +62,10 @@ impl DefMapFixture {
     }
 
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
-        let item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
+        let mut item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
         let mut names = PackageNameInterners::new(item_tree.parse_db().package_count());
-        let output = build_source_closed_def_map(
-            &workspace,
-            item_tree.parse_db(),
-            item_tree.item_tree_db(),
-            &mut names,
-        );
+        let (parse, trees) = item_tree.build_inputs_mut();
+        let output = build_source_closed_def_map(&workspace, parse, trees, &mut names);
         let (def_map, generated_items) = output.into_parts();
 
         Self {
@@ -159,14 +155,29 @@ impl DefMapFixture {
     }
 }
 
-/// Builds lower-layer fixtures through the same resumable DefMap session used by the project.
-///
-/// These fixtures have no project source coordinator. Their source set must therefore be closed
-/// after ItemTree lowering; generated out-of-line module discovery belongs in project fixtures.
+/// Lower-layer fixtures keep their source set closed after ItemTree lowering.
+/// Generated file-discovery behavior belongs in project fixtures with a real source loader.
+pub(crate) struct SourceClosedMacroSourceFileLoader;
+
+impl MacroSourceFileLoader for SourceClosedMacroSourceFileLoader {
+    fn load_files(
+        &mut self,
+        _parse: &mut ParseDb,
+        _item_tree: &mut ItemTreeDb,
+        _names: &mut PackageNameInterners,
+        requests: &[MacroSourceFileRequest],
+    ) -> anyhow::Result<Vec<MacroSourceFileResolution>> {
+        anyhow::bail!(
+            "fixture requested {} macro source file(s); use an rg_project fixture for source-discovery behavior",
+            requests.len(),
+        );
+    }
+}
+
 pub(crate) fn build_source_closed_def_map(
     workspace: &WorkspaceMetadata,
-    parse: &ParseDb,
-    item_tree: &ItemTreeDb,
+    parse: &mut ParseDb,
+    item_tree: &mut ItemTreeDb,
     names: &mut PackageNameInterners,
 ) -> DefMapBuildOutput {
     let package_count = parse.package_count();
@@ -175,8 +186,8 @@ pub(crate) fn build_source_closed_def_map(
         "source-closed DefMap fixture",
     ));
     let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
-    let mut session = baseline
-        .start_package_build(
+    baseline
+        .build_packages(
             &baseline_read,
             workspace,
             parse,
@@ -185,17 +196,7 @@ pub(crate) fn build_source_closed_def_map(
             true,
             names,
             MacroExpansionPerformancePreference::default(),
+            &mut SourceClosedMacroSourceFileLoader,
         )
-        .expect("fixture DefMap session should start");
-
-    match session
-        .advance(&baseline_read, parse, item_tree, names)
-        .expect("fixture DefMap session should advance")
-    {
-        DefMapBuildProgress::Complete(output) => output,
-        DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
-            "fixture requested {} macro source file(s); use an rg_project fixture for source-discovery behavior",
-            requests.len(),
-        ),
-    }
+        .expect("fixture DefMap should build")
 }

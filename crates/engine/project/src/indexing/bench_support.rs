@@ -47,19 +47,22 @@ pub fn build_def_map(
     );
 
     // The benchmark retains decoded phase data, so move it out of build-temporary allocations.
-    macro_source_files::build_packages(
-        &baseline,
-        &baseline_read,
-        workspace,
-        parse,
-        item_tree,
-        &source_packages,
-        true,
-        names,
-        IndexingPerformancePreference::default().macro_expansion_preference(),
-        &NoopProjectMemoryHooks,
-    )
-    .context("while attempting to build benchmark DefMap through project coordination")
+    baseline
+        .build_packages(
+            &baseline_read,
+            workspace,
+            parse,
+            item_tree,
+            source_packages.as_slice(),
+            true,
+            names,
+            IndexingPerformancePreference::default().macro_expansion_preference(),
+            &mut macro_source_files::MacroSourceFileLoader::new(
+                &source_packages,
+                &NoopProjectMemoryHooks,
+            ),
+        )
+        .context("while attempting to build benchmark DefMap")
 }
 
 /// Builds Semantic IR for every benchmark package through the baseline-replacement path.

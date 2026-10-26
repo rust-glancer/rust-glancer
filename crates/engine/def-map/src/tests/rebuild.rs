@@ -9,8 +9,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    CrateData, DefMapBuildProgress, DefMapDb, DefMapLoader, LoadDefMap, PackageDefMaps,
-    PackageDefMapsManifest,
+    CrateData, DefMapDb, DefMapLoader, LoadDefMap, PackageDefMaps, PackageDefMapsManifest,
 };
 
 #[test]
@@ -139,9 +138,12 @@ impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-        let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
+        let (mut parse, mut item_tree, mut names) = Self::build_item_tree(&workspace);
         let output = crate::testonly::build_source_closed_def_map(
-            &workspace, &parse, &item_tree, &mut names,
+            &workspace,
+            &mut parse,
+            &mut item_tree,
+            &mut names,
         );
         let (mut old, _) = output.into_parts();
         let clean_package = package_slot(&parse, clean_package);
@@ -165,36 +167,29 @@ impl RebuildFixture {
     fn rebuild_package_after_edit(&self, edit: &str, package_name: &str) -> RebuiltDefMaps {
         self.fixture.write_fixture_files(edit);
 
-        let (parse, item_tree, mut names) = Self::build_item_tree(&self.workspace);
+        let (mut parse, mut item_tree, mut names) = Self::build_item_tree(&self.workspace);
         let package = package_slot(&parse, package_name);
         let old_read = self.old.read_txn(DefMapLoader::new(ExpectedPackageLoader {
             package: self.clean_package,
             payload: Arc::clone(&self.clean_payload),
         }));
         let packages = [package];
-        let mut session = self
+        let def_map = self
             .old
-            .start_package_build(
+            .build_packages(
                 &old_read,
                 &self.workspace,
-                &parse,
-                &item_tree,
+                &mut parse,
+                &mut item_tree,
                 &packages,
                 true,
                 &mut names,
                 crate::MacroExpansionPerformancePreference::default(),
+                &mut crate::testonly::SourceClosedMacroSourceFileLoader,
             )
-            .expect("fixture DefMap package rebuild session should start");
-        let def_map = match session
-            .advance(&old_read, &parse, &item_tree, &mut names)
-            .expect("fixture DefMap package rebuild session should advance")
-        {
-            DefMapBuildProgress::Complete(output) => output.into_parts().0,
-            DefMapBuildProgress::NeedsMacroSourceFiles(requests) => panic!(
-                "source-closed rebuild fixture requested {} macro source file(s)",
-                requests.len(),
-            ),
-        };
+            .expect("fixture DefMap package should rebuild")
+            .into_parts()
+            .0;
 
         RebuiltDefMaps { parse, def_map }
     }

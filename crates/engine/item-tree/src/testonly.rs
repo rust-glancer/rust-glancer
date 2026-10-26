@@ -45,4 +45,8 @@ impl ItemTreeFixture {
     pub fn item_tree_db(&self) -> &ItemTreeDb {
         &self.item_tree
     }
+
+    pub fn build_inputs_mut(&mut self) -> (&mut ParseDb, &mut ItemTreeDb) {
+        (&mut self.parse, &mut self.item_tree)
+    }
 }

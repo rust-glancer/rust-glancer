@@ -62,7 +62,7 @@ declare_metrics! {
         }
 
         scope "project.build.macro_source_files" {
-            /// Coalesced late `mod` and `include!` requests returned across discovery waves.
+            /// Coalesced late `mod` and `include!` requests processed across discovery waves.
             counter MACRO_SOURCE_FILE_REQUESTS = "requests.seen";
             /// Distinct semantic lookup keys resolved by the project boundary.
             counter MACRO_SOURCE_FILE_UNIQUE_REQUESTS = "requests.unique";
@@ -78,14 +78,10 @@ declare_metrics! {
             counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_LOWERED = "item_tree.files_lowered";
             /// Existing file trees reused by incremental ItemTree lowering.
             counter MACRO_SOURCE_FILE_ITEM_TREE_FILES_REUSED = "item_tree.files_reused";
-            /// Batches of macro source-file requests processed by the coordinator.
+            /// Batches of macro source-file requests processed by the loader.
             counter MACRO_SOURCE_FILE_DISCOVERY_WAVES = "waves";
-            /// Resumptions of retained mutable DefMap state after a source-answer batch.
-            counter MACRO_SOURCE_FILE_DEF_MAP_RESUMES = "def_map_resumes";
-            /// Whether the bounded discovery-wave guard stopped source discovery.
-            gauge MACRO_SOURCE_FILE_DISCOVERY_LIMIT_REACHED = "discovery_limit_reached" [None];
-            /// Time spent resuming DefMap construction after source discovery.
-            duration TIMING_MACRO_SOURCE_FILE_DEF_MAP_RESUMES = "timings.def_map_resumes";
+            /// Time spent capturing and lowering files discovered through macro expansion.
+            duration TIMING_MACRO_SOURCE_FILE_LOADING = "timings.loading";
             /// Source-built package fingerprints changed by late discovery.
             counter MACRO_SOURCE_FILE_CACHE_FINGERPRINT_CHANGES = "cache.fingerprint_changes";
         }

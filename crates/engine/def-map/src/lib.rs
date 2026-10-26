@@ -18,8 +18,8 @@ pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
     build::{
-        DefMapBuildOutput, DefMapBuildProgress, DefMapBuildSession, GeneratedItemStores,
-        MacroSourceFileRequest,
+        DefMapBuildOutput, GeneratedItemStores, MacroSourceFileLoader, MacroSourceFileRequest,
+        MacroSourceFileResolution,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
