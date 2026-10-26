@@ -1,6 +1,76 @@
 use expect_test::expect;
 
-use super::utils;
+use super::utils::{self, PathResolutionQuery};
+
+#[test]
+fn written_included_and_generated_declarations_resolve_the_same_paths() {
+    // The declaration payload stays identical so collection origin is the only difference.
+    let declarations = r#"
+pub mod source {
+    pub struct Record { pub value: u8 }
+    pub enum Choice { Tuple(u8) }
+    pub trait Render {}
+    pub type Alias = Record;
+    pub const LIMIT: u8 = 1;
+    pub static READY: bool = true;
+    pub fn make() -> Alias { Record { value: LIMIT } }
+    unsafe extern "C" { pub fn read() -> u8; }
+}
+
+pub use source::*;
+pub use Choice::Tuple;
+"#;
+    let fixtures = [
+        format!("//- /src/lib.rs crate:collection_origins\n{declarations}"),
+        format!(
+            r#"
+//- /src/lib.rs crate:collection_origins
+include!("items.rs");
+
+//- /src/items.rs
+{declarations}
+"#,
+        ),
+        format!(
+            r#"
+//- /src/lib.rs crate:collection_origins
+macro_rules! declare_items {{
+    () => {{ {declarations} }};
+}}
+
+declare_items!();
+"#,
+        ),
+    ];
+
+    for fixture in fixtures {
+        utils::check_project_path_resolution_with_fake_sysroot(
+            &fixture,
+            &[
+                PathResolutionQuery::lib("collection_origins", "crate", "Record").types(),
+                PathResolutionQuery::lib("collection_origins", "crate", "Choice").types(),
+                PathResolutionQuery::lib("collection_origins", "crate", "Tuple").values(),
+                PathResolutionQuery::lib("collection_origins", "crate", "Render").types(),
+                PathResolutionQuery::lib("collection_origins", "crate", "Alias").types(),
+                PathResolutionQuery::lib("collection_origins", "crate", "LIMIT").values(),
+                PathResolutionQuery::lib("collection_origins", "crate", "READY").values(),
+                PathResolutionQuery::lib("collection_origins", "crate", "make").values(),
+                PathResolutionQuery::lib("collection_origins", "crate", "read").values(),
+            ],
+            expect![[r#"
+                collection_origins [lib] crate resolves Record [types] -> struct collection_origins[lib]::crate::source::Record
+                collection_origins [lib] crate resolves Choice [types] -> enum collection_origins[lib]::crate::source::Choice
+                collection_origins [lib] crate resolves Tuple [values] -> variant collection_origins[lib]::crate::source::Choice::Tuple
+                collection_origins [lib] crate resolves Render [types] -> trait collection_origins[lib]::crate::source::Render
+                collection_origins [lib] crate resolves Alias [types] -> type_alias collection_origins[lib]::crate::source::Alias
+                collection_origins [lib] crate resolves LIMIT [values] -> const collection_origins[lib]::crate::source::LIMIT
+                collection_origins [lib] crate resolves READY [values] -> static collection_origins[lib]::crate::source::READY
+                collection_origins [lib] crate resolves make [values] -> fn collection_origins[lib]::crate::source::make
+                collection_origins [lib] crate resolves read [values] -> fn collection_origins[lib]::crate::source::read
+            "#]],
+        );
+    }
+}
 
 #[test]
 fn resolves_reexports_from_out_of_line_files_inside_inline_modules() {

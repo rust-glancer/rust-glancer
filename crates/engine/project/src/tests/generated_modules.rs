@@ -210,6 +210,76 @@ pub struct Ordinary;
 }
 
 #[test]
+fn generated_source_discovery_resolves_imported_macros_between_file_loads() {
+    let fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "generated_import_chain"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod factory {
+    macro_rules! make_leaf {
+        () => { pub mod leaf; };
+    }
+
+    pub(crate) use make_leaf;
+}
+
+macro_rules! make_branch {
+    () => {
+        pub mod branch;
+
+        macro_rules! make_sibling {
+            () => { pub struct Sibling; };
+        }
+        make_sibling!();
+    };
+}
+
+make_branch!();
+pub use branch::Leaf;
+pub fn consume(_: Le$type$af) {}
+
+//- /src/branch.rs
+use crate::factory::make_leaf;
+make_leaf!();
+pub use leaf::Leaf;
+
+//- /src/branch/leaf.rs
+pub struct Leaf;
+"#,
+    );
+
+    // The first loaded file needs import resolution before it can discover the second file.
+    // The sibling expansion must also survive the source request from the same macro output.
+    fixture.check(
+        &[
+            HostObservation::workspace_symbols("Leaf"),
+            HostObservation::workspace_symbols("Sibling"),
+            HostObservation::file_context("second generated file", "src/branch/leaf.rs"),
+            HostObservation::type_names_at("generated reexport", "generated_import_chain", "type"),
+        ],
+        expect![[r#"
+            workspace symbols `Leaf`
+            - module leaf @ generated_import_chain[lib] src/branch.rs
+            - struct Leaf @ generated_import_chain[lib] src/branch/leaf.rs
+
+            workspace symbols `Sibling`
+            - struct Sibling @ generated_import_chain[lib] src/lib.rs
+
+            file context `second generated file`
+            - generated_import_chain src/branch/leaf.rs -> generated_import_chain[lib]
+
+            type names at `generated reexport`
+            - Leaf
+        "#]],
+    );
+}
+
+#[test]
 fn generated_inline_modules_descend_the_module_file_context() {
     let fixture = HostFixture::build(
         r#"
