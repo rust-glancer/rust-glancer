@@ -15,6 +15,7 @@ on:
       - ".github/actions/download-performance-baseline/**"
       - ".github/actions/download-server/**"
       - ".github/workflows/build-server.yml"
+      - ".github/workflows/performance-comment.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
   push:
@@ -33,6 +34,7 @@ on:
       - ".github/actions/download-performance-baseline/**"
       - ".github/actions/download-server/**"
       - ".github/workflows/build-server.yml"
+      - ".github/workflows/performance-comment.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
   workflow_dispatch:
@@ -40,7 +42,6 @@ on:
 permissions:
   actions: read
   contents: read
-  pull-requests: write
 
 # Superseded PR commits no longer need runners. Keep every main-branch run so
 # cache refreshes and performance baselines can finish independently.
@@ -195,8 +196,8 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-  performance-comment:
-    name: performance-comment
+  performance-report:
+    name: performance-report
     if: github.event_name == 'pull_request'
     needs:
       - memory-profile
@@ -225,10 +226,10 @@ jobs:
             --output .ci/performance/comment.md
           tee -a "$GITHUB_STEP_SUMMARY" < .ci/performance/comment.md
 
-      - name: Comment on pull request
-        # Fork pull requests receive a read-only token, so their report stays in the log and summary.
-        if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+      # Publishing runs separately so fork code never receives a write token.
+      - name: Upload performance report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          header: rust-glancer-performance
+          name: performance-report
           path: .ci/performance/comment.md
+          if-no-files-found: error

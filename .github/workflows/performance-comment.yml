@@ -1,0 +1,80 @@
+name: Performance comment
+
+on:
+  workflow_run:
+    workflows: [Performance]
+    types: [completed]
+
+permissions:
+  actions: read
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  performance-comment:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      # Fork runs can have an empty pull_requests list. Find the open PR through
+      # GitHub instead of trusting a PR number supplied in the report artifact.
+      # Matching its head SHA also skips reports from superseded commits.
+      - name: Find pull request
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_REPOSITORY: ${{ github.event.workflow_run.head_repository.full_name }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          pr_number="$(
+            gh api --method GET "repos/${GITHUB_REPOSITORY}/pulls" \
+              -f state=open \
+              -f head="${HEAD_REPOSITORY%%/*}:${HEAD_BRANCH}" \
+              --paginate \
+              --jq '.[] | select(
+                .head.repo.full_name == env.HEAD_REPOSITORY and
+                .head.ref == env.HEAD_BRANCH and
+                .head.sha == env.HEAD_SHA and
+                .base.repo.full_name == env.GITHUB_REPOSITORY
+              ) | .number'
+          )"
+
+          if [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+            echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No unique open PR matches this run; skipping the comment."
+          fi
+
+      # This job has write access. Never check out PR code or run anything from
+      # the artifact: download only this run's Markdown report outside the workspace.
+      - name: Download performance report
+        if: steps.pull-request.outputs.number != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: performance-report
+          path: ${{ runner.temp }}/performance-report
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Summarize performance report
+        if: steps.pull-request.outputs.number != ''
+        run: cat "$RUNNER_TEMP/performance-report/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        id: comment
+        if: steps.pull-request.outputs.number != ''
+        continue-on-error: true
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
+        with:
+          header: rust-glancer-performance
+          number_force: ${{ steps.pull-request.outputs.number }}
+          path: ${{ runner.temp }}/performance-report/comment.md
+
+      - name: Note comment fallback
+        if: steps.comment.outcome == 'failure'
+        run: echo "::warning::Could not post the performance comment; the report is available in the job summary."
