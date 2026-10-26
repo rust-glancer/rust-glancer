@@ -47,8 +47,16 @@ enum Command {
         /// Load matching offloadable packages from existing cache artifacts during indexing.
         #[clap(short, long)]
         load: bool,
-        /// Which packages should remain resident after analysis is built.
-        #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
+        /// Select package storage for developer diagnostics.
+        ///
+        /// Defaults to `all-offloadable`, matching normal LSP storage. Use `all-resident` to preserve
+        /// phase counts and detailed macro-limit reports that offloading discards.
+        #[clap(
+            long = "package-residency",
+            value_enum,
+            default_value = "all-offloadable",
+            hide = true
+        )]
         package_residency: CliPackageResidencyPolicy,
         /// Which indexing performance trade-off rust-glancer should prioritize.
         #[clap(

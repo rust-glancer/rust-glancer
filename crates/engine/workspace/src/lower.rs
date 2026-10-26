@@ -9,7 +9,7 @@ use rg_std::MemorySize;
 use rg_text::RustEdition;
 
 use crate::{
-    CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, PackageSource, TargetKind,
+    CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, TargetKind,
     WorkspaceMetadata, WorkspaceMetadataError, WorkspaceMetadataResult,
     build_outputs::CargoBuildOutputDiscovery, path::canonicalize_path,
 };
@@ -215,11 +215,6 @@ impl CargoMetadataLowerer {
             } else {
                 PackageOrigin::Dependency
             },
-            source: self.package_source(
-                &package_id,
-                is_workspace_member,
-                package.source.as_ref(),
-            )?,
             is_workspace_member,
             manifest_path,
             cfg_options,
@@ -232,41 +227,6 @@ impl CargoMetadataLowerer {
                 .cloned()
                 .unwrap_or_default(),
         })
-    }
-
-    fn package_source(
-        &self,
-        package: &PackageId,
-        is_workspace_member: bool,
-        source: Option<&cargo_metadata::Source>,
-    ) -> WorkspaceMetadataResult<PackageSource> {
-        if is_workspace_member {
-            return Ok(PackageSource::Workspace);
-        }
-
-        let Some(source) = source else {
-            return Ok(PackageSource::Path);
-        };
-        let source = source.repr.as_str();
-
-        if source.starts_with("path+") {
-            Ok(PackageSource::Path)
-        } else if source.starts_with("registry+") {
-            Ok(PackageSource::Registry)
-        } else if source.starts_with("sparse+") {
-            Ok(PackageSource::SparseRegistry)
-        } else if source.starts_with("git+") {
-            Ok(PackageSource::Git)
-        } else if source.starts_with("local-registry+") {
-            Ok(PackageSource::LocalRegistry)
-        } else if source.starts_with("directory+") {
-            Ok(PackageSource::Directory)
-        } else {
-            Err(WorkspaceMetadataError::UnsupportedPackageSource {
-                package: package.clone(),
-                source: source.to_string(),
-            })
-        }
     }
 
     fn target(

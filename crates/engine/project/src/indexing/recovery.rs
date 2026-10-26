@@ -16,49 +16,32 @@ pub(crate) fn recover_from_cache_load_failure(project: &mut ProjectState) -> any
         .cache_store
         .clear_package_artifacts()
         .context("while attempting to clear package cache artifacts")?;
-    rebuild_resident_from_source(project)
-        .context("while attempting to rebuild resident analysis project from source")?;
-    let memory_hooks = Arc::clone(&project.memory_hooks);
+    let mut memory_sampler = BuildMemorySampler::disabled();
+    // Keep recovery in the original cache namespace. The environment that selected the target
+    // directory may have changed since the project was opened.
+    let rebuilt = super::initial::build_state(
+        project.workspace.clone(),
+        project.workspace_lowering_config.clone(),
+        project.cargo_metadata_config.clone(),
+        project.cache_instance.clone(),
+        project.body_ir_policy,
+        project.split_indexing_mode,
+        project.indexing_preference,
+        project.package_batch_size,
+        project.package_residency_policy,
+        StartupCacheLoad::Disabled,
+        Arc::clone(&project.memory_hooks),
+        &mut memory_sampler,
+    )
+    .context("while attempting to rebuild analysis project from source")?;
+    *project = rebuilt;
+
     ResidencyApplication::fresh(project)
         .apply()
         .context("while attempting to reapply package cache residency")?;
-    memory_hooks.purge(ProjectMemoryPurgePoint::AfterProjectBuild);
-
-    Ok(())
-}
-
-fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::Result<()> {
-    let workspace = state.workspace.clone();
-    let workspace_lowering_config = state.workspace_lowering_config.clone();
-    let cargo_metadata_config = state.cargo_metadata_config.clone();
-    let body_ir_policy = state.body_ir_policy;
-    let split_indexing_mode = state.split_indexing_mode;
-    let indexing_preference = state.indexing_preference;
-    let package_batch_size = state.package_batch_size;
-    let package_residency_policy = state.package_residency_policy;
-    let cache_instance = state.cache_instance.clone();
-    let memory_hooks = Arc::clone(&state.memory_hooks);
-    let mut memory_sampler = BuildMemorySampler::disabled();
-
-    // Keep recovery in the original cache namespace. The environment that selected the target
-    // directory may have changed since the project was opened.
-    let rebuilt = super::initial::build_resident_state(
-        workspace,
-        workspace_lowering_config,
-        cargo_metadata_config,
-        cache_instance,
-        body_ir_policy,
-        split_indexing_mode,
-        indexing_preference,
-        package_batch_size,
-        package_residency_policy,
-        StartupCacheLoad::Disabled,
-        memory_hooks,
-        &mut memory_sampler,
-    )
-    .context("while attempting to rebuild resident analysis project")?;
-
-    *state = rebuilt;
+    project
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
     Ok(())
 }

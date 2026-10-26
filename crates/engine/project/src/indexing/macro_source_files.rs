@@ -50,9 +50,8 @@ const MAX_MACRO_SOURCE_FILE_DISCOVERY_WAVES: usize = 128;
 /// asking for more files. Parse and ItemTree stay mutable for that loop; the returned DefMap no
 /// longer contains the requests or continuations used to reach the fixed point.
 ///
-/// `packages` selects the payloads rebuilt by the session. `packages_to_reallocate` is the subset
-/// whose frozen DefMaps will remain resident afterward. Keeping those inputs separate avoids making
-/// a second copy of a package that the project will serialize and offload immediately.
+/// Reallocate completed DefMaps only when the caller will keep them decoded. Packages headed
+/// straight to disk can be serialized and dropped without making another copy.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packages(
     baseline: &DefMapDb,
@@ -61,7 +60,7 @@ pub(super) fn build_packages(
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
     packages: &PhasePackageSet,
-    packages_to_reallocate: &[PackageSlot],
+    reallocate_payloads: bool,
     names: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
     memory_hooks: &dyn ProjectMemoryHooks,
@@ -78,7 +77,7 @@ pub(super) fn build_packages(
             parse,
             item_tree,
             packages.as_slice(),
-            packages_to_reallocate,
+            reallocate_payloads,
             names,
             performance_preference,
         )

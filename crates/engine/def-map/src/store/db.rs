@@ -27,9 +27,8 @@ pub struct DefMapDb {
 impl DefMapDb {
     /// Starts replacing selected packages while retaining state across generated-source pauses.
     ///
-    /// `packages` selects what to rebuild. `packages_to_reallocate` selects which frozen payloads
-    /// should be cloned and shrunk for long-term residency; passing `packages` for both arguments
-    /// requests reallocation for every rebuilt package.
+    /// Reallocate frozen payloads when they will stay decoded after construction. Results headed
+    /// straight to a package artifact do not need that extra copy.
     #[allow(clippy::too_many_arguments)]
     pub fn start_package_build(
         &self,
@@ -38,7 +37,7 @@ impl DefMapDb {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
-        packages_to_reallocate: &[PackageSlot],
+        reallocate_payloads: bool,
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<DefMapBuildSession> {
@@ -49,7 +48,7 @@ impl DefMapDb {
             parse,
             item_tree,
             packages,
-            packages_to_reallocate,
+            reallocate_payloads,
             interners,
             performance_preference,
         )

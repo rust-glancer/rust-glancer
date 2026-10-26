@@ -200,6 +200,13 @@ impl ParseDb {
         LineIndex::pack_many(indexes.as_mut_slice());
     }
 
+    /// Drops retained line indexes that saved source files can recreate on demand.
+    pub fn offload_line_indexes(&mut self) {
+        for package in &mut self.packages {
+            package.offload_line_indexes();
+        }
+    }
+
     /// Drops retained line indexes for packages whose source maps are backed by source files.
     pub fn offload_line_indexes_for_packages(&mut self, packages: &[usize]) {
         for package_slot in packages {

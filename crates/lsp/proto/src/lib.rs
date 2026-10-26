@@ -29,7 +29,7 @@ pub use self::{
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
         DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, InlayHintsConfig,
-        PackageBatchSize, PackageResidencyPolicy, SysrootDiscovery,
+        PackageBatchSize, SysrootDiscovery,
     },
     error::EngineError,
     file_uri::{FileUriError, file_uri_to_path, path_for_editor, path_to_file_uri},

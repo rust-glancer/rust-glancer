@@ -56,7 +56,7 @@ pub use self::{
     query::{DocumentSourceView, FileContext, ProjectSnapshot},
     state::ProjectGenerationId,
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
-    storage::residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
+    storage::residency::PackageResidencyPolicy,
 };
 
 #[cfg(test)]

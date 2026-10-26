@@ -4,13 +4,12 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     AnalysisCfgConfig, CargoMetadataConfig, IndexingPerformancePreference, PackageBatchSize,
-    PackageResidencyPolicy, SysrootDiscovery,
+    SysrootDiscovery,
 };
 
 /// Analysis configuration sent by the LSP client during initialization.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct AnalysisConfig {
-    pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
     #[serde(default)]
     pub sysroot_discovery: SysrootDiscovery,
@@ -22,7 +21,6 @@ pub struct AnalysisConfig {
 impl AnalysisConfig {
     pub fn from_initialization_options(options: Option<&LspAny>) -> anyhow::Result<Self> {
         Ok(Self {
-            package_residency_policy: PackageResidencyPolicy::from_initialization_options(options),
             cargo_metadata_config: CargoMetadataConfig::from_initialization_options(options)
                 .context("parse Cargo metadata configuration")?,
             sysroot_discovery: SysrootDiscovery::from_initialization_options(options)
@@ -41,17 +39,14 @@ impl AnalysisConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{AnalysisConfig, PackageResidencyPolicy};
+    use super::AnalysisConfig;
 
     #[test]
-    fn defaults_to_all_offloadable_residency() {
-        let config = AnalysisConfig::from_initialization_options(None)
-            .expect("default analysis config should parse");
-
-        assert_eq!(config, AnalysisConfig::default());
+    fn parses_default_analysis_config() {
         assert_eq!(
-            config.package_residency_policy,
-            PackageResidencyPolicy::AllOffloadable,
+            AnalysisConfig::from_initialization_options(None)
+                .expect("default analysis config should parse"),
+            AnalysisConfig::default(),
         );
     }
 }

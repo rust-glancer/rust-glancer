@@ -6,8 +6,8 @@ use expect_test::expect;
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
-    TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, WorkspaceMetadataError,
+    CargoMetadataConfig, CargoMetadataTarget, RustcTarget, SysrootSources, TargetKind,
+    WorkspaceLoweringConfig, WorkspaceMetadata,
 };
 
 #[test]
@@ -109,7 +109,6 @@ pub fn dev_helper() {}
 
             package app [member]
             manifest crates/app/Cargo.toml
-            source workspace
             edition 2024
             targets
             - app [lib] crates/app/src/lib.rs
@@ -125,7 +124,6 @@ pub fn dev_helper() {}
 
             package build_helper [member]
             manifest vendor/build_helper/Cargo.toml
-            source workspace
             edition 2024
             targets
             - build_helper [lib] vendor/build_helper/src/lib.rs
@@ -134,7 +132,6 @@ pub fn dev_helper() {}
 
             package dep [member]
             manifest crates/dep/Cargo.toml
-            source workspace
             edition 2024
             targets
             - dep [lib] crates/dep/src/lib.rs
@@ -143,7 +140,6 @@ pub fn dev_helper() {}
 
             package dev_helper [member]
             manifest vendor/dev_helper/Cargo.toml
-            source workspace
             edition 2024
             targets
             - dev_helper [lib] vendor/dev_helper/src/lib.rs
@@ -152,7 +148,6 @@ pub fn dev_helper() {}
 
             package helper [member]
             manifest vendor/helper/Cargo.toml
-            source workspace
             edition 2024
             targets
             - helper [lib] vendor/helper/src/lib.rs
@@ -250,84 +245,6 @@ fn main() {}
 }
 
 #[test]
-fn classifies_supported_and_rejects_unknown_cargo_package_sources() {
-    let fixture = fixture_crate(
-        r#"
-//- /Cargo.toml
-[package]
-name = "source_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Lib;
-"#,
-    );
-    let cases = [
-        ("local path", None, Ok(PackageSource::Path)),
-        (
-            "explicit path",
-            Some("path+file:///tmp/source_fixture"),
-            Ok(PackageSource::Path),
-        ),
-        (
-            "registry",
-            Some("registry+https://github.com/rust-lang/crates.io-index"),
-            Ok(PackageSource::Registry),
-        ),
-        (
-            "sparse registry",
-            Some("sparse+https://index.crates.io/"),
-            Ok(PackageSource::SparseRegistry),
-        ),
-        (
-            "git",
-            Some("git+https://example.com/repo.git"),
-            Ok(PackageSource::Git),
-        ),
-        (
-            "local registry",
-            Some("local-registry+file:///tmp/registry"),
-            Ok(PackageSource::LocalRegistry),
-        ),
-        (
-            "directory",
-            Some("directory+file:///tmp/vendor"),
-            Ok(PackageSource::Directory),
-        ),
-        ("unsupported", Some("mystery+https://example.com"), Err(())),
-    ];
-
-    let metadata = fixture.metadata();
-    for (label, source, expected) in cases {
-        let mut metadata = metadata.clone();
-        metadata.workspace_members.clear();
-        metadata.packages[0].source = source.map(|source| cargo_metadata::Source {
-            repr: source.to_string(),
-        });
-
-        let actual = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default());
-        match expected {
-            Ok(expected_source) => assert_eq!(
-                actual
-                    .expect("supported package source should normalize")
-                    .packages()[0]
-                    .source,
-                expected_source,
-                "{label}"
-            ),
-            Err(()) => assert!(
-                matches!(
-                    actual,
-                    Err(WorkspaceMetadataError::UnsupportedPackageSource { .. })
-                ),
-                "{label}: unexpected result {actual:?}"
-            ),
-        }
-    }
-}
-
-#[test]
 fn injects_sysroot_packages_as_normalized_dependencies() {
     utils::check_workspace_metadata_with_sysroot(
         r#"
@@ -363,7 +280,6 @@ pub struct TokenStream;
 
             package alloc [sysroot]
             manifest sysroot/library/alloc/Cargo.toml
-            source sysroot
             edition 2024
             targets
             - alloc [lib] sysroot/library/alloc/src/lib.rs
@@ -372,7 +288,6 @@ pub struct TokenStream;
 
             package app [member]
             manifest Cargo.toml
-            source workspace
             edition 2024
             targets
             - app [lib] src/lib.rs
@@ -383,7 +298,6 @@ pub struct TokenStream;
 
             package core [sysroot]
             manifest sysroot/library/core/Cargo.toml
-            source sysroot
             edition 2024
             targets
             - core [lib] sysroot/library/core/src/lib.rs
@@ -392,7 +306,6 @@ pub struct TokenStream;
 
             package proc_macro [sysroot]
             manifest sysroot/library/proc_macro/Cargo.toml
-            source sysroot
             edition 2024
             targets
             - proc_macro [lib] sysroot/library/proc_macro/src/lib.rs
@@ -403,7 +316,6 @@ pub struct TokenStream;
 
             package std [sysroot]
             manifest sysroot/library/std/Cargo.toml
-            source sysroot
             edition 2024
             targets
             - std [lib] sysroot/library/std/src/lib.rs

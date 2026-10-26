@@ -1,4 +1,4 @@
-use rg_project::{PackageResidency, Project, ProjectStats};
+use rg_project::{Project, ProjectStats};
 use serde::Serialize;
 
 use crate::report::ReportFieldsBuilder;
@@ -14,18 +14,14 @@ pub(crate) struct PackageReport {
 
 impl PackageReport {
     pub(crate) fn capture(project: &Project, stats: &ProjectStats) -> Self {
-        let residency = project.package_residency_plan();
-        let resident_count = residency
-            .packages()
-            .iter()
-            .filter(|decision| matches!(decision, PackageResidency::Resident))
-            .count();
-        let offloaded_count = residency.packages().len() - resident_count;
+        let policy = project.package_residency_policy();
+        let resident_count = stats.def_map.resident_package_count;
+        let offloaded_count = stats.package_count - resident_count;
 
         Self {
             total_count: stats.package_count,
             workspace_count: stats.workspace_package_count,
-            residency_policy: residency.policy().config_name().to_string(),
+            residency_policy: policy.label().to_string(),
             resident_count,
             offloaded_count,
         }

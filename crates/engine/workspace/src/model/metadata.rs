@@ -10,7 +10,7 @@ use rg_text::RustEdition;
 
 use super::{
     dependency::PackageDependency,
-    package::{Package, PackageId, PackageOrigin, PackageSource},
+    package::{Package, PackageId, PackageOrigin},
     target::{CargoTarget, TargetKind},
 };
 use crate::{CargoBuildOutputScanStats, SysrootCrate, SysrootSources};
@@ -161,7 +161,6 @@ impl WorkspaceMetadata {
             name: krate.name().to_string(),
             edition: RustEdition::Edition2024,
             origin: PackageOrigin::Sysroot(krate),
-            source: PackageSource::Sysroot,
             is_workspace_member: false,
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
             cfg_options,

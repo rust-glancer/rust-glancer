@@ -88,12 +88,11 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // the same coordinator as fresh construction for both macro-generated modules and generated
     // includes, while clean dependency packages stay lazy.
     let memory_hooks = Arc::clone(&state.memory_hooks);
-    // The rebuild must produce every selected package before one coherent cache update can run.
-    // Early-start packages cannot be offloaded until deferred Body IR becomes durable, so reallocate
-    // those temporary residents as well as packages selected for final resident storage.
-    let packages_to_reallocate = state
+    // Early-start declarations stay decoded until Body IR is durable. Full builds only need
+    // reallocation in resident mode; offloading mode can write and drop the completed payloads.
+    let reallocate_payloads = state
         .split_indexing_mode
-        .packages_to_reallocate(&state.package_residency, packages.as_slice());
+        .reallocate_payloads(state.package_residency_policy);
     let def_map_output = macro_source_files::build_packages(
         &state.def_map,
         &old_def_map_txn,
@@ -101,7 +100,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         Arc::make_mut(&mut state.parse),
         &mut item_tree,
         &packages,
-        &packages_to_reallocate,
+        reallocate_payloads,
         &mut state.names,
         state.indexing_preference.macro_expansion_preference(),
         memory_hooks.as_ref(),
@@ -135,7 +134,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &def_map,
         &semantic_ir,
         packages.as_slice(),
-        &packages_to_reallocate,
+        reallocate_payloads,
         &mut state.names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
@@ -150,7 +149,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &def_map,
         &semantic_ir,
         packages.as_slice(),
-        &packages_to_reallocate,
+        reallocate_payloads,
         &mut state.names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),

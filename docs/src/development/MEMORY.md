@@ -272,9 +272,10 @@ Useful flags:
   plus the final retained-memory breakdown.
 - `--profile memory:def-map` records a detailed memory breakdown for the def-map
   checkpoint. Other available aliases and selectors are listed in `just analyze --help`.
-- `--package-residency <policy>` controls what remains resident after indexing.
-  `all-offloadable` is useful for checking idle-memory behavior, while `all-resident`
-  is useful when you want to remove offloading from the experiment.
+- `--package-residency <policy>` selects storage for developer diagnostics.
+  The default, `all-offloadable`, follows normal LSP storage behavior for routine performance and
+  memory measurements. Select `all-resident` when you need full phase counts or detailed macro-limit
+  reports, which offloading discards.
 - `-l` / `--load` enables startup cache loading, so matching offloadable package
   artifacts can be reused instead of rebuilt.
 - `--indexing-preference <preference>` switches between `lower-peak-memory` and
@@ -290,10 +291,10 @@ Samples:
 
 "Default go-to command" -- analyze with full offloading
 ```
-just analyze path/to/rust-analyzer --profile --package-residency all-offloadable -m
+just analyze path/to/rust-analyzer --profile -m
 ```
 
-Exclude offloading from analysis:
+Capture full phase counts and detailed macro-limit reports:
 ```
 just analyze path/to/rust-analyzer --profile --package-residency all-resident -m
 ```

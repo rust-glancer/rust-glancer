@@ -1,4 +1,4 @@
-use std::fmt::Write as _;
+use std::{collections::HashSet, fmt::Write as _};
 
 use expect_test::expect;
 use rg_ir_model::PackageSlot;
@@ -6,10 +6,9 @@ use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use crate::{
-    PackageResidencyPolicy,
     storage::cache::{
-        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPath, CachedTarget,
-        WorkspaceCachePlan,
+        CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPackageOrigin, CachedPath,
+        CachedTarget, WorkspaceCachePlan,
     },
     testonly::ProjectSourceFixture,
 };
@@ -41,9 +40,33 @@ pub struct App;
     let right_plan = WorkspaceCachePlan::build(&right_workspace);
     assert_eq!(left_plan, right_plan);
     assert_eq!(
-        left_plan.generation_fingerprint(PackageResidencyPolicy::default()),
-        right_plan.generation_fingerprint(PackageResidencyPolicy::default()),
+        left_plan.generation_fingerprint(),
+        right_plan.generation_fingerprint(),
     );
+}
+
+#[test]
+fn package_origins_select_distinct_cache_artifacts() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:app
+pub struct App;
+"#,
+    );
+    let plan = WorkspaceCachePlan::build(&fixture.workspace_metadata());
+    let mut package = plan.packages()[0].clone();
+    let mut fingerprints = HashSet::new();
+    for origin in [
+        CachedPackageOrigin::Workspace,
+        CachedPackageOrigin::Dependency,
+        CachedPackageOrigin::Sysroot,
+    ] {
+        package.origin = origin;
+        assert!(
+            fingerprints.insert(package.fingerprint()),
+            "{origin} must have its own artifact identity even when other package metadata agrees",
+        );
+    }
 }
 
 #[test]
@@ -133,7 +156,7 @@ pub struct DevHelper;
 
         package #0 app
         schema 10
-        source workspace
+        origin workspace
         edition 2024
         manifest Cargo.toml
         targets
@@ -149,7 +172,7 @@ pub struct DevHelper;
 
         package #1 build-helper
         schema 10
-        source path
+        origin dependency
         edition 2021
         manifest build-helper/Cargo.toml
         targets
@@ -159,7 +182,7 @@ pub struct DevHelper;
 
         package #2 dep-pkg
         schema 10
-        source path
+        origin dependency
         edition 2021
         manifest dep/Cargo.toml
         targets
@@ -169,7 +192,7 @@ pub struct DevHelper;
 
         package #3 dev-helper
         schema 10
-        source path
+        origin dependency
         edition 2018
         manifest dev-helper/Cargo.toml
         targets
@@ -283,7 +306,7 @@ fn render_cache_plan(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCacheP
             CURRENT_PACKAGE_CACHE_SCHEMA_VERSION.0,
         )
         .expect("string writes should not fail");
-        writeln!(&mut dump, "source {}", package.source).expect("string writes should not fail");
+        writeln!(&mut dump, "origin {}", package.origin).expect("string writes should not fail");
         writeln!(&mut dump, "edition {}", package.edition).expect("string writes should not fail");
         writeln!(
             &mut dump,

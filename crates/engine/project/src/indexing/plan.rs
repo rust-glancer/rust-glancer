@@ -8,7 +8,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use super::cache_probe::{StartupCacheProbe, StartupPackageSelection};
 use crate::{
-    PackageResidencyPlan, StartupCacheLoad,
+    PackageResidencyPolicy, StartupCacheLoad,
     selection::PhasePackageSet,
     storage::cache::{PackageCacheStore, WorkspaceCachePlan},
 };
@@ -38,23 +38,18 @@ impl PackageBuildPlan {
     pub(super) fn build(
         startup_cache_load: StartupCacheLoad,
         body_ir_policy: BodyIrBuildPolicy,
-        package_residency: &PackageResidencyPlan,
+        package_residency_policy: PackageResidencyPolicy,
         cache_plan: &WorkspaceCachePlan,
         cache_store: &PackageCacheStore,
         workspace: &WorkspaceMetadata,
         parse: &mut ParseDb,
     ) -> Self {
         let package_count = parse.package_count();
-        let package_selections = if startup_cache_load.is_enabled() {
-            let mut cache_probe = StartupCacheProbe::new(
-                package_count,
-                body_ir_policy,
-                package_residency,
-                cache_plan,
-                cache_store,
-                workspace,
-                parse,
-            );
+        let package_selections = if package_residency_policy.is_offloadable()
+            && startup_cache_load.is_enabled()
+        {
+            let mut cache_probe =
+                StartupCacheProbe::new(body_ir_policy, cache_plan, cache_store, workspace, parse);
             cache_probe.select()
         } else {
             (0..package_count)

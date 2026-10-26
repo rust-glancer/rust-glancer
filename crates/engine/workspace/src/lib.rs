@@ -18,8 +18,8 @@ pub use self::{
     cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
     lower::WorkspaceLoweringConfig,
     model::{
-        CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, PackageSource,
-        TargetKind, WorkspaceMetadata,
+        CargoTarget, Package, PackageDependency, PackageId, PackageOrigin, TargetKind,
+        WorkspaceMetadata,
     },
     rustc::RustcTarget,
     sysroot::{SysrootCrate, SysrootSources},
@@ -49,10 +49,6 @@ pub enum WorkspaceMetadataError {
         target: String,
         status: String,
         stderr: String,
-    },
-    UnsupportedPackageSource {
-        package: PackageId,
-        source: String,
     },
 }
 
@@ -92,10 +88,6 @@ impl fmt::Display for WorkspaceMetadataError {
                     "rustc --print cfg failed for {target}: status {status}, stderr: {stderr}"
                 )
             }
-            Self::UnsupportedPackageSource { package, source } => write!(
-                f,
-                "unsupported Cargo source `{source}` for package {package}"
-            ),
         }
     }
 }
@@ -110,7 +102,6 @@ impl Error for WorkspaceMetadataError {
             Self::RustcHostTargetCommandFailed { .. }
             | Self::RustcHostTargetMissing { .. }
             | Self::RustcTargetCfgCommandFailed { .. } => None,
-            Self::UnsupportedPackageSource { .. } => None,
         }
     }
 }

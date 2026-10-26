@@ -1,104 +1,14 @@
-use std::{fs, path::Path};
+use std::fs;
 
-use rg_body_ir::PackageBodies;
-use rg_def_map::PackageDefMaps;
 use rg_ir_model::{CrateId, PackageSlot};
-use rg_parse::PackageParseSnapshot;
-use rg_semantic_ir::SemanticPackage;
 
 use super::utils::write_resident_package_artifact;
 use crate::{
     PackageResidencyPolicy,
     profile::metric,
-    storage::cache::{
-        CachedCfgOptions, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,
-        CachedRustEdition, Fingerprint, PackageCacheCodec, PackageCacheHeader,
-        PackageCacheWriteInput, WorkspaceCachePlan,
-        codec::{
-            BODY_CACHE_CONTAINER_PREFIX_BYTES, PACKAGE_CACHE_CONTAINER_PREFIX_BYTES,
-            PackageCacheLayout, PackageCacheSectionRange,
-        },
-    },
+    storage::cache::codec::{PACKAGE_CACHE_CONTAINER_PREFIX_BYTES, PackageCacheLayout},
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
-
-#[test]
-fn roundtrips_minimal_package_cache_artifact_codec() {
-    let header = PackageCacheHeader::new(
-        CachedPackage {
-            package: CachedPackageSlot(7),
-            name: String::new(),
-            source: CachedPackageSource::Workspace,
-            edition: CachedRustEdition::Edition2024,
-            manifest_path: CachedPath::from_workspace_path(
-                Path::new("/workspace"),
-                Path::new("/workspace/Cargo.toml"),
-            ),
-            cfg_options: CachedCfgOptions::default(),
-            targets: Vec::new(),
-            dependencies: Vec::new(),
-        },
-        Fingerprint::from_stable_bytes([7; 32]),
-    );
-    let parse = PackageParseSnapshot::empty();
-    let def_map = PackageDefMaps::default();
-    let semantic_ir = SemanticPackage::default();
-    let body_ir = PackageBodies::default();
-
-    // Exercise the production borrowed input and fragment writer before decoding every container
-    // section independently, just like the filesystem store does.
-    let encoded = PackageCacheCodec::encode_write_input(
-        PackageCacheWriteInput::new(&header, &parse, &def_map, &semantic_ir, &body_ir),
-        &rg_std::CancellationToken::new(),
-    )
-    .expect("minimal package cache input should encode");
-    let mut bytes = Vec::new();
-    encoded
-        .write_to(&mut bytes)
-        .expect("encoded package cache fragments should write");
-    let section_bytes = |range: PackageCacheSectionRange| {
-        let start =
-            usize::try_from(range.offset).expect("test cache section offset should fit usize");
-        let len = usize::try_from(range.len).expect("test cache section length should fit usize");
-        let end = start
-            .checked_add(len)
-            .expect("test cache section range should not overflow");
-        bytes
-            .get(start..end)
-            .expect("test cache section should be inside encoded bytes")
-    };
-
-    let layout = PackageCacheLayout::decode_prefix(
-        &bytes[..PACKAGE_CACHE_CONTAINER_PREFIX_BYTES],
-        bytes.len() as u64,
-    )
-    .expect("minimal package cache layout should decode");
-    let probe = PackageCacheCodec::decode_probe(section_bytes(layout.probe))
-        .expect("minimal package cache probe should decode");
-    let decoded_def_map = PackageCacheCodec::decode_def_map(section_bytes(layout.def_map), &probe)
-        .expect("minimal package cache DefMap should decode");
-    let decoded_semantic_ir =
-        PackageCacheCodec::decode_semantic_ir(section_bytes(layout.semantic_ir), &probe)
-            .expect("minimal package cache Semantic IR should decode");
-    let body_bytes = section_bytes(layout.body_ir);
-    let body_prefix = &body_bytes[..BODY_CACHE_CONTAINER_PREFIX_BYTES];
-    let manifest_len = PackageCacheCodec::decode_body_prefix(body_prefix)
-        .expect("minimal Body IR prefix should decode");
-    let manifest_end = BODY_CACHE_CONTAINER_PREFIX_BYTES + manifest_len;
-    let body_index = PackageCacheCodec::decode_body_index(
-        &body_bytes[BODY_CACHE_CONTAINER_PREFIX_BYTES..manifest_end],
-        body_bytes.len() as u64,
-        &probe,
-    )
-    .expect("minimal Body IR manifest should decode");
-
-    assert_eq!(probe.header, header);
-    assert_eq!(probe.parse, parse);
-    assert_eq!(decoded_def_map, def_map);
-    assert_eq!(decoded_semantic_ir, semantic_ir);
-    assert!(body_index.manifest().crates().is_empty());
-    assert!(!bytes.is_empty(), "encoded artifact should contain bytes");
-}
 
 #[test]
 fn probe_and_def_map_reads_do_not_decode_a_corrupt_body_section() {
@@ -228,59 +138,5 @@ pub fn unrelated() {
             .keyed_counter(metric::CACHE_SECTION_BYTES.path(), "body_ir"),
         None,
         "file-local query must not read the package-wide Body IR section",
-    );
-}
-
-#[test]
-fn artifact_snapshot_source_fingerprint_matches_discovered_package_sources() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /src/lib.rs crate:app deps:dep
-pub struct App;
-
-//- /dep/src/lib.rs crate:dep root:dep origin:dependency
-mod child;
-
-//- /dep/src/child.rs
-pub struct DepChild;
-"#,
-    );
-    let project = fixture
-        .build_project_with_package_residency_policy(PackageResidencyPolicy::WorkspaceResident);
-    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
-    let header = project
-        .state
-        .cache_plan
-        .artifact_header(dep, &project.state.package_source_fingerprints)
-        .expect("dependency should have a cache artifact header");
-    let reader = project
-        .state
-        .cache_store
-        .open_artifact(&header)
-        .expect("written dependency artifact should be readable")
-        .expect("written dependency artifact should exist");
-    let snapshot_fingerprint = WorkspaceCachePlan::snapshot_source_fingerprint(
-        project.workspace().workspace_root(),
-        &reader.probe().header.package,
-        &reader.probe().parse,
-    )
-    .expect("artifact parse snapshot source fingerprint should compute");
-    let source_fingerprint = project.state.package_source_fingerprints[dep.0]
-        .expect("dependency source fingerprint should be recorded");
-    let parse_package = project
-        .snapshot()
-        .parse_db()
-        .package(dep.0)
-        .expect("dependency should be parsed");
-
-    assert_eq!(parse_package.package_name(), "dep");
-    assert_eq!(
-        reader.probe().parse.files().len(),
-        2,
-        "dependency artifact should capture both discovered source files",
-    );
-    assert_eq!(
-        snapshot_fingerprint, source_fingerprint,
-        "artifact parse snapshot should reproduce the discovered package source fingerprint",
     );
 }

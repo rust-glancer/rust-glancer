@@ -2,7 +2,6 @@ use rg_ir_model::PackageSlot;
 use rg_parse::ParseDb;
 
 use crate::{
-    PackageResidencyPolicy,
     storage::cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     testonly::ProjectSourceFixture,
 };
@@ -24,10 +23,8 @@ fn cache_instances_claim_distinct_live_slots() {
     assert!(second.root().join("instance.lock").exists());
 
     let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let first_store =
-        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &first);
-    let second_store =
-        PackageCacheStore::for_instance(&cache_plan, PackageResidencyPolicy::default(), &second);
+    let first_store = PackageCacheStore::for_instance(&cache_plan, &first);
+    let second_store = PackageCacheStore::for_instance(&cache_plan, &second);
     let header = package_header(&workspace, &cache_plan);
 
     assert_ne!(

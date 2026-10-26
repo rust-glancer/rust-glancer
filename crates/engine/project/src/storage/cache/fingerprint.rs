@@ -12,7 +12,6 @@ use super::{
     CachedCfgOptions, CachedDependency, CachedPackage, CachedPath, CachedTarget,
     WorkspaceCachePlan, cached::CachedCfgKeyValue,
 };
-use crate::PackageResidencyPolicy;
 
 /// Stable BLAKE3 fingerprint used by cache keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
@@ -22,11 +21,6 @@ pub struct Fingerprint([u8; 32]);
 impl Fingerprint {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
-    }
-
-    #[cfg(test)]
-    pub(super) fn from_stable_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
     }
 }
 
@@ -46,24 +40,6 @@ pub(crate) struct FingerprintBuilder {
 }
 
 impl FingerprintBuilder {
-    /// Builds the stable identity of one reusable package-cache generation.
-    pub(super) fn cache_generation(
-        cache_plan: &WorkspaceCachePlan,
-        residency_policy: PackageResidencyPolicy,
-    ) -> Fingerprint {
-        let mut builder = Self::new("cache-generation");
-
-        builder.bytes(
-            "workspace.graph",
-            Self::workspace_graph(cache_plan).as_bytes(),
-        );
-        // Different residency policies require different data to be cached. Including the policy
-        // here intentionally invalidates the cache when the configuration changes.
-        builder.str("package.residency", residency_policy.config_name());
-
-        builder.finalize()
-    }
-
     pub(super) fn workspace_graph(cache_plan: &WorkspaceCachePlan) -> Fingerprint {
         let mut builder = Self::new("workspace-graph");
 
@@ -83,7 +59,7 @@ impl FingerprintBuilder {
 
         builder.u64("package.slot", package.package.0);
         builder.str("package.name", &package.name);
-        builder.str("package.source", &package.source.to_string());
+        builder.str("package.origin", &package.origin.to_string());
         builder.str("package.edition", &package.edition.to_string());
         builder.cached_path("package.manifest_path", &package.manifest_path);
         builder.cfg_options(&package.cfg_options);

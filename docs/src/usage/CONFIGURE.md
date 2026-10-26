@@ -11,7 +11,6 @@ since the project is all about being non-intrusive, I think it should be a consc
 diagnostics. So if you need them, please go to settings and enable diagnostics on startup/save.
 
 Otherwise, typically you don't need to tweak the settings to make something work better. You can, though.
-Tweaking options are covered from the more "traditional" configuration options.
 
 ## Configuration options
 
@@ -66,11 +65,3 @@ is fully complete).
 Exact memory and indexing-time differences vary by machine, operating system, and project. If the
 default `faster-builds` mode uses too much RAM, try `lower-peak-memory` first and adjust the batch
 size only if needed.
-
-## Tweaking options
-
-Following settings _can_ be changed, but probably shouldn't.
-
-- `Cache: Package Residency`: you can make it so that not everything is offloaded to the filesystem.
-  In theory, it can make Rust Glancer faster. In practice, if you don't care about memory usage,
-  `rust-analyzer` will probably work better for you.

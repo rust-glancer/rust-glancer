@@ -99,7 +99,7 @@ pub struct BodyIrBuilder<'db, 'names> {
     subset: &'db PackageSubset,
     worker_limit: Option<NonZeroUsize>,
     cancellation: rg_std::CancellationToken,
-    packages_to_reallocate: Vec<PackageSlot>,
+    reallocate_payloads: bool,
 }
 
 impl rg_std::Cancelable for BodyIrBuilder<'_, '_> {
@@ -115,7 +115,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
         def_map: &'db DefMapDb,
         semantic_ir: &'db SemanticIrDb,
         packages: &'db [PackageSlot],
-        packages_to_reallocate: &[PackageSlot],
+        reallocate_payloads: bool,
         interners: &'names mut PackageNameInterners,
         def_map_loader: DefMapLoader<'db>,
         semantic_ir_loader: SemanticIrLoader<'db>,
@@ -127,7 +127,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
             semantic_ir,
             materialization: None,
             packages,
-            packages_to_reallocate: Self::normalized_package_slots(packages_to_reallocate),
+            reallocate_payloads,
             interners,
             def_map_loader,
             semantic_ir_loader,
@@ -300,11 +300,7 @@ impl<'db, 'names> BodyIrBuilder<'db, 'names> {
                 // Reallocating bodies that stay in memory may let the allocator free pages used
                 // during indexing. Bodies headed straight to a cache artifact can be encoded and
                 // dropped, so they do not need a second copy at the build's peak.
-                if batch.first().is_some_and(|(crate_ref, _)| {
-                    self.packages_to_reallocate
-                        .binary_search(&crate_ref.package)
-                        .is_ok()
-                }) {
+                if self.reallocate_payloads {
                     batch = batch
                         .into_iter()
                         .map(|(crate_ref, bodies)| {
@@ -431,7 +427,7 @@ pub fn compute() -> usize {{ let first = 1; first + 2 }}
                 fixture.def_map_db(),
                 fixture.semantic_ir_db(),
                 &packages,
-                &packages,
+                true,
                 &mut names,
                 DefMapLoader::resident_only("parallel fixture"),
                 SemanticIrLoader::resident_only("parallel fixture"),
@@ -472,7 +468,7 @@ pub fn compute() -> usize {{ let first = 1; first + 2 }}
             fixture.def_map_db(),
             fixture.semantic_ir_db(),
             &packages,
-            &packages,
+            true,
             &mut names,
             DefMapLoader::resident_only("parallel retry"),
             SemanticIrLoader::resident_only("parallel retry"),

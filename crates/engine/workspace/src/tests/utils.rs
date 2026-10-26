@@ -61,7 +61,6 @@ fn render_package(workspace: &WorkspaceMetadata, package: &crate::Package, dump:
         relative_path(workspace.workspace_root(), &package.manifest_path)
     )
     .expect("string writes should not fail");
-    writeln!(dump, "source {}", package.source).expect("string writes should not fail");
     writeln!(dump, "edition {}", package.edition).expect("string writes should not fail");
     writeln!(dump, "targets").expect("string writes should not fail");
 

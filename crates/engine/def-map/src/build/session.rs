@@ -41,14 +41,13 @@ use crate::{
 /// invokes [`DefMapBuildSession::advance`], answers every returned request on this same value, and
 /// advances again until [`DefMapBuildProgress::Complete`] is returned.
 ///
-/// Completion first freezes every selected package. It then reallocates the subset supplied when
-/// the session starts. Project builds derive that subset from residency, while fixtures pass their
-/// complete package set. Keeping the choice on the session matters because a macro source request
-/// can pause between collection and the final package replacement.
+/// Completion freezes every selected package, then reallocates the payloads if the caller will
+/// retain them in memory. Keep this choice on the session because macro source requests can pause
+/// construction before the final package replacement.
 pub struct DefMapBuildSession {
     baseline: DefMapDb,
     packages: Vec<PackageSlot>,
-    packages_to_reallocate: Vec<PackageSlot>,
+    reallocate_payloads: bool,
     crate_states: FinalizeCrateStates,
     scope_session: FinalizeScopeSession,
     macro_source_file_resolutions: MacroSourceFileResolutions,
@@ -66,15 +65,11 @@ impl DefMapBuildSession {
         parse: &rg_parse::ParseDb,
         item_tree: &ItemTreeDb,
         packages: &[PackageSlot],
-        packages_to_reallocate: &[PackageSlot],
+        reallocate_payloads: bool,
         interners: &mut PackageNameInterners,
         performance_preference: MacroExpansionPerformancePreference,
     ) -> anyhow::Result<Self> {
         let packages = Self::normalized_package_slots(packages);
-        let packages_to_reallocate = Self::normalized_package_slots(packages_to_reallocate)
-            .into_iter()
-            .filter(|package| packages.binary_search(package).is_ok())
-            .collect();
         let implicit_roots = build_implicit_roots(workspace, parse.packages(), interners)
             .context("while attempting to build implicit crate roots")?;
         let mut crate_states = FinalizeCrateStates::empty(parse.packages().len());
@@ -126,7 +121,7 @@ impl DefMapBuildSession {
         Ok(Self {
             baseline: baseline.clone(),
             packages,
-            packages_to_reallocate,
+            reallocate_payloads,
             crate_states,
             scope_session: FinalizeScopeSession::new(performance_preference),
             macro_source_file_resolutions: MacroSourceFileResolutions::default(),
@@ -274,8 +269,9 @@ impl DefMapBuildSession {
                     )
                 })?;
         }
-        next.mutator()
-            .reallocate_packages(&self.packages_to_reallocate);
+        if self.reallocate_payloads {
+            next.mutator().reallocate_packages(&self.packages);
+        }
         self.complete = true;
         Ok(DefMapBuildProgress::Complete(DefMapBuildOutput::new(
             next,

@@ -8,15 +8,15 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetada
 
 use super::phases;
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, PackageResidencyPolicy,
-    ProjectMemoryHooks, SplitIndexingMode, StartupCacheLoad,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectMemoryHooks,
+    SplitIndexingMode, StartupCacheLoad,
     profile::{BuildMemorySampler, metric},
     state::{ProjectGenerationId, ProjectState},
     storage::cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_resident_state(
+pub(crate) fn build_state(
     workspace: WorkspaceMetadata,
     workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
@@ -85,10 +85,8 @@ pub(crate) fn build_resident_state(
     metric::CARGO_BUILD_OUTPUT_GENERATED_BYTES.add(cargo_build_outputs.generated_bytes());
     metric::CARGO_BUILD_OUTPUT_SCAN.record(cargo_build_outputs.scan_duration());
 
-    let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let cache_store =
-        PackageCacheStore::for_instance(&cache_plan, package_residency_policy, &cache_instance);
+    let cache_store = PackageCacheStore::for_instance(&cache_plan, &cache_instance);
     cache_store
         .recover_incomplete_update()
         .context("while attempting to recover an incomplete package cache update")?;
@@ -97,7 +95,7 @@ pub(crate) fn build_resident_state(
         body_ir_policy,
         indexing_preference,
         package_batch_size,
-        &package_residency,
+        package_residency_policy,
         &cache_plan,
         &cache_store,
         startup_cache_load,
@@ -120,7 +118,6 @@ pub(crate) fn build_resident_state(
         indexing_preference,
         package_batch_size,
         package_residency_policy,
-        package_residency,
         memory_hooks,
         names: phases.names,
         parse: Arc::new(phases.parse),

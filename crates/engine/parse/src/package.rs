@@ -273,13 +273,6 @@ pub struct PackageParseSnapshot {
 }
 
 impl PackageParseSnapshot {
-    pub fn empty() -> Self {
-        Self {
-            files: Vec::new(),
-            target_root_files: Vec::new(),
-        }
-    }
-
     pub fn files(&self) -> &[ParsedFileSnapshot] {
         &self.files
     }

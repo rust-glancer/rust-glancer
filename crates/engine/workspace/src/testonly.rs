@@ -17,7 +17,7 @@ use rg_text::RustEdition;
 
 use crate::{
     CargoBuildOutputScanStats, CargoTarget, Package, PackageDependency, PackageId, PackageOrigin,
-    PackageSource, TargetKind, WorkspaceMetadata,
+    TargetKind, WorkspaceMetadata,
 };
 
 impl WorkspaceMetadata {
@@ -172,11 +172,6 @@ impl WorkspaceMetadata {
                     name: name.to_string(),
                     edition,
                     origin,
-                    source: if is_workspace_member {
-                        PackageSource::Workspace
-                    } else {
-                        PackageSource::Path
-                    },
                     is_workspace_member,
                     manifest_path: package_root.join("Cargo.toml"),
                     cfg_options,

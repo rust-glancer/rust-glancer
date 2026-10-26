@@ -8,8 +8,8 @@ use std::{
 };
 
 use rg_lsp_proto::{
-    AnalysisConfig, DeferredIndexingOutcome, IndexingPerformancePreference, PackageResidencyPolicy,
-    ServiceNotification, SysrootDiscovery,
+    AnalysisConfig, DeferredIndexingOutcome, IndexingPerformancePreference, ServiceNotification,
+    SysrootDiscovery,
 };
 use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange};
 use test_fixture::fixture_crate;
@@ -182,6 +182,32 @@ fn receive_completion(
     }
 }
 
+// Read a local binding through the published snapshot so this also checks cache-backed bodies.
+fn assert_saved_body_type(project: &ProjectCoordinator, path: &std::path::Path) {
+    let source = std::fs::read_to_string(path).expect("fixture source should exist");
+    let offset = source.rfind("value").expect("fixture has a local value") as u32;
+    let snapshot = project
+        .saved_snapshot()
+        .expect("saved project should be available");
+    let context = snapshot
+        .file_context_for_path(path)
+        .expect("fixture context should load")
+        .expect("fixture source should be indexed");
+    let analysis = snapshot
+        .analysis_for_crates(&[context.crate_ref], rg_std::CancellationToken::new())
+        .expect("saved analysis should open");
+    let ty = analysis
+        .type_at(context.crate_ref, context.file, offset)
+        .expect("saved local type should resolve")
+        .expect("saved local has a type");
+    assert_eq!(
+        ty.primitive(),
+        Some(rg_ir_model::PrimitiveTy::UnsignedInt(
+            rg_ir_model::UnsignedIntTy::Usize
+        ))
+    );
+}
+
 #[test]
 fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
     let fixture = fixture_crate(
@@ -194,7 +220,8 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
 
             //- /src/lib.rs
             pub fn completed_in_batch() -> usize {
-                1
+                let value = 1usize;
+                value
             }
             "#,
     );
@@ -208,7 +235,6 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
                 indexing_preference: IndexingPerformancePreference::LowerPeakMemory,
-                package_residency_policy: PackageResidencyPolicy::AllResident,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
@@ -224,14 +250,7 @@ fn lower_memory_builds_do_not_start_empty_deferred_finishes() {
         matches!(receiver.try_recv(), Err(mpsc::TryRecvError::Empty)),
         "completed package batches should not spawn a deferred worker",
     );
-    let initial_body_ir = project
-        .saved_snapshot()
-        .expect("lower-memory fixture project should be saved")
-        .stats()
-        .body_ir;
-    assert_eq!(initial_body_ir.complete_crate_count, 1);
-    assert_eq!(initial_body_ir.missing_crate_count, 0);
-    assert_eq!(initial_body_ir.body_count, 1);
+    assert_saved_body_type(&project, &fixture.path("src/lib.rs"));
 
     project
         .reindex_workspace()
@@ -261,7 +280,6 @@ fn cached_startup_reports_idle_without_deferred_work_events() {
             "#,
     );
     let configuration = ProjectConfiguration::from(AnalysisConfig {
-        package_residency_policy: PackageResidencyPolicy::AllOffloadable,
         sysroot_discovery: SysrootDiscovery::Disabled,
         ..AnalysisConfig::default()
     });
@@ -322,7 +340,6 @@ fn completed_successor_terminates_superseded_deferred_lifecycle() {
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
-                package_residency_policy: PackageResidencyPolicy::AllResident,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
@@ -381,7 +398,8 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
 
             //- /src/lib.rs
             pub fn published() -> usize {
-                1
+                let value = 1usize;
+                value
             }
             "#,
     );
@@ -397,9 +415,6 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
-                // The final assertions observe resident Body IR, so keep this lifecycle fixture
-                // independent from the client-facing residency default.
-                package_residency_policy: PackageResidencyPolicy::AllResident,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
@@ -431,8 +446,11 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
         "an unchanged foreground cycle should not invent deferred work",
     );
 
-    std::fs::write(&source, "pub fn updated() -> usize { 2 }\n")
-        .expect("fixture source should be replaced");
+    std::fs::write(
+        &source,
+        "pub fn updated() -> usize { let value = 2usize; value }\n",
+    )
+    .expect("fixture source should be replaced");
     project
         .saved_project_changes(vec![SavedFileChange::fs_path(source)])
         .expect("saved source change should be applied");
@@ -455,14 +473,8 @@ fn deferred_lifecycle_tracks_published_generations_not_foreground_activity() {
     };
     project.deferred_indexing_finished(generation, result);
     assert_progress_then_finished(&recorded.take());
-    let finished_stats = project
-        .saved_snapshot()
-        .expect("finished saved project should be available")
-        .stats()
-        .body_ir;
-    assert_eq!(finished_stats.complete_crate_count, 1);
-    assert_eq!(finished_stats.missing_crate_count, 0);
-    assert_eq!(finished_stats.body_count, 1);
+    assert!(!project.project.has_unfinished_split_indexing());
+    assert_saved_body_type(&project, &fixture.path("src/lib.rs"));
 }
 
 #[test]
@@ -535,7 +547,7 @@ fn open_document_package_is_published_before_full_deferred_result() {
             edition = "2024"
 
             //- /app/src/lib.rs
-            pub fn app() -> usize { 1 }
+            pub fn app() -> usize { let value = 1usize; value }
 
             //- /helper/Cargo.toml
             [package]
@@ -546,7 +558,7 @@ fn open_document_package_is_published_before_full_deferred_result() {
             //- /helper/src/lib.rs
             pub fn first() -> usize { 1 }
             pub fn second() -> usize { 2 }
-            pub fn third() -> usize { 3 }
+            pub fn third() -> usize { let value = 3usize; value }
             "#,
     );
     let (sender, receiver) = mpsc::channel();
@@ -558,7 +570,6 @@ fn open_document_package_is_published_before_full_deferred_result() {
         .initialize(
             fixture.path(""),
             ProjectConfiguration::from(AnalysisConfig {
-                package_residency_policy: PackageResidencyPolicy::AllResident,
                 sysroot_discovery: SysrootDiscovery::Disabled,
                 ..AnalysisConfig::default()
             }),
@@ -577,15 +588,15 @@ fn open_document_package_is_published_before_full_deferred_result() {
     };
     project.deferred_indexing_products(*products);
 
-    let first_stats = project
-        .saved_snapshot()
-        .expect("partially finished saved project should be available")
-        .stats()
-        .body_ir;
-    assert_eq!(first_stats.complete_crate_count, 1);
-    assert!(
-        matches!(first_stats.body_count, 1 | 3),
-        "one coherent package should be published before completion"
+    assert_eq!(
+        project
+            .project
+            .saved_body_build_inputs()
+            .expect("unfinished package selection should be available")
+            .packages()
+            .len(),
+        1,
+        "one package should remain unfinished after the first publication",
     );
     assert!(
         recorded.take().iter().all(|notification| !matches!(
@@ -601,13 +612,9 @@ fn open_document_package_is_published_before_full_deferred_result() {
     };
     project.deferred_indexing_finished(generation, result);
 
-    let finished_stats = project
-        .saved_snapshot()
-        .expect("finished saved project should be available")
-        .stats()
-        .body_ir;
-    assert_eq!(finished_stats.complete_crate_count, 2);
-    assert_eq!(finished_stats.body_count, 4);
+    assert!(!project.project.has_unfinished_split_indexing());
+    assert_saved_body_type(&project, &fixture.path("app/src/lib.rs"));
+    assert_saved_body_type(&project, &fixture.path("helper/src/lib.rs"));
     assert!(matches!(
         recorded.take().last(),
         Some(ServiceNotification::DeferredIndexingFinished { .. })

@@ -12,7 +12,7 @@ use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, ProjectBuilder,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectBuilder,
     ProjectGenerationId, ProjectSnapshot, ProjectStats, SavedBodyBuildInputs, SplitIndexing,
     indexing, selection::PhasePackageSet, state::ProjectState,
 };
@@ -52,9 +52,9 @@ impl Project {
         PhasePackageSet::from_path(&self.state.parse, path).map(PhasePackageSet::into_vec)
     }
 
-    /// Returns package residency decisions for this project.
-    pub fn package_residency_plan(&self) -> &PackageResidencyPlan {
-        self.state.package_residency_plan()
+    /// Returns the internal package storage choice.
+    pub fn package_residency_policy(&self) -> PackageResidencyPolicy {
+        self.state.package_residency_policy
     }
 
     /// Returns the indexing speed/memory trade-off used by this project.

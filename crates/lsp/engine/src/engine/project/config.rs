@@ -3,10 +3,9 @@
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
-    PackageResidencyPolicy as ProtoPackageResidencyPolicy,
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
-use rg_project::{IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy};
+use rg_project::{IndexingPerformancePreference, PackageBatchSize};
 #[cfg(test)]
 use rg_workspace::SysrootSources;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
@@ -14,7 +13,6 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
 /// Project settings after client-facing enum and option shapes have been removed.
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectConfiguration {
-    pub(super) package_residency_policy: PackageResidencyPolicy,
     pub(super) cargo_metadata_config: CargoMetadataConfig,
     pub(super) workspace_lowering_config: WorkspaceLoweringConfig,
     pub(super) indexing_preference: IndexingPerformancePreference,
@@ -27,19 +25,6 @@ pub(crate) struct ProjectConfiguration {
 impl From<AnalysisConfig> for ProjectConfiguration {
     /// Remove protocol-only enum shapes before project construction reaches the engine lane.
     fn from(config: AnalysisConfig) -> Self {
-        let package_residency_policy = match config.package_residency_policy {
-            ProtoPackageResidencyPolicy::AllResident => PackageResidencyPolicy::AllResident,
-            ProtoPackageResidencyPolicy::WorkspaceResident => {
-                PackageResidencyPolicy::WorkspaceResident
-            }
-            ProtoPackageResidencyPolicy::WorkspaceAndPathDepsResident => {
-                PackageResidencyPolicy::WorkspaceAndPathDepsResident
-            }
-            ProtoPackageResidencyPolicy::WorkspacePathAndDirectDepsResident => {
-                PackageResidencyPolicy::WorkspacePathAndDirectDepsResident
-            }
-            ProtoPackageResidencyPolicy::AllOffloadable => PackageResidencyPolicy::AllOffloadable,
-        };
         let cargo_metadata_config = match config.cargo_metadata_config.target() {
             ProtoCargoMetadataTarget::Auto => CargoMetadataConfig::default(),
             ProtoCargoMetadataTarget::Triple(target) => {
@@ -64,7 +49,6 @@ impl From<AnalysisConfig> for ProjectConfiguration {
             .expect("protocol package batch size should remain positive");
 
         Self {
-            package_residency_policy,
             cargo_metadata_config,
             workspace_lowering_config,
             indexing_preference,

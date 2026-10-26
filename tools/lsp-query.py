@@ -47,7 +47,6 @@ class Options:
     timeout_ms: int = DEFAULT_TIMEOUT_MS
     json_output: bool = False
     show_logs: bool = False
-    package_residency: str = "all-resident"
     max_hints: int = MAX_HINTS
     max_completions: int = MAX_COMPLETIONS
     max_code_actions: int = MAX_CODE_ACTIONS
@@ -92,7 +91,6 @@ Query file shape:
     "format": "text",
     "readinessBarrier": "ready",
     "deferredBarrier": "none",
-    "initializationOptions": {"cache": {"packageResidency": "all-resident"}},
     "queries": [
       {"kind": "hover", "label": "local", "marker": "let value", "delta": 5},
       {"kind": "completion", "label": "member", "marker": "value.", "delta": 6,
@@ -137,7 +135,6 @@ def parse_args(argv: Sequence[str]) -> Options:
         "--overlay-file": "overlay_file",
         "--workspace-root": "workspace_root",
         "--profile": "profile",
-        "--package-residency": "package_residency",
         "--label": "label",
         "--marker": "marker",
         "--start-marker": "start_marker",
@@ -497,7 +494,7 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
     requested = {} if requested_value is None else require_object(
         requested_value, "initializationOptions"
     )
-    for key in ("cache", "cfg", "diagnostics"):
+    for key in ("cfg", "diagnostics"):
         if key in requested and requested[key] is not None and not isinstance(requested[key], dict):
             fail("initializationOptions.{} must be an object".format(key))
     requested_cfg = requested.get("cfg") or {}
@@ -505,14 +502,12 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
         fail("use only one of cfgTest or initializationOptions.cfg.test")
 
     initialization_options = dict(requested)
-    cache = {"packageResidency": options.package_residency}
-    cache.update(requested.get("cache") or {})
     cfg = dict(requested_cfg)
     if "cfgTest" in plan and plan["cfgTest"] is not None:
         cfg["test"] = plan["cfgTest"]
     diagnostics = {"onStartup": False, "onSave": False}
     diagnostics.update(requested.get("diagnostics") or {})
-    initialization_options.update({"cache": cache, "cfg": cfg, "diagnostics": diagnostics})
+    initialization_options.update({"cfg": cfg, "diagnostics": diagnostics})
 
     return {
         "file": file_path,

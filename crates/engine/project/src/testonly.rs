@@ -146,16 +146,6 @@ impl ProjectFixture {
             .expect("fixture save changes should apply as one source generation")
     }
 
-    pub fn remove_package_cache_artifacts(&self) {
-        self.project
-            .state
-            .cache_store
-            .clear_package_artifacts()
-            .unwrap_or_else(|error| {
-                panic!("fixture package cache artifacts should be removable: {error}")
-            });
-    }
-
     pub fn corrupt_package_cache_artifact(&self, package_name: &str) {
         let path = self.package_cache_artifact_path(package_name);
 

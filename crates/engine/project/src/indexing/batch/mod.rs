@@ -2,8 +2,8 @@
 //!
 //! Parsing and cache probing still happen once for the complete project. After that, a small group
 //! of packages runs through Item Tree, DefMap, Semantic IR, and configured Body IR. Finished
-//! packages are written and released when their residency policy allows it, then the next group
-//! starts. This avoids keeping incomplete phase data for every package in memory at once.
+//! packages are written and released in offloading mode before the next group starts. This avoids
+//! keeping incomplete phase data for every package in memory at once.
 //!
 //! Dependencies are put in the same batch or an earlier batch. One cache transaction spans all
 //! batches, so later packages can read artifacts written by earlier ones. If the build fails, the
@@ -32,8 +32,8 @@ use super::{
     plan::PackageBuildPlan,
 };
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidency, PackageResidencyPlan,
-    SplitIndexingMode, StartupCacheLoad,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, SplitIndexingMode,
+    StartupCacheLoad,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
     stats::MacroExpansionLimitBuildSummary,
@@ -50,7 +50,7 @@ pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
-    package_residency: &PackageResidencyPlan,
+    package_residency_policy: PackageResidencyPolicy,
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
@@ -71,7 +71,7 @@ pub(super) fn build(
     let mut build_plan = PackageBuildPlan::build(
         startup_cache_load,
         body_ir_policy,
-        package_residency,
+        package_residency_policy,
         cache_plan,
         cache_store,
         workspace,
@@ -124,11 +124,10 @@ pub(super) fn build(
     let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(body_ir_entries));
     let mut macro_expansion_limit_summary = MacroExpansionLimitBuildSummary::default();
 
-    let has_offloadable_source_packages = build_plan
-        .source_packages
-        .iter()
-        .any(|package| package_residency.package(package) == Some(PackageResidency::Offloadable));
-    let cache_update = if has_offloadable_source_packages {
+    let reallocate_payloads = !package_residency_policy.is_offloadable();
+    let write_artifacts =
+        package_residency_policy.is_offloadable() && !build_plan.source_packages.is_empty();
+    let cache_update = if write_artifacts {
         Some(
             cache_store
                 .begin_artifact_update()
@@ -158,7 +157,6 @@ pub(super) fn build(
             &pending_packages,
         );
         let rebuild_subset = batch.visible_dependency_subset(workspace);
-        let resident_packages = package_residency.resident_packages(batch.as_slice());
 
         // Item trees are the largest purely transient cross-phase input. Restricting them to one
         // package batch removes the global ItemTree/DefMap overlap before any durable phase changes.
@@ -200,7 +198,7 @@ pub(super) fn build(
             &mut parse,
             &mut item_tree,
             batch,
-            &resident_packages,
+            reallocate_payloads,
             &mut names,
             indexing_preference.macro_expansion_preference(),
             memory_hooks,
@@ -304,7 +302,7 @@ pub(super) fn build(
             &def_map,
             &semantic_ir,
             batch.as_slice(),
-            &resident_packages,
+            reallocate_payloads,
             &mut names,
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
@@ -319,7 +317,7 @@ pub(super) fn build(
             &def_map,
             &semantic_ir,
             batch.as_slice(),
-            &resident_packages,
+            reallocate_payloads,
             &mut names,
             loaders.def_map,
             loaders.semantic_ir,
@@ -344,13 +342,7 @@ pub(super) fn build(
         )
         .checkpoint(sampler, metric::BODY_IR_MEMORY, &body_ir);
 
-        let offloadable_batch = batch.filter(|package| {
-            package_residency.package(package) == Some(PackageResidency::Offloadable)
-        });
-        if !offloadable_batch.is_empty() {
-            let update = cache_update
-                .as_ref()
-                .context("batch indexing cache update should exist for offloadable packages")?;
+        if let Some(update) = &cache_update {
             PackageArtifactWriter::new(
                 cache_plan,
                 &source_fingerprints,
@@ -359,7 +351,7 @@ pub(super) fn build(
                 &semantic_ir,
                 &body_ir,
             )
-            .write_packages(update, offloadable_batch.as_slice())
+            .write_packages(update, batch.as_slice())
             .context("while attempting to write package batch artifacts")?;
             checkpoint_memory!(
                 names,
@@ -374,7 +366,7 @@ pub(super) fn build(
 
             let mut artifact_phases =
                 PackageArtifactPhases::new(&mut def_map, &mut semantic_ir, &mut body_ir);
-            for package in offloadable_batch.iter() {
+            for package in batch.iter() {
                 artifact_phases.offload_package(package).with_context(|| {
                     format!(
                         "while attempting to offload package batch package {}",
@@ -382,7 +374,7 @@ pub(super) fn build(
                     )
                 })?;
             }
-            parse.offload_line_indexes_for_packages(&offloadable_batch.package_indices());
+            parse.offload_line_indexes_for_packages(&batch.package_indices());
             Shrink::shrink_to_fit(&mut names);
             memory_hooks.purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
             checkpoint_memory!(

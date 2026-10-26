@@ -6,7 +6,7 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
-use super::initial::build_resident_state;
+use super::initial::build_state;
 use crate::{
     BuildProcessMemory, IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy,
     Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SplitIndexingMode, StartupCacheLoad,
@@ -116,7 +116,7 @@ impl ProjectBuilder {
         // project/LSP owner.
         let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
             .context("while attempting to claim package cache instance")?;
-        let mut state = build_resident_state(
+        let mut state = build_state(
             self.workspace,
             self.workspace_lowering_config,
             self.cargo_metadata_config,
@@ -130,7 +130,7 @@ impl ProjectBuilder {
             Arc::clone(&self.memory_hooks),
             &mut memory_sampler,
         )
-        .context("while attempting to build resident analysis project")?;
+        .context("while attempting to build analysis project")?;
         ResidencyApplication::fresh(&mut state)
             .apply_profiled(&mut memory_sampler)
             .context("while attempting to apply package cache residency")?;

@@ -1,13 +1,11 @@
-use std::{fmt::Write as _, fs};
+use std::fs;
 
-use expect_test::expect;
 use rg_ir_model::{CrateId, EvaluatedConstValue, PackageSlot, UnsignedIntTy};
 
 use super::utils::{
-    assert_reader_matches_resident_package, package_cache_header, package_cache_header_for,
-    write_resident_package_artifact,
+    assert_reader_matches_resident_package, package_cache_header, write_resident_package_artifact,
 };
-use crate::{PackageResidencyPolicy, Project, testonly::ProjectSourceFixture};
+use crate::testonly::ProjectSourceFixture;
 
 #[test]
 fn stores_package_cache_artifacts_on_disk() {
@@ -173,83 +171,4 @@ pub struct App;
         current_artifact.exists(),
         "current cache artifact should survive stale-generation cleanup",
     );
-}
-
-#[test]
-fn residency_policy_controls_package_artifact_writes() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /src/lib.rs crate:app deps:dep
-pub struct AppBefore;
-pub fn use_dep(_: dep::Dep) {}
-
-//- /dep/src/lib.rs crate:dep root:dep origin:dependency
-pub struct Dep;
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-    let mut dump = String::new();
-    writeln!(&mut dump, "artifact writes by residency policy")
-        .expect("string writes should not fail");
-
-    for (index, (label, policy)) in [
-        ("all-resident", PackageResidencyPolicy::AllResident),
-        (
-            "workspace-resident",
-            PackageResidencyPolicy::WorkspaceResident,
-        ),
-        ("all-offloadable", PackageResidencyPolicy::AllOffloadable),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        if index > 0 {
-            writeln!(&mut dump).expect("string writes should not fail");
-        }
-
-        let project = Project::builder(workspace.clone())
-            .package_residency_policy(policy)
-            .build()
-            .unwrap_or_else(|error| panic!("{label} fixture project should build: {error:#}"));
-
-        writeln!(&mut dump, "{label}").expect("string writes should not fail");
-        for package in project.snapshot().parse_db().packages() {
-            let header = package_cache_header_for(&project, package.package_name());
-            let artifact_exists = project
-                .state
-                .cache_store
-                .package_artifact_path(&header.package)
-                .exists();
-            writeln!(
-                &mut dump,
-                "- {} artifact {artifact_exists}",
-                package.package_name(),
-            )
-            .expect("string writes should not fail");
-        }
-
-        project
-            .state
-            .cache_store
-            .clear_package_artifacts()
-            .unwrap_or_else(|error| {
-                panic!("{label} fixture cache artifacts should clean up: {error}")
-            });
-    }
-
-    expect![[r#"
-        artifact writes by residency policy
-        all-resident
-        - app artifact false
-        - dep artifact false
-
-        workspace-resident
-        - app artifact false
-        - dep artifact true
-
-        all-offloadable
-        - app artifact true
-        - dep artifact true
-    "#]]
-    .assert_eq(&format!("{}\n", dump.trim_end()));
 }

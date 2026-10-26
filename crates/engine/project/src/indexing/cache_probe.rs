@@ -11,7 +11,6 @@ use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    PackageResidency, PackageResidencyPlan,
     profile::metric,
     storage::cache::{
         CachedPackage, PackageCacheProbe, PackageCacheStartup, PackageCacheStore,
@@ -37,7 +36,6 @@ pub(super) enum StartupPackageSelection {
 /// miss so the package rebuilds from source.
 pub(super) struct StartupCacheProbe<'a> {
     body_ir_policy: BodyIrBuildPolicy,
-    package_residency: &'a PackageResidencyPlan,
     cache_plan: &'a WorkspaceCachePlan,
     cache_store: &'a PackageCacheStore,
     workspace: &'a WorkspaceMetadata,
@@ -46,24 +44,19 @@ pub(super) struct StartupCacheProbe<'a> {
 
 impl<'a> StartupCacheProbe<'a> {
     pub(super) fn new(
-        package_count: usize,
         body_ir_policy: BodyIrBuildPolicy,
-        package_residency: &'a PackageResidencyPlan,
         cache_plan: &'a WorkspaceCachePlan,
         cache_store: &'a PackageCacheStore,
         workspace: &'a WorkspaceMetadata,
         parse: &'a mut ParseDb,
     ) -> Self {
-        let probe = Self {
+        Self {
             body_ir_policy,
-            package_residency,
             cache_plan,
             cache_store,
             workspace,
             parse,
-        };
-        metric::CACHE_PROBE_PACKAGES.add(package_count as u64);
-        probe
+        }
     }
 
     /// Chooses cache hits for the package graph before restoring any parse snapshot.
@@ -75,6 +68,7 @@ impl<'a> StartupCacheProbe<'a> {
     /// and DefMap routing directory.
     pub(super) fn select(&mut self) -> Vec<StartupPackageSelection> {
         let package_count = self.parse.package_count();
+        metric::CACHE_PROBE_PACKAGES.add(package_count as u64);
         let mut probes = (0..package_count).map(|_| None).collect::<Vec<_>>();
         let mut source_packages = vec![false; package_count];
 
@@ -145,12 +139,6 @@ impl<'a> StartupCacheProbe<'a> {
 
     /// Returns a package-local tentative hit without mutating the parse database.
     fn probe_package(&mut self, package: PackageSlot) -> Option<PackageCacheStartup> {
-        if self.package_residency.package(package) != Some(PackageResidency::Offloadable) {
-            metric::CACHE_PROBE_RESIDENT_PACKAGES.inc();
-            return None;
-        }
-        metric::CACHE_PROBE_OFFLOADABLE_PACKAGES.inc();
-
         let Some(cached_package) = self.cache_plan.package(package) else {
             metric::CACHE_PROBE_UNPLANNED_PACKAGES.inc();
             return None;

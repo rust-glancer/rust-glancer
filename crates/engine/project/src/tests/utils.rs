@@ -38,10 +38,6 @@ impl HostFixture {
         self.fixture.file_id_for_path(relative_path)
     }
 
-    pub(super) fn remove_package_cache_artifacts(&self) {
-        self.fixture.remove_package_cache_artifacts();
-    }
-
     pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {
         self.fixture.corrupt_package_cache_artifact(package_name);
     }
@@ -443,18 +439,9 @@ impl HostFixture {
             return Vec::new();
         };
 
-        let semantic_ir =
-            host.state
-                .semantic_ir
-                .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
-                    "resident project fixture",
-                ));
-        let def_map = host
-            .state
-            .def_map
-            .read_txn(rg_def_map::DefMapLoader::resident_only(
-                "resident project fixture",
-            ));
+        let loaders = crate::storage::loaders::PackageReadLoaders::new(&host.state);
+        let semantic_ir = host.state.semantic_ir.read_txn(loaders.semantic_ir);
+        let def_map = host.state.def_map.read_txn(loaders.def_map);
         let mut names = Vec::new();
         for ty in ty.nominal_type_defs() {
             let Some(crate_ref) = ty.origin.as_crate_ref() else {

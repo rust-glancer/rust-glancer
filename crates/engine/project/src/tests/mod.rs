@@ -2554,7 +2554,7 @@ edition = "2024"
 //- /dep/src/lib.rs
 pub struct Api;
 "#,
-        PackageResidencyPolicy::WorkspaceResident,
+        PackageResidencyPolicy::AllOffloadable,
     );
 
     fixture.check(
@@ -2630,7 +2630,7 @@ impl OffloadedArtifactDamage {
 
     fn apply(self, fixture: &HostFixture) {
         match self {
-            Self::Missing => fixture.remove_package_cache_artifacts(),
+            Self::Missing => fixture.remove_package_cache_artifact("dep"),
             Self::Corrupt => fixture.corrupt_package_cache_artifact("dep"),
         }
     }
@@ -2654,7 +2654,7 @@ fn queries_report_missing_and_corrupt_offloaded_package_cache_artifacts() {
     for damage in OffloadedArtifactDamage::ALL {
         let fixture = HostFixture::build_with_package_residency_policy(
             OFFLOADED_ARTIFACT_FIXTURE,
-            PackageResidencyPolicy::WorkspaceResident,
+            PackageResidencyPolicy::AllOffloadable,
         );
 
         assert!(fixture.package_cache_artifact_exists("dep"));
@@ -2773,7 +2773,7 @@ fn source_updates_rebuild_missing_and_corrupt_offloaded_package_cache_artifacts(
     for damage in OffloadedArtifactDamage::ALL {
         let mut fixture = HostFixture::build_with_package_residency_policy(
             OFFLOADED_ARTIFACT_FIXTURE,
-            PackageResidencyPolicy::WorkspaceResident,
+            PackageResidencyPolicy::AllOffloadable,
         );
         damage.apply(&fixture);
 

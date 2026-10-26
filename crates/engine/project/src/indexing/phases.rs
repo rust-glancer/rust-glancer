@@ -23,7 +23,7 @@ use super::{
     plan::PackageBuildPlan,
 };
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, SplitIndexingMode,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, SplitIndexingMode,
     StartupCacheLoad,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildMemorySampler, metric},
@@ -36,8 +36,8 @@ use crate::{
 
 /// Phase payloads built for one project snapshot.
 ///
-/// `ParseDb` keeps package slots, file ids, source paths, and line indexes resident for every
-/// package. The heavier retained phases may keep a package resident or leave it offloaded, but
+/// `ParseDb` keeps package slots, file ids, and source paths resident for every package.
+/// The heavier retained phases may keep a package resident or leave it offloaded, but
 /// DefMap, Semantic IR, and Body IR must agree on that package slot's backing artifact.
 pub(super) struct BuiltPhases {
     pub(super) package_source_fingerprints: Vec<Option<Fingerprint>>,
@@ -55,7 +55,7 @@ pub(super) fn build(
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
     package_batch_size: PackageBatchSize,
-    package_residency: &PackageResidencyPlan,
+    package_residency_policy: PackageResidencyPolicy,
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
@@ -68,7 +68,7 @@ pub(super) fn build(
             workspace,
             body_ir_policy,
             indexing_preference,
-            package_residency,
+            package_residency_policy,
             cache_plan,
             cache_store,
             startup_cache_load,
@@ -93,7 +93,7 @@ pub(super) fn build(
     let mut build_plan = PackageBuildPlan::build(
         startup_cache_load,
         body_ir_policy,
-        package_residency,
+        package_residency_policy,
         cache_plan,
         cache_store,
         workspace,
@@ -150,12 +150,9 @@ pub(super) fn build(
     let rebuild_subset = build_plan
         .source_packages
         .visible_dependency_subset(workspace);
-    // Freezing still produces every source-built package, but reallocation briefly duplicates a
-    // complete payload. Full builds pay that peak only for packages that survive cache application.
-    // Early-start builds also reallocate offloadable packages because incomplete Body IR prevents
-    // those packages from reaching their artifact-backed residency at this boundary.
-    let source_packages_to_reallocate = split_indexing_mode
-        .packages_to_reallocate(package_residency, build_plan.source_packages.as_slice());
+    // Reallocation copies payloads out of allocator pages shared with build temporaries. Only pay
+    // for that copy when retaining decoded data: resident mode or unfinished early-start builds.
+    let reallocate_payloads = split_indexing_mode.reallocate_payloads(package_residency_policy);
 
     // ----------------
     // 6. Build def-map
@@ -178,7 +175,7 @@ pub(super) fn build(
         &mut parse,
         &mut item_tree,
         &build_plan.source_packages,
-        &source_packages_to_reallocate,
+        reallocate_payloads,
         &mut names,
         indexing_preference.macro_expansion_preference(),
         memory_hooks,
@@ -294,7 +291,7 @@ pub(super) fn build(
         &def_map,
         &semantic_ir,
         build_plan.source_packages.as_slice(),
-        &source_packages_to_reallocate,
+        reallocate_payloads,
         &mut names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
@@ -309,7 +306,7 @@ pub(super) fn build(
         &def_map,
         &semantic_ir,
         build_plan.source_packages.as_slice(),
-        &source_packages_to_reallocate,
+        reallocate_payloads,
         &mut names,
         loaders.def_map,
         loaders.semantic_ir,

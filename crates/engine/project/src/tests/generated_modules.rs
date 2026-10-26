@@ -1142,10 +1142,19 @@ pub struct RefreshedGenerated;
     drop(analysis);
     drop(rebuilt);
 
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
     let second_warm = Project::builder(fixture.workspace_metadata())
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("the rewritten generated module artifact should survive another warm restart");
+    run.finish().assert_counter_path_with_message(
+        "project.build.cache_probe.results.hits",
+        1,
+        "the replacement artifact should be reused after the edited file was rebuilt",
+    );
     assert_eq!(
         second_warm
             .snapshot()

@@ -42,7 +42,7 @@ pub struct SavedBodyBuildInputs {
     crates: UniqueVec<CrateRef>,
     packages: Vec<PackageSlot>,
     subset: PackageSubset,
-    packages_to_reallocate: Vec<PackageSlot>,
+    reallocate_payloads: bool,
     worker_limit: Option<NonZeroUsize>,
 }
 
@@ -101,13 +101,8 @@ impl SavedBodyBuildInputs {
         let subset = packages.visible_dependency_subset(&state.workspace);
         // File work may leave an offloadable package incomplete and still in memory, so reallocate
         // its crate payloads too. Complete products headed straight to disk do not need the copy.
-        let packages_to_reallocate = if files.is_empty() {
-            state
-                .package_residency
-                .resident_packages(packages.as_slice())
-        } else {
-            packages.as_slice().to_vec()
-        };
+        let reallocate_payloads =
+            !state.package_residency_policy.is_offloadable() || !files.is_empty();
         let loaders = PackageReadLoaders::new(state);
         Self {
             generation: state.generation_id,
@@ -120,7 +115,7 @@ impl SavedBodyBuildInputs {
             crates,
             packages: packages.as_slice().to_vec(),
             subset,
-            packages_to_reallocate,
+            reallocate_payloads,
             worker_limit: state.indexing_preference.body_ir_worker_limit(),
         }
     }
@@ -185,7 +180,7 @@ impl SavedBodyBuildInputs {
             &self.def_map,
             &self.semantic_ir,
             &self.packages,
-            &self.packages_to_reallocate,
+            self.reallocate_payloads,
             &mut names,
             self.def_map_loader,
             self.semantic_ir_loader,

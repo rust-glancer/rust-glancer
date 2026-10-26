@@ -4,21 +4,43 @@
 //! level lifecycle: deciding which resident packages need durable artifacts, writing them, and then
 //! dropping phase data so the project returns to its selected memory profile.
 
-mod policy;
-
 use std::sync::Arc;
 
 use anyhow::Context as _;
 use rg_ir_model::PackageSlot;
-use rg_std::Shrink;
+use rg_std::{MemorySize, Shrink};
 
-pub use self::policy::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 use super::artifacts::{PackageArtifactPhases, PackageArtifactWriter};
 use crate::{
     profile::{BuildMemorySampler, record_build_checkpoint},
     selection::PhasePackageSet,
     state::ProjectState,
 };
+
+/// Internal storage choice for project construction and diagnostics.
+///
+/// The LSP uses offloading. Tests and diagnostics can retain decoded payloads without serializing
+/// them. In either mode, incomplete deferred analysis stays resident until it can be persisted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
+#[memsize(leaf)]
+pub enum PackageResidencyPolicy {
+    #[default]
+    AllResident,
+    AllOffloadable,
+}
+
+impl PackageResidencyPolicy {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AllResident => "all-resident",
+            Self::AllOffloadable => "all-offloadable",
+        }
+    }
+
+    pub(crate) fn is_offloadable(self) -> bool {
+        self == Self::AllOffloadable
+    }
+}
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {
@@ -32,14 +54,11 @@ impl<'a> ResidencyApplication<'a> {
     /// Builds the residency transition for a freshly constructed project.
     ///
     /// Source fingerprints have already been computed for every package in the build phases, and
-    /// startup-cache hits may already be non-resident. Therefore we only write artifacts for
-    /// offloadable packages whose phase data is actually resident, then offload every package
-    /// selected by the residency policy.
+    /// startup-cache hits are already backed by artifacts. In offloading mode, write the finished
+    /// source-built packages before releasing their phase data.
     pub(crate) fn fresh(project: &'a mut ProjectState) -> Self {
-        let packages_to_offload = Self::offloadable_packages(project)
-            .filter(|package| Self::package_can_be_offloaded(project, package));
-        // Cache artifacts are the durable backing store for offloadable packages. Resident packages
-        // stay in memory and should not pay serialization/write cost until policy asks for it.
+        let packages_to_offload = Self::finished_packages(project);
+        // Already-offloaded packages need only cleanup; newly completed payloads need an artifact.
         let packages_to_write = packages_to_offload
             .filter(|package| Self::package_artifact_is_writable(project, package));
 
@@ -53,17 +72,20 @@ impl<'a> ResidencyApplication<'a> {
 
     /// Builds the residency transition after a stable-graph source rebuild.
     ///
-    /// Rebuilt packages have fresh resident phase data and stale source fingerprints, while
-    /// unchanged dependencies may have been lazily materialized from existing artifacts. Only
-    /// rebuilt offloadable packages need fresh artifacts; every offloadable package can be dropped
-    /// back to its current cache backing store afterward.
+    /// Rebuilt packages have fresh phase data and stale source fingerprints. In offloading mode,
+    /// they need replacement artifacts before releasing their payloads. Cleanup also drops
+    /// reloadable metadata for unchanged cached packages; unfinished deferred packages stay decoded.
     pub(crate) fn restore(project: &'a mut ProjectState, rebuilt_packages: &[PackageSlot]) -> Self {
+        let rebuilt_packages = PhasePackageSet::from_slice(rebuilt_packages);
+        let packages_to_write = if project.package_residency_policy.is_offloadable() {
+            rebuilt_packages.filter(|package| Self::package_artifact_is_writable(project, package))
+        } else {
+            PhasePackageSet::default()
+        };
         Self {
-            refresh_source_fingerprints_for: PhasePackageSet::from_slice(rebuilt_packages),
-            packages_to_write: Self::rebuilt_offloadable_packages(project, rebuilt_packages)
-                .filter(|package| Self::package_artifact_is_writable(project, package)),
-            packages_to_offload: Self::offloadable_packages(project)
-                .filter(|package| Self::package_can_be_offloaded(project, package)),
+            refresh_source_fingerprints_for: rebuilt_packages,
+            packages_to_write,
+            packages_to_offload: Self::finished_packages(project),
             project,
         }
     }
@@ -87,7 +109,14 @@ impl<'a> ResidencyApplication<'a> {
             || !self.packages_to_offload.is_empty();
 
         if !self.refresh_source_fingerprints_for.is_empty() {
-            self.refresh_source_fingerprints()
+            self.project
+                .cache_plan
+                .refresh_source_fingerprints(
+                    self.project.workspace.workspace_root(),
+                    &self.project.parse,
+                    &mut self.project.package_source_fingerprints,
+                    self.refresh_source_fingerprints_for.as_slice(),
+                )
                 .context("while attempting to refresh package cache source fingerprints")?;
         }
 
@@ -139,50 +168,17 @@ impl<'a> ResidencyApplication<'a> {
         record_build_checkpoint(label, project_bytes, project_bytes, process_memory);
     }
 
-    /// Returns all packages selected by the current residency policy.
-    fn offloadable_packages(project: &ProjectState) -> PhasePackageSet {
+    /// Release only packages whose resident phases have coherent durable backing. Early-start
+    /// and file-local analysis can leave unfinished packages resident even in offloading mode.
+    fn finished_packages(project: &ProjectState) -> PhasePackageSet {
+        if !project.package_residency_policy.is_offloadable() {
+            return PhasePackageSet::default();
+        }
         PhasePackageSet::from_packages(
-            (0..project.workspace.packages().len())
+            (0..project.parse.package_count())
                 .map(PackageSlot)
-                .filter(|package| {
-                    project.package_residency.package(*package)
-                        == Some(PackageResidency::Offloadable)
-                })
+                .filter(|&package| Self::package_can_be_offloaded(project, package))
                 .collect(),
-        )
-    }
-
-    /// Intersects the rebuilt package set with the current offloadable package set.
-    fn rebuilt_offloadable_packages(
-        project: &ProjectState,
-        rebuilt_packages: &[PackageSlot],
-    ) -> PhasePackageSet {
-        let package_count = project.workspace.packages().len();
-        let mut rebuilt = vec![false; package_count];
-        for package in rebuilt_packages {
-            if package.0 < package_count {
-                rebuilt[package.0] = true;
-            }
-        }
-        let mut packages = Vec::new();
-        for (package_idx, was_rebuilt) in rebuilt.iter().copied().enumerate() {
-            let package = PackageSlot(package_idx);
-            if was_rebuilt
-                && project.package_residency.package(package) == Some(PackageResidency::Offloadable)
-            {
-                packages.push(package);
-            }
-        }
-        PhasePackageSet::from_packages(packages)
-    }
-
-    /// Refreshes source fingerprints for packages that were rebuilt from source.
-    fn refresh_source_fingerprints(&mut self) -> anyhow::Result<()> {
-        self.project.cache_plan.refresh_source_fingerprints(
-            self.project.workspace.workspace_root(),
-            &self.project.parse,
-            &mut self.project.package_source_fingerprints,
-            self.refresh_source_fingerprints_for.as_slice(),
         )
     }
 
@@ -282,20 +278,9 @@ impl crate::Project {
     /// line indexes are cached inside the saved project while converting byte ranges, so they need
     /// this explicit cleanup after the request.
     pub fn release_query_memory(&mut self) {
-        let offloadable_packages = self
-            .state
-            .package_residency
-            .packages()
-            .iter()
-            .enumerate()
-            .filter_map(|(package_idx, residency)| {
-                (*residency == PackageResidency::Offloadable).then_some(package_idx)
-            })
-            .collect::<Vec<_>>();
-
-        self.state
-            .parse_db_mut()
-            .offload_line_indexes_for_packages(&offloadable_packages);
+        if self.state.package_residency_policy.is_offloadable() {
+            self.state.parse_db_mut().offload_line_indexes();
+        }
         self.state.parse.evict_saved_source_text();
     }
 }

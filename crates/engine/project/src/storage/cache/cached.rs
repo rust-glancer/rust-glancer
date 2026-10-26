@@ -10,7 +10,7 @@ use rg_cfg_eval::CfgOptions;
 use rg_ir_model::PackageSlot;
 use rg_std::{MemorySize, NativeOsString};
 use rg_text::RustEdition;
-use rg_workspace::{PackageSource, TargetKind};
+use rg_workspace::{PackageOrigin, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};
@@ -76,7 +76,8 @@ impl CachedPath {
     }
 }
 
-/// Cargo source kind stored in cache metadata.
+/// Package role stored in cache identity. Workspace membership controls target selection and
+/// body analysis; sysroot packages must also remain distinct from ordinary dependencies.
 #[derive(
     Debug,
     Clone,
@@ -90,36 +91,21 @@ impl CachedPath {
     MemorySize,
 )]
 #[memsize(leaf)]
-pub enum CachedPackageSource {
+pub enum CachedPackageOrigin {
     #[display("workspace")]
     Workspace,
-    #[display("path")]
-    Path,
-    #[display("registry")]
-    Registry,
-    #[display("sparse-registry")]
-    SparseRegistry,
-    #[display("git")]
-    Git,
-    #[display("local-registry")]
-    LocalRegistry,
-    #[display("directory")]
-    Directory,
+    #[display("dependency")]
+    Dependency,
     #[display("sysroot")]
     Sysroot,
 }
 
-impl From<PackageSource> for CachedPackageSource {
-    fn from(source: PackageSource) -> Self {
-        match source {
-            PackageSource::Workspace => Self::Workspace,
-            PackageSource::Path => Self::Path,
-            PackageSource::Registry => Self::Registry,
-            PackageSource::SparseRegistry => Self::SparseRegistry,
-            PackageSource::Git => Self::Git,
-            PackageSource::LocalRegistry => Self::LocalRegistry,
-            PackageSource::Directory => Self::Directory,
-            PackageSource::Sysroot => Self::Sysroot,
+impl From<&PackageOrigin> for CachedPackageOrigin {
+    fn from(origin: &PackageOrigin) -> Self {
+        match origin {
+            PackageOrigin::Workspace => Self::Workspace,
+            PackageOrigin::Dependency => Self::Dependency,
+            PackageOrigin::Sysroot(_) => Self::Sysroot,
         }
     }
 }
@@ -272,7 +258,7 @@ impl CachedCfgKeyValue {
 pub struct CachedPackage {
     pub package: CachedPackageSlot,
     pub name: String,
-    pub source: CachedPackageSource,
+    pub origin: CachedPackageOrigin,
     pub edition: CachedRustEdition,
     pub manifest_path: CachedPath,
     #[memsize(skip)]

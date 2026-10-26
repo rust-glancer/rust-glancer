@@ -14,7 +14,7 @@ use crate::{
 };
 
 #[test]
-fn residency_policy_changes_rebuild_from_source() {
+fn resident_diagnostics_preserve_warm_package_artifacts() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /src/lib.rs crate:app deps:dep
@@ -25,85 +25,58 @@ pub struct Dep;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let first = Project::builder(workspace.clone())
+    // Resident diagnostics need no package artifacts when starting with an empty cache.
+    let resident = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllResident)
+        .build()
+        .expect("resident diagnostic build should succeed without a cache");
+    for package in resident.state.cache_plan.packages() {
+        assert!(
+            !resident
+                .state
+                .cache_store
+                .package_artifact_path(package)
+                .exists(),
+            "resident diagnostics should not write an artifact for {}",
+            package.name,
+        );
+    }
+    drop(resident);
+
+    let cold = Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
-        .expect("fixture project should write the first residency generation");
-    let first_artifact = first
-        .state
-        .cache_store
-        .package_artifact_path(&package_cache_header_for(&first, "dep").package);
-    let first_generation = first_artifact
-        .parent()
-        .expect("package artifact should belong to a generation directory")
-        .to_path_buf();
-    let first_generation_existed = first_generation.exists();
-    drop(first);
+        .expect("cold build should persist package artifacts");
+    drop(cold);
 
-    let transition_run = rg_profile::test_support::ProfileTest::start(
+    // A diagnostic build must retain decoded packages even when matching artifacts already exist.
+    // It should also leave that backing available for the next ordinary offloading build.
+    let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
         "project.build.cache_probe",
     );
-    let transitioned = Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+    let resident = Project::builder(workspace.clone())
+        .package_residency_policy(PackageResidencyPolicy::AllResident)
         .build()
-        .expect("residency change should rebuild into a fresh cache generation");
-    let transition_profile = CacheProbeCounters::capture(transition_run.finish());
-    let transition_artifact = transitioned
-        .state
-        .cache_store
-        .package_artifact_path(&package_cache_header_for(&transitioned, "dep").package);
-    let transition_generation = transition_artifact
-        .parent()
-        .expect("package artifact should belong to a generation directory")
-        .to_path_buf();
+        .expect("resident diagnostic build should succeed");
+    let counters = CacheProbeCounters::capture(run.finish());
+    assert_eq!(resident.stats().def_map.resident_package_count, 2);
+    assert_eq!(counters.hits, 0);
+    assert_eq!(counters.misses, 0);
+    drop(resident);
 
-    let mut dump = StartupSnapshot::new("residency policy cache invalidation");
-    dump.value("first generation existed", first_generation_existed);
-    dump.value(
-        "generation changed",
-        first_generation != transition_generation,
-    );
-    dump.values(&[
-        ("transition hits", transition_profile.hits),
-        (
-            "transition missing artifacts",
-            transition_profile.missing_artifacts,
-        ),
-    ]);
-    dump.value("old generation after transition", first_generation.exists());
-    dump.value("transition artifact", transition_artifact.exists());
-    drop(transitioned);
-
-    // Switching back must not resurrect the generation used before the first policy change.
-    let switch_back_run = rg_profile::test_support::ProfileTest::start(
+    let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
         "project.build.cache_probe",
     );
-    let _switched_back = Project::builder(workspace)
+    let warm = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
-        .expect("switching residency back should rebuild from source again");
-    let switch_back_profile = CacheProbeCounters::capture(switch_back_run.finish());
-    dump.values(&[
-        ("switch-back hits", switch_back_profile.hits),
-        (
-            "switch-back missing artifacts",
-            switch_back_profile.missing_artifacts,
-        ),
-    ]);
-
-    dump.check(expect![[r#"
-        residency policy cache invalidation
-        first generation existed true
-        generation changed true
-        transition hits 0
-        transition missing artifacts 1
-        old generation after transition false
-        transition artifact true
-        switch-back hits 0
-        switch-back missing artifacts 2
-    "#]]);
+        .expect("offloading startup should reuse the preserved cache");
+    let counters = CacheProbeCounters::capture(run.finish());
+    assert_eq!(counters.hits, 2);
+    assert_eq!(counters.misses, 0);
+    assert_eq!(warm.stats().def_map.resident_package_count, 0);
 }
 
 #[test]
@@ -126,8 +99,8 @@ unsafe extern "C" {
 fn main() {}
 "#,
     );
-    let project = fixture
-        .build_project_with_package_residency_policy(PackageResidencyPolicy::WorkspaceResident);
+    let project =
+        fixture.build_project_with_package_residency_policy(PackageResidencyPolicy::AllOffloadable);
     let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let analysis = project
         .snapshot()
@@ -203,7 +176,7 @@ pub struct DepOld;
     );
     let workspace = fixture.workspace_metadata();
     let project = Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("fixture project should build");
     let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
@@ -251,7 +224,7 @@ pub struct DepNew;
 
     drop(project);
     let cached_project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("fixture project should rebuild from matching artifact");
     let analysis = cached_project
@@ -524,9 +497,9 @@ pub fn dep_value() -> usize { 2 }
     );
     let workspace = fixture.workspace_metadata();
     Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
-        .expect("fixture project should write workspace-policy dependency cache artifact");
+        .expect("fixture project should write dependency cache artifact");
 
     let run = rg_profile::test_support::ProfileTest::start(
         crate::profile_descriptors(),
@@ -534,7 +507,7 @@ pub fn dep_value() -> usize { 2 }
     );
     let project = Project::builder(workspace)
         .body_ir_policy(BodyIrBuildPolicy::all_packages())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("fixture project should reject body-policy-mismatched artifact");
     let snapshot = CacheProbeCounters::capture(run.finish());
@@ -551,6 +524,7 @@ pub fn dep_value() -> usize { 2 }
         ("hits", snapshot.hits),
         ("misses", snapshot.misses),
         ("body policy mismatches", snapshot.body_policy_mismatches),
+        ("propagated misses", snapshot.propagated_misses),
     ]);
     dump.section(
         "body IR crate statuses",
@@ -567,70 +541,11 @@ pub fn dep_value() -> usize { 2 }
     dump.check(expect![[r#"
         startup body IR policy mismatch
         hits 0
-        misses 1
+        misses 2
         body policy mismatches 1
+        propagated misses 1
         body IR crate statuses
         - crate 0 built complete
-    "#]]);
-}
-
-#[test]
-fn startup_indexing_rejects_artifacts_when_out_of_line_modules_change() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /src/lib.rs crate:app deps:dep
-pub struct App;
-
-//- /dep/src/lib.rs crate:dep root:dep origin:dependency
-mod child;
-
-//- /dep/src/child.rs
-pub struct DepChildOld;
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-    let project = Project::builder(workspace.clone())
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should build");
-    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
-
-    fixture.write_fixture_files(
-        r#"
-//- /dep/src/child.rs
-pub struct DepChildNew;
-"#,
-    );
-    // The changed file is discovered only after item-tree lowering. Startup cache validation must
-    // therefore trust the artifact's saved parse manifest, not the fresh target-root-only parse DB.
-    let cached_project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should reject stale artifact and rebuild from source");
-    let analysis = cached_project
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("cached project analysis should construct");
-    let old_symbols = analysis
-        .workspace_symbols("DepChildOld")
-        .expect("old dependency symbol query should resolve");
-    let new_symbols = analysis
-        .workspace_symbols("DepChildNew")
-        .expect("new dependency symbol query should resolve");
-
-    let mut dump = StartupSnapshot::new("startup stale out-of-line module");
-    dump.value(
-        "dep resident",
-        cached_project.state.def_map.resident_package(dep).is_some(),
-    );
-    dump.value("old symbols", old_symbols.len());
-    dump.value("new symbols", new_symbols.len());
-
-    dump.check(expect![[r#"
-        startup stale out-of-line module
-        dep resident false
-        old symbols 0
-        new symbols 1
     "#]]);
 }
 

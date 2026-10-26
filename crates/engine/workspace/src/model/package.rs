@@ -32,28 +32,6 @@ impl PackageOrigin {
     }
 }
 
-/// Package source kind used for future residency/cache policies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
-#[memsize(leaf)]
-pub enum PackageSource {
-    #[display("workspace")]
-    Workspace,
-    #[display("path")]
-    Path,
-    #[display("registry")]
-    Registry,
-    #[display("sparse-registry")]
-    SparseRegistry,
-    #[display("git")]
-    Git,
-    #[display("local-registry")]
-    LocalRegistry,
-    #[display("directory")]
-    Directory,
-    #[display("sysroot")]
-    Sysroot,
-}
-
 /// Normalized package metadata relevant to later analysis phases.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct Package {
@@ -61,7 +39,6 @@ pub struct Package {
     pub name: String,
     pub edition: RustEdition,
     pub origin: PackageOrigin,
-    pub source: PackageSource,
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
     pub cfg_options: CfgOptions,

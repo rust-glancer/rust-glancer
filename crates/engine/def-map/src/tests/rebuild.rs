@@ -180,7 +180,7 @@ impl RebuildFixture {
                 &parse,
                 &item_tree,
                 &packages,
-                &packages,
+                true,
                 &mut names,
                 crate::MacroExpansionPerformancePreference::default(),
             )

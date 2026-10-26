@@ -1,7 +1,7 @@
 //! Cache paths and atomic package-set updates.
 //!
-//! A generation directory belongs to one workspace graph and residency policy. Individual package
-//! files are replaced atomically. A source update can change identities across several packages,
+//! A generation directory belongs to one workspace graph. Individual package files are replaced
+//! atomically. A source update can change identities across several packages,
 //! so it also uses a package-set marker: an interrupted update is discarded on the next startup
 //! instead of exposing mutually inconsistent artifacts.
 //!
@@ -38,7 +38,6 @@ use super::{
     PackageCacheInstance, PackageCacheWriteInput, WorkspaceCachePlan,
     codec::EncodedPackageCacheArtifact, reader::PackageArtifactReader,
 };
-use crate::PackageResidencyPolicy;
 
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
@@ -48,7 +47,7 @@ const CACHE_UPDATE_MARKER_FILE_NAME: &str = "update-in-progress";
 /// Paths for one cache instance and one cache generation.
 ///
 /// `root` is the already-claimed instance directory. `generation` selects the subdirectory for the
-/// workspace graph and residency policy.
+/// workspace graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageCacheStore {
     root: PathBuf,
@@ -56,23 +55,17 @@ pub struct PackageCacheStore {
 }
 
 impl PackageCacheStore {
-    /// Bind a workspace cache plan and residency policy to the claimed instance directory.
+    /// Bind a workspace cache plan to the claimed instance directory.
     ///
     /// This does not touch the filesystem. Directory creation is delayed until an update begins,
     /// while cache reads can simply observe a missing artifact as a cache miss.
     pub(crate) fn for_instance(
         cache_plan: &WorkspaceCachePlan,
-        residency_policy: PackageResidencyPolicy,
         instance: &PackageCacheInstance,
     ) -> Self {
-        // Users do not change residency policy during normal operation. Although we could reuse
-        // packages that remain offloadable under both policies, preserving that cache state is not
-        // worth the additional transition complexity. Even for a big project, reindexing takes
-        // ~10 seconds, so a residency-policy change simply selects a fresh cache generation and
-        // rebuilds from source.
         Self {
             root: instance.root().to_path_buf(),
-            generation: cache_plan.generation_fingerprint(residency_policy),
+            generation: cache_plan.generation_fingerprint(),
         }
     }
 

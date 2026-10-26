@@ -12,8 +12,7 @@ use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
     AnalysisConfig, CompletionClientCapabilities, DocumentRevision, EditorDocumentSnapshot,
     EngineConfig, EngineService, GlobalPositionSnapshot, OpenDocumentSession,
-    OpenDocumentsRevision, PackageResidencyPolicy, ServiceNotification, SysrootDiscovery,
-    TargetDocumentRevision,
+    OpenDocumentsRevision, ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -202,7 +201,6 @@ impl PreparedEngine {
     ) {
         let config = EngineConfig {
             analysis: AnalysisConfig {
-                package_residency_policy: PackageResidencyPolicy::AllOffloadable,
                 // Keep this benchmark fixture-local and independent of whether a CI or developer
                 // toolchain happens to have rust-src installed.
                 sysroot_discovery: SysrootDiscovery::Disabled,

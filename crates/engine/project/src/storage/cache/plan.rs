@@ -12,11 +12,10 @@ use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
-    CachedDependency, CachedPackage, CachedPackageSlot, CachedPackageSource, CachedPath,
+    CachedDependency, CachedPackage, CachedPackageOrigin, CachedPackageSlot, CachedPath,
     CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint, PackageCacheHeader,
     fingerprint,
 };
-use crate::PackageResidencyPolicy;
 
 /// Cache-schema plan for the package artifacts belonging to one workspace graph.
 ///
@@ -28,15 +27,9 @@ pub struct WorkspaceCachePlan {
 }
 
 impl WorkspaceCachePlan {
-    /// Returns the cache generation selected by graph and residency configuration.
-    ///
-    /// Saved source changes keep this identity stable. Cargo graph or residency-policy changes
-    /// select a different artifact directory and make the previous generation disposable.
-    pub(crate) fn generation_fingerprint(
-        &self,
-        residency_policy: PackageResidencyPolicy,
-    ) -> Fingerprint {
-        fingerprint::FingerprintBuilder::cache_generation(self, residency_policy)
+    /// Saved source edits keep the generation stable; Cargo graph changes select a new directory.
+    pub(crate) fn generation_fingerprint(&self) -> Fingerprint {
+        fingerprint::FingerprintBuilder::workspace_graph(self)
     }
 
     /// Builds cache metadata for the package targets analyzed by the current project.
@@ -53,7 +46,7 @@ impl WorkspaceCachePlan {
             .map(|(package_slot, package)| CachedPackage {
                 package: CachedPackageSlot::from_workspace(PackageSlot(package_slot)),
                 name: package.name.clone(),
-                source: CachedPackageSource::from(package.source),
+                origin: CachedPackageOrigin::from(&package.origin),
                 edition: CachedRustEdition::from(package.edition),
                 manifest_path: CachedPath::from_workspace_path(
                     workspace.workspace_root(),

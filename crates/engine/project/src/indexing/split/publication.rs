@@ -15,7 +15,6 @@ use rg_std::Shrink;
 
 use super::SavedBodyProducts;
 use crate::{
-    PackageResidency,
     state::ProjectState,
     storage::cache::{BodyIrWriteInput, PackageCacheBodyUpdateInput, PackageCacheWriteInput},
 };
@@ -124,8 +123,7 @@ fn publish_package(
             next.replace_crate(crate_id, bodies)
                 .context("body product crate slot must exist")?;
         }
-        let offload = state.package_residency.package(package)
-            == Some(PackageResidency::Offloadable)
+        let offload = state.package_residency_policy.is_offloadable()
             && state.configured_package_is_finished(package, &next);
         let artifact = if offload {
             let header = state

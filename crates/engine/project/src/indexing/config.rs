@@ -7,9 +7,8 @@ use std::{
 };
 
 use rg_def_map::MacroExpansionPerformancePreference;
-use rg_ir_model::PackageSlot;
 
-use crate::PackageResidencyPlan;
+use crate::PackageResidencyPolicy;
 
 const LOWER_PEAK_MEMORY_BODY_IR_WORKER_LIMIT: usize = 4;
 const DEFAULT_PACKAGE_BATCH_SIZE: usize = 512;
@@ -17,8 +16,8 @@ const DEFAULT_PACKAGE_BATCH_SIZE: usize = 512;
 /// Number of source packages taken through the main indexing phases together.
 ///
 /// This is a package-level working-set target, not a strict memory limit. A dependency cycle and
-/// packages waiting on it may have to stay in one larger batch. Packages retained by the residency
-/// policy are not released after their batch finishes.
+/// packages waiting on it may have to stay in one larger batch. Resident diagnostic builds retain
+/// completed batches in memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PackageBatchSize(NonZeroUsize);
 
@@ -137,31 +136,16 @@ pub enum SplitIndexingMode {
 }
 
 impl SplitIndexingMode {
-    /// Select rebuilt packages whose payloads should be reallocated before return.
-    ///
-    /// A full build can immediately write and offload packages selected by the residency policy,
-    /// so only resident packages need a fresh copy. An ordinary early-start build does not yet
-    /// have durable Body IR and must keep every rebuilt package decoded until deferred finishing.
-    /// The selection happens before Body IR can prove that an individual package has no deferred
-    /// bodies, so the early-start case includes the complete rebuilt set.
-    pub(crate) fn packages_to_reallocate(
-        self,
-        package_residency: &PackageResidencyPlan,
-        rebuilt_packages: &[PackageSlot],
-    ) -> Vec<PackageSlot> {
-        match self {
-            Self::Full => package_residency.resident_packages(rebuilt_packages),
-            Self::EarlyStart => rebuilt_packages.to_vec(),
-        }
+    /// Copy payloads that will stay in memory after this build boundary. Incomplete Body IR keeps
+    /// early-start declarations resident even when finished packages normally go straight to disk.
+    pub(crate) fn reallocate_payloads(self, policy: PackageResidencyPolicy) -> bool {
+        self == Self::EarlyStart || !policy.is_offloadable()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::PackageSlot;
-
-    use super::{IndexingPerformancePreference, PackageBatchSize, SplitIndexingMode};
-    use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
+    use super::{IndexingPerformancePreference, PackageBatchSize};
 
     #[test]
     fn package_batch_size_is_positive() {
@@ -211,26 +195,6 @@ mod tests {
         assert_eq!(
             IndexingPerformancePreference::default(),
             IndexingPerformancePreference::FasterBuilds,
-        );
-    }
-
-    #[test]
-    fn early_start_reallocates_packages_waiting_for_deferred_artifacts() {
-        let residency = PackageResidencyPlan {
-            policy: PackageResidencyPolicy::WorkspaceResident,
-            packages: vec![PackageResidency::Offloadable, PackageResidency::Resident],
-        };
-        let rebuilt = [PackageSlot(0), PackageSlot(1)];
-
-        assert_eq!(
-            SplitIndexingMode::Full.packages_to_reallocate(&residency, &rebuilt),
-            [PackageSlot(1)],
-            "a full build can release its offloadable package immediately",
-        );
-        assert_eq!(
-            SplitIndexingMode::EarlyStart.packages_to_reallocate(&residency, &rebuilt),
-            rebuilt,
-            "an early-start build retains the offloadable package until Body IR is durable",
         );
     }
 }

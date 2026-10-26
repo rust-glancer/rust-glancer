@@ -46,8 +46,7 @@ pub fn build_def_map(
         &visible_packages,
     );
 
-    // The benchmark returns every built package as resident phase data, so all source packages are
-    // part of the reallocation set as well as the build set.
+    // The benchmark retains decoded phase data, so move it out of build-temporary allocations.
     macro_source_files::build_packages(
         &baseline,
         &baseline_read,
@@ -55,7 +54,7 @@ pub fn build_def_map(
         parse,
         item_tree,
         &source_packages,
-        source_packages.as_slice(),
+        true,
         names,
         IndexingPerformancePreference::default().macro_expansion_preference(),
         &NoopProjectMemoryHooks,
@@ -110,7 +109,7 @@ pub fn build_body_ir(
         def_map,
         semantic_ir,
         &packages,
-        &packages,
+        true,
         names,
         DefMapLoader::resident_only("all-source benchmark DefMap"),
         SemanticIrLoader::resident_only("all-source benchmark Semantic IR"),

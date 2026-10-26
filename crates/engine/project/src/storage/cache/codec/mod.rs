@@ -337,24 +337,6 @@ impl PackageCacheCodec {
         Ok(probe)
     }
 
-    #[cfg(test)]
-    fn section_slice<'a>(
-        bytes: &'a [u8],
-        range: PackageCacheSectionRange,
-        label: &'static str,
-    ) -> anyhow::Result<&'a [u8]> {
-        let start = usize::try_from(range.offset)
-            .with_context(|| format!("{label} offset does not fit usize"))?;
-        let len = usize::try_from(range.len)
-            .with_context(|| format!("{label} length does not fit usize"))?;
-        let end = start
-            .checked_add(len)
-            .with_context(|| format!("{label} range overflows usize"))?;
-        bytes
-            .get(start..end)
-            .with_context(|| format!("{label} range ends outside its section"))
-    }
-
     /// Use one bounded wincode configuration for every independently decoded storage unit.
     ///
     /// The preallocation limit is defensive against malformed cache lengths. It is not a total

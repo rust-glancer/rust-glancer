@@ -12,13 +12,9 @@
 
 use anyhow::Context as _;
 use rg_ir_model::CrateId;
-#[cfg(test)]
-use rg_semantic_ir::SemanticCrate;
 use rg_semantic_ir::{ItemLookupIndex, ItemStore, SemanticPackage, SemanticPackageManifest};
 use wincode::{SchemaRead, SchemaWrite};
 
-#[cfg(test)]
-use super::crate_shards::CRATE_SHARD_CONTAINER_PREFIX_BYTES;
 use super::{
     PackageCacheCodec, PackageCacheProbe, PackageCacheSectionRange,
     crate_shards::{
@@ -247,76 +243,6 @@ impl PackageCacheCodec {
         wincode::config::deserialize_exact::<ItemLookupIndex, _>(bytes, Self::wincode_config())
             .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to deserialize package cache Semantic IR lookup index")
-    }
-
-    #[cfg(test)]
-    pub(crate) fn decode_semantic_ir(
-        bytes: &[u8],
-        probe: &PackageCacheProbe,
-    ) -> anyhow::Result<SemanticPackage> {
-        let (manifest_bytes, section_len) = Self::semantic_ir_manifest_bytes(bytes)
-            .context("read package cache Semantic IR manifest bytes")?;
-        let index = Self::decode_semantic_ir_index(manifest_bytes, section_len, probe)
-            .context("decode package cache Semantic IR index")?;
-        let manifest = *index.manifest();
-        let mut crates = Vec::with_capacity(manifest.crate_count());
-        for crate_idx in 0..manifest.crate_count() {
-            let crate_id = CrateId(crate_idx);
-            let range = index
-                .crate_range(crate_id)
-                .context("Semantic IR cache index should contain every manifest crate")?;
-            let shard = Self::section_slice(bytes, range, "Semantic IR crate")
-                .context("read package cache Semantic IR crate bytes")?;
-            anyhow::ensure!(
-                shard.len() >= SEMANTIC_IR_CRATE_PREFIX_BYTES,
-                "Semantic IR crate is shorter than its prefix",
-            );
-            let crate_index = Self::decode_semantic_ir_crate_index(
-                &shard[..SEMANTIC_IR_CRATE_PREFIX_BYTES],
-                u64::try_from(shard.len()).context("Semantic IR crate length does not fit u64")?,
-            )
-            .with_context(|| format!("decode package cache Semantic IR crate {crate_idx} index"))?;
-            let items = Self::section_slice(shard, crate_index.items(), "Semantic IR items")
-                .context("read package cache Semantic IR item bytes")?;
-            let lookup_index = Self::section_slice(
-                shard,
-                crate_index.lookup_index(),
-                "Semantic IR lookup index",
-            )
-            .context("read package cache Semantic IR lookup bytes")?;
-            crates.push(SemanticCrate::from_storage_parts(
-                Self::decode_semantic_ir_items(items, manifest, crate_id)
-                    .with_context(|| format!("decode Semantic IR items for crate {crate_idx}"))?,
-                Self::decode_semantic_ir_lookup_index(lookup_index, manifest, crate_id)
-                    .with_context(|| {
-                        format!("decode Semantic IR lookup index for crate {crate_idx}")
-                    })?,
-            ));
-        }
-        SemanticPackage::from_storage_parts(manifest, crates)
-    }
-
-    #[cfg(test)]
-    fn semantic_ir_manifest_bytes(bytes: &[u8]) -> anyhow::Result<(&[u8], u64)> {
-        anyhow::ensure!(
-            bytes.len() >= CRATE_SHARD_CONTAINER_PREFIX_BYTES,
-            "package cache Semantic IR section is shorter than its prefix",
-        );
-        let manifest_len =
-            Self::decode_semantic_ir_prefix(&bytes[..CRATE_SHARD_CONTAINER_PREFIX_BYTES])
-                .context("decode package cache Semantic IR prefix")?;
-        let manifest_end = CRATE_SHARD_CONTAINER_PREFIX_BYTES
-            .checked_add(manifest_len)
-            .context("Semantic IR manifest end overflows usize")?;
-        anyhow::ensure!(
-            manifest_end <= bytes.len(),
-            "package cache Semantic IR manifest ends at byte {manifest_end}, section has {} bytes",
-            bytes.len(),
-        );
-        Ok((
-            &bytes[CRATE_SHARD_CONTAINER_PREFIX_BYTES..manifest_end],
-            u64::try_from(bytes.len()).context("Semantic IR section length does not fit u64")?,
-        ))
     }
 
     fn validate_semantic_ir_manifest(

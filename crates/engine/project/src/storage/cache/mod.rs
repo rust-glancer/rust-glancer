@@ -1,7 +1,7 @@
 //! Disposable package cache for retained analysis state.
 //!
 //! Indexing and residency choose when to reuse or persist package analysis using the workspace
-//! graph, saved source fingerprints, and residency configuration. This module owns the durable
+//! graph, saved source fingerprints, and storage mode. This module owns the durable
 //! representation and the mechanics needed to publish and read it safely. A cache hit is an
 //! optimization; any missing, stale, or malformed artifact is rejected and rebuilt rather than
 //! partially salvaged.
@@ -43,7 +43,7 @@ mod store;
 
 pub use self::{
     cached::{
-        CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageSlot, CachedPackageSource,
+        CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageOrigin, CachedPackageSlot,
         CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind,
     },
     codec::PackageCacheCodec,

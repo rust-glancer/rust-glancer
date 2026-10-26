@@ -108,8 +108,6 @@ declare_metrics! {
 
         scope "project.build.cache_probe" {
             counter CACHE_PROBE_PACKAGES = "packages.total";
-            counter CACHE_PROBE_RESIDENT_PACKAGES = "packages.resident";
-            counter CACHE_PROBE_OFFLOADABLE_PACKAGES = "packages.offloadable";
             counter CACHE_PROBE_HITS = "results.hits";
             counter CACHE_PROBE_MISSING_ARTIFACTS = "misses.missing_artifact";
             counter CACHE_PROBE_ARTIFACT_READ_ERRORS = "misses.artifact_read_error";

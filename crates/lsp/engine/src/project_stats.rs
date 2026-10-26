@@ -76,7 +76,7 @@ impl ProjectStats {
             skipped_macro_call_count = summary.skipped_macro_call_count(),
             affected_crates = ?summary.listed_crates(),
             omitted_affected_crate_count = summary.omitted_crate_count(),
-            "macro expansion was truncated after reaching the pass limit; analysis may be incomplete; run rust-glancer analyze for details"
+            "macro expansion was truncated after reaching the pass limit; analysis may be incomplete; run rust-glancer analyze <path> --package-residency all-resident for details"
         );
     }
 }

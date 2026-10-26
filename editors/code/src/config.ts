@@ -7,16 +7,6 @@
  */
 import * as vscode from "vscode";
 
-const PACKAGE_RESIDENCY_VALUES = [
-  "all-resident",
-  "workspace",
-  "workspace-and-path-deps",
-  "workspace-path-and-direct-deps",
-  "all-offloadable",
-] as const;
-
-export type PackageResidencySetting = (typeof PACKAGE_RESIDENCY_VALUES)[number];
-
 const INDEXING_PERFORMANCE_PREFERENCE_VALUES = ["lower-peak-memory", "faster-builds"] as const;
 
 export type IndexingPerformancePreferenceSetting =
@@ -29,7 +19,6 @@ export interface ExtensionConfig {
   readonly indexing: IndexingConfig;
   readonly inlayHints: InlayHintsConfig;
   readonly cargo: CargoConfig;
-  readonly cache: CacheConfig;
   readonly diagnostics: DiagnosticsConfig;
 }
 
@@ -71,10 +60,6 @@ type MutableCargoOverrideConfig = {
   features?: string[];
 };
 
-export interface CacheConfig {
-  readonly packageResidency: PackageResidencySetting;
-}
-
 export interface DiagnosticsConfig {
   readonly onStartup: boolean;
   readonly onSave: boolean;
@@ -112,14 +97,6 @@ export namespace ExtensionConfig {
         noDefaultFeatures: readBoolean(config, "cargo.noDefaultFeatures", false),
         features: normalizeCargoFeatures(readUnknownArray(config, "cargo.features")),
         overrides: normalizeCargoOverrides(readUnknownArray(config, "cargo.overrides")),
-      },
-      cache: {
-        packageResidency: readStringEnum(
-          config,
-          "cache.packageResidency",
-          PACKAGE_RESIDENCY_VALUES,
-          "all-offloadable",
-        ),
       },
       diagnostics: {
         onStartup: readBoolean(config, "diagnostics.onStartup", false),

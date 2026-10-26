@@ -1,5 +1,4 @@
 mod analysis;
-mod cache;
 mod cargo;
 mod cfg;
 mod diagnostics;
@@ -12,7 +11,6 @@ use serde::{Deserialize, Serialize};
 
 pub use self::{
     analysis::AnalysisConfig,
-    cache::PackageResidencyPolicy,
     cargo::{CargoMetadataConfig, CargoMetadataTarget},
     cfg::AnalysisCfgConfig,
     diagnostics::DiagnosticsConfig,

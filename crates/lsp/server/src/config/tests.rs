@@ -1,4 +1,4 @@
-use rg_lsp_proto::{CargoMetadataTarget, PackageResidencyPolicy};
+use rg_lsp_proto::CargoMetadataTarget;
 use serde_json::json;
 
 use super::ServerConfig;
@@ -7,8 +7,8 @@ use crate::tests::normalized_test_path;
 #[test]
 fn exact_override_merges_with_base_cargo_config() {
     let options = json!({
-        "cache": {
-            "packageResidency": "all-resident",
+        "cfg": {
+            "test": false,
         },
         "cargo": {
             "target": "x86_64-unknown-linux-gnu",
@@ -29,9 +29,8 @@ fn exact_override_merges_with_base_cargo_config() {
     let project_config = config.engine_config_for_root(&normalized_test_path("repo/project-a"));
     let default_config = config.engine_config_for_root(&normalized_test_path("repo/project-b"));
 
-    assert_eq!(
-        project_config.analysis.package_residency_policy,
-        PackageResidencyPolicy::AllResident,
+    assert!(
+        !project_config.analysis.cfg.test,
         "non-cargo engine settings should remain inherited",
     );
     assert_eq!(

@@ -111,7 +111,6 @@ impl ProjectCoordinator {
         };
         tracing::info!(
             root = %root.display(),
-            package_residency = configuration.package_residency_policy.config_name(),
             indexing_preference = configuration.indexing_preference.config_name(),
             package_batch_size = configuration.package_batch_size.get(),
             cargo_target = configured_target,
@@ -198,7 +197,7 @@ impl ProjectCoordinator {
                 .indexing_preference(configuration.indexing_preference)
                 .package_batch_size(configuration.package_batch_size)
                 .split_indexing_mode(SplitIndexingMode::EarlyStart)
-                .package_residency_policy(configuration.package_residency_policy)
+                .package_residency_policy(rg_project::PackageResidencyPolicy::AllOffloadable)
                 .memory_hooks(Arc::clone(&self.memory_hooks))
                 .build();
             match result {
@@ -418,7 +417,6 @@ impl ProjectCoordinator {
         // A successful finish is the first point where every package has completed its configured
         // residency transition. If that offloaded every analysis payload, reallocate the small
         // saved state now so the purge has a chance to release pages fragmented during indexing.
-        // Reallocation is skipped for policies that keep any payload resident.
         if terminal.as_ref().is_some_and(|terminal| {
             matches!(
                 &terminal.outcome,

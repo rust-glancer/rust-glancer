@@ -18,8 +18,8 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPlan, PackageResidencyPolicy,
-    ProjectMemoryHooks, SplitIndexingMode,
+    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectMemoryHooks,
+    SplitIndexingMode,
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
     storage::cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
@@ -71,7 +71,6 @@ pub(crate) struct ProjectState {
     #[memsize(skip)]
     pub(crate) package_batch_size: PackageBatchSize,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
-    pub(crate) package_residency: PackageResidencyPlan,
     #[memsize(skip)]
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
@@ -92,11 +91,6 @@ impl ProjectState {
     /// Returns the normalized workspace metadata this project was built from.
     pub(crate) fn workspace(&self) -> &WorkspaceMetadata {
         &self.workspace
-    }
-
-    /// Returns package residency decisions for this project snapshot.
-    pub(crate) fn package_residency_plan(&self) -> &PackageResidencyPlan {
-        &self.package_residency
     }
 
     /// Returns the parse database built for this project.
