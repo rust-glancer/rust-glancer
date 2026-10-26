@@ -32,7 +32,7 @@ use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
     LocalImplData, MacroDefinitionData, ModuleData, ModuleDocumentation, ModuleFileSelection,
     ModuleOrigin, ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
-    build::{collect::CrateState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
+    build::{collect::CrateState, macros::MacroExpansionApplyResult},
 };
 
 /// Semantic module, ordering, and file context used to insert already-lowered items.
@@ -55,7 +55,6 @@ pub(super) struct SourceFragmentOrigin {
 /// physical filename.
 pub(super) struct SourceFragmentCollector<'a> {
     pub(super) state: &'a mut CrateState,
-    pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreePackage,
     pub(super) origin: SourceFragmentOrigin,
     pub(super) result: MacroExpansionApplyResult,
@@ -393,8 +392,7 @@ impl SourceFragmentCollector<'_> {
             &item.visibility,
         );
 
-        // Local definitions become immediately visible in both the frozen def-map being built and
-        // the mutable scope snapshot used by the macro expansion fixed-point loop.
+        // Retain the real source identity while the builder updates direct and resolved bindings.
         let local_def_id = self.state.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
@@ -417,19 +415,13 @@ impl SourceFragmentCollector<'_> {
             origin: DefMapRef::Crate(self.state.crate_ref),
             local_def: local_def_id,
         });
-        let base_scope = self
-            .state
-            .base_scopes
-            .get_mut(module_id.0)
-            .expect("base scope should exist for source fragment local definition");
-        let current_scope = self
-            .current_scopes
-            .module_scope_mut(self.state.crate_ref, module_id)
-            .expect("current scope should exist for source fragment local definition");
         for namespace in namespaces.iter() {
-            let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
-            base_scope.insert_binding(&name, namespace, binding.clone());
-            current_scope.insert_binding(&name, namespace, binding);
+            self.state.def_map_builder.insert_direct_binding(
+                module_id,
+                &name,
+                namespace,
+                ScopeBinding::new(def, *visibilities.get(namespace), provenance),
+            );
         }
 
         Some(local_def_id)
@@ -525,15 +517,12 @@ impl SourceFragmentCollector<'_> {
             ScopeBindingProvenance::MacroExport,
         );
 
-        self.state
-            .base_scopes
-            .get_mut(root_module.0)
-            .expect("root scope should exist before source fragment macro export collection")
-            .insert_binding(name, Namespace::Macros, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.crate_ref, root_module)
-            .expect("current root scope should exist for source fragment macro export")
-            .insert_binding(name, Namespace::Macros, binding);
+        self.state.def_map_builder.insert_direct_binding(
+            root_module,
+            name,
+            Namespace::Macros,
+            binding,
+        );
     }
 
     fn macro_definition_is_exported(&self, attrs: &MacroDefinitionAttrs) -> bool {
@@ -782,7 +771,7 @@ impl SourceFragmentCollector<'_> {
         visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.state.def_map_builder.alloc_module(ModuleData {
+        self.state.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -796,12 +785,7 @@ impl SourceFragmentCollector<'_> {
             unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
             origin,
-        });
-        self.state.base_scopes.push(Default::default());
-        self.current_scopes
-            .push_module_scope(self.state.crate_ref, Default::default())
-            .expect("current scopes should have a crate slot for source fragment module");
-        module_id
+        })
     }
 
     fn link_child_module(
@@ -825,15 +809,12 @@ impl SourceFragmentCollector<'_> {
             visibility,
             ScopeBindingProvenance::Direct,
         );
-        self.state
-            .base_scopes
-            .get_mut(parent_module.0)
-            .expect("base scope should exist for source fragment child link")
-            .insert_binding(module_name, Namespace::Types, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.crate_ref, parent_module)
-            .expect("current scope should exist for source fragment child link")
-            .insert_binding(module_name, Namespace::Types, binding);
+        self.state.def_map_builder.insert_direct_binding(
+            parent_module,
+            module_name,
+            Namespace::Types,
+            binding,
+        );
     }
 
     fn collect_use(
@@ -938,14 +919,11 @@ impl SourceFragmentCollector<'_> {
                 .resolve_visibility(module_id, &item.visibility),
             ScopeBindingProvenance::ExternCrate,
         );
-        self.state
-            .base_scopes
-            .get_mut(module_id.0)
-            .expect("base scope should exist for source fragment extern crate binding")
-            .insert_binding(&binding_name, Namespace::Types, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.crate_ref, module_id)
-            .expect("current scope should exist for source fragment extern crate binding")
-            .insert_binding(&binding_name, Namespace::Types, binding);
+        self.state.def_map_builder.insert_direct_binding(
+            module_id,
+            &binding_name,
+            Namespace::Types,
+            binding,
+        );
     }
 }

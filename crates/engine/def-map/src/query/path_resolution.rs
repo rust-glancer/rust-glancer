@@ -53,8 +53,7 @@ pub enum GlobImportSource {
 ///
 /// Resolution status is separate from emitted bindings. For example, `use Trait as _` resolves its
 /// source even though it introduces no named path, while `use missing::*` remains unresolved and
-/// emits nothing. This lets scope construction and unresolved-import reporting use the same lookup
-/// operation.
+/// emits nothing. The builder uses this status to record unresolved imports while applying bindings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImportResolution {
     source_resolved: bool,
@@ -71,25 +70,6 @@ impl ImportResolution {
     pub(crate) fn emitted_binding_count(&self) -> usize {
         self.emitted_binding_count
     }
-}
-
-/// One binding flowing from import lookup into a mutable destination scope.
-///
-/// `use Unit as LocalUnit` can emit two `Named` values: one for the type and one for its unit
-/// constructor. `use Trait as _` emits `UnnamedTrait` instead because the trait participates in
-/// method lookup without occupying a path name.
-///
-/// This protocol stays inside `ScopeResolver`; callers either ask it to apply an import or ask only
-/// for resolution status. A named binding borrows its spelling so a large glob does not need to
-/// clone every name into a temporary result vector.
-#[derive(Debug)]
-enum ImportedScopeBinding<'name> {
-    Named {
-        name: &'name Name,
-        namespace: Namespace,
-        binding: ScopeBinding,
-    },
-    UnnamedTrait(ScopeBinding),
 }
 
 /// Applies name lookup rules over one abstract scope source.
@@ -443,6 +423,9 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     /// adds an unnamed trait binding. Keeping both cases here prevents the two builders from
     /// implementing that split separately.
     ///
+    /// Lookup reads the resolver's environment, not this output scope. A caller can therefore build
+    /// a whole wave of candidates without making partially applied imports visible.
+    ///
     /// Glob bindings are inserted one at a time instead of first collecting an owned result.
     pub fn apply_import(
         &self,
@@ -451,51 +434,6 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         import: &ImportData,
         target_scope: &mut ModuleScopeBuilder,
     ) -> Result<ImportResolution, E::Error> {
-        self.resolve_import_streaming(importing_module, import_ref, import, |introduced| {
-            match introduced {
-                ImportedScopeBinding::Named {
-                    name,
-                    namespace,
-                    binding,
-                } => {
-                    target_scope.insert_binding(name, namespace, binding);
-                }
-                ImportedScopeBinding::UnnamedTrait(binding) => {
-                    target_scope.insert_unnamed_trait_binding(binding);
-                }
-            }
-        })
-    }
-
-    /// Resolve one import and return its status without changing a scope.
-    ///
-    /// After a body fixed point settles, the builder uses this form to collect unresolved imports.
-    /// It runs the same lookup as `apply_import` and discards the emitted bindings, so the reported
-    /// status describes the operation used during construction.
-    pub fn resolve_import(
-        &self,
-        importing_module: ModuleRef,
-        import_ref: ImportRef,
-        import: &ImportData,
-    ) -> Result<ImportResolution, E::Error> {
-        self.resolve_import_streaming(importing_module, import_ref, import, |_| {})
-    }
-
-    /// Shared lookup behind the applying and status-only import APIs.
-    ///
-    /// A glob may expose thousands of bindings. The private callback consumes each binding as soon
-    /// as lookup produces it, avoiding an intermediate `Vec` while keeping the callback protocol
-    /// out of the crate's public API.
-    fn resolve_import_streaming<F>(
-        &self,
-        importing_module: ModuleRef,
-        import_ref: ImportRef,
-        import: &ImportData,
-        mut emit: F,
-    ) -> Result<ImportResolution, E::Error>
-    where
-        F: for<'name> FnMut(ImportedScopeBinding<'name>),
-    {
         match import.kind {
             ImportKind::Glob => {
                 // `path::*` can name either a module or an enum. Finding either source resolves the
@@ -520,11 +458,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                                             continue;
                                         };
                                         emitted_binding_count += 1;
-                                        emit(ImportedScopeBinding::Named {
-                                            name,
-                                            namespace,
-                                            binding,
-                                        });
+                                        target_scope.insert_binding(name, namespace, binding);
                                     }
                                 }
                             }
@@ -550,11 +484,11 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                                         continue;
                                     };
                                     emitted_binding_count += 1;
-                                    emit(ImportedScopeBinding::Named {
-                                        name: &entry.data.name,
+                                    target_scope.insert_binding(
+                                        &entry.data.name,
                                         namespace,
                                         binding,
-                                    });
+                                    );
                                 }
                             }
                         }
@@ -601,7 +535,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
                     let emitted_binding_count = unnamed_traits.len();
                     for binding in unnamed_traits {
-                        emit(ImportedScopeBinding::UnnamedTrait(binding));
+                        target_scope.insert_unnamed_trait_binding(binding);
                     }
                     return Ok(ImportResolution {
                         source_resolved,
@@ -628,11 +562,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                         continue;
                     };
                     emitted_binding_count += 1;
-                    emit(ImportedScopeBinding::Named {
-                        name: &name,
-                        namespace,
-                        binding,
-                    });
+                    target_scope.insert_binding(&name, namespace, binding);
                 }
 
                 Ok(ImportResolution {

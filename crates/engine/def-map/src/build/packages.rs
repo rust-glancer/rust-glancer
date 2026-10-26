@@ -77,7 +77,7 @@ impl DefMapDb {
         }
 
         select_preludes(
-            Some(baseline_read),
+            baseline_read,
             workspace,
             parse.packages(),
             &mut crate_states,
@@ -85,7 +85,7 @@ impl DefMapDb {
         )
         .context("while attempting to select crate preludes")?;
         finalize_scopes(
-            Some(baseline_read),
+            baseline_read,
             parse,
             item_tree,
             &mut crate_states,

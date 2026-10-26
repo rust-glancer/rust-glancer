@@ -8,8 +8,8 @@ use rg_def_map::{
     ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
     LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv,
     MacroDefinitionView, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingProvenance,
-    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver, Visibility,
+    ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
+    ScopeResolutionEnv, ScopeResolver, Visibility,
 };
 use rg_ir_model::{
     BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
@@ -30,7 +30,6 @@ pub(crate) struct LocalDefMapCollector<'source> {
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
     modules_by_scope: Vec<ModuleId>,
-    base_scopes: Vec<ModuleScopeBuilder>,
 }
 
 impl<'source> LocalDefMapCollector<'source> {
@@ -40,7 +39,6 @@ impl<'source> LocalDefMapCollector<'source> {
             source,
             builder: DefMapBuilder::new_body(body_ref),
             modules_by_scope: Vec::with_capacity(source.scopes.len()),
-            base_scopes: Vec::with_capacity(source.scopes.len()),
         }
     }
 
@@ -61,7 +59,7 @@ impl<'source> LocalDefMapCollector<'source> {
 
             // Note: we're going through scopes in order, so we process all the parents first.
             let parent = scope.parent.map(|parent| self.modules_by_scope[parent.0]);
-            let module = self.alloc_module(ModuleData {
+            let module = self.builder.alloc_module(ModuleData {
                 name: None,
                 name_span: None,
                 docs: None,
@@ -100,16 +98,7 @@ impl<'source> LocalDefMapCollector<'source> {
         Ok(LocalDefMapBuildState {
             body_ref: self.body_ref,
             builder: self.builder,
-            base_scopes: self.base_scopes,
         })
-    }
-
-    fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
-        // Keep a mutable base scope next to every allocated module. The final def-map stores only
-        // the frozen scope, but collection needs cheap direct-binding insertion.
-        let module = self.builder.alloc_module(module);
-        self.base_scopes.push(ModuleScopeBuilder::default());
-        module
     }
 
     fn collect_item(&mut self, module: ModuleId, item_id: ItemTreeId) {
@@ -189,12 +178,9 @@ impl<'source> LocalDefMapCollector<'source> {
             origin: DefMapRef::Body(self.body_ref),
             local_def,
         });
-        let scope = self
-            .base_scopes
-            .get_mut(module.0)
-            .expect("base scope should exist for body local definition");
         for namespace in namespaces.iter() {
-            scope.insert_binding(
+            self.builder.insert_direct_binding(
+                module,
                 &name,
                 namespace,
                 ScopeBinding::new(
@@ -274,7 +260,7 @@ impl<'source> LocalDefMapCollector<'source> {
         };
         let visibility = self.builder.resolve_visibility(parent, &item.visibility);
 
-        let child = self.alloc_module(ModuleData {
+        let child = self.builder.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs,
@@ -294,21 +280,19 @@ impl<'source> LocalDefMapCollector<'source> {
             .expect("parent module should exist for body child module")
             .children
             .push((module_name.clone(), child));
-        self.base_scopes
-            .get_mut(parent.0)
-            .expect("base scope should exist for body child module")
-            .insert_binding(
-                &module_name,
-                Namespace::Types,
-                ScopeBinding::new(
-                    DefId::Module(ModuleRef {
-                        origin: DefMapRef::Body(self.body_ref),
-                        module: child,
-                    }),
-                    visibility,
-                    ScopeBindingProvenance::Direct,
-                ),
-            );
+        self.builder.insert_direct_binding(
+            parent,
+            &module_name,
+            Namespace::Types,
+            ScopeBinding::new(
+                DefId::Module(ModuleRef {
+                    origin: DefMapRef::Body(self.body_ref),
+                    module: child,
+                }),
+                visibility,
+                ScopeBindingProvenance::Direct,
+            ),
+        );
 
         // Note: out-of-line modules are not parsed, it's a bizarre pattern and at
         // least for now it's not worth spending time on it.
@@ -373,10 +357,13 @@ impl<'source> LocalDefMapCollector<'source> {
 pub(crate) struct LocalDefMapBuildState {
     body_ref: BodyRef,
     builder: DefMapBuilder,
-    base_scopes: Vec<ModuleScopeBuilder>,
 }
 
 impl LocalDefMapBuildState {
+    /// Replay local imports until no body scope changes, then freeze the scopes and their reports.
+    ///
+    /// Other crates and bodies are already frozen. This loop reruns the active body's imports
+    /// together, without the cross-package scheduling used during crate construction.
     pub(crate) fn finalize<S>(
         mut self,
         def_maps: S,
@@ -385,138 +372,74 @@ impl LocalDefMapBuildState {
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let final_scopes = self.resolve_import_scopes(def_maps, cancellation)?;
-        let unresolved_imports =
-            self.collect_unresolved_imports(def_maps, cancellation, &final_scopes)?;
-
-        for (module_idx, scope) in final_scopes.into_iter().enumerate() {
-            let module = self
-                .builder
-                .module_mut(ModuleId(module_idx))
-                .expect("module should exist for body scope freeze");
-            module.scope = scope.freeze();
-            module.unresolved_imports = unresolved_imports
-                .get(module_idx)
-                .expect("unresolved imports should exist for every body module")
-                .clone();
-        }
-
-        Ok(self.builder.build())
-    }
-
-    fn resolve_import_scopes<S>(
-        &self,
-        def_maps: S,
-        cancellation: &rg_std::CancellationToken,
-    ) -> anyhow::Result<Vec<ModuleScopeBuilder>>
-    where
-        S: DefMapSource<Error = PackageStoreError> + Copy,
-    {
-        let mut current_scopes = self.base_scopes.clone();
-
         loop {
             rg_std::check_cancel!(cancellation, "local import round");
-            let mut next_scopes = self.base_scopes.clone();
-            let env = LocalDefMapFinalizationEnv {
-                def_maps,
-                state: self,
-                current_scopes: &current_scopes,
+            let candidates = {
+                // Rebuild from declarations so an import's old target can disappear on replay.
+                let mut candidates = (0..self.builder.partial().module_count())
+                    .map(|index| {
+                        (
+                            self.builder
+                                .module_direct_scope(ModuleId(index))
+                                .expect("body module should have direct bindings")
+                                .clone(),
+                            Vec::new(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                // Lookup reads the published scopes, not the candidates being filled. In
+                // `use crate::Id as Alias; use Alias as Other;`, Other gains its target next wave.
+                let env = LocalDefMapFinalizationEnv {
+                    def_maps,
+                    state: &self,
+                };
+                let resolver = ScopeResolver::new(&env);
+                for (import_id, import) in self.builder.partial().imports_with_ids() {
+                    rg_std::check_cancel!(cancellation, "local import resolution");
+                    let importing_module = ModuleRef {
+                        origin: DefMapRef::Body(self.body_ref),
+                        module: import.module,
+                    };
+                    let (scope, unresolved_imports) = &mut candidates[import.module.0];
+                    let resolution = resolver.apply_import(
+                        importing_module,
+                        ImportRef {
+                            origin: importing_module.origin,
+                            import: import_id,
+                        },
+                        import,
+                        scope,
+                    )?;
+                    if !resolution.is_resolved() {
+                        unresolved_imports.push(import_id);
+                    }
+                }
+                candidates
             };
-            self.apply_imports(&env, &mut next_scopes, cancellation)?;
 
-            if next_scopes == current_scopes {
-                return Ok(current_scopes);
+            // All lookups are done. Publish each scope with the report from that same wave,
+            // including the final unchanged wave whose reports will be frozen below.
+            let mut stable = true;
+            for (index, (scope, unresolved_imports)) in candidates.into_iter().enumerate() {
+                let module = ModuleId(index);
+                stable &= self.builder.module_scope(module) == Some(&scope);
+                self.builder
+                    .apply_module_imports(module, Some(scope), unresolved_imports);
             }
-
-            current_scopes = next_scopes;
-        }
-    }
-
-    /// Apply every body-local import to the matching synthetic module scope.
-    ///
-    /// Body DefMaps run their own small fixed point, but import lookup and insertion must match
-    /// crate DefMaps. Passing each destination scope to `ScopeResolver` keeps named imports, globs,
-    /// and hidden trait imports on that shared path.
-    fn apply_imports<S>(
-        &self,
-        env: &LocalDefMapFinalizationEnv<'_, S>,
-        next_scopes: &mut [ModuleScopeBuilder],
-        cancellation: &rg_std::CancellationToken,
-    ) -> anyhow::Result<()>
-    where
-        S: DefMapSource<Error = PackageStoreError> + Copy,
-    {
-        let resolver = ScopeResolver::new(env);
-        for (import_id, import) in self.builder.partial().imports_with_ids() {
-            rg_std::check_cancel!(cancellation, "local import resolution");
-            let importing_module = self.importing_module(import.module);
-            let import_ref = ImportRef {
-                origin: DefMapRef::Body(self.body_ref),
-                import: import_id,
-            };
-            let target_scope = next_scopes
-                .get_mut(import.module.0)
-                .expect("crate scope should exist for body import");
-            resolver.apply_import(importing_module, import_ref, import, target_scope)?;
-        }
-
-        Ok(())
-    }
-
-    /// Record imports whose source still fails to resolve in the settled body scopes.
-    ///
-    /// The status-only resolver runs the same lookup as fixed-point application, so this report
-    /// cannot disagree with the operation which built the scopes.
-    fn collect_unresolved_imports<S>(
-        &self,
-        def_maps: S,
-        cancellation: &rg_std::CancellationToken,
-        final_scopes: &[ModuleScopeBuilder],
-    ) -> anyhow::Result<Vec<Vec<rg_ir_model::ImportId>>>
-    where
-        S: DefMapSource<Error = PackageStoreError> + Copy,
-    {
-        let mut module_imports = vec![Vec::new(); self.builder.partial().module_count()];
-        let env = LocalDefMapFinalizationEnv {
-            def_maps,
-            state: self,
-            current_scopes: final_scopes,
-        };
-        let resolver = ScopeResolver::new(&env);
-
-        for (import_id, import) in self.builder.partial().imports_with_ids() {
-            rg_std::check_cancel!(cancellation, "local import resolution");
-            let importing_module = self.importing_module(import.module);
-            let import_ref = ImportRef {
-                origin: DefMapRef::Body(self.body_ref),
-                import: import_id,
-            };
-            if !resolver
-                .resolve_import(importing_module, import_ref, import)?
-                .is_resolved()
-            {
-                module_imports
-                    .get_mut(import.module.0)
-                    .expect("import module should exist while collecting body unresolved imports")
-                    .push(import_id);
+            if stable {
+                return Ok(self.builder.build());
             }
-        }
-
-        Ok(module_imports)
-    }
-
-    fn importing_module(&self, module: ModuleId) -> ModuleRef {
-        ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
-            module,
         }
     }
 }
 
+/// Read builder scopes for the active body and frozen DefMaps for every other origin.
+///
+/// A local import can name crate items or aliases produced by earlier waves in this body. Reading
+/// the body's unfinished `ModuleData::scope` would miss those aliases.
 struct LocalDefMapFinalizationEnv<'state, S> {
     def_maps: S,
     state: &'state LocalDefMapBuildState,
-    current_scopes: &'state [ModuleScopeBuilder],
 }
 
 impl<S> LocalDefMapFinalizationEnv<'_, S>
@@ -549,8 +472,9 @@ where
     ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
-                .current_scopes
-                .get(module_ref.module.0)
+                .state
+                .builder
+                .module_scope(module_ref.module)
                 .and_then(|scope| scope.entry(name)));
         }
 
@@ -566,8 +490,9 @@ where
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
-                .current_scopes
-                .get(module_ref.module.0)
+                .state
+                .builder
+                .module_scope(module_ref.module)
                 .map(|scope| scope.entries().collect())
                 .unwrap_or_default());
         }

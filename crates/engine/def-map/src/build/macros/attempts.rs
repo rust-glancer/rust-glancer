@@ -28,9 +28,8 @@ use super::{
 use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroSourceFileRequest,
     build::{
-        MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::CrateState,
-        finalize::{FinalizeCrateStates, ScopeMatrix},
+        MacroSourceFileResolution, MacroSourceFileResolutions, collect::CrateState,
+        finalize::FinalizeCrateStates,
     },
     profile::metric,
 };
@@ -150,7 +149,6 @@ pub(crate) fn apply_expansion_attempts(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
-    current_scopes: &mut ScopeMatrix,
     attempts: Vec<MacroExpansionAttempt>,
     macro_source_file_resolutions: &MacroSourceFileResolutions,
 ) -> anyhow::Result<MacroExpansionApplyResult> {
@@ -191,7 +189,6 @@ pub(crate) fn apply_expansion_attempts(
                     })?;
                 let collected = SourceFragmentCollector {
                     state,
-                    current_scopes,
                     item_tree: item_tree_package,
                     origin: SourceFragmentOrigin {
                         module: attempt.origin.module,
@@ -227,7 +224,6 @@ pub(crate) fn apply_expansion_attempts(
                     })?;
                 let collected = SourceFragmentCollector {
                     state,
-                    current_scopes,
                     item_tree: item_tree_package,
                     origin: SourceFragmentOrigin {
                         module: attempt.origin.module,
@@ -270,7 +266,6 @@ pub(crate) fn apply_expansion_attempts(
         let collected = GeneratedCollector {
             state,
             interner,
-            current_scopes,
             item_tree,
             macro_source_file_resolutions,
             origin: attempt.origin,

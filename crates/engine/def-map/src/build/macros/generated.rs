@@ -38,9 +38,8 @@ use crate::{
     MacroSourceFileRequest, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
     ModuleScope, Namespace, ScopeBinding, ScopeBindingProvenance, Visibility,
     build::{
-        MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::CrateState,
-        finalize::{FinalizeCrateStates, ScopeMatrix},
+        MacroSourceFileResolution, MacroSourceFileResolutions, collect::CrateState,
+        finalize::FinalizeCrateStates,
     },
     profile::metric,
 };
@@ -95,7 +94,6 @@ pub(crate) struct PendingGeneratedInclude {
 pub(super) struct GeneratedCollector<'a> {
     pub(super) state: &'a mut CrateState,
     pub(super) interner: &'a mut NameInterner,
-    pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreeDb,
     pub(super) macro_source_file_resolutions: &'a MacroSourceFileResolutions,
     pub(super) origin: GeneratedOrigin,
@@ -354,22 +352,13 @@ impl GeneratedCollector<'_> {
             origin: DefMapRef::Crate(self.state.crate_ref),
             local_def: local_def_id,
         });
-        // Update both the base scopes and the current snapshot. The base scopes make future import
-        // refreshes see the generated name; the current snapshot lets later generated calls in this
-        // pass resolve it immediately.
-        let base_scope = self
-            .state
-            .base_scopes
-            .get_mut(module_id.0)
-            .expect("base scope should exist for generated local definition");
-        let current_scope = self
-            .current_scopes
-            .module_scope_mut(self.state.crate_ref, module_id)
-            .expect("current scope should exist for generated local definition");
         for namespace in namespaces.iter() {
-            let binding = ScopeBinding::new(def, *visibilities.get(namespace), provenance);
-            base_scope.insert_binding(&name, namespace, binding.clone());
-            current_scope.insert_binding(&name, namespace, binding);
+            self.state.def_map_builder.insert_direct_binding(
+                module_id,
+                &name,
+                namespace,
+                ScopeBinding::new(def, *visibilities.get(namespace), provenance),
+            );
         }
 
         Some(local_def_id)
@@ -466,7 +455,7 @@ impl GeneratedCollector<'_> {
         );
     }
 
-    /// Updates both scope snapshots for a generated `#[macro_export]` definition.
+    /// Makes a generated `#[macro_export]` definition visible at the crate root.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
         let root_module = self.state.root_module;
         let binding = ScopeBinding::new(
@@ -478,15 +467,12 @@ impl GeneratedCollector<'_> {
             ScopeBindingProvenance::MacroExport,
         );
 
-        self.state
-            .base_scopes
-            .get_mut(root_module.0)
-            .expect("root scope should exist before generated macro export collection")
-            .insert_binding(name, Namespace::Macros, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.crate_ref, root_module)
-            .expect("current root scope should exist for generated macro export")
-            .insert_binding(name, Namespace::Macros, binding);
+        self.state.def_map_builder.insert_direct_binding(
+            root_module,
+            name,
+            Namespace::Macros,
+            binding,
+        );
     }
 
     fn macro_definition_is_exported(&self, attrs: &MacroDefinitionAttrs) -> bool {
@@ -611,15 +597,9 @@ impl GeneratedCollector<'_> {
             scope: ModuleScope::default(),
             origin,
         });
-        // Generated modules extend all scope matrices in lockstep with the def-map module arena so
-        // later generated children or file-backed declarations can enter the new module.
-        self.state.base_scopes.push(Default::default());
         self.state
             .textual_macro_scopes
             .record_module_declaration(child_module, order.clone());
-        self.current_scopes
-            .push_module_scope(self.state.crate_ref, Default::default())
-            .expect("current scopes should have a crate slot for generated module");
         self.state
             .def_map_builder
             .module_mut(parent_module)
@@ -634,15 +614,12 @@ impl GeneratedCollector<'_> {
             semantic_visibility,
             ScopeBindingProvenance::Direct,
         );
-        self.state
-            .base_scopes
-            .get_mut(parent_module.0)
-            .expect("base scope should exist for generated child link")
-            .insert_binding(&module_name, Namespace::Types, binding.clone());
-        self.current_scopes
-            .module_scope_mut(self.state.crate_ref, parent_module)
-            .expect("current scope should exist for generated child link")
-            .insert_binding(&module_name, Namespace::Types, binding);
+        self.state.def_map_builder.insert_direct_binding(
+            parent_module,
+            &module_name,
+            Namespace::Types,
+            binding,
+        );
 
         match &module_item.source {
             ModuleSource::Inline { items } => {
@@ -670,7 +647,6 @@ impl GeneratedCollector<'_> {
                     .context("while attempting to fetch generated module item tree package")?;
                 let collected = SourceFragmentCollector {
                     state: self.state,
-                    current_scopes: self.current_scopes,
                     item_tree: item_tree_package,
                     origin: SourceFragmentOrigin {
                         module: child_module,
@@ -908,7 +884,6 @@ pub(crate) fn apply_pending_macro_source_files(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
-    current_scopes: &mut ScopeMatrix,
     macro_source_file_resolutions: &MacroSourceFileResolutions,
 ) -> Result<()> {
     for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
@@ -941,7 +916,6 @@ pub(crate) fn apply_pending_macro_source_files(
                         GeneratedCollector {
                             state,
                             interner,
-                            current_scopes,
                             item_tree,
                             macro_source_file_resolutions,
                             origin: pending.origin,
@@ -984,7 +958,6 @@ pub(crate) fn apply_pending_macro_source_files(
                             )?;
                         let collected = SourceFragmentCollector {
                             state,
-                            current_scopes,
                             item_tree: item_tree_package,
                             origin: SourceFragmentOrigin {
                                 module: pending.origin.module,

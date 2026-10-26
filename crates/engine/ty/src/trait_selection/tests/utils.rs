@@ -3,8 +3,8 @@ use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
 use expect_test::Expect;
 use rg_def_map::{
     DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
-    ItemSourceKind, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, ModuleScopeBuilder,
-    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, Namespace, NamespaceSet,
+    ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
@@ -715,7 +715,6 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         });
         debug_assert_eq!(root_module, module().module);
 
-        let mut scope = ModuleScopeBuilder::default();
         let mut local_defs = Vec::new();
 
         // The fixture language describes semantic items directly, but trait selection resolves names
@@ -741,7 +740,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             };
             struct_data.local_def = local_def_ref;
             local_defs.push(local_def);
-            scope.insert_binding(
+            def_map_builder.insert_direct_binding(
+                root_module,
                 &struct_data.name,
                 Namespace::Types,
                 ScopeBinding::new(
@@ -771,7 +771,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             };
             trait_data.local_def = local_def_ref;
             local_defs.push(local_def);
-            scope.insert_binding(
+            def_map_builder.insert_direct_binding(
+                root_module,
                 &trait_data.name,
                 Namespace::Types,
                 ScopeBinding::new(
@@ -787,7 +788,6 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .expect("fixture root module should exist");
         let local_def_count = local_defs.len();
         module_data.local_defs = local_defs;
-        module_data.scope = scope.freeze();
 
         let mut builder = ItemStoreBuilder::new(origin(), local_def_count);
         for struct_data in structs {

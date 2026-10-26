@@ -153,6 +153,39 @@ import_thing!();
 }
 
 #[test]
+fn generated_declarations_replace_glob_bindings_through_reexports() {
+    utils::check_project_path_resolution(
+        r#"
+//- /src/lib.rs crate:generated_binding_refresh
+mod original {
+    pub struct Item;
+}
+
+mod bridge {
+    pub use crate::original::*;
+
+    macro_rules! declare_item {
+        () => { pub struct Item; };
+    }
+
+    declare_item!();
+}
+
+pub use bridge::Item;
+"#,
+        &[
+            utils::PathResolutionQuery::lib("generated_binding_refresh", "crate", "bridge::Item")
+                .types(),
+            utils::PathResolutionQuery::lib("generated_binding_refresh", "crate", "Item").types(),
+        ],
+        expect![[r#"
+            generated_binding_refresh [lib] crate resolves bridge::Item [types] -> struct generated_binding_refresh[lib]::crate::bridge::Item
+            generated_binding_refresh [lib] crate resolves Item [types] -> struct generated_binding_refresh[lib]::crate::bridge::Item
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_dollar_crate_in_generated_imports_to_macro_definition_crate() {
     let project = utils::DefMapFixtureDb::build(
         r#"

@@ -7,7 +7,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_std::{MemorySize, Shrink};
-use rg_text::identifier_text;
+use rg_text::{Name, identifier_text};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
         MacroDefinitionData,
     },
     module::ModuleData,
-    scope::{Namespace, NamespaceSet, PerNs, Visibility},
+    scope::{ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding, Visibility},
     source::{GeneratedItemStore, GeneratedSourceData, GeneratedSourceId},
 };
 
@@ -34,9 +34,56 @@ struct DefMapData {
     imports: Arena<ImportId, ImportData>,
 }
 
+/// One module while declarations and imports are still being collected.
+///
+/// `direct_scope` contains bindings collected without resolving `use` items: local declarations,
+/// child modules, `extern crate` bindings, and macro exports. Declarations produced by macros
+/// count as direct bindings too.
+///
+/// `resolved_scope` is what lookup reads: direct bindings plus the names that this module's `use`
+/// items resolved to. For example:
+///
+/// ```text
+/// struct Local;
+/// use crate::other::Remote as Alias;
+///
+/// // direct_scope: Local
+/// // resolved_scope once the import resolves: Local, Alias
+/// ```
+///
+/// New declarations enter both scopes immediately. Each import wave rebuilds from `direct_scope`,
+/// then publishes `resolved_scope` together with `data.unresolved_imports`. Starting from the old
+/// resolved scope could keep obsolete bindings: `use bridge::Item` may resolve to a different item
+/// after a macro adds `Item` to `bridge`.
+///
+/// `data.scope` is filled from the resolved scope only when this builder becomes frozen module data.
+#[derive(Debug)]
+struct ModuleBuilder {
+    data: ModuleData,
+    direct_scope: ModuleScopeBuilder,
+    resolved_scope: ModuleScopeBuilder,
+}
+
+impl ModuleBuilder {
+    fn freeze(mut self) -> ModuleData {
+        self.data.scope = self.resolved_scope.freeze();
+        self.data
+    }
+}
+
+/// Collects declarations and import results before producing a frozen DefMap.
+///
+/// Collectors add modules, items, and direct bindings here. Import resolution reads those
+/// declarations and replaces each module's resolved scope after a complete wave.
+///
+/// Crate builds also retain generated syntax for Semantic IR. Freezing moves that syntax out
+/// separately, so the queryable DefMap does not keep the expansion arena alive.
 #[derive(Debug)]
 pub struct DefMapBuilder {
+    // Module metadata and both mutable scopes have one owner until freezing. The module arena in
+    // `def_map` stays empty until `into_parts`; its other declaration arenas are already usable.
     def_map: DefMap,
+    modules: Arena<ModuleId, ModuleBuilder>,
     generated_items: GeneratedItemStore,
 }
 
@@ -44,6 +91,7 @@ impl DefMapBuilder {
     pub fn new(crate_ref: CrateRef) -> Self {
         Self {
             def_map: DefMap::krate(crate_ref),
+            modules: Arena::new(),
             generated_items: GeneratedItemStore::default(),
         }
     }
@@ -51,6 +99,7 @@ impl DefMapBuilder {
     pub fn new_body(body_ref: BodyRef) -> Self {
         Self {
             def_map: DefMap::body(body_ref),
+            modules: Arena::new(),
             generated_items: GeneratedItemStore::default(),
         }
     }
@@ -58,16 +107,86 @@ impl DefMapBuilder {
     pub fn partial(&self) -> PartialDefMap<'_> {
         PartialDefMap {
             def_map: &self.def_map,
+            modules: &self.modules,
             generated_items: &self.generated_items,
         }
     }
 
     pub fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
-        self.def_map.data.modules.get_mut(module_id)
+        self.modules
+            .get_mut(module_id)
+            .map(|module| &mut module.data)
     }
 
+    /// Allocate module structure and empty mutable scopes under the same module id.
+    ///
+    /// Add bindings through `insert_direct_binding`. The supplied `module.scope` is a placeholder;
+    /// freezing replaces it with the resolved bindings.
     pub fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
-        self.def_map.data.modules.alloc(module)
+        self.modules.alloc(ModuleBuilder {
+            data: module,
+            direct_scope: ModuleScopeBuilder::default(),
+            resolved_scope: ModuleScopeBuilder::default(),
+        })
+    }
+
+    /// Direct declarations must survive later import replays and be visible to newly queued macros.
+    /// Keep those two insertions here so collectors cannot update only one of the scopes.
+    pub fn insert_direct_binding(
+        &mut self,
+        module: ModuleId,
+        name: &Name,
+        namespace: Namespace,
+        binding: ScopeBinding,
+    ) {
+        let module = self
+            .modules
+            .get_mut(module)
+            .expect("binding module should exist");
+        module
+            .direct_scope
+            .insert_binding(name, namespace, binding.clone());
+        module
+            .resolved_scope
+            .insert_binding(name, namespace, binding);
+    }
+
+    pub fn module_direct_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
+        self.modules.get(module).map(|module| &module.direct_scope)
+    }
+
+    /// Read the last import result together with any direct declarations added since that wave.
+    pub fn module_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
+        self.modules
+            .get(module)
+            .map(|module| &module.resolved_scope)
+    }
+
+    pub(crate) fn module_scope_mut(&mut self, module: ModuleId) -> Option<&mut ModuleScopeBuilder> {
+        self.modules
+            .get_mut(module)
+            .map(|module| &mut module.resolved_scope)
+    }
+
+    /// Publish one module's import replay after all readers of the previous wave have finished.
+    ///
+    /// `scope: None` means the candidate matched the existing scope. A glob such as `use empty::*`
+    /// can resolve without introducing any names, so its unresolved-import report still needs
+    /// replacing even when the scope did not change.
+    pub fn apply_module_imports(
+        &mut self,
+        module: ModuleId,
+        scope: Option<ModuleScopeBuilder>,
+        unresolved_imports: Vec<ImportId>,
+    ) {
+        let module = self
+            .modules
+            .get_mut(module)
+            .expect("import module should exist");
+        if let Some(scope) = scope {
+            module.resolved_scope = scope;
+        }
+        module.data.unresolved_imports = unresolved_imports;
     }
 
     pub fn alloc_local_def(&mut self, local_def: LocalDefData) -> LocalDefId {
@@ -237,7 +356,7 @@ impl DefMapBuilder {
     }
 
     fn parent_module(&self, module: ModuleId) -> Option<ModuleId> {
-        self.def_map.module(module)?.parent
+        self.partial().module(module)?.parent
     }
 
     fn root_module(&self, module: ModuleId) -> Option<ModuleId> {
@@ -265,7 +384,7 @@ impl DefMapBuilder {
                 "self" => current,
                 "super" => self.parent_module(current)?,
                 "crate" | "" => return None,
-                name => self.def_map.module(current)?.children.iter().find_map(
+                name => self.partial().module(current)?.children.iter().find_map(
                     |(child_name, child)| (child_name == identifier_text(name)).then_some(*child),
                 )?,
             };
@@ -286,15 +405,24 @@ impl DefMapBuilder {
     }
 
     pub fn build(self) -> DefMap {
+        let (def_map, generated_items) = self.into_parts();
         debug_assert!(
-            self.generated_items.is_empty(),
+            generated_items.is_empty(),
             "generated crate declarations must be handed to Semantic IR",
         );
-        self.def_map
+        def_map
     }
 
     /// Separates frozen resolution data from the generated declarations consumed by Semantic IR.
-    pub(crate) fn into_parts(self) -> (DefMap, GeneratedItemStore) {
+    pub(crate) fn into_parts(mut self) -> (DefMap, GeneratedItemStore) {
+        // Keep allocation order: parent links, imports, and bindings already contain these module ids.
+        self.def_map.data.modules = Arena::from_vec(
+            self.modules
+                .into_vec()
+                .into_iter()
+                .map(ModuleBuilder::freeze)
+                .collect(),
+        );
         (self.def_map, self.generated_items)
     }
 }
@@ -306,6 +434,7 @@ impl DefMapBuilder {
 #[derive(Debug, Clone, Copy)]
 pub struct PartialDefMap<'a> {
     def_map: &'a DefMap,
+    modules: &'a Arena<ModuleId, ModuleBuilder>,
     generated_items: &'a GeneratedItemStore,
 }
 
@@ -314,13 +443,15 @@ impl<'a> PartialDefMap<'a> {
         self.def_map.local_defs()
     }
 
-    /// Returns module data allocated so far during collection/finalization.
+    /// Read structural module data, such as parents, children, and import ids.
+    ///
+    /// Its `scope` is not a lookup source before freezing; use the builder's `module_scope` instead.
     pub fn module(&self, module_id: ModuleId) -> Option<&'a ModuleData> {
-        self.def_map.module(module_id)
+        self.modules.get(module_id).map(|module| &module.data)
     }
 
     pub fn module_count(&self) -> usize {
-        self.def_map.module_count()
+        self.modules.len()
     }
 
     /// Returns local definition data allocated so far during collection/finalization.

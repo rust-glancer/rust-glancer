@@ -2,8 +2,8 @@
 //!
 //! Collection records direct declarations and raw imports, but leaves cross-crate facts unresolved.
 //! This module turns those mutable crate states into immutable def maps by selecting preludes,
-//! repeatedly applying imports until scopes stop changing, and then freezing the settled scopes
-//! back into the crate payloads. During package builds, selected package reads come from fresh
+//! repeatedly applying imports and expanding item macros until scopes stop changing, and then
+//! freezing the settled scopes into the crate payloads. Selected package reads come from fresh
 //! crate states while other package reads fall through to the frozen baseline.
 //!
 //! Generated modules and includes can require more real source files. An injected loader grows
@@ -27,7 +27,7 @@ use rg_workspace::{PackageOrigin, SysrootCrate, TargetKind, WorkspaceMetadata};
 use super::{
     MacroSourceFileResolutions,
     collect::{CrateState, KnownModuleFiles},
-    imports::{ImportResolutionExecutor, ImportWorklist, UnresolvedImports},
+    imports::{ImportResolutionExecutor, ImportWorklist},
     macros::{
         BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, apply_pending_macro_source_files,
@@ -48,16 +48,10 @@ use crate::{
 /// Mutable crate states for every crate inside one package.
 pub(super) type PackageCrateStates = Vec<CrateState>;
 
-/// Mutable module scopes for one crate.
-type CrateScopeMatrix = Vec<ModuleScopeBuilder>;
-
-/// Mutable module scopes for every crate inside one package.
-type PackageScopeMatrix = Vec<CrateScopeMatrix>;
-
 /// Collected crate states that must be finalized.
 ///
-/// `Some` package slots are dirty and will be resolved/frozen. `None` slots are only valid when a
-/// frozen `DefMapDb` baseline exists; resolution reads them from that snapshot instead.
+/// `Some` package slots are being rebuilt and own fresh crate state. `None` slots are left unchanged;
+/// resolution reads their declarations and scopes from the caller's frozen baseline.
 pub(super) struct FinalizeCrateStates {
     packages: Vec<Option<PackageCrateStates>>,
 }
@@ -84,10 +78,6 @@ impl FinalizeCrateStates {
 
     pub(super) fn take_package(&mut self, package: PackageSlot) -> Option<Vec<CrateState>> {
         self.packages.get_mut(package.0)?.take()
-    }
-
-    pub(super) fn iter_packages(&self) -> impl Iterator<Item = Option<&[CrateState]>> + '_ {
-        self.packages.iter().map(Option::as_deref)
     }
 
     pub(super) fn crate_state(&self, crate_ref: CrateRef) -> Option<&CrateState> {
@@ -164,101 +154,33 @@ impl FinalizeCrateStates {
         requests.into_vec()
     }
 
-    fn base_scopes(&self) -> ScopeMatrix {
-        ScopeMatrix::from_crate_states(self)
-    }
-}
-
-/// Import-resolution scopes for dirty packages.
-///
-/// The axes are package slot, crate id, then module id. Clean package slots are absent and read
-/// from the optional frozen baseline instead.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct ScopeMatrix {
-    packages: Vec<Option<PackageScopeMatrix>>,
-}
-
-impl ScopeMatrix {
-    fn from_crate_states(states: &FinalizeCrateStates) -> Self {
-        let packages = states
-            .packages
-            .iter()
-            .map(|package_states| {
-                package_states.as_ref().map(|package_states| {
-                    package_states
-                        .iter()
-                        .map(|state| state.base_scopes.clone())
-                        .collect()
-                })
-            })
-            .collect();
-
-        let mut scopes = Self { packages };
-        scopes.censor_proc_macro_exports(states);
-        scopes
-    }
-
-    fn crate_scopes(&self, crate_ref: CrateRef) -> Option<&[ModuleScopeBuilder]> {
-        self.packages
-            .get(crate_ref.package.0)?
-            .as_ref()?
-            .get(crate_ref.crate_id.0)
-            .map(Vec::as_slice)
-    }
-
     pub(super) fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
-        self.crate_scopes(module.origin.as_crate_ref()?)?
-            .get(module.module.0)
+        self.crate_state(module.origin.as_crate_ref()?)?
+            .def_map_builder
+            .module_scope(module.module)
     }
 
-    pub(super) fn module_scope_mut(
-        &mut self,
-        crate_ref: CrateRef,
-        module: ModuleId,
-    ) -> Option<&mut ModuleScopeBuilder> {
-        self.packages
-            .get_mut(crate_ref.package.0)?
-            .as_mut()?
-            .get_mut(crate_ref.crate_id.0)?
-            .get_mut(module.0)
-    }
-
-    pub(super) fn push_module_scope(
-        &mut self,
-        crate_ref: CrateRef,
-        scope: ModuleScopeBuilder,
-    ) -> Option<()> {
-        self.packages
-            .get_mut(crate_ref.package.0)?
-            .as_mut()?
-            .get_mut(crate_ref.crate_id.0)?
-            .push(scope);
-        Some(())
-    }
-
-    /// Apply the language-level export surface of every dirty proc-macro target.
-    ///
-    /// ```text
-    /// #[proc_macro]
-    /// pub fn emit(input: TokenStream) -> TokenStream { /* ... */ }
-    ///
-    /// pub fn helper() {}
-    /// ```
-    ///
-    /// Cargo still gives the implementation functions normal source visibility inside their own
-    /// crate. Across the crate boundary, however, only directly declared proc-macro identities are
-    /// exported: downstream code can use `emit!`, but cannot import the value `emit` or `helper`.
-    ///
-    /// Import and macro expansion are fixed-point operations. Applying the censoring to every
-    /// mutable scope snapshot prevents a public re-export or generated item from being observed by
-    /// another crate during an intermediate pass and surviving in its settled imports.
-    fn censor_proc_macro_exports(&mut self, states: &FinalizeCrateStates) {
-        for package_states in states.iter_dirty() {
+    /// Keep proc-macro implementation items private before another crate can import them.
+    fn censor_proc_macro_exports(&mut self) {
+        for package_states in self.iter_dirty_mut() {
             for state in package_states {
-                let scope = self
-                    .module_scope_mut(state.crate_ref, state.root_module)
-                    .expect("crate root scope should exist while censoring exports");
-                state.censor_proc_macro_scope(state.root_module, scope);
+                if state.target_kind != TargetKind::ProcMacro {
+                    continue;
+                }
+                // Censoring reads declaration metadata while changing the resolved scope. Move the
+                // scope out briefly so those borrows stay separate without cloning its bindings.
+                let root = state.root_module;
+                let mut scope = std::mem::take(
+                    state
+                        .def_map_builder
+                        .module_scope_mut(root)
+                        .expect("proc-macro root scope should exist"),
+                );
+                state.censor_proc_macro_scope(root, &mut scope);
+                *state
+                    .def_map_builder
+                    .module_scope_mut(root)
+                    .expect("proc-macro root scope should remain allocated") = scope;
             }
         }
     }
@@ -301,30 +223,25 @@ impl CrateState {
 
 /// Resolution environment used while dirty package scopes are being fixed up.
 ///
-/// Dirty package reads come from fresh crate state and the current fixed-point scope snapshot.
-/// Clean package reads fall through to the frozen baseline when one exists.
+/// Dirty package reads come from fresh crate state and the current fixed-point module scopes.
+/// Clean package reads fall through to the frozen baseline.
+///
+/// For dirty crates, `PartialDefMap` exposes module metadata but its `ModuleData::scope` is not
+/// filled yet. Their scope queries read the builder's resolved scope instead. Borrowing all states
+/// immutably keeps those scopes unchanged while import workers build their candidates.
 pub(super) struct FinalizeResolutionEnv<'a> {
-    old: Option<&'a DefMapReadTxn<'a>>,
+    old: &'a DefMapReadTxn<'a>,
     states: &'a FinalizeCrateStates,
-    current_scopes: &'a ScopeMatrix,
 }
 
 impl<'a> FinalizeResolutionEnv<'a> {
-    fn new(
-        old: Option<&'a DefMapReadTxn<'a>>,
-        states: &'a FinalizeCrateStates,
-        current_scopes: &'a ScopeMatrix,
-    ) -> Self {
-        Self {
-            old,
-            states,
-            current_scopes,
-        }
+    fn new(old: &'a DefMapReadTxn<'a>, states: &'a FinalizeCrateStates) -> Self {
+        Self { old, states }
     }
 
     /// Return the input scope a module worker uses to decide whether its candidate changed.
     pub(super) fn current_module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
-        self.current_scopes.module_scope(module)
+        self.states.module_scope(module)
     }
 }
 
@@ -346,9 +263,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         };
         Ok(self
             .old
-            .map(|old| old.def_map(crate_ref))
-            .transpose()?
-            .flatten()
+            .def_map(crate_ref)?
             .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
@@ -363,7 +278,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .is_some_and(|crate_ref| self.states.package(crate_ref.package).is_some())
         {
             return Ok(self
-                .current_scopes
+                .states
                 .module_scope(module_ref)
                 .and_then(|scope| scope.entry(name)));
         }
@@ -384,7 +299,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .is_some_and(|crate_ref| self.states.package(crate_ref.package).is_some())
         {
             return Ok(self
-                .current_scopes
+                .states
                 .module_scope(module_ref)
                 .map(|scope| scope.entries().collect())
                 .unwrap_or_default());
@@ -418,14 +333,10 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         let Some(crate_ref) = local_def_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
-        self.old
-            .map(|old| {
-                Ok(old
-                    .def_map(crate_ref)?
-                    .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
-            })
-            .transpose()
-            .map(Option::flatten)
+        Ok(self
+            .old
+            .def_map(crate_ref)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
     }
 
     fn local_enum_variant_data(
@@ -444,14 +355,10 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         let Some(crate_ref) = variant_ref.origin.as_crate_ref() else {
             return Ok(None);
         };
-        self.old
-            .map(|old| {
-                Ok(old
-                    .def_map(crate_ref)?
-                    .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
-            })
-            .transpose()
-            .map(Option::flatten)
+        Ok(self
+            .old
+            .def_map(crate_ref)?
+            .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
@@ -469,8 +376,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         }
 
         if let Some(crate_ref) = enum_def.origin.as_crate_ref()
-            && let Some(old) = self.old
-            && let Some(def_map) = old.def_map(crate_ref)?
+            && let Some(def_map) = self.old.def_map(crate_ref)?
         {
             Ok(def_map
                 .local_enum_variant_entries_for_enum(enum_def.local_def)
@@ -505,9 +411,7 @@ impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
                 return Ok(None);
             };
             self.old
-                .map(|old| old.def_map(crate_ref))
-                .transpose()?
-                .flatten()
+                .def_map(crate_ref)?
                 .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
         };
         let Some(data) = data else {
@@ -530,13 +434,9 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
 
         Ok(self
             .old
-            .map(|old| old.package(crate_ref.package))
-            .transpose()?
-            .and_then(|package| {
-                package
-                    .crate_data(crate_ref.crate_id)
-                    .and_then(|data| data.extern_prelude().get(name).copied())
-            }))
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+            .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
     fn prelude_module(
@@ -549,13 +449,9 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
 
         Ok(self
             .old
-            .map(|old| old.package(crate_ref.package))
-            .transpose()?
-            .and_then(|package| {
-                package
-                    .crate_data(crate_ref.crate_id)
-                    .and_then(|data| data.prelude())
-            }))
+            .package(crate_ref.package)?
+            .crate_data(crate_ref.crate_id)
+            .and_then(|data| data.prelude()))
     }
 
     fn root_module(
@@ -566,13 +462,9 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
             Some(state.root_module)
         } else {
             self.old
-                .map(|old| old.package(crate_ref.package))
-                .transpose()?
-                .and_then(|package| {
-                    package
-                        .crate_data(crate_ref.crate_id)
-                        .and_then(|data| data.root_module())
-                })
+                .package(crate_ref.package)?
+                .crate_data(crate_ref.crate_id)
+                .and_then(|data| data.root_module())
         };
 
         Ok(module.map(|module| ModuleRef {
@@ -588,16 +480,16 @@ impl CrateResolutionEnv for FinalizeResolutionEnv<'_> {
 /// unselected package. Resolution therefore uses the same fresh-state-plus-baseline environment
 /// as the later import fixed point.
 pub(super) fn select_preludes(
-    old: Option<&DefMapReadTxn<'_>>,
+    old: &DefMapReadTxn<'_>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
-    // Prelude lookup only needs directly declared names and crate extern preludes. Using base
-    // scopes here keeps the operation independent from later import and macro expansion passes.
-    let base_scopes = states.base_scopes();
-    let env = FinalizeResolutionEnv::new(old, states, &base_scopes);
+    // No imports have run yet, so module scopes contain only direct declarations. Apply the
+    // proc-macro export boundary before looking up preludes across crates.
+    states.censor_proc_macro_exports();
+    let env = FinalizeResolutionEnv::new(old, states);
 
     // Store selected preludes out-of-band first so path resolution can borrow all crate states
     // immutably while we inspect roots across packages.
@@ -703,7 +595,7 @@ pub(super) fn select_preludes(
 /// module/include into the same scopes and continue calls appended since before that batch. Import
 /// refresh waits until that queue drains, just as it does for directly generated declarations.
 pub(super) fn finalize_scopes(
-    old: Option<&DefMapReadTxn<'_>>,
+    old: &DefMapReadTxn<'_>,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
     states: &mut FinalizeCrateStates,
@@ -720,48 +612,37 @@ pub(super) fn finalize_scopes(
     let mut import_resolution_runs = 0;
     let mut expansion_passes = 0;
     let mut macro_source_file_resolutions = MacroSourceFileResolutions::default();
-    let mut current_scopes = states.base_scopes();
 
     loop {
         metric::ROUNDS.inc();
         let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-        let resolved = resolve_import_scopes(
+        resolve_import_scopes(
             old,
             states,
             &mut import_executor,
             &mut import_resolution_runs,
-            current_scopes,
         )?;
         timer.finish();
-        current_scopes = resolved.scopes;
-        let mut current_unresolved_imports = Some(resolved.unresolved_imports);
         let mut next_scan_cursors = None;
+        // Direct additions are visible immediately; dependent imports and their reports need replay.
         let mut needs_import_refresh = false;
 
-        // Macro expansion can introduce more macro calls that are visible in the same scope
-        // snapshot. Keep consuming that local queue before paying for another full import pass.
+        // Macro expansion can introduce more macro calls visible through direct bindings. Keep
+        // consuming that local queue before paying for another full import pass.
         loop {
             if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
                 // Stop expanding but still freeze a coherent def-map. The final import refresh lets
                 // names generated before the cap settle into module scopes.
                 mark_retryable_macros_skipped_by_limit(states);
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                let resolved = resolve_import_scopes(
+                resolve_import_scopes(
                     old,
                     states,
                     &mut import_executor,
                     &mut import_resolution_runs,
-                    current_scopes,
                 )?;
                 timer.finish();
-                freeze_resolved_scopes(
-                    old,
-                    item_tree,
-                    states,
-                    interners,
-                    resolved.scopes,
-                    resolved.unresolved_imports,
-                )?;
+                lower_builtin_derives(old, item_tree, states, interners)?;
                 return Ok(());
             }
 
@@ -770,7 +651,7 @@ pub(super) fn finalize_scopes(
 
             let timer = metric::TIMING_COLLECT_EXPANSION_ATTEMPTS.start_timer();
             let mut expansion_attempts = {
-                let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
+                let env = FinalizeResolutionEnv::new(old, states);
                 // The first pass in a round visits all pending macro calls. Follow-up passes only
                 // visit calls appended by the previous expansion, because older unresolved calls
                 // need a fresh import snapshot before their answer can change.
@@ -803,13 +684,12 @@ pub(super) fn finalize_scopes(
                 Default::default()
             } else {
                 // Expanded text is parsed into regular item-tree data and appended to the owning
-                // module. The same generated declarations are also added to `current_scopes`, which
-                // makes simple chains like `make_macro!(); generated_macro!();` work in one round.
+                // module. Direct bindings also enter its resolved scope, so simple chains like
+                // `make_macro!(); generated_macro!();` work in one round.
                 apply_expansion_attempts(
                     item_tree,
                     states,
                     interners,
-                    &mut current_scopes,
                     expansion_attempts,
                     &macro_source_file_resolutions,
                 )?
@@ -818,10 +698,7 @@ pub(super) fn finalize_scopes(
 
             needs_import_refresh |= expansion.changed;
             if expansion.changed {
-                // These reports describe scopes from before the generated items were inserted.
-                // Require the next import run to produce matching reports before anything freezes.
-                current_unresolved_imports = None;
-                current_scopes.censor_proc_macro_exports(states);
+                states.censor_proc_macro_exports();
             }
 
             // All lookup and item borrows have ended before the loader can grow Parse/ItemTree.
@@ -860,21 +737,19 @@ pub(super) fn finalize_scopes(
                     item_tree,
                     states,
                     interners,
-                    &mut current_scopes,
                     &macro_source_file_resolutions,
                 )?;
 
                 // Even a missing result belongs to a batch that may have added other declarations.
                 // Drain both its generated calls and the newly loaded calls before refreshing
                 // imports, then require matching import reports before anything can freeze.
-                current_unresolved_imports = None;
                 needs_import_refresh = true;
                 next_scan_cursors = Some(scan_cursors_before_apply);
                 continue;
             }
 
             if expansion.changed {
-                // Generated calls can be resolved with the same scope snapshot, but generated
+                // Generated calls can be resolved with the same module scopes, but generated
                 // imports cannot. Keep the cheap path going until no more direct expansion happens.
                 next_scan_cursors = Some(scan_cursors_before_apply);
                 continue;
@@ -886,30 +761,12 @@ pub(super) fn finalize_scopes(
                 break;
             }
 
-            // No imports and no macros changed the visible declarations, so this is the stable
-            // scope matrix that can be written into the frozen def maps.
-            freeze_resolved_scopes(
-                old,
-                item_tree,
-                states,
-                interners,
-                current_scopes,
-                current_unresolved_imports
-                    .expect("stable scopes should have import status from their fixed-point run"),
-            )?;
+            // No imports or macros changed the visible declarations. Module builders now own the
+            // settled scopes and reports; only builtin impl synthesis remains before freezing.
+            lower_builtin_derives(old, item_tree, states, interners)?;
             return Ok(());
         }
     }
-}
-
-/// Scope and unresolved-import results settled by the same import run.
-///
-/// Keeping them together matters because a later wave can make an import resolve or stop resolving
-/// at the same time that it changes the destination scope. Freezing one result from an older wave
-/// would leave query-visible status out of sync with the bindings.
-struct ResolvedImportScopes {
-    scopes: ScopeMatrix,
-    unresolved_imports: UnresolvedImports,
 }
 
 /// Settle import-derived bindings without rebuilding every import group on every wave.
@@ -922,12 +779,11 @@ struct ResolvedImportScopes {
 /// When no changed scope has a reader, both the scopes and their latest unresolved-import reports
 /// are ready to freeze.
 fn resolve_import_scopes(
-    old: Option<&DefMapReadTxn<'_>>,
-    states: &FinalizeCrateStates,
+    old: &DefMapReadTxn<'_>,
+    states: &mut FinalizeCrateStates,
     import_executor: &mut ImportResolutionExecutor,
     import_resolution_runs: &mut usize,
-    mut current_scopes: ScopeMatrix,
-) -> anyhow::Result<ResolvedImportScopes> {
+) -> anyhow::Result<()> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
     *import_resolution_runs += 1;
     let run_index = *import_resolution_runs;
@@ -938,16 +794,16 @@ fn resolve_import_scopes(
         pass_index += 1;
         metric::IMPORT_RESOLUTION_PASSES.inc();
 
-        // Finish the active wave before changing `current_scopes`. If `root` imports from `bridge`
+        // Finish the active wave before changing module scopes. If `root` imports from `bridge`
         // and `bridge` imports from `source`, `root` must not see `bridge`'s new binding until the
         // next wave; otherwise the result would depend on which worker happened to finish first.
         let updates = {
-            let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
+            let env = FinalizeResolutionEnv::new(old, states);
             import_executor
                 .apply_wave(&worklist, states, &env)
                 .context("while attempting to resolve import wave")?
         };
-        let outcome = worklist.apply_updates(&mut current_scopes, updates);
+        let outcome = worklist.apply_updates(states, updates);
         record_import_resolution_pass(
             run_index,
             pass_index,
@@ -969,24 +825,19 @@ fn resolve_import_scopes(
         }
     }
 
-    Ok(ResolvedImportScopes {
-        scopes: current_scopes,
-        unresolved_imports: worklist.into_unresolved_imports(),
-    })
+    Ok(())
 }
 
-fn freeze_resolved_scopes(
-    old: Option<&DefMapReadTxn<'_>>,
+fn lower_builtin_derives(
+    old: &DefMapReadTxn<'_>,
     item_tree: &ItemTreeDb,
     states: &mut FinalizeCrateStates,
     interners: &mut PackageNameInterners,
-    current_scopes: ScopeMatrix,
-    unresolved_imports: UnresolvedImports,
 ) -> anyhow::Result<()> {
     // Builtin derives add impls, but no imports or module bindings. Once normal expansion has
     // settled, synthesize them once, including derives on declarations produced by macros.
     let derives = BuiltinDeriveExpansion::collect(
-        &FinalizeResolutionEnv::new(old, states, &current_scopes),
+        &FinalizeResolutionEnv::new(old, states),
         states,
         item_tree,
         interners,
@@ -995,51 +846,7 @@ fn freeze_resolved_scopes(
     for derive in derives {
         derive.apply(states);
     }
-    // The worklist produced each scope and unresolved-import list from the same final wave. Write
-    // both into the public DefMap now; there is no need to traverse every import one more time.
-
-    for (package_slot, crate_scopes) in current_scopes.packages.into_iter().enumerate() {
-        let Some(crate_scopes) = crate_scopes else {
-            continue;
-        };
-        let package_states = states
-            .packages
-            .get_mut(package_slot)
-            .and_then(Option::as_mut)
-            .expect("resolved scopes should exist only for dirty packages");
-        assert_eq!(
-            package_states.len(),
-            crate_scopes.len(),
-            "resolved crate scopes should match dirty crate states"
-        );
-
-        for (state, scopes) in package_states.iter_mut().zip(crate_scopes) {
-            freeze_crate_scopes(state, scopes, &unresolved_imports);
-        }
-    }
     Ok(())
-}
-
-fn freeze_crate_scopes(
-    state: &mut CrateState,
-    final_scopes: CrateScopeMatrix,
-    unresolved_imports: &UnresolvedImports,
-) {
-    let final_unresolved_imports = unresolved_imports
-        .crate_imports(state.crate_ref)
-        .expect("unresolved imports should exist for every dirty crate");
-
-    for (module_idx, scope) in final_scopes.into_iter().enumerate() {
-        let module = state
-            .def_map_builder
-            .module_mut(ModuleId(module_idx))
-            .expect("module should exist for every final dirty scope");
-        module.scope = scope.freeze();
-        module.unresolved_imports = final_unresolved_imports
-            .get(module_idx)
-            .expect("unresolved imports should exist for every dirty module")
-            .clone();
-    }
 }
 
 /// Freezes collected crate states into the package payload stored by `DefMapDb`.

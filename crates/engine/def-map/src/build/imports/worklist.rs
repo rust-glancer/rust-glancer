@@ -18,11 +18,11 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 
-use super::{ImportApplicationStats, ModuleSetShape, UnresolvedImports};
+use super::{ImportApplicationStats, ModuleSetShape};
 use crate::{
     CrateResolutionEnv, ImportKind, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
     ModuleData, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
-    build::finalize::{FinalizeCrateStates, FinalizeResolutionEnv, ScopeMatrix},
+    build::finalize::{FinalizeCrateStates, FinalizeResolutionEnv},
 };
 
 // Below this size, dispatching module groups through a worker pool costs more than the import work.
@@ -36,11 +36,14 @@ const LOWER_PEAK_MEMORY_IMPORT_RESOLUTION_THREAD_LIMIT: usize = 2;
 /// grow during one fixed-point run. A path may stop using an older link after another segment
 /// changes, but keeping it can only schedule an extra run; it cannot miss a required run.
 ///
+/// Scopes and unresolved-import reports belong to the module builders. This worklist owns only
+/// scheduling data; completed workers hand their results back to those builders.
+///
 /// Macro expansion starts a new worklist, so links from an older import structure are discarded.
 pub(crate) struct ImportWorklist {
     /// Every `use` item owned by each destination module, kept in arena order.
     ///
-    /// A module job replays this whole group from its base scope whenever the module becomes
+    /// A module job replays this whole group from its direct bindings whenever the module becomes
     /// active. The groups do not change during one fixed-point run.
     imports_by_module: FxHashMap<ModuleRef, Vec<ImportId>>,
     /// Reverse edges from a scope read during lookup to the import groups which read it.
@@ -54,17 +57,12 @@ pub(crate) struct ImportWorklist {
     /// application order stable, that order lets `ModuleSetShape` count adjacent package and crate
     /// runs without allocating sets.
     active_modules: Vec<ModuleRef>,
-    /// Latest complete unresolved-import list produced for every dirty module.
-    ///
-    /// A module's entry is replaced in the same wave as its scope candidate, so the two results
-    /// always describe the same import replay when finalization freezes them.
-    unresolved_imports: UnresolvedImports,
 }
 
 impl ImportWorklist {
     /// Build one import group per destination module and make every group active.
     ///
-    /// A module without `use` items cannot gain import-derived bindings, so its base scope needs no
+    /// A module without `use` items cannot gain import-derived bindings, so its direct scope needs no
     /// job. Imports stay in arena order inside a group: grouping changes which modules run, not the
     /// order in which one module's imports are replayed.
     pub(crate) fn new(states: &FinalizeCrateStates) -> Self {
@@ -87,7 +85,6 @@ impl ImportWorklist {
             imports_by_module,
             dependents_by_source: FxHashMap::default(),
             active_modules,
-            unresolved_imports: UnresolvedImports::empty(states),
         }
     }
 
@@ -104,16 +101,16 @@ impl ImportWorklist {
 
     /// Install one completed wave and decide which groups run next.
     ///
-    /// Each update contains a whole replacement scope, its unresolved imports, and the mutable
-    /// scopes it read. The replacement was built from direct declarations plus every import in the
-    /// destination module. Replacing the whole result lets bindings disappear or become ambiguous
-    /// without separate logic for retracting an earlier import.
+    /// Each update contains unresolved imports and the scopes it read, plus a replacement scope
+    /// when bindings changed. That scope was built from direct declarations plus every import in
+    /// the destination module. Replacing the whole result lets bindings disappear or become
+    /// ambiguous without separate logic for retracting an earlier import.
     ///
     /// After installing all updates, changed source scopes wake their recorded readers. Those
     /// readers become the active modules for the next wave.
     pub(crate) fn apply_updates(
         &mut self,
-        current_scopes: &mut ScopeMatrix,
+        states: &mut FinalizeCrateStates,
         updates: Vec<ModuleImportUpdate>,
     ) -> ImportWaveOutcome {
         let evaluated = ModuleSetShape::from_sorted_modules(&self.active_modules);
@@ -123,10 +120,10 @@ impl ImportWorklist {
         for update in updates {
             stats.merge(update.stats);
 
-            // Only dirty scopes in this matrix can change during the run. A clean package is read
+            // Only scopes owned by dirty builders can change during the run. A clean package is read
             // from the frozen baseline, so no later wave can make that read stale.
             for source in update.scope_reads {
-                if current_scopes.module_scope(source).is_some() {
+                if states.module_scope(source).is_some() {
                     self.dependents_by_source
                         .entry(source)
                         .or_default()
@@ -134,18 +131,22 @@ impl ImportWorklist {
                 }
             }
 
-            self.unresolved_imports
-                .replace_module(update.module, update.unresolved_imports);
-
-            if let Some(scope) = update.changed_scope {
-                let crate_ref = update
-                    .module
-                    .origin
-                    .as_crate_ref()
-                    .expect("crate import should belong to a crate module");
-                *current_scopes
-                    .module_scope_mut(crate_ref, update.module.module)
-                    .expect("active import module should have a mutable scope") = scope;
+            let changed = update.changed_scope.is_some();
+            let crate_ref = update
+                .module
+                .origin
+                .as_crate_ref()
+                .expect("crate import should belong to a crate module");
+            states
+                .crate_state_mut(crate_ref)
+                .expect("active import module should belong to a dirty crate")
+                .def_map_builder
+                .apply_module_imports(
+                    update.module.module,
+                    update.changed_scope,
+                    update.unresolved_imports,
+                );
+            if changed {
                 changed_modules.push(update.module);
             }
         }
@@ -172,10 +173,6 @@ impl ImportWorklist {
             changed,
             finished: self.active_modules.is_empty(),
         }
-    }
-
-    pub(crate) fn into_unresolved_imports(self) -> UnresolvedImports {
-        self.unresolved_imports
     }
 
     fn module_sort_key(module: &ModuleRef) -> (usize, usize, usize) {
@@ -237,10 +234,10 @@ impl ModuleImportUpdate {
         // Start from direct declarations. Replaying the whole group on this clean base means an
         // import which stopped resolving naturally disappears from the candidate.
         let mut scope = state
-            .base_scopes
-            .get(module.module.0)
-            .cloned()
-            .expect("base scope should exist for every active import module");
+            .def_map_builder
+            .module_direct_scope(module.module)
+            .expect("active import module should have direct bindings")
+            .clone();
         let tracked_env = TrackingResolutionEnv::new(env);
         let resolver = ScopeResolver::new(&tracked_env);
         let mut unresolved_imports = Vec::new();

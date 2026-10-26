@@ -18,77 +18,9 @@
 
 mod worklist;
 
-use rg_ir_model::{CrateRef, ImportId, ModuleRef};
+use rg_ir_model::ModuleRef;
 
 pub(super) use self::worklist::{ImportResolutionExecutor, ImportWorklist};
-use super::finalize::FinalizeCrateStates;
-
-/// Unresolved import ids for one module.
-type ModuleUnresolvedImports = Vec<ImportId>;
-
-/// Unresolved imports for every module inside one crate.
-type CrateUnresolvedImports = Vec<ModuleUnresolvedImports>;
-
-/// Unresolved imports for every crate and module inside one package.
-type PackageUnresolvedImports = Vec<CrateUnresolvedImports>;
-
-/// Latest unresolved-import list for every dirty module.
-///
-/// A module update rebuilds its scope and unresolved list from the same input snapshot. Replacing
-/// them together means the report cannot describe an older version of the scope. When the
-/// worklist stops, these are the lists written into the frozen DefMaps.
-///
-/// Clean packages have no slot here because their existing frozen reports stay in the baseline.
-pub(super) struct UnresolvedImports {
-    packages: Vec<Option<PackageUnresolvedImports>>,
-}
-
-impl UnresolvedImports {
-    /// Start an empty report with the same package/crate/module shape as the dirty build.
-    ///
-    /// Modules without imports stay empty. Every module with imports runs in the first wave and
-    /// replaces its slot before the worklist can finish.
-    pub(super) fn empty(states: &FinalizeCrateStates) -> Self {
-        let packages = states
-            .iter_packages()
-            .map(|package_states| {
-                package_states.map(|package_states| {
-                    package_states
-                        .iter()
-                        .map(|state| {
-                            vec![Vec::new(); state.def_map_builder.partial().module_count()]
-                        })
-                        .collect()
-                })
-            })
-            .collect();
-
-        Self { packages }
-    }
-
-    /// Replace one module's whole report after replaying all of its imports.
-    pub(super) fn replace_module(&mut self, module: ModuleRef, imports: Vec<ImportId>) {
-        let crate_ref = module
-            .origin
-            .as_crate_ref()
-            .expect("crate import should belong to a crate module");
-        *self
-            .packages
-            .get_mut(crate_ref.package.0)
-            .and_then(Option::as_mut)
-            .and_then(|crates| crates.get_mut(crate_ref.crate_id.0))
-            .and_then(|modules| modules.get_mut(module.module.0))
-            .expect("unresolved-import slot should exist for every dirty module") = imports;
-    }
-
-    pub(super) fn crate_imports(&self, crate_ref: CrateRef) -> Option<&[Vec<ImportId>]> {
-        self.packages
-            .get(crate_ref.package.0)?
-            .as_ref()?
-            .get(crate_ref.crate_id.0)
-            .map(Vec::as_slice)
-    }
-}
 
 /// Import counters collected by the workers in one wave.
 ///

@@ -7,7 +7,7 @@
 //! - raw import directives
 //! - immediate bindings such as child modules and `extern crate`
 //!
-//! Import resolution itself happens during build finalization, using the `base_scopes` produced
+//! Import resolution itself happens during build finalization, using the direct bindings produced
 //! here. Collection also carries each logical module's filesystem context into queued macro calls.
 //! That context is construction-only, but a later expansion needs it if it emits `mod child;`.
 
@@ -40,14 +40,14 @@ use super::macros::{
 use crate::{
     DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, LocalDefData, LocalDefKind,
     LocalImplData, MacroDefinitionData, MacroSourceFileRequest, ModuleData, ModuleDocumentation,
-    ModuleFileSelection, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet,
-    ScopeBinding, ScopeBindingProvenance, Visibility,
+    ModuleFileSelection, ModuleOrigin, ModuleScope, Namespace, NamespaceSet, ScopeBinding,
+    ScopeBindingProvenance, Visibility,
 };
 
-/// Collected state for one crate before fixed-point import resolution.
+/// Mutable state for one crate during declaration collection and fixed-point resolution.
 ///
-/// `def_map` contains the frozen structural data, while `base_scopes` keeps the directly known
-/// bindings that later passes start from.
+/// The DefMap builder owns each module's structure, direct declarations, and resolved imports.
+/// Crate-wide context and pending macro work stay here.
 pub(super) struct CrateState {
     pub(super) crate_ref: CrateRef,
     pub(super) cargo_target: rg_parse::CargoTargetId,
@@ -63,7 +63,6 @@ pub(super) struct CrateState {
     /// source files. Frozen DefMaps retain only the selected `definition_file` ids.
     pub(super) known_module_files: Arc<KnownModuleFiles>,
     pub(super) def_map_builder: DefMapBuilder,
-    pub(super) base_scopes: Vec<ModuleScopeBuilder>,
     pub(super) extern_prelude: ExternPreludeBuilder,
     pub(super) prelude: Option<ModuleRef>,
     pub(super) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
@@ -253,9 +252,8 @@ pub(super) fn collect_package_crate_states(
 
 /// Mutable collector for one crate's module tree.
 ///
-/// The collector builds two parallel structures:
-/// - `def_map.modules`, which is the final structural payload
-/// - `base_scopes`, which starts with only directly known bindings and is enriched later
+/// Module builders own the structural data and mutable scopes together. Collection inserts direct
+/// declarations there; import replay later replaces only their resolved scopes.
 struct CrateScopeCollector<'db> {
     crate_ref: CrateRef,
     cargo_target: rg_parse::CargoTargetId,
@@ -266,7 +264,6 @@ struct CrateScopeCollector<'db> {
     extern_prelude: ExternPreludeBuilder,
     root_module: Option<ModuleId>,
     def_map_builder: DefMapBuilder,
-    base_scopes: Vec<ModuleScopeBuilder>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     textual_macro_scopes: TextualMacroScopes,
     macro_use_imports: Vec<MacroUseImport>,
@@ -294,7 +291,6 @@ impl<'db> CrateScopeCollector<'db> {
             extern_prelude: ExternPreludeBuilder::new(implicit_roots),
             root_module: None,
             def_map_builder: DefMapBuilder::new(crate_ref),
-            base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
             textual_macro_scopes: TextualMacroScopes::default(),
             macro_use_imports: Vec::new(),
@@ -356,7 +352,6 @@ impl<'db> CrateScopeCollector<'db> {
             target_kind: self.target_kind.clone(),
             known_module_files: self.known_module_files,
             def_map_builder: self.def_map_builder,
-            base_scopes: self.base_scopes,
             extern_prelude: self.extern_prelude,
             prelude: None,
             macro_definitions: self.macro_definitions,
@@ -370,7 +365,7 @@ impl<'db> CrateScopeCollector<'db> {
         })
     }
 
-    /// Allocates one module in both the def-map payload and the base-scope table.
+    /// Allocates module metadata together with its direct and resolved scopes.
     #[allow(clippy::too_many_arguments)]
     fn alloc_module(
         &mut self,
@@ -382,7 +377,7 @@ impl<'db> CrateScopeCollector<'db> {
         visibility: Visibility,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.def_map_builder.alloc_module(ModuleData {
+        self.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -396,9 +391,7 @@ impl<'db> CrateScopeCollector<'db> {
             unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
             origin,
-        });
-        self.base_scopes.push(ModuleScopeBuilder::default());
-        module_id
+        })
     }
 
     /// Walks items while preserving the filesystem base of this logical module.
@@ -564,7 +557,7 @@ impl<'db> CrateScopeCollector<'db> {
         self.cfg_evaluator().is_enabled(&item.cfg)
     }
 
-    /// Records one module-scope local definition and inserts its direct binding into the base scope.
+    /// Records one module-scope local definition and inserts its direct bindings.
     fn collect_local_def(
         &mut self,
         module_id: ModuleId,
@@ -602,12 +595,9 @@ impl<'db> CrateScopeCollector<'db> {
             origin: DefMapRef::Crate(self.crate_ref),
             local_def: local_def_id,
         });
-        let scope = self
-            .base_scopes
-            .get_mut(module_id.0)
-            .expect("base scope should exist for collected local definition");
         for namespace in namespaces.iter() {
-            scope.insert_binding(
+            self.def_map_builder.insert_direct_binding(
+                module_id,
                 &name,
                 namespace,
                 ScopeBinding::new(def, *visibilities.get(namespace), provenance),
@@ -737,14 +727,12 @@ impl<'db> CrateScopeCollector<'db> {
             origin: DefMapRef::Crate(self.crate_ref),
             local_def: local_def_id,
         });
-        self.base_scopes
-            .get_mut(module_id.0)
-            .expect("proc-macro root scope should exist")
-            .insert_binding(
-                &proc_macro.name,
-                Namespace::Macros,
-                ScopeBinding::new(def, Visibility::Public, ScopeBindingProvenance::Direct),
-            );
+        self.def_map_builder.insert_direct_binding(
+            module_id,
+            &proc_macro.name,
+            Namespace::Macros,
+            ScopeBinding::new(def, Visibility::Public, ScopeBindingProvenance::Direct),
+        );
         self.macro_definitions.insert(
             local_def_id,
             MacroDefinitionRecord {
@@ -768,21 +756,19 @@ impl<'db> CrateScopeCollector<'db> {
         let root_module = self
             .root_module
             .expect("root module should exist before macro export collection");
-        self.base_scopes
-            .get_mut(root_module.0)
-            .expect("root scope should exist before macro export collection")
-            .insert_binding(
-                name,
-                Namespace::Macros,
-                ScopeBinding::new(
-                    DefId::Local(LocalDefRef {
-                        origin: DefMapRef::Crate(self.crate_ref),
-                        local_def: local_def_id,
-                    }),
-                    Visibility::Public,
-                    ScopeBindingProvenance::MacroExport,
-                ),
-            );
+        self.def_map_builder.insert_direct_binding(
+            root_module,
+            name,
+            Namespace::Macros,
+            ScopeBinding::new(
+                DefId::Local(LocalDefRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    local_def: local_def_id,
+                }),
+                Visibility::Public,
+                ScopeBindingProvenance::MacroExport,
+            ),
+        );
     }
 
     fn macro_definition_is_exported(&self, attrs: &MacroDefinitionAttrs) -> bool {
@@ -1031,21 +1017,19 @@ impl<'db> CrateScopeCollector<'db> {
             .expect("parent module should exist for child link")
             .children
             .push((module_name.clone(), child_module));
-        self.base_scopes
-            .get_mut(parent_module.0)
-            .expect("base scope should exist for child link")
-            .insert_binding(
-                module_name,
-                Namespace::Types,
-                ScopeBinding::new(
-                    DefId::Module(ModuleRef {
-                        origin: DefMapRef::Crate(self.crate_ref),
-                        module: child_module,
-                    }),
-                    visibility,
-                    ScopeBindingProvenance::Direct,
-                ),
-            );
+        self.def_map_builder.insert_direct_binding(
+            parent_module,
+            module_name,
+            Namespace::Types,
+            ScopeBinding::new(
+                DefId::Module(ModuleRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    module: child_module,
+                }),
+                visibility,
+                ScopeBindingProvenance::Direct,
+            ),
+        );
     }
 
     /// Records raw import directives for later fixed-point resolution.
@@ -1153,20 +1137,18 @@ impl<'db> CrateScopeCollector<'db> {
                 .insert_explicit_alias(binding_name.clone(), module_ref);
         }
 
-        // `extern crate` contributes directly to the base scope rather than through a deferred
+        // `extern crate` contributes direct bindings rather than going through a deferred
         // import record.
-        self.base_scopes
-            .get_mut(module_id.0)
-            .expect("base scope should exist for extern crate binding")
-            .insert_binding(
-                &binding_name,
-                Namespace::Types,
-                ScopeBinding::new(
-                    DefId::Module(module_ref),
-                    visibility,
-                    ScopeBindingProvenance::ExternCrate,
-                ),
-            );
+        self.def_map_builder.insert_direct_binding(
+            module_id,
+            &binding_name,
+            Namespace::Types,
+            ScopeBinding::new(
+                DefId::Module(module_ref),
+                visibility,
+                ScopeBindingProvenance::ExternCrate,
+            ),
+        );
     }
 
     fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
