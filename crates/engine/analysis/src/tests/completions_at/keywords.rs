@@ -170,7 +170,7 @@ pub fn body() {
 "#,
         expect![[r#"
             // path root keyword completions
-            fn body
+            fn      body
             keyword crate
         "#]],
     );

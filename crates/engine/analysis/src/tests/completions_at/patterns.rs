@@ -53,10 +53,10 @@ pub fn use_it(items: Items) {
 "#,
         expect![[r#"
             // for pattern binding completions
-            struct Items
+            struct   Items
             variable item
             variable items
-            fn use_it
+            fn       use_it
         "#]],
     );
 }
@@ -158,13 +158,13 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
               replace: 447..450
 
             // qualified pattern root
-            enum Action
+            enum       Action
             type_alias Alias
-            struct Marker
-            const READY
-            struct RecordMarker
-            struct TupleMarker
-            module nested
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            struct     TupleMarker
+            module     nested
 
             // qualified enum variant
             variant Data
@@ -175,76 +175,76 @@ pub fn pattern_param(Sta$0: Action) {} // complete("function parameter pattern")
             variant Stop // record variant constructor
 
             // if let pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            variant Data
-            struct Marker
-            const READY
-            struct RecordMarker
-            variant Start
-            variant Stop
-            struct TupleMarker
-            module nested
+            variant    Data
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            variant    Start
+            variant    Stop
+            struct     TupleMarker
+            module     nested
 
             // while let pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            variant Data
-            struct Marker
-            const READY
-            struct RecordMarker
-            variant Start
-            variant Stop
-            struct TupleMarker
-            module nested
+            variant    Data
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            variant    Start
+            variant    Stop
+            struct     TupleMarker
+            module     nested
 
             // let pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            variant Data
-            struct Marker
-            const READY
-            struct RecordMarker
-            variant Start
-            variant Stop
-            struct TupleMarker
-            module nested
+            variant    Data
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            variant    Start
+            variant    Stop
+            struct     TupleMarker
+            module     nested
 
             // for pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            struct Marker
-            const READY
-            struct RecordMarker
-            struct TupleMarker
-            module nested
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            struct     TupleMarker
+            module     nested
 
             // closure parameter pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            variant Data
-            struct Marker
-            const READY
-            struct RecordMarker
-            variant Start
-            variant Stop
-            struct TupleMarker
-            module nested
+            variant    Data
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            variant    Start
+            variant    Stop
+            struct     TupleMarker
+            module     nested
 
             struct TupleMarker // tuple struct constructor
             struct RecordMarker // record struct constructor
 
             // function parameter pattern
-            enum Action
+            enum       Action
             type_alias Alias
-            variant Data
-            struct Marker
-            const READY
-            struct RecordMarker
-            variant Start
-            variant Stop
-            struct TupleMarker
-            module nested
+            variant    Data
+            struct     Marker
+            const      READY
+            struct     RecordMarker
+            variant    Start
+            variant    Stop
+            struct     TupleMarker
+            module     nested
         "#]],
     );
 }
@@ -295,9 +295,9 @@ pub fn inspect(event: Event) {
 "#,
         expect![[r#"
             // pattern invocation macro
-            enum Event
+            enum    Event
             variant Only
-            macro pattern_macro
+            macro   pattern_macro
         "#]],
     );
 }

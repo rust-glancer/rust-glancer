@@ -45,8 +45,8 @@ pub fn run(value: &Service) {
 
             // object methods
             inherent_method inspect
-            trait_method parent
-            trait_method request
+            trait_method    parent
+            trait_method    request
         "#]],
     );
 }
@@ -135,11 +135,11 @@ where
             u32 // method through generic Deref chain
 
             // generic Deref members
-            field value
+            field           value
             inherent_method value_len
 
             // request-local Deref members
-            field value
+            field           value
             inherent_method value_len
         "#]],
     );
@@ -267,12 +267,12 @@ pub fn use_it(user: User) {
             // partial dot completions
             inherent_method id
             inherent_method touch
-            trait_method trait_name
+            trait_method    trait_name
 
             // bare dot completions
             inherent_method id
             inherent_method touch
-            trait_method trait_name
+            trait_method    trait_name
         "#]],
     );
 }
@@ -492,23 +492,23 @@ pub async fn use_it(user: User) -> Result<(), Error> {
         expect![[r#"
             // reference completions
             inherent_method id
-            field profile
+            field           profile
 
             // double reference completions
             inherent_method id
-            field profile
+            field           profile
 
             // try completions
             inherent_method id
-            field profile
+            field           profile
 
             // await completions
             inherent_method id
-            field profile
+            field           profile
 
             // cast completions
             inherent_method id
-            field profile
+            field           profile
         "#]],
     );
 }
@@ -598,8 +598,8 @@ pub fn use_it(user: User) {
 
             // same-name completions
             inherent_method label
-            trait_method label
-            trait_method label
+            trait_method    label
+            trait_method    label
         "#]],
     );
 }
@@ -639,7 +639,7 @@ pub fn use_it(error: Wrapper<Error>) {
         expect![[r#"
             // wrong generic arg completions
             inherent_method generic
-            field value
+            field           value
         "#]],
     );
 }
@@ -683,7 +683,7 @@ pub fn use_it(wrapper: Wrapper<User>) {
         expect![[r#"
             // generic trait completions
             trait_method generic_trait_name
-            field value
+            field        value
         "#]],
     );
 }
@@ -802,11 +802,11 @@ pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
 "#,
         expect![[r#"
             // Deref completions
-            field id
+            field           id
             inherent_method label
 
             // dyn Deref completions
-            field id
+            field           id
             inherent_method label
         "#]],
     );
@@ -960,7 +960,7 @@ pub fn use_it(value: u32) {
             // macro-generated methods
             inherent_method generated_count
             inherent_method generated_nested
-            trait_method generated_trait
+            trait_method    generated_trait
         "#]],
     );
 }
@@ -1164,14 +1164,14 @@ pub fn nested_body_owner() {
 "#,
         expect![[r#"
             // body-local type impl completions
-            field id
+            field           id
             inherent_method id
 
             inherent_method local // body-local target impl completions
             trait_method label // body-local target trait impl completions
 
             // nested body-local impl completions
-            field id
+            field           id
             inherent_method id
 
             inherent_method id // parent body-local impl completions from nested body
@@ -1221,16 +1221,16 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // generic method return completions
-            field id
+            field           id
             inherent_method label
 
             // generic field receiver completions
-            field id
+            field           id
             inherent_method label
 
             // wrong generic receiver completions
             inherent_method get
-            field value
+            field           value
         "#]],
     );
 }
@@ -1281,37 +1281,37 @@ pub fn use_it(maybe: Option<User>) {
 "#,
         expect![[r#"
             // closure parameter completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // let pattern payload completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // if let-chain rhs completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // if let pattern payload completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // while let pattern payload completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // match guard payload completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
 
             // match pattern payload completions
-            field id
+            field           id
             inherent_method is_valid
             inherent_method label
         "#]],

@@ -138,11 +138,11 @@ pub fn use_it() {
             module local
 
             // body-local imported value completions
-            struct User
-            const VALUE
+            struct   User
+            const    VALUE
             variable _typed
-            module local
-            fn use_it
+            module   local
+            fn       use_it
         "#]],
     );
 }
@@ -164,11 +164,11 @@ fn main() {
         expect![[r#"
             // unqualified use root completions
             module analysis_unqualified_roots
-            fn main
+            fn     main
 
             // unqualified value root completions
             module analysis_unqualified_roots
-            fn main
+            fn     main
         "#]],
     );
 }
@@ -219,23 +219,23 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // unqualified prelude completions
-            trait Clone
-            trait Copy
-            trait Default
-            trait Eq
-            trait Fn
-            trait FnMut
-            trait FnOnce
-            trait IntoIterator
-            trait Iterator
-            enum Option
-            trait Ord
-            trait PartialEq
-            trait PartialOrd
-            enum Result
-            trait Send
+            trait  Clone
+            trait  Copy
+            trait  Default
+            trait  Eq
+            trait  Fn
+            trait  FnMut
+            trait  FnOnce
+            trait  IntoIterator
+            trait  Iterator
+            enum   Option
+            trait  Ord
+            trait  PartialEq
+            trait  PartialOrd
+            enum   Result
+            trait  Send
             struct String
-            trait Sync
+            trait  Sync
             struct Vec
             module alloc
             module core
@@ -270,13 +270,13 @@ pub mod api {
         expect![[r#"
             // use path completions
             type_alias ApiAlias
-            trait ApiNamed
-            enum ApiState
-            struct ApiUser
-            static FLAG
-            const VERSION
-            module api_nested
-            fn build_user
+            trait      ApiNamed
+            enum       ApiState
+            struct     ApiUser
+            static     FLAG
+            const      VERSION
+            module     api_nested
+            fn         build_user
         "#]],
     );
 }

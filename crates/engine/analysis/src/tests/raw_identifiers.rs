@@ -98,11 +98,11 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
 
             // complete raw field
             inherent_method r#fn
-            field r#struct
+            field           r#struct
 
             // complete raw method
             inherent_method r#fn
-            field r#struct
+            field           r#struct
         "#]],
     );
 }

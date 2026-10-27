@@ -1137,31 +1137,27 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_completions(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
-        completions.sort_by_key(|completion| {
-            (
-                completion.label.clone(),
-                completion.kind,
-                completion.applicability,
-            )
-        });
+    fn render_completions(&self, completions: Vec<CompletionItem>, dump: &mut String) {
+        let mut infos = completions
+            .into_iter()
+            .map(|it| (it.label, it.kind.to_string(), it.applicability))
+            .collect::<Vec<_>>();
 
-        if completions.is_empty() {
+        infos.sort();
+
+        if infos.is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
         }
+        let kwidth = infos.iter().map(|it| it.1.len()).max().unwrap();
 
-        for completion in completions {
-            if completion.applicability == CompletionApplicability::Known {
-                writeln!(dump, "{} {}", completion.kind, completion.label)
+        for (label, kind, applicability) in infos {
+            if applicability == CompletionApplicability::Known {
+                writeln!(dump, "{:kwidth$} {}", kind, label)
                     .expect("string writes should not fail");
             } else {
-                writeln!(
-                    dump,
-                    "{} {} ({})",
-                    completion.kind, completion.label, completion.applicability
-                )
-                .expect("string writes should not fail");
+                writeln!(dump, "{:kwidth$} {} ({})", kind, label, applicability)
+                    .expect("string writes should not fail");
             }
         }
     }

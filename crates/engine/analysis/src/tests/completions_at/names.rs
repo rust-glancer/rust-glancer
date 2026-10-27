@@ -20,11 +20,11 @@ pub fn use_it(input_user: User) {
 "#,
         expect![[r#"
             // unqualified value completions
-            struct User
+            struct   User
             variable input_user
             variable local_user
-            fn make_user
-            fn use_it
+            fn       make_user
+            fn       use_it
         "#]],
     );
 }
@@ -43,7 +43,7 @@ pub fn use_it(shadowed: u8) {
         expect![[r#"
             // shadowed value completions
             variable shadowed
-            fn use_it
+            fn       use_it
         "#]],
     );
 }
@@ -187,89 +187,89 @@ pub fn incomplete(value: Wrapper<Fi$0 // complete("incomplete function generic a
 "#,
         expect![[r#"
             // struct field generic arg
-            struct Array
-            struct Fixture
-            struct Holder
-            trait Service
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // struct field type param
-            struct Array
-            struct Fixture
-            struct Holder
-            trait Service
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // trait method generic arg
-            struct Array
-            struct Fixture
-            struct Holder
+            struct         Array
+            struct         Fixture
+            struct         Holder
             type_parameter Self
-            trait Service
+            trait          Service
             type_parameter T
             type_parameter U
-            struct Wrapper
+            struct         Wrapper
 
             // trait method Self
-            struct Array
-            struct Fixture
-            struct Holder
+            struct         Array
+            struct         Fixture
+            struct         Holder
             type_parameter Self
-            trait Service
+            trait          Service
             type_parameter T
             type_parameter U
-            struct Wrapper
+            struct         Wrapper
 
             // impl method generic arg
-            struct Array
-            struct Fixture
-            struct Holder
-            const N
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            const          N
             type_parameter Self
-            trait Service
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // qualified return type
             struct Array
             struct Fixture
             struct Holder
-            trait Service
+            trait  Service
             struct Wrapper
 
             // function generic arg
-            struct Array
-            struct Fixture
-            struct Holder
-            const N
-            trait Service
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            const          N
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // function type param
-            struct Array
-            struct Fixture
-            struct Holder
-            trait Service
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // function const arg
-            struct Array
-            struct Fixture
-            struct Holder
-            const N
-            trait Service
+            struct         Array
+            struct         Fixture
+            struct         Holder
+            const          N
+            trait          Service
             type_parameter T
-            struct Wrapper
+            struct         Wrapper
 
             // incomplete function generic arg
             struct Array
             struct Fixture
             struct Holder
-            trait Service
+            trait  Service
             struct Wrapper
         "#]],
     );
@@ -304,12 +304,12 @@ pub fn use_it<T, const N: usize>() {
 "#,
         expect![[r#"
             // body type parameter
-            struct Array
+            struct         Array
             type_parameter T
 
             // body const generic argument
-            struct Array
-            const N
+            struct         Array
+            const          N
             type_parameter T
         "#]],
     );
@@ -329,7 +329,7 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // primitive type completions
-            struct Vec
+            struct         Vec
             primitive_type u128
             primitive_type u16
             primitive_type u32
@@ -338,7 +338,7 @@ pub fn use_it() {
             primitive_type usize
 
             // primitive generic arg completions
-            struct Vec
+            struct         Vec
             primitive_type u128
             primitive_type u16
             primitive_type u32
@@ -424,21 +424,21 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local type item completions
-            struct GlobalId
-            enum LocalAction
+            struct     GlobalId
+            enum       LocalAction
             type_alias LocalAlias
-            union LocalBits
-            trait LocalNamed
-            struct LocalUnit
+            union      LocalBits
+            trait      LocalNamed
+            struct     LocalUnit
 
             // body-local value item completions
-            struct GlobalId
-            struct LocalUnit
+            struct   GlobalId
+            struct   LocalUnit
             variable _typed
-            static local_current
-            const local_default
-            fn local_helper
-            fn use_it
+            static   local_current
+            const    local_default
+            fn       local_helper
+            fn       use_it
         "#]],
     );
 }
@@ -469,21 +469,21 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // second generic arg completions
-            enum Maybe
+            enum   Maybe
             struct Session
             struct State
             struct String
             module collections
 
             // value path generic arg completions
-            enum Maybe
+            enum   Maybe
             struct Session
             struct State
             struct String
             module collections
 
             // first generic arg completions
-            enum Maybe
+            enum   Maybe
             struct Session
             struct State
             struct String

@@ -39,12 +39,12 @@ pub fn use_it() {
             // unqualified record constructor completions
             struct LocalUser
             module api
-            fn use_it
+            fn     use_it
 
             variant Start // body-local record variant constructor completions
 
             // qualified record constructor completions
-            enum Action
+            enum   Action
             struct User
 
             variant Start // record variant constructor completions
@@ -180,8 +180,8 @@ pub fn use_it(user_value: u8) {
 "#,
         expect![[r#"
             // record field value completions
-            struct User
-            fn use_it
+            struct   User
+            fn       use_it
             variable user_value
         "#]],
     );
