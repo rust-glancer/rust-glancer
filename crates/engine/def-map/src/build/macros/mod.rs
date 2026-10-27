@@ -65,7 +65,7 @@ impl MacroDirective {
     fn is_retryable(&self) -> bool {
         matches!(
             self.state,
-            MacroDirectiveState::Pending | MacroDirectiveState::Unresolved
+            MacroDirectiveState::Pending | MacroDirectiveState::WaitingForImports
         )
     }
 }
@@ -229,22 +229,17 @@ impl PendingMacroExpansionLimitGroup {
 }
 
 /// Worklist state for an item-shaped macro call seen during def-map construction.
+///
+/// Scheduling only needs to know when a call can be attempted again. Profiling records expansion
+/// results separately; successful, failed, and skipped calls all finish their work in this queue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MacroDirectiveState {
-    /// The call has not yet been resolved against the current scope snapshot.
+    /// The call has not yet been attempted.
     Pending,
-    /// Resolution failed, but a later import refresh may make the macro visible.
-    Unresolved,
-    /// Expansion succeeded and its output was spliced according to the call placement.
-    Expanded,
-    /// Compilation, expansion, or generated-source parsing failed.
-    Failed,
-    /// The call is known not to be expandable by this engine.
-    Skipped,
-    /// The call names a builtin that cannot contribute def-map items.
-    IgnoredByDefMap,
-    /// The call names a macro category that would need dedicated support to model correctly.
-    Unsupported,
+    /// Lookup failed; retry only after imports have been refreshed.
+    WaitingForImports,
+    /// No further attempt is needed, including when source loading owns the remaining collection.
+    Complete,
 }
 
 #[derive(Debug, Clone)]
@@ -420,7 +415,7 @@ pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut CrateBuildStor
             );
             for directive in &mut state.macro_directives {
                 if directive.is_retryable() {
-                    directive.state = MacroDirectiveState::Skipped;
+                    directive.state = MacroDirectiveState::Complete;
                     skipped += 1;
                 }
             }

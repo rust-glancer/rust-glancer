@@ -113,12 +113,12 @@ pub(crate) struct PendingGeneratedModule {
 /// Pending collection for one builtin `include!` call produced by another macro.
 ///
 /// ItemTree could not lower a payload for a call that did not exist in original source. The macro
-/// directive and its call placement are already retained, so collection only needs to splice the
-/// project-lowered file into the module or associated owner and mark the directive complete.
+/// directive is already complete; this pending operation owns the remaining file collection.
+/// The origin retains ancestry for nested macros and placement for splicing the loaded items into
+/// the module or associated owner.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingGeneratedInclude {
     pub(super) request: MacroSourceFileRequest,
-    pub(super) call_id: usize,
     pub(super) origin: GeneratedOrigin,
 }
 
@@ -159,38 +159,34 @@ pub(crate) fn apply_pending_macro_source_files(
             }
             let pending = std::mem::take(&mut state.pending_generated_includes);
             for pending in pending {
-                let success = match resolutions
+                match resolutions
                     .get(&pending.request)
                     .expect("pending include request should be answered")
                 {
-                    MacroSourceFileResolution::Missing => false,
-                    MacroSourceFileResolution::Include { file_id } => DeclarationCollector::new(
-                        state,
-                        package,
-                        resolutions,
-                        MacroCallOrigin::Generated {
-                            parent_call: pending.call_id,
-                        },
-                        None,
-                    )
-                    .collect_file(
-                        pending.origin.module,
-                        *file_id,
-                        pending.origin.order,
-                        pending.origin.placement,
-                        pending.origin.module_file_context,
-                    )
-                    .is_ok(),
+                    MacroSourceFileResolution::Missing => {}
+                    MacroSourceFileResolution::Include { file_id } => {
+                        // Collection failure finishes this include just as it does an ordinary
+                        // expansion. Source loading has answered the request, so there is no retry.
+                        let _ = DeclarationCollector::new(
+                            state,
+                            package,
+                            resolutions,
+                            MacroCallOrigin::Generated {
+                                parent_call: pending.origin.parent_call,
+                            },
+                            None,
+                        )
+                        .collect_file(
+                            pending.origin.module,
+                            *file_id,
+                            pending.origin.order,
+                            pending.origin.placement,
+                            pending.origin.module_file_context,
+                        );
+                    }
                     MacroSourceFileResolution::Module { .. } => {
                         unreachable!("include request received a module answer")
                     }
-                };
-                if let Some(directive) = state.macro_directives.get_mut(pending.call_id) {
-                    directive.state = if success {
-                        super::MacroDirectiveState::Expanded
-                    } else {
-                        super::MacroDirectiveState::Failed
-                    };
                 }
             }
         }
