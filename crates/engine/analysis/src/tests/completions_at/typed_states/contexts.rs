@@ -46,13 +46,13 @@ pub fn run() {
     let _: crate::Wrapper<$0 // complete_with_source("empty generic argument at EOF").matching("GenericVisibleType")
 "#,
         expect![[r#"
-            keyword crate // empty import at EOF
-            struct VisibleType // empty qualified import segment at EOF
-            struct SignatureVisibleType // empty signature type at EOF
-            struct VisibleType // empty qualified signature segment at EOF
-            variable local_value // empty body expression at EOF
-            variable local_value // empty call argument at EOF
-            struct GenericVisibleType // empty generic argument at EOF
+            kw crate // empty import at EOF
+            st VisibleType // empty qualified import segment at EOF
+            st SignatureVisibleType // empty signature type at EOF
+            st VisibleType // empty qualified signature segment at EOF
+            vr local_value // empty body expression at EOF
+            vr local_value // empty call argument at EOF
+            st GenericVisibleType // empty generic argument at EOF
         "#]],
     );
 }
@@ -84,11 +84,11 @@ pub fn run(value: bool) {
     let re$0 // complete_keywords_with_source("pattern keyword at EOF").matching("ref")
 "#,
         expect![[r#"
-            keyword dyn // type keyword at EOF
-            keyword impl // impl Trait keyword at EOF
-            keyword let // statement keyword at EOF
-            keyword match // expression keyword at EOF
-            keyword ref // pattern keyword at EOF
+            kw dyn // type keyword at EOF
+            kw impl // impl Trait keyword at EOF
+            kw let // statement keyword at EOF
+            kw match // expression keyword at EOF
+            kw ref // pattern keyword at EOF
         "#]],
     );
 }
@@ -130,12 +130,12 @@ extern "C" {
     f$0 // complete_keywords_with_source("extern block item at EOF").matching("fn")
 "#,
         expect![[r#"
-            keyword fn // source-file item at EOF
-            keyword fn // module item at EOF
-            keyword fn // inherent impl item at EOF
-            keyword fn // trait item at EOF
-            keyword fn // trait impl item at EOF
-            keyword fn // extern block item at EOF
+            kw fn // source-file item at EOF
+            kw fn // module item at EOF
+            kw fn // inherent impl item at EOF
+            kw fn // trait item at EOF
+            kw fn // trait impl item at EOF
+            kw fn // extern block item at EOF
         "#]],
     );
 }
@@ -164,11 +164,11 @@ extern c$0 // complete_keywords_with_source("after extern at EOF").matching("cra
 const f$0 // complete_keywords_with_source("after const at EOF").matching("fn")
 "#,
         expect![[r#"
-            keyword fn // after pub at EOF
-            keyword fn // after unsafe at EOF
-            keyword fn // after async at EOF
-            keyword crate // after extern at EOF
-            keyword fn // after const at EOF
+            kw fn // after pub at EOF
+            kw fn // after unsafe at EOF
+            kw fn // after async at EOF
+            kw crate // after extern at EOF
+            kw fn // after const at EOF
         "#]],
     );
 }
@@ -212,13 +212,13 @@ pub fn run(event: crate::Event) {
         crate::Event::$0 // complete_with_source("empty qualified pattern segment at EOF").matching("Start")
 "#,
         expect![[r#"
-            variant Start // qualified name pattern with suffix
-            variant Data // tuple pattern with suffix
-            variant Stop // record pattern with suffix
-            variant Start // unqualified expected pattern without semicolon
-            variant Start // unqualified expected pattern with suffix
-            variant Start // qualified name pattern at EOF
-            variant Start // empty qualified pattern segment at EOF
+            ev Start // qualified name pattern with suffix
+            ev Data // tuple pattern with suffix
+            ev Stop // record pattern with suffix
+            ev Start // unqualified expected pattern without semicolon
+            ev Start // unqualified expected pattern with suffix
+            ev Start // qualified name pattern at EOF
+            ev Start // empty qualified pattern segment at EOF
         "#]],
     );
 }

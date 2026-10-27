@@ -90,19 +90,19 @@ fn resolves_and_renders_raw_identifiers_across_semantic_surfaces() {
                 pub struct r#async
 
             // complete raw type
-            struct Imported
-            struct r#async
-            struct r#gen
-            module r#mod
-            struct r#type
+            st Imported
+            st r#async
+            st r#gen
+            md r#mod
+            st r#type
 
             // complete raw field
-            inherent_method r#fn
-            field r#struct
+            im r#fn
+            fd r#struct
 
             // complete raw method
-            inherent_method r#fn
-            field r#struct
+            im r#fn
+            fd r#struct
         "#]],
     );
 }
@@ -127,7 +127,7 @@ fn presentation_uses_the_package_edition_instead_of_a_global_keyword_set() {
               signature:
                 pub struct gen
 
-            struct gen // complete 2021 identifier
+            st gen // complete 2021 identifier
         "#]],
     );
 }

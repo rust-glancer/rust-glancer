@@ -32,70 +32,70 @@ extern "C" {
 "#,
         expect![[r#"
             // source-file items
-            keyword async
-            keyword const
-            keyword enum
-            keyword extern
-            keyword fn
-            keyword impl
-            keyword impl for
-            keyword mod
-            keyword pub
-            keyword static
-            keyword struct
-            keyword trait
-            keyword type
-            keyword union
-            keyword unsafe
-            keyword use
+            kw async
+            kw const
+            kw enum
+            kw extern
+            kw fn
+            kw impl
+            kw impl for
+            kw mod
+            kw pub
+            kw static
+            kw struct
+            kw trait
+            kw type
+            kw union
+            kw unsafe
+            kw use
 
             // module items
-            keyword async
-            keyword const
-            keyword enum
-            keyword extern
-            keyword fn
-            keyword impl
-            keyword impl for
-            keyword mod
-            keyword pub
-            keyword static
-            keyword struct
-            keyword trait
-            keyword type
-            keyword union
-            keyword unsafe
-            keyword use
+            kw async
+            kw const
+            kw enum
+            kw extern
+            kw fn
+            kw impl
+            kw impl for
+            kw mod
+            kw pub
+            kw static
+            kw struct
+            kw trait
+            kw type
+            kw union
+            kw unsafe
+            kw use
 
             // inherent impl items
-            keyword async
-            keyword const
-            keyword extern
-            keyword fn
-            keyword pub
-            keyword unsafe
+            kw async
+            kw const
+            kw extern
+            kw fn
+            kw pub
+            kw unsafe
 
             // trait items
-            keyword async
-            keyword const
-            keyword extern
-            keyword fn
-            keyword type
-            keyword unsafe
+            kw async
+            kw const
+            kw extern
+            kw fn
+            kw type
+            kw unsafe
 
             // trait impl items
-            keyword async
-            keyword const
-            keyword extern
-            keyword fn
-            keyword type
-            keyword unsafe
+            kw async
+            kw const
+            kw extern
+            kw fn
+            kw type
+            kw unsafe
 
             // extern block items
-            keyword fn
-            keyword pub
-            keyword static
-            keyword unsafe
+            kw fn
+            kw pub
+            kw static
+            kw unsafe
         "#]],
     );
 }
@@ -141,18 +141,18 @@ mod restricted_visibility_context {
               snippet: dyn ${1:Trait}
 
             // fn type
-            keyword fn
-            keyword for
+            kw fn
+            kw for
 
-            keyword for // for type
+            kw for // for type
             <none> // impl Trait excluded from fields
-            keyword impl // impl Trait function parameter
-            keyword impl // impl Trait function return
-            keyword fn // after visibility
-            keyword fn // after unsafe
-            keyword fn // after async
-            keyword crate // after extern
-            keyword fn // after const
+            kw impl // impl Trait function parameter
+            kw impl // impl Trait function return
+            kw fn // after visibility
+            kw fn // after unsafe
+            kw fn // after async
+            kw crate // after extern
+            kw fn // after const
             <none> // extern crate name has no item fallback
             <none> // restricted visibility has no item fallback
         "#]],
@@ -171,7 +171,7 @@ pub fn body() {
         expect![[r#"
             // path root keyword completions
             fn body
-            keyword crate
+            kw crate
         "#]],
     );
 }

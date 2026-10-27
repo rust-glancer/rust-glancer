@@ -113,11 +113,11 @@ pub struct Parser;
             fn required // function trait member before closing brace
             fn required // function trait member at EOF
             fn required // trait member before its first prefix at EOF
-            macro local_item // module macro before invocation suffix
-            macro local_item // module macro at EOF
-            module parser // module declaration before semicolon
-            module parser // module declaration at EOF
-            module parser // module declaration before its first prefix at EOF
+            ma local_item // module macro before invocation suffix
+            ma local_item // module macro at EOF
+            md parser // module declaration before semicolon
+            md parser // module declaration at EOF
+            md parser // module declaration before its first prefix at EOF
         "#]],
     );
 }

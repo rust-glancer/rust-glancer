@@ -32,8 +32,8 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // primitive associated items
-            const DEFAULT
-            const MAX
+            ct DEFAULT
+            ct MAX
             fn count_ones
             fn from_be_bytes
             fn make
@@ -106,16 +106,16 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
 "#,
         expect![[r#"
             // enum variant import items
-            variant Data
-            variant Start
-            variant Stop
+            ev Data
+            ev Start
+            ev Stop
 
             // concrete associated items
-            const LIMIT
-            type_alias Output
-            const PARENT
-            type_alias ParentItem
-            const ZERO
+            ct LIMIT
+            ta Output
+            ct PARENT
+            ta ParentItem
+            ct ZERO
             fn inspect
             fn make
             fn new
@@ -123,11 +123,11 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
             fn touch
 
             // alias associated items
-            const LIMIT
-            type_alias Output
-            const PARENT
-            type_alias ParentItem
-            const ZERO
+            ct LIMIT
+            ta Output
+            ct PARENT
+            ta ParentItem
+            ct ZERO
             fn inspect
             fn make
             fn new
@@ -135,47 +135,47 @@ pub fn inspect_signature<T: Factory>(_: T::Out$0) -> <T as Factory>::Par$1 { // 
             fn touch
 
             // parameter value associated items
-            const LIMIT
-            type_alias Output
-            const PARENT
-            type_alias ParentItem
+            ct LIMIT
+            ta Output
+            ct PARENT
+            ta ParentItem
             fn inspect
             fn make
             fn parent_fn
 
             // parameter type associated items
-            type_alias Output
-            type_alias ParentItem
+            ta Output
+            ta ParentItem
 
             // qualified value associated items
-            const LIMIT
-            type_alias Output
-            const PARENT
-            type_alias ParentItem
+            ct LIMIT
+            ta Output
+            ct PARENT
+            ta ParentItem
             fn inspect
             fn make
             fn parent_fn
 
             // qualified type associated items
-            type_alias Output
-            type_alias ParentItem
+            ta Output
+            ta ParentItem
 
             // direct trait associated items
-            const LIMIT
-            type_alias Output
-            const PARENT
-            type_alias ParentItem
+            ct LIMIT
+            ta Output
+            ct PARENT
+            ta ParentItem
             fn inspect
             fn make
             fn parent_fn
 
             // signature parameter associated items
-            type_alias Output
-            type_alias ParentItem
+            ta Output
+            ta ParentItem
 
             // signature qualified associated items
-            type_alias Output
-            type_alias ParentItem
+            ta Output
+            ta ParentItem
         "#]],
     );
 }
@@ -270,24 +270,24 @@ pub fn use_local() {
 "#,
         expect![[r#"
             // body local Self associated items
-            const EMPTY
-            type_alias Output
-            const READY
+            ct EMPTY
+            ta Output
+            ct READY
             fn build
             fn create
             fn inside
             fn inspect
 
             // body local value associated items
-            const EMPTY
-            type_alias Output
-            const READY
+            ct EMPTY
+            ta Output
+            ct READY
             fn build
             fn create
             fn inside
             fn inspect
 
-            type_alias Output // body local type associated items
+            ta Output // body local type associated items
         "#]],
     );
 }

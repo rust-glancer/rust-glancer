@@ -37,17 +37,17 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // unqualified record constructor completions
-            struct LocalUser
-            module api
+            st LocalUser
+            md api
             fn use_it
 
-            variant Start // body-local record variant constructor completions
+            ev Start // body-local record variant constructor completions
 
             // qualified record constructor completions
-            enum Action
-            struct User
+            en Action
+            st User
 
-            variant Start // record variant constructor completions
+            ev Start // record variant constructor completions
         "#]],
     );
 }
@@ -73,10 +73,10 @@ pub fn inspect(action: Action) {
 }
 "#,
         expect![[r#"
-            field code // semantic variant expression fields
-            field message // semantic variant pattern fields
-            field alpha // local variant expression fields
-            field beta // local variant pattern fields
+            fd code // semantic variant expression fields
+            fd message // semantic variant pattern fields
+            fd alpha // local variant expression fields
+            fd beta // local variant pattern fields
         "#]],
     );
 }
@@ -111,33 +111,33 @@ pub fn use_it(id: u8, user: User, users: Users) {
 "#,
         expect![[r#"
             // record literal prefix completions
-            field active
-            field name
+            fd active
+            fd name
 
             // record literal empty completions
-            field active
-            field name
+            fd active
+            fd name
 
             <none> // record literal defaults completions
 
             // record pattern prefix completions
-            field active
-            field name
+            fd active
+            fd name
 
             <none> // record pattern rest completions
 
             // if let record pattern fields
-            field active
-            field name
+            fd active
+            fd name
 
             // while let record pattern fields
-            field active
-            field id
-            field name
+            fd active
+            fd id
+            fd name
 
             // for record pattern fields
-            field active
-            field name
+            fd active
+            fd name
         "#]],
     );
 }
@@ -158,8 +158,8 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local record literal completions
-            field left
-            field right
+            fd left
+            fd right
         "#]],
     );
 }
@@ -180,9 +180,9 @@ pub fn use_it(user_value: u8) {
 "#,
         expect![[r#"
             // record field value completions
-            struct User
+            st User
             fn use_it
-            variable user_value
+            vr user_value
         "#]],
     );
 }

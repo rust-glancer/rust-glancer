@@ -57,7 +57,7 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
               sort: 00-specialized:07:explicit_name
               replace: 355..358
 
-            const MODULE_CAPTURE // format module const
+            ct MODULE_CAPTURE // format module const
 
             // Cargo environment
             value CARGO_MANIFEST_DIR
@@ -65,9 +65,9 @@ fn complete<const COUNT: usize>(local_capture: usize, condition: bool, value: i3
               sort: 00-specialized:08:CARGO_MANIFEST_DIR
               replace: 434..443
 
-            value CARGO_BIN_NAME // Cargo option environment
+            vl CARGO_BIN_NAME // Cargo option environment
             <none> // write destination is ordinary
-            variable nested_capture // write format
+            vr nested_capture // write format
 
             // postfix match
             postfix match
@@ -163,13 +163,13 @@ fn const_body<const N: usize>() {
 }
 "#,
         expect![[r#"
-            attribute derive // attribute path
-            macro traced // attribute proc macro
-            value Clone // builtin derive
-            macro Stored // derive proc macro
-            value dead_code // lint input
-            value transparent // repr input
-            value target_arch // cfg key
+            at derive // attribute path
+            ma traced // attribute proc macro
+            vl Clone // builtin derive
+            ma Stored // derive proc macro
+            vl dead_code // lint input
+            vl transparent // repr input
+            vl target_arch // cfg key
 
             // cfg Cargo feature
             value serde-support
@@ -177,16 +177,16 @@ fn const_body<const N: usize>() {
               sort: 00-specialized:08:serde-support
               replace: 272..278
 
-            value message // diagnostic input
-            value since // compatibility input
-            module inner // visibility module
-            module dependency // extern crate
-            const LIMIT // const default
-            const LIMIT // array length
-            lifetime 'outer // lifetime
-            const N // const parameter
-            const LIMIT // braced const argument
-            label 'inner // loop label
+            vl message // diagnostic input
+            vl since // compatibility input
+            md inner // visibility module
+            md dependency // extern crate
+            ct LIMIT // const default
+            ct LIMIT // array length
+            lt 'outer // lifetime
+            ct N // const parameter
+            ct LIMIT // braced const argument
+            lb 'inner // loop label
         "#]],
     );
 }

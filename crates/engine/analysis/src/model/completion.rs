@@ -258,6 +258,36 @@ impl CompletionKind {
             SemanticItemKind::Impl => return None,
         })
     }
+
+    /// Short kind tag, for test render.
+    #[cfg(test)]
+    pub(crate) fn tag(self) -> &'static str {
+        match self {
+            Self::Attribute => "at",
+            Self::Const => "ct",
+            Self::Enum => "en",
+            Self::EnumVariant => "ev",
+            Self::Field => "fd",
+            Self::Function => "fn",
+            Self::InherentMethod => "im",
+            Self::Keyword => "kw",
+            Self::Label => "lb",
+            Self::Lifetime => "lt",
+            Self::Macro => "ma",
+            Self::Module => "md",
+            Self::PrimitiveType => "pt",
+            Self::Postfix => "po",
+            Self::Static => "sc",
+            Self::Struct => "st",
+            Self::Trait => "tt",
+            Self::TraitMethod => "tm",
+            Self::TypeParameter => "tp",
+            Self::TypeAlias => "ta",
+            Self::Union => "un",
+            Self::Variable => "vr",
+            Self::Value => "vl",
+        }
+    }
 }
 
 /// Confidence attached to a completion candidate.

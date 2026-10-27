@@ -1153,13 +1153,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         for completion in completions {
             if completion.applicability == CompletionApplicability::Known {
-                writeln!(dump, "{} {}", completion.kind, completion.label)
+                writeln!(dump, "{} {}", completion.kind.tag(), completion.label)
                     .expect("string writes should not fail");
             } else {
                 writeln!(
                     dump,
                     "{} {} ({})",
-                    completion.kind, completion.label, completion.applicability
+                    completion.kind.tag(),
+                    completion.label,
+                    completion.applicability
                 )
                 .expect("string writes should not fail");
             }
