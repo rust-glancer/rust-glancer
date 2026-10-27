@@ -55,7 +55,6 @@ edition = "2024"
 authors = ["Igor Aleksanov <popzxc@yandex.ru>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/popzxc/rust-glancer"
-homepage = "https://github.com/popzxc/rust-glancer"
 readme = "README.md"
 description = "A Rust workspace for rust-glancer."
 
