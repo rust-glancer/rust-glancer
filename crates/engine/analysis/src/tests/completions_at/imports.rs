@@ -1,6 +1,52 @@
 use expect_test::expect;
 
 use crate::tests::utils::{check_analysis, check_analysis_with_fake_sysroot};
+
+#[test]
+fn merged_bindings_present_the_selected_reexport_attributes() {
+    check_analysis(
+        r#"
+//- /catalog/src/lib.rs crate:catalog root:catalog
+mod source {
+    #[doc(hidden)]
+    pub struct Shared {}
+}
+
+pub mod hidden_first {
+    #[doc(hidden)]
+    pub use crate::source::*;
+    pub use crate::source::*;
+}
+
+pub mod visible_first {
+    pub use crate::source::*;
+    #[doc(hidden)]
+    pub use crate::source::*;
+}
+
+pub mod macros {
+    #[doc(hidden)]
+    #[macro_export]
+    macro_rules! facade_macro { () => {} }
+
+    pub use facade_macro;
+}
+
+//- /app/src/lib.rs crate:app root:app deps:catalog
+fn use_it() {
+    let _: catalog::hidden_first::Sha$0; // complete_with_source("visible re-export after hidden source").in_lib("app").matching("Shared")
+    let _: catalog::visible_first::Sha$0; // complete_with_source("visible re-export before hidden source").in_lib("app").matching("Shared")
+    catalog::macros::facade_$0!(); // complete_with_source("macro re-export overrides declaration attributes").in_lib("app").matching("facade_macro")
+}
+"#,
+        expect![[r#"
+            struct Shared // visible re-export after hidden source
+            struct Shared // visible re-export before hidden source
+            macro facade_macro // macro re-export overrides declaration attributes
+        "#]],
+    );
+}
+
 #[test]
 #[ignore = "TODO(#160)"]
 fn completes_unqualified_names_with_bounded_auto_imports() {

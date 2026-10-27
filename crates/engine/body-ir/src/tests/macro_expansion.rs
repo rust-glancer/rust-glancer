@@ -859,10 +859,10 @@ pub mod shadow {
 }
 
 #[test]
-fn ambiguous_prelude_macro_blocks_body_builtin_resolution() {
+fn conflicting_prelude_macros_use_the_first_body_expansion() {
     check_project_body_ir_with_sysroot(
         r#"
-//- /src/lib.rs crate:body_ambiguous_prelude_builtin_fixture
+//- /src/lib.rs crate:body_first_prelude_macro_fixture
 pub fn use_it() {
     let value = format_args!();
     value
@@ -887,7 +887,7 @@ pub struct Alloc;
 #[macro_export]
 macro_rules! format_args {
     () => {
-        2u8
+        2u16
     };
 }
 
@@ -907,22 +907,22 @@ pub struct TokenStream;
             alloc [lib]
             skipped
 
-            package body_ambiguous_prelude_builtin_fixture
+            package body_first_prelude_macro_fixture
 
-            body_ambiguous_prelude_builtin_fixture [lib]
-            body b0 fn body_ambiguous_prelude_builtin_fixture[lib]::crate::use_it @ 1:1-4:2
+            body_first_prelude_macro_fixture [lib]
+            body b0 fn body_first_prelude_macro_fixture[lib]::crate::use_it @ 1:1-4:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
             bindings
-            - v0 let value `value` => <unknown> @ 2:9-2:14
+            - v0 let value `value` => u8 @ 2:9-2:14
             body
-            expr e2 block s1 => <unknown> @ 1:17-4:2
+            expr e2 block s1 => u8 @ 1:17-4:2
               stmt s0 let v0 @ 2:5-2:32
                 initializer
-                  expr e0 unknown `format_args!()` => <unknown> @ 2:17-2:31
+                  expr e0 literal int `format_args!()` => u8 @ 2:17-2:31
               tail
-                expr e1 path value -> local v0 => <unknown> @ 3:5-3:10
+                expr e1 path value -> local v0 => u8 @ 3:5-3:10
 
 
             package core

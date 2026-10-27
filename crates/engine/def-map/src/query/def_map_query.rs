@@ -18,8 +18,8 @@ use super::{
 };
 use crate::{
     DefMap, ImportData, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
-    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleResolutionView,
-    ModuleScopeBuilder, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
+    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleResolutionView, Namespace,
+    NamespaceSet, ScopeBinding, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
 
@@ -255,10 +255,22 @@ where
         importing_module: ModuleRef,
         source_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
-        let scope = self
-            .scope_resolver()
-            .visible_scope(importing_module, source_module)?;
-        let mut defs = VisibleScopeDefs::new(&scope, VisibleScopeOrigin::ModuleScope, false);
+        let mut defs = VisibleScopeDefs::empty();
+        self.scope_resolver().visit_visible_bindings(
+            importing_module,
+            source_module,
+            NamespaceSet::ALL,
+            |name, namespace, binding| {
+                defs.push_binding(
+                    name,
+                    namespace,
+                    binding,
+                    VisibleScopeOrigin::ModuleScope,
+                    false,
+                );
+                Ok(())
+            },
+        )?;
         defs.sort();
         Ok(defs)
     }
@@ -285,11 +297,13 @@ where
         let resolver = self.scope_resolver();
         let mut traits = UniqueVec::new();
         let mut current = Some(importing_module);
-        let no_shadowed_names = FxHashSet::default();
-
         while let Some(module_ref) = current {
-            let scope = resolver.visible_scope(importing_module, module_ref)?;
-            self.push_named_traits(&mut traits, &scope, &no_shadowed_names)?;
+            resolver.visit_visible_bindings(
+                importing_module,
+                module_ref,
+                NamespaceSet::TYPES,
+                |_, _, binding| self.push_named_trait(&mut traits, binding),
+            )?;
 
             let Some(module) = self.source.module_data(module_ref)? else {
                 break;
@@ -319,50 +333,50 @@ where
         importing_module: ModuleRef,
     ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
         let resolver = self.scope_resolver();
-        let current_scope = resolver.visible_scope(importing_module, importing_module)?;
-        let no_shadowed_names = FxHashSet::default();
-        let occupied_type_names = current_scope
-            .entries()
-            .filter(|(_, entry)| !entry.bindings(Namespace::Types).is_empty())
-            .map(|(name, _)| name.clone())
-            .collect::<FxHashSet<_>>();
-
+        let mut occupied_type_names = FxHashSet::default();
         let mut traits = UniqueVec::new();
-        self.push_named_traits(&mut traits, &current_scope, &no_shadowed_names)?;
+        resolver.visit_visible_bindings(
+            importing_module,
+            importing_module,
+            NamespaceSet::TYPES,
+            |name, _, binding| {
+                occupied_type_names.insert(name.clone());
+                self.push_named_trait(&mut traits, binding)
+            },
+        )?;
         if let Some(module) = self.source.module_data(importing_module)? {
             self.push_unnamed_traits(&mut traits, &resolver, importing_module, module)?;
         }
 
         let crate_ref = importing_module.origin.origin_crate();
         if let Some(prelude) = self.source.prelude_module(crate_ref)? {
-            let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
-            self.push_named_traits(&mut traits, &prelude_scope, &occupied_type_names)?;
+            resolver.visit_visible_bindings(
+                importing_module,
+                prelude,
+                NamespaceSet::TYPES,
+                |name, _, binding| {
+                    if !occupied_type_names.contains(name) {
+                        self.push_named_trait(&mut traits, binding)?;
+                    }
+                    Ok(())
+                },
+            )?;
         }
 
         Ok(traits)
     }
 
-    /// Add selected type bindings that are traits and whose spelling is not shadowed.
-    fn push_named_traits(
+    /// Add a selected type binding when it denotes a trait.
+    fn push_named_trait(
         &self,
         traits: &mut UniqueVec<LocalDefRef>,
-        scope: &ModuleScopeBuilder,
-        shadowed_names: &FxHashSet<Name>,
+        binding: &ScopeBinding,
     ) -> Result<(), S::Error> {
-        for (name, entry) in scope.entries() {
-            if shadowed_names.contains(name) {
-                continue;
-            }
-            for binding in entry.bindings(Namespace::Types) {
-                let DefId::Local(local_def) = binding.def else {
-                    continue;
-                };
-                if self.source.local_def_data(local_def)?.map(|data| data.kind)
-                    == Some(LocalDefKind::Trait)
-                {
-                    traits.push(local_def);
-                }
-            }
+        if let DefId::Local(local_def) = binding.def
+            && self.source.local_def_data(local_def)?.map(|data| data.kind)
+                == Some(LocalDefKind::Trait)
+        {
+            traits.push(local_def);
         }
         Ok(())
     }
@@ -394,9 +408,22 @@ where
 
         // First-segment resolution checks the current module scope before extern roots and the
         // standard prelude. Completion follows the same namespace-specific shadowing order.
-        let current_scope = resolver.visible_scope(importing_module, importing_module)?;
-        let mut defs =
-            VisibleScopeDefs::new(&current_scope, VisibleScopeOrigin::ModuleScope, false);
+        let mut defs = VisibleScopeDefs::empty();
+        resolver.visit_visible_bindings(
+            importing_module,
+            importing_module,
+            NamespaceSet::ALL,
+            |name, namespace, binding| {
+                defs.push_binding(
+                    name,
+                    namespace,
+                    binding,
+                    VisibleScopeOrigin::ModuleScope,
+                    false,
+                );
+                Ok(())
+            },
+        )?;
 
         let crate_ref = importing_module.origin.origin_crate();
         for visible in self.visible_absolute_root_defs(importing_module)? {
@@ -404,8 +431,15 @@ where
         }
 
         if let Some(prelude) = self.source.prelude_module(crate_ref)? {
-            let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
-            defs.extend(&prelude_scope, VisibleScopeOrigin::Prelude, true);
+            resolver.visit_visible_bindings(
+                importing_module,
+                prelude,
+                NamespaceSet::ALL,
+                |name, namespace, binding| {
+                    defs.push_binding(name, namespace, binding, VisibleScopeOrigin::Prelude, true);
+                    Ok(())
+                },
+            )?;
         }
 
         defs.sort();
@@ -433,7 +467,8 @@ where
                     namespace: Namespace::Types,
                     def: rg_ir_model::DefId::Module(module_ref),
                     origin: VisibleScopeOrigin::ExternRoot,
-                    attribute_imports: Vec::new(),
+                    attribute_import: None,
+                    has_reexport: false,
                 },
                 false,
             );

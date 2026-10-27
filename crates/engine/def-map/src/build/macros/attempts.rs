@@ -16,7 +16,6 @@ use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
     MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
 };
-use rg_std::ExpectedUnique;
 use rg_text::PackageNameInterners;
 
 use super::{
@@ -471,18 +470,15 @@ impl MacroExpansionAttempt {
         // Then resolve against the current scope snapshot. Unresolved user macros can be retried;
         // compiler builtins are handled only after resolution identifies a builtin definition.
         let resolver = ItemMacroResolver::new(env, states, state);
-        let resolved = match resolver.resolve(call, &path)? {
-            ExpectedUnique::One(resolved) => resolved,
-            ExpectedUnique::Ambiguous | ExpectedUnique::Empty => {
-                return Ok(Self::new(
-                    state.crate_ref,
-                    call_id,
-                    call,
-                    Some(path_text.to_string()),
-                    MacroExpansionAttemptOutcome::WaitingForImports,
-                    MacroExpansionAttemptRecord::Unresolved,
-                ));
-            }
+        let Some(resolved) = resolver.resolve(call, &path)? else {
+            return Ok(Self::new(
+                state.crate_ref,
+                call_id,
+                call,
+                Some(path_text.to_string()),
+                MacroExpansionAttemptOutcome::WaitingForImports,
+                MacroExpansionAttemptRecord::Unresolved,
+            ));
         };
 
         if let Some(kind) = resolved.definition.data.builtin {

@@ -105,10 +105,8 @@ pub(crate) fn select_preludes(
 
             for prelude_path in prelude_paths.into_iter().flatten() {
                 let root_module = ModuleRef::krate(state.crate_ref, state.root_module);
-                prelude_module = ScopeResolver::new(&env)
-                    .import_modules(root_module, &prelude_path)?
-                    .into_iter()
-                    .next();
+                prelude_module =
+                    ScopeResolver::new(&env).import_module(root_module, &prelude_path)?;
                 if prelude_module.is_some() {
                     break;
                 }

@@ -543,22 +543,13 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         // Attributes on an outer re-export deliberately replace declaration attributes for that
         // route. This lets a crate expose a supported public facade over a hidden implementation,
         // while a hidden re-export remains hidden even when its target is otherwise public.
-        let mut imported_attrs = Vec::new();
-        for import_ref in &visible_def.attribute_imports {
-            if let Some(import) = self
+        if let Some(import_ref) = visible_def.attribute_import
+            && let Some(import) = self
                 .db
-                .import_data(*import_ref)
+                .import_data(import_ref)
                 .context("read visible name import attributes")?
-            {
-                imported_attrs.push(import.user_facing_attrs);
-            }
-        }
-        if !imported_attrs.is_empty() {
-            user_facing_attrs = imported_attrs
-                .iter()
-                .copied()
-                .find(|attrs| !attrs.is_doc_hidden() && !attrs.is_unstable())
-                .unwrap_or(imported_attrs[0]);
+        {
+            user_facing_attrs = import.user_facing_attrs;
         }
 
         let importing_crate = importing_module.origin.origin_crate();

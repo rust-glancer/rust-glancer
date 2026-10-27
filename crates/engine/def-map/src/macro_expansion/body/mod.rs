@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use rg_ir_model::{BuiltinMacroExprKind, CrateRef, DefMapRef, ModuleId, ModuleRef, Path};
 use rg_item_tree::BuiltinMacroKind;
 use rg_macro_runtime::{CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRuntime};
-use rg_std::{CancellationToken, ExpectedUnique};
+use rg_std::CancellationToken;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
@@ -284,16 +284,15 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         let resolved = Self::resolve_macro_definition(query, site.module(), &path)
             .context("while attempting to resolve body macro call")?;
 
-        let callee = match resolved {
-            ExpectedUnique::One(resolved) => match resolved.data.builtin {
-                Some(kind) => BodyMacroCallee::Builtin {
-                    def_ref: resolved.def_ref,
-                    kind,
-                },
-                None => BodyMacroCallee::Declarative(resolved),
+        let Some(resolved) = resolved else {
+            return Ok(None);
+        };
+        let callee = match resolved.data.builtin {
+            Some(kind) => BodyMacroCallee::Builtin {
+                def_ref: resolved.def_ref,
+                kind,
             },
-            ExpectedUnique::Ambiguous => return Ok(None),
-            ExpectedUnique::Empty => return Ok(None),
+            None => BodyMacroCallee::Declarative(resolved),
         };
 
         Ok(Some(ResolvedBodyMacroCall::new(path_text, callee)))
@@ -346,34 +345,27 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
         module: ModuleRef,
         path: &Path,
-    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
+    ) -> anyhow::Result<Option<MacroDefinitionView<'a>>> {
         // Body expansion is crate-local. Synthetic body modules resolve through their semantic
         // fallback before reaching this facade.
         let Some(crate_ref) = module.origin.as_crate_ref() else {
-            return Ok(ExpectedUnique::Empty);
+            return Ok(None);
         };
 
         if let Some(name) = path.relative_single_name() {
             return Self::resolve_single_name_macro(query, crate_ref, module.module, name);
         }
 
-        let bindings = query
+        let binding = query
             .scope_resolver()
-            .macro_bindings(module, path)
+            .macro_binding(module, path)
             .context("while attempting to resolve qualified body macro path")?;
-        let mut macros = ExpectedUnique::new();
-        for binding in bindings {
-            // Path resolution may return duplicate bindings to the same macro definition; collapse
-            // those while still treating different definitions as ambiguous.
-            if let Some(macro_) = query
-                .macro_definition_view(binding.def)
-                .context("while attempting to fetch body macro definition")?
-            {
-                macros.push(macro_);
-            }
-        }
-
-        Ok(macros)
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        query
+            .macro_definition_view(binding.def)
+            .context("while attempting to fetch body macro definition")
     }
 
     fn resolve_single_name_macro<'a>(
@@ -381,7 +373,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         crate_ref: CrateRef,
         module: ModuleId,
         name: &Name,
-    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
+    ) -> anyhow::Result<Option<MacroDefinitionView<'a>>> {
         let importing_module = ModuleRef {
             origin: DefMapRef::Crate(crate_ref),
             module,
@@ -410,29 +402,11 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             .visible_unqualified_macro_bindings(importing_module, module_scope_modules, name)
             .context("while attempting to resolve unqualified body macro")?;
 
-        let module_scope = Self::resolve_macro_bindings(query, bindings.module_scope)?;
-        if !module_scope.is_empty() {
-            return Ok(module_scope);
-        }
-
-        Self::resolve_macro_bindings(query, bindings.standard_prelude)
-    }
-
-    fn resolve_macro_bindings<'a>(
-        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
-        bindings: Vec<crate::ScopeBinding>,
-    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
-        let mut resolved = ExpectedUnique::new();
-
-        for binding in bindings {
-            if let Some(macro_) = query
-                .macro_definition_view(binding.def)
-                .context("while attempting to fetch body macro definition")?
-            {
-                resolved.push(macro_);
-            }
-        }
-
-        Ok(resolved)
+        let Some(binding) = bindings.module_scope.or(bindings.standard_prelude) else {
+            return Ok(None);
+        };
+        query
+            .macro_definition_view(binding.def)
+            .context("while attempting to fetch body macro definition")
     }
 }

@@ -5,7 +5,6 @@
 
 use anyhow::Result;
 use rg_ir_model::{CrateRef, DefId, DefMapRef, LocalDefRef, ModuleRef, Path};
-use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use super::{ItemOrder, MacroCallSite};
@@ -20,15 +19,6 @@ pub(super) struct ResolvedMacroDefinition<'a> {
     pub(super) order: Option<&'a ItemOrder>,
     pub(super) direct_only: bool,
 }
-
-impl PartialEq for ResolvedMacroDefinition<'_> {
-    fn eq(&self, other: &Self) -> bool {
-        // Collapse duplicate bindings to the same macro definition, e.g. macro-export root aliases.
-        self.definition == other.definition
-    }
-}
-
-impl Eq for ResolvedMacroDefinition<'_> {}
 
 /// Applies item-shaped macro lookup rules on top of ordinary path resolution.
 ///
@@ -53,12 +43,12 @@ where
         Self { env, states, state }
     }
 
-    /// Finds the unique declarative macro definition visible at a macro call.
+    /// Find the selected macro definition visible at a call.
     pub(super) fn resolve(
         &self,
         call: &MacroCallSite,
         path: &Path,
-    ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         if let Some(name) = path.relative_single_name() {
             // Unqualified calls have special `macro_rules!` textual visibility before they behave
             // like ordinary macro-namespace lookups.
@@ -67,19 +57,9 @@ where
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
-        let resolved_bindings = ScopeResolver::new(self.env)
-            .macro_bindings(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
-        let mut macros = Vec::new();
-
-        for binding in resolved_bindings {
-            if let Some(resolved) = self.macro_record_for_binding(&binding)? {
-                macros.push(resolved);
-            }
-        }
-
-        Ok(Self::unique_macro_definition(
-            Self::visible_macro_definitions(macros, self.state.crate_ref, call),
-        ))
+        let binding = ScopeResolver::new(self.env)
+            .macro_binding(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
+        self.resolve_scope_macro_binding(call, binding)
     }
 
     /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
@@ -87,17 +67,15 @@ where
         &self,
         call: &MacroCallSite,
         name: &Name,
-    ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         // Textual `macro_rules!` scope shadows ordinary macro bindings. This covers the
         // source-order behavior that cannot be represented by a normal module-scope map.
         if let Some(resolved) = self.resolve_textual_macro_rules(call, name)? {
-            return Ok(ExpectedUnique::One(resolved));
+            return Ok(Some(resolved));
         }
 
-        match self.resolve_scope_macro(call, name)? {
-            ExpectedUnique::One(resolved) => return Ok(ExpectedUnique::One(resolved)),
-            ExpectedUnique::Ambiguous => return Ok(ExpectedUnique::Ambiguous),
-            ExpectedUnique::Empty => {}
+        if let Some(resolved) = self.resolve_scope_macro(call, name)? {
+            return Ok(Some(resolved));
         }
 
         self.resolve_macro_use_extern_crate_fallback(name)
@@ -108,7 +86,7 @@ where
         &self,
         call: &MacroCallSite,
         name: &Name,
-    ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let importing_module = ModuleRef {
             origin: DefMapRef::Crate(self.state.crate_ref),
             module: call.module,
@@ -119,12 +97,12 @@ where
             name,
         )?;
 
-        let module_scope = self.resolve_scope_macro_bindings(call, bindings.module_scope)?;
-        if !module_scope.is_empty() {
+        let module_scope = self.resolve_scope_macro_binding(call, bindings.module_scope)?;
+        if module_scope.is_some() {
             return Ok(module_scope);
         }
 
-        self.resolve_scope_macro_bindings(call, bindings.standard_prelude)
+        self.resolve_scope_macro_binding(call, bindings.standard_prelude)
     }
 
     /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
@@ -179,9 +157,7 @@ where
     fn resolve_macro_use_extern_crate_fallback(
         &self,
         name: &Name,
-    ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
-        let mut macros = Vec::new();
-
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         for macro_use in &self.state.macro_use_imports {
             if !macro_use.selector.allows(name) {
                 continue;
@@ -191,7 +167,7 @@ where
                 origin: DefMapRef::Crate(self.state.crate_ref),
                 module: macro_use.module,
             };
-            for binding in ScopeResolver::new(self.env).visible_macro_bindings(
+            if let Some(binding) = ScopeResolver::new(self.env).visible_macro_binding(
                 import_owner,
                 macro_use.source_module,
                 name,
@@ -200,30 +176,25 @@ where
                 // inside the exporting crate, but macro-use lookup is not source-order sensitive in
                 // the caller.
                 if let Some(resolved) = self.macro_record_for_def(binding.def, false)? {
-                    macros.push(resolved);
+                    return Ok(Some(resolved));
                 }
             }
         }
 
-        Ok(Self::unique_macro_definition(macros))
+        Ok(None)
     }
 
-    fn resolve_scope_macro_bindings(
+    fn resolve_scope_macro_binding(
         &self,
         call: &MacroCallSite,
-        bindings: Vec<ScopeBinding>,
-    ) -> Result<ExpectedUnique<ResolvedMacroDefinition<'a>>> {
-        let mut macros = Vec::new();
-
-        for binding in bindings {
-            if let Some(resolved) = self.macro_record_for_binding(&binding)? {
-                macros.push(resolved);
-            }
-        }
-
-        Ok(Self::unique_macro_definition(
-            Self::visible_macro_definitions(macros, self.state.crate_ref, call),
-        ))
+        binding: Option<ScopeBinding>,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        Ok(self.macro_record_for_binding(&binding)?.filter(|resolved| {
+            Self::macro_definition_is_visible_by_order(resolved, self.state.crate_ref, call)
+        }))
     }
 
     /// Converts a resolved macro binding into the payload needed by expansion.
@@ -256,32 +227,6 @@ where
             order,
             direct_only,
         }))
-    }
-
-    fn visible_macro_definitions<'definition, 'call, I>(
-        macros: I,
-        crate_ref: CrateRef,
-        call: &'call MacroCallSite,
-    ) -> impl Iterator<Item = ResolvedMacroDefinition<'definition>> + 'call
-    where
-        I: IntoIterator<Item = ResolvedMacroDefinition<'definition>> + 'call,
-    {
-        macros.into_iter().filter(move |macro_| {
-            Self::macro_definition_is_visible_by_order(macro_, crate_ref, call)
-        })
-    }
-
-    fn unique_macro_definition<'definition>(
-        macros: impl IntoIterator<Item = ResolvedMacroDefinition<'definition>>,
-    ) -> ExpectedUnique<ResolvedMacroDefinition<'definition>> {
-        let mut unique = ExpectedUnique::new();
-        for macro_ in macros {
-            // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
-            // root binding. That is still one resolved macro, not an ambiguity.
-            unique.push(macro_);
-        }
-
-        unique
     }
 
     /// Filters ordinary namespace candidates that are textually later than the call site.

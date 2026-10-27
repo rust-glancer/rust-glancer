@@ -15,7 +15,7 @@ use rg_item_tree::{
     TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment,
     TypeRef, VisibilityLevel, WherePredicate,
 };
-use rg_std::{ExpectedUnique, UniqueVec};
+use rg_std::UniqueVec;
 use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::{
@@ -174,30 +174,23 @@ impl BuiltinDeriveExpansion {
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
     {
         let resolver = ScopeResolver::new(env);
-        let bindings = if let Some(name) = path.relative_single_name() {
+        let binding = if let Some(name) = path.relative_single_name() {
             let bindings = resolver
                 .visible_unqualified_macro_bindings(module, [module], name)
                 .context("resolve unqualified derive macro")?;
-            if bindings.module_scope.is_empty() {
-                bindings.standard_prelude
-            } else {
-                bindings.module_scope
-            }
+            bindings.module_scope.or(bindings.standard_prelude)
         } else {
             resolver
-                .macro_bindings(module, path)
+                .macro_binding(module, path)
                 .context("resolve qualified derive macro")?
         };
-        let mut definitions = ExpectedUnique::new();
-        for binding in bindings {
-            if let Some(definition) = env
-                .macro_definition_view(binding.def)
-                .context("read derive macro definition")?
-            {
-                definitions.push(definition);
-            }
-        }
-        let ExpectedUnique::One(definition) = definitions else {
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        let Some(definition) = env
+            .macro_definition_view(binding.def)
+            .context("read derive macro definition")?
+        else {
             return Ok(None);
         };
         let Some(BuiltinMacroKind::Derive(kind)) = definition.data.builtin else {

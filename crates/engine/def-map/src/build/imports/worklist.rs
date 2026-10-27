@@ -103,8 +103,8 @@ impl ImportWorklist {
     ///
     /// Each update contains unresolved imports and the scopes it read, plus a replacement scope
     /// when bindings changed. That scope was built from direct declarations plus every import in
-    /// the destination module. Replacing the whole result lets bindings disappear or become
-    /// ambiguous without separate logic for retracting an earlier import.
+    /// the destination module. Replacing the whole result lets the selected target change or
+    /// disappear without separate logic for retracting an earlier import.
     ///
     /// After installing all updates, changed source scopes wake their recorded readers. Those
     /// readers become the active modules for the next wave.

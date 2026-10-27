@@ -16,7 +16,8 @@ use rg_text::Name;
 use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
 use crate::{
     ImportBinding, ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder,
-    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    Namespace, NamespaceSet, PerNs, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
+    Visibility,
 };
 
 /// Macro candidates kept in the buckets required by Rust lookup precedence.
@@ -24,8 +25,8 @@ use crate::{
 /// Callers try `module_scope` before `standard_prelude`; this type only preserves the split while
 /// sharing the visibility walk.
 pub struct UnqualifiedMacroBindings {
-    pub module_scope: Vec<ScopeBinding>,
-    pub standard_prelude: Vec<ScopeBinding>,
+    pub module_scope: Option<ScopeBinding>,
+    pub standard_prelude: Option<ScopeBinding>,
 }
 
 /// Result of walking a path through the current scope graph.
@@ -37,6 +38,12 @@ pub struct UnqualifiedMacroBindings {
 pub struct ResolvePathResult {
     pub resolved: Vec<DefId>,
     pub unresolved_at: Option<usize>,
+}
+
+/// A prefix has one type-namespace target; failures retain their written segment position.
+enum PrefixResolution {
+    Resolved(DefId),
+    UnresolvedAt(usize),
 }
 
 /// Item that can appear on the left side of a glob import.
@@ -126,39 +133,50 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             return Ok(Self::unresolved_at(0));
         }
 
-        let Some((first_segment, remaining_segments)) = path.segments().split_first() else {
+        let Some((terminal, prefix)) = path.segments().split_last() else {
             return Ok(Self::unresolved_at(0));
         };
 
-        let mut current_defs = self.first_name_in_lexical_scope(
-            importing_module,
-            first_segment.as_str(),
-            NamespaceSet::for_segment(!remaining_segments.is_empty(), terminal_filter),
-        )?;
-        if current_defs.is_empty() {
-            return Ok(Self::unresolved_at(0));
-        }
-
-        for (segment_idx, segment) in remaining_segments.iter().enumerate() {
-            current_defs = self.lexical_next_name_segment(
+        // Only the terminal can contribute several namespaces. Prefixes select one type binding.
+        let Some((first, remaining)) = prefix.split_first() else {
+            let resolved = match self.first_lexical_entry(
                 importing_module,
-                current_defs,
-                segment.as_str(),
-                NamespaceSet::for_segment(
-                    segment_idx + 1 < remaining_segments.len(),
-                    terminal_filter,
-                ),
-            )?;
-
-            if current_defs.is_empty() {
-                return Ok(Self::unresolved_at(segment_idx + 1));
-            }
+                terminal.as_str(),
+                terminal_filter,
+            )? {
+                Some(entry) => {
+                    self.visible_defs_in_entry(importing_module, entry, terminal_filter)?
+                }
+                None => Vec::new(),
+            };
+            return Ok(if resolved.is_empty() {
+                Self::unresolved_at(0)
+            } else {
+                ResolvePathResult {
+                    resolved,
+                    unresolved_at: None,
+                }
+            });
+        };
+        let Some(entry) =
+            self.first_lexical_entry(importing_module, first.as_str(), NamespaceSet::TYPES)?
+        else {
+            return Ok(Self::unresolved_at(0));
+        };
+        let first = entry
+            .binding(Namespace::Types)
+            .expect("type lookup selected a type binding")
+            .def;
+        match self.walk_prefix(importing_module, first, remaining, 1)? {
+            PrefixResolution::Resolved(container) => self.resolve_terminal(
+                importing_module,
+                container,
+                terminal.as_str(),
+                terminal_filter,
+                path.segments().len() - 1,
+            ),
+            PrefixResolution::UnresolvedAt(segment) => Ok(Self::unresolved_at(segment)),
         }
-
-        Ok(ResolvePathResult {
-            resolved: current_defs,
-            unresolved_at: None,
-        })
     }
 
     /// Resolve one name inside a single lexical module without walking parent scopes.
@@ -169,55 +187,109 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         name: &str,
         filter: NamespaceSet,
     ) -> Result<Vec<DefId>, E::Error> {
-        let Some(scope_entry) = self.env.module_scope_entry(module_ref, name)? else {
+        let Some(entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
+        self.visible_defs_in_entry(importing_module, entry, filter)
+    }
 
+    /// Several namespaces can expose the same definition, so terminal answers remain deduplicated.
+    fn visible_defs_in_entry(
+        &self,
+        importing_module: ModuleRef,
+        entry: ScopeEntryRef<'_>,
+        filter: NamespaceSet,
+    ) -> Result<Vec<DefId>, E::Error> {
         let mut defs = UniqueVec::new();
         for namespace in filter.iter() {
-            for binding in scope_entry.bindings(namespace) {
-                if self.binding_is_visible(importing_module, binding)? {
-                    defs.push(binding.def);
-                }
+            if let Some(binding) = entry.binding(namespace)
+                && self.binding_is_visible(importing_module, binding)?
+            {
+                defs.push(binding.def);
             }
         }
-
         Ok(defs.into_vec())
     }
 
-    fn lexical_next_name_segment(
+    /// Follow one type binding per prefix segment, preserving the first failed position.
+    fn walk_prefix(
         &self,
         importing_module: ModuleRef,
-        current_defs: Vec<DefId>,
+        mut container: DefId,
+        segments: &[Name],
+        first_segment: usize,
+    ) -> Result<PrefixResolution, E::Error> {
+        for (offset, segment) in segments.iter().enumerate() {
+            let next = match container {
+                DefId::Module(module) => self
+                    .binding_in_module(
+                        importing_module,
+                        module,
+                        segment.as_str(),
+                        Namespace::Types,
+                    )?
+                    .map(|binding| binding.def),
+                DefId::Local(def) => self
+                    .enum_variant_for_name(def, segment.as_str(), NamespaceSet::TYPES)?
+                    .map(DefId::EnumVariant),
+                DefId::EnumVariant(_) => None,
+            };
+            let Some(next) = next else {
+                return Ok(PrefixResolution::UnresolvedAt(first_segment + offset));
+            };
+            container = next;
+        }
+        Ok(PrefixResolution::Resolved(container))
+    }
+
+    /// The last name may occupy type, value, and macro slots inside its single container.
+    fn resolve_terminal(
+        &self,
+        importing_module: ModuleRef,
+        container: DefId,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
-        let mut next_defs = UniqueVec::new();
-
-        for current_def in current_defs {
-            match current_def {
-                DefId::Module(module_ref) => {
-                    for resolved_def in self.resolve_lexical_name_in_module(
-                        importing_module,
-                        module_ref,
-                        name,
-                        filter,
-                    )? {
-                        next_defs.push(resolved_def);
-                    }
-                }
-                DefId::Local(local_def_ref) => {
-                    if let Some(variant) =
-                        self.enum_variant_for_name(local_def_ref, name, filter)?
-                    {
-                        next_defs.push(DefId::EnumVariant(variant));
-                    }
-                }
-                DefId::EnumVariant(_) => {}
+        segment: usize,
+    ) -> Result<ResolvePathResult, E::Error> {
+        let resolved = match container {
+            DefId::Module(module) => {
+                self.resolve_lexical_name_in_module(importing_module, module, name, filter)?
             }
-        }
+            DefId::Local(def) => self
+                .enum_variant_for_name(def, name, filter)?
+                .map(DefId::EnumVariant)
+                .into_iter()
+                .collect(),
+            DefId::EnumVariant(_) => Vec::new(),
+        };
+        Ok(if resolved.is_empty() {
+            Self::unresolved_at(segment)
+        } else {
+            ResolvePathResult {
+                resolved,
+                unresolved_at: None,
+            }
+        })
+    }
 
-        Ok(next_defs.into_vec())
+    fn binding_in_module(
+        &self,
+        importing_module: ModuleRef,
+        module: ModuleRef,
+        name: &str,
+        namespace: Namespace,
+    ) -> Result<Option<ScopeBinding>, E::Error> {
+        let Some(binding) = self
+            .env
+            .module_scope_entry(module, name)?
+            .and_then(|entry| entry.binding(namespace))
+            .copied()
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .binding_is_visible(importing_module, &binding)?
+            .then_some(binding))
     }
 
     fn enum_variant_for_name(
@@ -244,91 +316,109 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             }))
     }
 
-    fn first_name_in_lexical_scope(
+    /// Find the first lexical scope with a visible binding in the requested namespaces.
+    fn first_lexical_entry(
         &self,
         importing_module: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
+    ) -> Result<Option<ScopeEntryRef<'_>>, E::Error> {
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
-            let defs =
-                self.resolve_lexical_name_in_module(importing_module, module_ref, name, filter)?;
-            if !defs.is_empty() {
-                return Ok(defs);
+            if let Some(entry) = self.env.module_scope_entry(module_ref, name)? {
+                for namespace in filter.iter() {
+                    if let Some(binding) = entry.binding(namespace)
+                        && self.binding_is_visible(importing_module, binding)?
+                    {
+                        return Ok(Some(entry));
+                    }
+                }
             }
-
             let Some(module) = self.env.module_metadata(module_ref)? else {
-                return Ok(Vec::new());
+                break;
             };
             if !matches!(module.origin, ModuleOrigin::Synthetic { .. }) {
                 break;
             }
             current = self.env.parent_module(module_ref)?;
         }
-
-        Ok(Vec::new())
+        Ok(None)
     }
 
-    /// Checks whether any retained route to a selected binding is visible from a module.
+    /// Check whether the selected binding is visible from a module.
     pub fn binding_is_visible(
         &self,
         importing_module: ModuleRef,
         binding: &ScopeBinding,
     ) -> Result<bool, E::Error> {
-        for route in binding.routes() {
-            if self.visibility_is_visible(importing_module, route.visibility)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        self.visibility_is_visible(importing_module, binding.visibility)
     }
 
-    /// Create the route introduced by an import without widening the source definition.
+    /// Apply the use item's visibility without widening the source definition.
     ///
-    /// Each visible source route is intersected with the use item's visibility. Legacy
-    /// `macro_rules!` is the one special case: its direct route may be re-exported up to the
-    /// defining crate, while `#[macro_export]` may make it public.
+    /// A direct `macro_rules!` definition may be re-exported through its crate, and an exported
+    /// definition may be public. Imported aliases use the visibility already selected for them.
     pub fn imported_binding(
         &self,
         importing_module: ModuleRef,
         source: &ScopeBinding,
-        import_visibility: Visibility,
+        import: &ImportData,
         provenance: ScopeBindingProvenance,
     ) -> Result<Option<ScopeBinding>, E::Error> {
-        let mut imported: Option<ScopeBinding> = None;
-
-        for route in source.routes() {
-            if !self.visibility_is_visible(importing_module, route.visibility)? {
-                continue;
-            }
-            // A direct `macro_rules!` binding has textual visibility, but a named import may expose
-            // it anywhere inside the defining crate. It still cannot become public outside that
-            // crate unless `#[macro_export]` contributed a separate public root route.
-            let source_visibility = if route.provenance == ScopeBindingProvenance::DirectMacroRules
-            {
-                self.local_def_crate_visibility(source.def)?
-                    .unwrap_or(route.visibility)
-            } else if route.provenance == ScopeBindingProvenance::DirectMacroExport {
-                Visibility::Public
-            } else {
-                route.visibility
-            };
-            let Some(visibility) =
-                self.intersect_visibility(source_visibility, import_visibility)?
-            else {
-                continue;
-            };
-
-            let candidate = ScopeBinding::new(source.def, visibility, provenance);
-            if let Some(existing) = &mut imported {
-                existing.merge_routes(candidate);
-            } else {
-                imported = Some(candidate);
-            }
+        if !self.binding_is_visible(importing_module, source)? {
+            return Ok(None);
         }
+        let source_visibility = if source.is_exported_macro() {
+            Visibility::Public
+        } else if source.has_direct_macro_rules() {
+            self.local_def_crate_visibility(source.def)?
+                .unwrap_or(source.visibility)
+        } else {
+            source.visibility
+        };
+        Ok(self
+            .intersect_visibility(source_visibility, import.visibility)?
+            .map(|visibility| {
+                ScopeBinding::from_import(source.def, visibility, provenance, import)
+            }))
+    }
 
-        Ok(imported)
+    /// Choose one target before publishing it to the next import-wave scope.
+    fn insert_binding(
+        &self,
+        scope: &mut ModuleScopeBuilder,
+        name: &Name,
+        namespace: Namespace,
+        binding: ScopeBinding,
+    ) -> Result<(), E::Error> {
+        let binding = match scope.binding(name, namespace) {
+            Some(existing) => {
+                existing.select(binding, |left, right| self.broadest_visibility(left, right))?
+            }
+            None => binding,
+        };
+        scope.set_binding(name, namespace, binding);
+        Ok(())
+    }
+
+    fn broadest_visibility(
+        &self,
+        left: Visibility,
+        right: Visibility,
+    ) -> Result<Visibility, E::Error> {
+        Ok(match (left, right) {
+            (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+            (Visibility::Invisible, visibility) | (visibility, Visibility::Invisible) => visibility,
+            (Visibility::Module(left), Visibility::Module(right)) => {
+                // Valid restrictions are nested ancestors of the importing module. Incomparable
+                // restrictions from incomplete code keep the first region.
+                if self.module_is_descendant_of(left, right)? {
+                    Visibility::Module(right)
+                } else {
+                    Visibility::Module(left)
+                }
+            }
+        })
     }
 
     fn local_def_crate_visibility(&self, def: DefId) -> Result<Option<Visibility>, E::Error> {
@@ -438,35 +528,37 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             ImportKind::Glob => {
                 // `path::*` can name either a module or an enum. Finding either source resolves the
                 // import even when visibility filtering leaves it with no bindings to emit.
-                let sources = self.import_glob_sources(importing_module, import.path.semantic())?;
-                let source_resolved = !sources.is_empty();
+                let source = self.import_glob_source(importing_module, import.path.semantic())?;
+                let source_resolved = source.is_some();
                 let mut emitted_binding_count = 0;
 
-                for source in sources {
+                if let Some(source) = source {
                     match source {
                         GlobImportSource::Module(source_module) => {
                             for (name, entry) in self.env.module_scope_entries(source_module)? {
                                 for namespace in Namespace::ALL {
-                                    for source_binding in entry.bindings(namespace) {
+                                    if let Some(source_binding) = entry.binding(namespace) {
                                         let Some(binding) = self.imported_binding(
                                             importing_module,
                                             source_binding,
-                                            import.visibility,
+                                            import,
                                             ScopeBindingProvenance::GlobImport(import_ref),
                                         )?
                                         else {
                                             continue;
                                         };
                                         emitted_binding_count += 1;
-                                        target_scope.insert_binding(name, namespace, binding);
+                                        self.insert_binding(
+                                            target_scope,
+                                            name,
+                                            namespace,
+                                            binding,
+                                        )?;
                                     }
                                 }
                             }
                         }
                         GlobImportSource::Enum(enum_def) => {
-                            if self.env.local_def_kind(enum_def)? != Some(LocalDefKind::Enum) {
-                                continue;
-                            }
                             for entry in self.env.local_enum_variant_entries_for_enum(enum_def)? {
                                 let source_binding = ScopeBinding::new(
                                     DefId::EnumVariant(entry.variant_ref),
@@ -477,18 +569,19 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                                     let Some(binding) = self.imported_binding(
                                         importing_module,
                                         &source_binding,
-                                        import.visibility,
+                                        import,
                                         ScopeBindingProvenance::GlobImport(import_ref),
                                     )?
                                     else {
                                         continue;
                                     };
                                     emitted_binding_count += 1;
-                                    target_scope.insert_binding(
+                                    self.insert_binding(
+                                        target_scope,
                                         &entry.data.name,
                                         namespace,
                                         binding,
-                                    );
+                                    )?;
                                 }
                             }
                         }
@@ -508,9 +601,9 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 )?;
                 let source_resolved = !source_bindings.is_empty();
                 if matches!(&import.binding, ImportBinding::Hidden) {
-                    // A hidden import affects method lookup only when its type-namespace source is
-                    // a trait. Deduplicate it in case lookup reached the same trait by several routes.
-                    let mut unnamed_traits = UniqueVec::new();
+                    // An underscore import affects method lookup only when its type-namespace
+                    // source is a trait. Repeated imports merge into the same trait binding.
+                    let mut emitted_binding_count = 0;
                     for (namespace, source_binding) in source_bindings {
                         let DefId::Local(local_def) = source_binding.def else {
                             continue;
@@ -524,18 +617,20 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                         let Some(binding) = self.imported_binding(
                             importing_module,
                             &source_binding,
-                            import.visibility,
+                            import,
                             ScopeBindingProvenance::NamedImport(import_ref),
                         )?
                         else {
                             continue;
                         };
-                        unnamed_traits.push(binding);
-                    }
-
-                    let emitted_binding_count = unnamed_traits.len();
-                    for binding in unnamed_traits {
-                        target_scope.insert_unnamed_trait_binding(binding);
+                        let binding = match target_scope.unnamed_trait_binding(binding.def) {
+                            Some(existing) => existing.select(binding, |left, right| {
+                                self.broadest_visibility(left, right)
+                            })?,
+                            None => binding,
+                        };
+                        target_scope.set_unnamed_trait_binding(binding);
+                        emitted_binding_count += 1;
                     }
                     return Ok(ImportResolution {
                         source_resolved,
@@ -555,14 +650,14 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                     let Some(binding) = self.imported_binding(
                         importing_module,
                         &source_binding,
-                        import.visibility,
+                        import,
                         ScopeBindingProvenance::NamedImport(import_ref),
                     )?
                     else {
                         continue;
                     };
                     emitted_binding_count += 1;
-                    target_scope.insert_binding(&name, namespace, binding);
+                    self.insert_binding(target_scope, &name, namespace, binding)?;
                 }
 
                 Ok(ImportResolution {
@@ -573,84 +668,62 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         }
     }
 
-    /// Build the source module scope as observed by `importing_module`.
-    ///
-    /// Glob imports use this to copy only bindings that pass visibility from the importer.
-    pub fn visible_scope(
+    /// Visit visible selected bindings without copying them into construction storage.
+    pub(crate) fn visit_visible_bindings(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
-    ) -> Result<ModuleScopeBuilder, E::Error> {
-        let mut visible_scope = ModuleScopeBuilder::default();
+        filter: NamespaceSet,
+        mut visit: impl FnMut(&Name, Namespace, &ScopeBinding) -> Result<(), E::Error>,
+    ) -> Result<(), E::Error> {
         for (name, entry) in self.env.module_scope_entries(source_module)? {
-            for namespace in Namespace::ALL {
-                for binding in entry.bindings(namespace) {
-                    if self.binding_is_visible(importing_module, binding)? {
-                        visible_scope.insert_binding(name, namespace, binding.clone());
-                    }
+            for namespace in filter.iter() {
+                if let Some(binding) = entry.binding(namespace)
+                    && self.binding_is_visible(importing_module, binding)?
+                {
+                    visit(name, namespace, binding)?;
                 }
             }
         }
-
-        Ok(visible_scope)
+        Ok(())
     }
 
-    /// Returns visible macro bindings for one name without copying the whole source scope.
-    pub fn visible_macro_bindings(
+    /// Return the selected macro binding when it is visible to the caller.
+    pub fn visible_macro_binding(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
         name: &Name,
-    ) -> Result<Vec<ScopeBinding>, E::Error> {
-        let Some(entry) = self.env.module_scope_entry(source_module, name.as_str())? else {
-            return Ok(Vec::new());
-        };
-
-        let mut bindings = Vec::new();
-        for binding in entry.bindings(Namespace::Macros) {
-            if self.binding_is_visible(importing_module, binding)? {
-                bindings.push(binding.clone());
-            }
-        }
-
-        Ok(bindings)
+    ) -> Result<Option<ScopeBinding>, E::Error> {
+        self.binding_in_module(importing_module, source_module, name, Namespace::Macros)
     }
 
-    /// Returns unqualified macro binding buckets before applying macro lookup precedence.
+    /// Keep module and prelude lookup separate so item callers can filter textual macro order
+    /// before trying the prelude. The first visible module wins along a lexical parent chain.
     pub fn visible_unqualified_macro_bindings(
         &self,
         importing_module: ModuleRef,
         module_scope_modules: impl IntoIterator<Item = ModuleRef>,
         name: &Name,
     ) -> Result<UnqualifiedMacroBindings, E::Error> {
-        let mut module_bindings = Vec::new();
-        for module_ref in module_scope_modules {
-            module_bindings.extend(self.visible_macro_bindings(
-                importing_module,
-                module_ref,
-                name,
-            )?);
+        let mut module_scope = None;
+        for module in module_scope_modules {
+            module_scope = self.visible_macro_binding(importing_module, module, name)?;
+            if module_scope.is_some() {
+                break;
+            }
         }
-
-        Ok(UnqualifiedMacroBindings {
-            module_scope: module_bindings,
-            standard_prelude: self.visible_prelude_macro_bindings(importing_module, name)?,
-        })
-    }
-
-    fn visible_prelude_macro_bindings(
-        &self,
-        importing_module: ModuleRef,
-        name: &Name,
-    ) -> Result<Vec<ScopeBinding>, E::Error> {
-        let Some(prelude_module) = self
+        let standard_prelude = match self
             .env
             .prelude_module(importing_module.origin.origin_crate())?
-        else {
-            return Ok(Vec::new());
+        {
+            Some(prelude) => self.visible_macro_binding(importing_module, prelude, name)?,
+            None => None,
         };
-
-        self.visible_macro_bindings(importing_module, prelude_module, name)
+        Ok(UnqualifiedMacroBindings {
+            module_scope,
+            standard_prelude,
+        })
     }
 
     /// Resolve a normal Rust path from one module.
@@ -684,90 +757,67 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         Ok(defs.into_vec())
     }
 
-    /// Resolve an import path and keep only module results.
-    pub fn import_modules(
+    /// Resolve the type namespace of an import path and keep a module target.
+    pub fn import_module(
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<ModuleRef>, E::Error> {
-        let mut modules = UniqueVec::new();
-        for (_, binding) in self.import_bindings(importing_module, path, NamespaceSet::TYPES)? {
-            if let DefId::Module(module_ref) = binding.def {
-                modules.push(module_ref);
-            }
-        }
-
-        Ok(modules.into_vec())
+    ) -> Result<Option<ModuleRef>, E::Error> {
+        Ok(
+            match self.resolve_prefix(importing_module, path.root(), path.segments())? {
+                PrefixResolution::Resolved(DefId::Module(module)) => Some(module),
+                _ => None,
+            },
+        )
     }
 
-    /// Resolve a glob import prefix to every source that can export bindings.
-    pub fn import_glob_sources(
+    /// A glob source is one selected module or enum in the type namespace.
+    pub fn import_glob_source(
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<GlobImportSource>, E::Error> {
-        let mut sources = UniqueVec::new();
-        for (_, binding) in self.import_bindings(importing_module, path, NamespaceSet::TYPES)? {
-            match binding.def {
-                DefId::Module(module_ref) => {
-                    sources.push(GlobImportSource::Module(module_ref));
-                }
-                DefId::Local(local_def_ref)
-                    if self
-                        .env
-                        .local_def_kind(local_def_ref)?
-                        .is_some_and(|kind| kind == LocalDefKind::Enum) =>
-                {
-                    sources.push(GlobImportSource::Enum(local_def_ref));
-                }
-                DefId::Local(_) | DefId::EnumVariant(_) => {}
-            }
-        }
-
-        Ok(sources.into_vec())
-    }
-
-    /// Resolve a macro path by walking any prefix and reading the terminal macro bucket.
-    pub fn macro_bindings(
-        &self,
-        importing_module: ModuleRef,
-        path: &Path,
-    ) -> Result<Vec<ScopeBinding>, E::Error> {
-        let Some((terminal, prefix)) = path.segments().split_last() else {
-            return Ok(Vec::new());
+    ) -> Result<Option<GlobImportSource>, E::Error> {
+        let PrefixResolution::Resolved(def) =
+            self.resolve_prefix(importing_module, path.root(), path.segments())?
+        else {
+            return Ok(None);
         };
+        Ok(match def {
+            DefId::Module(module) => Some(GlobImportSource::Module(module)),
+            DefId::Local(local) if self.env.local_def_kind(local)? == Some(LocalDefKind::Enum) => {
+                Some(GlobImportSource::Enum(local))
+            }
+            _ => None,
+        })
+    }
 
-        let source_modules = if prefix.is_empty() {
+    /// Resolve a macro path through its selected module prefix and macro namespace binding.
+    pub fn macro_binding(
+        &self,
+        importing_module: ModuleRef,
+        path: &Path,
+    ) -> Result<Option<ScopeBinding>, E::Error> {
+        let Some((terminal, prefix)) = path.segments().split_last() else {
+            return Ok(None);
+        };
+        let source_module = if prefix.is_empty() {
             match path.root() {
-                PathRoot::Relative => vec![importing_module],
-                PathRoot::Absolute => Vec::new(),
+                PathRoot::Relative => Some(importing_module),
+                PathRoot::Absolute => None,
                 PathRoot::Crate
                 | PathRoot::SelfModule
                 | PathRoot::Super(_)
                 | PathRoot::DollarCrate(_) => {
-                    self.import_modules(importing_module, &Path::new(path.root(), Vec::new()))?
+                    self.import_module(importing_module, &Path::new(path.root(), Vec::new()))?
                 }
             }
         } else {
-            self.import_modules(importing_module, &Path::new(path.root(), prefix.to_vec()))?
+            self.import_module(importing_module, &Path::new(path.root(), prefix.to_vec()))?
         };
-
-        let mut bindings = Vec::new();
-        for source_module in source_modules {
-            let Some(entry) = self
-                .env
-                .module_scope_entry(source_module, terminal.as_str())?
-            else {
-                continue;
-            };
-            for binding in entry.bindings(Namespace::Macros) {
-                if self.binding_is_visible(importing_module, binding)? {
-                    bindings.push(binding.clone());
-                }
-            }
+        match source_module {
+            Some(module) => self.visible_macro_binding(importing_module, module, terminal),
+            None => Ok(None),
         }
-
-        Ok(bindings)
     }
 
     /// Resolves an import while preserving the selected binding's semantic visibility.
@@ -798,41 +848,41 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         };
 
         if prefix.is_empty() && matches!(path.root(), PathRoot::Relative | PathRoot::Absolute) {
-            return self.first_name_bindings(
+            let bindings = self.first_name_bindings(
                 importing_module,
                 path.is_absolute(),
                 terminal.as_str(),
                 terminal_filter,
-            );
+            )?;
+            return Ok(terminal_filter
+                .iter()
+                .filter_map(|namespace| bindings.get(namespace).map(|binding| (namespace, binding)))
+                .collect());
         }
 
-        let prefix =
-            self.resolve_path_segments(importing_module, path.root(), prefix, NamespaceSet::TYPES)?;
-        let mut bindings = Vec::new();
-        for def in prefix.resolved {
-            match def {
-                DefId::Module(module_ref) => bindings.extend(self.bindings_in_module(
-                    importing_module,
-                    module_ref,
-                    terminal.as_str(),
-                    terminal_filter,
-                )?),
-                DefId::Local(enum_def) => bindings.extend(self.enum_variant_bindings(
-                    importing_module,
-                    enum_def,
-                    terminal.as_str(),
-                    terminal_filter,
-                )?),
-                DefId::EnumVariant(_) => {}
-            }
+        let PrefixResolution::Resolved(prefix) =
+            self.resolve_prefix(importing_module, path.root(), prefix)?
+        else {
+            return Ok(Vec::new());
+        };
+        match prefix {
+            DefId::Module(module) => self.bindings_in_module(
+                importing_module,
+                module,
+                terminal.as_str(),
+                terminal_filter,
+            ),
+            DefId::Local(def) => self.enum_variant_bindings(
+                importing_module,
+                def,
+                terminal.as_str(),
+                terminal_filter,
+            ),
+            DefId::EnumVariant(_) => Ok(Vec::new()),
         }
-        Ok(bindings)
     }
 
-    /// Shared path walker for ordinary item paths and imports.
-    ///
-    /// The root chooses the initial search space. Ordinary name segments are then resolved inside
-    /// the modules or enum definitions produced by the previous step.
+    /// Resolve the prefix once, then collect the terminal's selected namespace results.
     fn resolve_path_segments(
         &self,
         importing_module: ModuleRef,
@@ -840,78 +890,99 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         segments: &[Name],
         terminal_filter: NamespaceSet,
     ) -> Result<ResolvePathResult, E::Error> {
-        let (mut current_defs, remaining_segments, consumed_first_name, root_component_count) =
-            match root {
-                PathRoot::Relative | PathRoot::Absolute => {
-                    let Some((first_segment, remaining_segments)) = segments.split_first() else {
-                        return Ok(Self::unresolved_at(0));
-                    };
-                    let mut defs = UniqueVec::new();
-                    for (_, binding) in self.first_name_bindings(
-                        importing_module,
-                        root.is_absolute(),
-                        first_segment.as_str(),
-                        NamespaceSet::for_segment(!remaining_segments.is_empty(), terminal_filter),
-                    )? {
-                        defs.push(binding.def);
-                    }
-                    (defs.into_vec(), remaining_segments, true, 0)
-                }
-                PathRoot::Crate
-                | PathRoot::SelfModule
-                | PathRoot::Super(_)
-                | PathRoot::DollarCrate(_) => {
-                    let defs = self.root_modules(importing_module, root)?;
-                    if segments.is_empty() && !terminal_filter.contains(Namespace::Types) {
-                        return Ok(Self::unresolved_at(0));
-                    }
-                    let root_component_count = root.written_component_count();
-                    (defs, segments, false, root_component_count)
-                }
+        let Some((terminal, prefix)) = segments.split_last() else {
+            let module = if terminal_filter.contains(Namespace::Types) {
+                self.root_module(importing_module, root)?
+            } else {
+                None
             };
+            return Ok(match module {
+                Some(module) => ResolvePathResult {
+                    resolved: vec![DefId::Module(module)],
+                    unresolved_at: None,
+                },
+                None => Self::unresolved_at(0),
+            });
+        };
 
-        if current_defs.is_empty() {
-            return Ok(Self::unresolved_at(0));
-        }
-
-        for (segment_idx, segment) in remaining_segments.iter().enumerate() {
-            current_defs = self.next_segment(
+        if prefix.is_empty() && matches!(root, PathRoot::Relative | PathRoot::Absolute) {
+            let bindings = self.first_name_bindings(
                 importing_module,
-                current_defs,
-                segment,
-                NamespaceSet::for_segment(
-                    segment_idx + 1 < remaining_segments.len(),
-                    terminal_filter,
-                ),
+                root.is_absolute(),
+                terminal.as_str(),
+                terminal_filter,
             )?;
-
-            if current_defs.is_empty() {
-                return Ok(Self::unresolved_at(
-                    root_component_count + segment_idx + usize::from(consumed_first_name),
-                ));
+            let mut defs = UniqueVec::new();
+            for namespace in terminal_filter.iter() {
+                if let Some(binding) = bindings.get(namespace) {
+                    defs.push(binding.def);
+                }
             }
+            return Ok(if defs.is_empty() {
+                Self::unresolved_at(0)
+            } else {
+                ResolvePathResult {
+                    resolved: defs.into_vec(),
+                    unresolved_at: None,
+                }
+            });
         }
 
-        Ok(ResolvePathResult {
-            resolved: current_defs,
-            unresolved_at: None,
-        })
+        match self.resolve_prefix(importing_module, root, prefix)? {
+            PrefixResolution::Resolved(container) => self.resolve_terminal(
+                importing_module,
+                container,
+                terminal.as_str(),
+                terminal_filter,
+                root.written_component_count() + segments.len() - 1,
+            ),
+            PrefixResolution::UnresolvedAt(segment) => Ok(Self::unresolved_at(segment)),
+        }
     }
 
-    /// Resolve a structured keyword or macro-hygiene root to its starting module.
-    fn root_modules(
+    fn resolve_prefix(
         &self,
         importing_module: ModuleRef,
         root: PathRoot,
-    ) -> Result<Vec<DefId>, E::Error> {
+        segments: &[Name],
+    ) -> Result<PrefixResolution, E::Error> {
+        let (first, remaining, first_segment) = match root {
+            PathRoot::Relative | PathRoot::Absolute => {
+                let Some((first, remaining)) = segments.split_first() else {
+                    return Ok(PrefixResolution::UnresolvedAt(0));
+                };
+                let first = self
+                    .first_name_bindings(
+                        importing_module,
+                        root.is_absolute(),
+                        first.as_str(),
+                        NamespaceSet::TYPES,
+                    )?
+                    .get(Namespace::Types)
+                    .map(|binding| binding.def);
+                (first, remaining, 1)
+            }
+            _ => (
+                self.root_module(importing_module, root)?.map(DefId::Module),
+                segments,
+                root.written_component_count(),
+            ),
+        };
+        match first {
+            Some(first) => self.walk_prefix(importing_module, first, remaining, first_segment),
+            None => Ok(PrefixResolution::UnresolvedAt(0)),
+        }
+    }
+
+    /// Resolve a structured keyword or macro-hygiene root to its starting module.
+    fn root_module(
+        &self,
+        importing_module: ModuleRef,
+        root: PathRoot,
+    ) -> Result<Option<ModuleRef>, E::Error> {
         match root {
-            PathRoot::DollarCrate(crate_ref) => Ok(self
-                .env
-                .root_module(crate_ref)?
-                .map(DefId::Module)
-                .into_iter()
-                .collect()),
-            PathRoot::SelfModule => Ok(vec![DefId::Module(importing_module)]),
+            PathRoot::DollarCrate(crate_ref) => self.env.root_module(crate_ref),
+            PathRoot::SelfModule => Ok(Some(importing_module)),
             PathRoot::Super(depth) => {
                 let mut module = Some(importing_module);
                 for _ in 0..depth {
@@ -920,112 +991,47 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                         None => break,
                     };
                 }
-                Ok(module.map(DefId::Module).into_iter().collect())
+                Ok(module)
             }
-            PathRoot::Crate => Ok(self
-                .env
-                .root_module(importing_module.origin.origin_crate())?
-                .map(DefId::Module)
-                .into_iter()
-                .collect()),
-            PathRoot::Relative | PathRoot::Absolute => Ok(Vec::new()),
+            PathRoot::Crate => self.env.root_module(importing_module.origin.origin_crate()),
+            PathRoot::Relative | PathRoot::Absolute => Ok(None),
         }
     }
 
-    /// Resolve a segment inside the containers produced by the previous segment.
-    ///
-    /// Modules expose ordinary scope entries. Enum definitions expose their variant constructors in
-    /// value positions.
-    fn next_segment(
-        &self,
-        importing_module: ModuleRef,
-        current_defs: Vec<DefId>,
-        segment: &Name,
-        filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
-        let mut next_defs = UniqueVec::new();
-
-        for current_def in current_defs {
-            match current_def {
-                DefId::Module(module_ref) => {
-                    for resolved_def in
-                        self.name_in_module(importing_module, module_ref, segment.as_str(), filter)?
-                    {
-                        next_defs.push(resolved_def);
-                    }
-                }
-                DefId::Local(local_def_ref) => {
-                    if let Some(variant) =
-                        self.enum_variant_for_name(local_def_ref, segment.as_str(), filter)?
-                    {
-                        next_defs.push(DefId::EnumVariant(variant));
-                    }
-                }
-                DefId::EnumVariant(_) => {}
-            }
-        }
-
-        Ok(next_defs.into_vec())
-    }
-
-    /// Resolves one textual name inside one module scope.
-    fn name_in_module(
-        &self,
-        importing_module: ModuleRef,
-        module_ref: ModuleRef,
-        name: &str,
-        filter: NamespaceSet,
-    ) -> Result<Vec<DefId>, E::Error> {
-        let mut defs = UniqueVec::new();
-        for (_, binding) in self.bindings_in_module(importing_module, module_ref, name, filter)? {
-            defs.push(binding.def);
-        }
-        Ok(defs.into_vec())
-    }
-
-    /// Returns selected bindings for a first path segment with per-namespace fallback.
+    /// Fill one temporary slot per namespace, following lexical, extern, and prelude precedence.
+    /// Stored scope entries remain sparse; this result only lives during one lookup.
     fn first_name_bindings(
         &self,
         importing_module: ModuleRef,
         absolute: bool,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, ScopeBinding)>, E::Error> {
+    ) -> Result<PerNs<Option<ScopeBinding>>, E::Error> {
+        let mut bindings = PerNs::default();
         if absolute {
-            if !filter.contains(Namespace::Types) {
-                return Ok(Vec::new());
-            }
-            return Ok(self
-                .env
-                .extern_root(importing_module.origin.origin_crate(), name)?
-                .map(|module_ref| {
-                    vec![(
-                        Namespace::Types,
+            if filter.contains(Namespace::Types) {
+                *bindings.get_mut(Namespace::Types) = self
+                    .env
+                    .extern_root(importing_module.origin.origin_crate(), name)?
+                    .map(|module| {
                         ScopeBinding::new(
-                            DefId::Module(module_ref),
+                            DefId::Module(module),
                             Visibility::Public,
                             ScopeBindingProvenance::Direct,
-                        ),
-                    )]
-                })
-                .unwrap_or_default());
+                        )
+                    });
+            }
+            return Ok(bindings);
         }
 
-        // Synthetic modules are lexical scopes. A binding shadows only its own namespace, so the
-        // walk keeps looking for missing namespaces in outer scopes.
-        let mut bindings = Vec::new();
+        // Synthetic scopes shadow one namespace at a time. Outer scopes can fill the other slots.
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
-            let occupied_before = Namespace::ALL
-                .map(|namespace| bindings.iter().any(|(occupied, _)| *occupied == namespace));
             for (namespace, binding) in
                 self.bindings_in_module(importing_module, module_ref, name, filter)?
             {
-                if !occupied_before[namespace.sort_rank() as usize] {
-                    bindings.push((namespace, binding));
-                }
+                bindings.get_mut(namespace).get_or_insert(binding);
             }
-
             let Some(module) = self.env.module_metadata(module_ref)? else {
                 break;
             };
@@ -1035,40 +1041,29 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             current = self.env.parent_module(module_ref)?;
         }
 
-        // Extern and standard preludes fill only namespaces that lexical lookup did not occupy.
+        // Extern and standard preludes fill only slots that lexical lookup left empty.
         if filter.contains(Namespace::Types)
-            && !bindings
-                .iter()
-                .any(|(namespace, _)| *namespace == Namespace::Types)
-            && let Some(module_ref) = self
+            && bindings.get(Namespace::Types).is_none()
+            && let Some(module) = self
                 .env
                 .extern_root(importing_module.origin.origin_crate(), name)?
         {
-            bindings.push((
-                Namespace::Types,
-                ScopeBinding::new(
-                    DefId::Module(module_ref),
-                    Visibility::Public,
-                    ScopeBindingProvenance::Direct,
-                ),
+            *bindings.get_mut(Namespace::Types) = Some(ScopeBinding::new(
+                DefId::Module(module),
+                Visibility::Public,
+                ScopeBindingProvenance::Direct,
             ));
         }
-
-        if let Some(prelude_module) = self
+        if let Some(prelude) = self
             .env
             .prelude_module(importing_module.origin.origin_crate())?
         {
-            let occupied_before = Namespace::ALL
-                .map(|namespace| bindings.iter().any(|(occupied, _)| *occupied == namespace));
             for (namespace, binding) in
-                self.bindings_in_module(importing_module, prelude_module, name, filter)?
+                self.bindings_in_module(importing_module, prelude, name, filter)?
             {
-                if !occupied_before[namespace.sort_rank() as usize] {
-                    bindings.push((namespace, binding));
-                }
+                bindings.get_mut(namespace).get_or_insert(binding);
             }
         }
-
         Ok(bindings)
     }
 
@@ -1085,10 +1080,10 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
         let mut bindings = Vec::new();
         for namespace in filter.iter() {
-            for binding in entry.bindings(namespace) {
-                if self.binding_is_visible(importing_module, binding)? {
-                    bindings.push((namespace, binding.clone()));
-                }
+            if let Some(binding) = entry.binding(namespace)
+                && self.binding_is_visible(importing_module, binding)?
+            {
+                bindings.push((namespace, *binding));
             }
         }
         Ok(bindings)
@@ -1126,7 +1121,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 .namespaces
                 .iter()
                 .filter(|namespace| filter.contains(*namespace))
-                .map(|namespace| (namespace, binding.clone()))
+                .map(|namespace| (namespace, binding))
                 .collect());
         }
         Ok(Vec::new())

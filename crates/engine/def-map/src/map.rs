@@ -184,16 +184,29 @@ impl DefMapBuilder {
         namespace: Namespace,
         binding: ScopeBinding,
     ) {
+        let select = |existing: Option<&ScopeBinding>| {
+            existing.map_or(binding, |existing| {
+                existing
+                    .select(binding, |left, right| {
+                        Ok::<_, std::convert::Infallible>(self.broadest_visibility(left, right))
+                    })
+                    .expect("local visibility comparison is infallible")
+            })
+        };
+        let direct = select(
+            self.module_direct_scope(module)
+                .and_then(|scope| scope.binding(name, namespace)),
+        );
+        let resolved = select(
+            self.module_scope(module)
+                .and_then(|scope| scope.binding(name, namespace)),
+        );
         let module = self
             .modules
             .get_mut(module)
             .expect("binding module should exist");
-        module
-            .direct_scope
-            .insert_binding(name, namespace, binding.clone());
-        module
-            .resolved_scope
-            .insert_binding(name, namespace, binding);
+        module.direct_scope.set_binding(name, namespace, direct);
+        module.resolved_scope.set_binding(name, namespace, resolved);
     }
 
     pub fn module_direct_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
@@ -373,6 +386,25 @@ impl DefMapBuilder {
         }
 
         visibilities
+    }
+
+    /// Valid restrictions on one module's binding form an ancestor chain. Keep the first region
+    /// if incomplete syntax produced unrelated restrictions instead of widening it arbitrarily.
+    fn broadest_visibility(&self, left: Visibility, right: Visibility) -> Visibility {
+        match (left, right) {
+            (Visibility::Public, _) | (_, Visibility::Public) => Visibility::Public,
+            (Visibility::Invisible, visibility) | (visibility, Visibility::Invisible) => visibility,
+            (Visibility::Module(left), Visibility::Module(right)) => {
+                if left.origin == self.own_ref
+                    && right.origin == self.own_ref
+                    && self.module_is_descendant_of(left.module, right.module)
+                {
+                    Visibility::Module(right)
+                } else {
+                    Visibility::Module(left)
+                }
+            }
+        }
     }
 
     fn intersect_visibility(&self, left: Visibility, right: Visibility) -> Visibility {

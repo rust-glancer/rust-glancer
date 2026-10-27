@@ -21,7 +21,7 @@ use super::macros::{
 };
 use crate::{
     CrateData, DefMapBuilder, GeneratedItemStores, MacroExpansionLimitReport,
-    MacroSourceFileRequest, ModuleScopeBuilder, Namespace, PackageDefMaps, ScopeBindingProvenance,
+    MacroSourceFileRequest, ModuleScopeBuilder, Namespace, PackageDefMaps,
 };
 
 /// Mutable crate builders indexed by package slot and Cargo target.
@@ -297,12 +297,7 @@ impl CrateBuilder {
         let root = ModuleRef::krate(self.crate_ref, self.root_module);
         let def_map = &self.def_map_builder;
         scope.censor_public_bindings(root, |namespace, binding| {
-            if namespace != Namespace::Macros
-                || !binding
-                    .routes()
-                    .iter()
-                    .any(|route| route.provenance == ScopeBindingProvenance::Direct)
-            {
+            if namespace != Namespace::Macros || !binding.has_direct_declaration() {
                 return false;
             }
 

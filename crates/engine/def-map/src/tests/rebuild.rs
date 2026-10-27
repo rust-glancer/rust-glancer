@@ -41,7 +41,7 @@ pub use dep::api::Api as Renamed;
         .expect("rebuilt app root should contain the renamed import");
 
     assert!(
-        !renamed_entry.bindings(crate::Namespace::Types).is_empty(),
+        renamed_entry.binding(crate::Namespace::Types).is_some(),
         "dirty app import should resolve through the clean frozen dependency package"
     );
     assert!(

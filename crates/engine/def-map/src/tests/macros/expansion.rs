@@ -550,7 +550,7 @@ macro_rules! cfg_select {
 }
 
 #[test]
-fn ambiguous_standard_prelude_macro_blocks_macro_use_fallback() {
+fn conflicting_standard_prelude_macros_keep_the_first_before_macro_use_fallback() {
     let project = utils::DefMapFixtureDb::build_with_sysroot(
         r#"
 //- /crates/dep/src/lib.rs crate:dep root:crates/dep
@@ -601,13 +601,13 @@ pub struct TokenStream;
 
     target
         .entry("FromFirstPrelude")
-        .assert_missing("ambiguous prelude macros should not pick the first candidate");
+        .assert_type_exists("conflicting prelude macros should expand the first useful target");
     target
         .entry("FromSecondPrelude")
-        .assert_missing("ambiguous prelude macros should not pick the second candidate");
+        .assert_missing("the first prelude macro should win the conflict");
     target
         .entry("FromMacroUse")
-        .assert_missing("ambiguous prelude macros should block later fallback lookup");
+        .assert_missing("the selected prelude macro should take precedence over legacy fallback");
 }
 
 #[test]

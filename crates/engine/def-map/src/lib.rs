@@ -47,8 +47,7 @@ pub use self::{
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding,
-        ScopeBindingProvenance, ScopeBindingRoute, ScopeEntry, ScopeEntryRef, ScopeResolution,
-        ScopeResolutionRef, Visibility,
+        ScopeBindingProvenance, ScopeEntry, ScopeEntryRef, Visibility,
     },
     source::{
         BodyItemSourceRef, GeneratedItemRef, GeneratedItemStore, GeneratedSourceId, ItemSource,

@@ -1,8 +1,9 @@
 //! Visible module-scope definitions produced by DefMap lookup.
 
 use rg_ir_model::{DefId, ImportRef};
+use rg_text::Name;
 
-use crate::scope::{ModuleScopeBuilder, Namespace};
+use crate::scope::{Namespace, ScopeBinding};
 
 /// Where a visible definition came from during unqualified lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,11 +21,10 @@ pub struct VisibleScopeDef {
     pub def: DefId,
     /// Lookup source used by unqualified completions to rank familiar names first.
     pub origin: VisibleScopeOrigin,
-    /// Outermost imports that expose this binding under `label`.
-    ///
-    /// This request-local route data lets presentation honor attributes on a re-export without
-    /// enlarging every binding in the frozen namespace graph.
-    pub attribute_imports: Vec<ImportRef>,
+    /// Selected outer import whose attributes describe this spelling.
+    pub attribute_import: Option<ImportRef>,
+    /// Whether a same-definition import deliberately re-exported the spelling.
+    pub has_reexport: bool,
 }
 
 /// Ordered visible definitions plus the namespace-aware shadowing rules used while collecting.
@@ -36,49 +36,25 @@ impl VisibleScopeDefs {
         Self(Vec::new())
     }
 
-    pub fn new(
-        scope: &ModuleScopeBuilder,
-        origin: VisibleScopeOrigin,
-        skip_shadowed: bool,
-    ) -> Self {
-        let mut self_ = Self(Vec::new());
-        self_.extend(scope, origin, skip_shadowed);
-        self_
-    }
-
-    pub fn extend(
+    pub(crate) fn push_binding(
         &mut self,
-        scope: &ModuleScopeBuilder,
+        name: &Name,
+        namespace: Namespace,
+        binding: &ScopeBinding,
         origin: VisibleScopeOrigin,
         skip_shadowed: bool,
     ) {
-        // Completion keeps namespace identity so a same-spelling value does not shadow a type.
-        for (name, entry) in scope.entries() {
-            for namespace in Namespace::ALL {
-                for binding in entry.bindings(namespace) {
-                    self.push(
-                        VisibleScopeDef {
-                            label: name.to_string(),
-                            namespace,
-                            def: binding.def,
-                            origin,
-                            attribute_imports: binding
-                                .routes()
-                                .iter()
-                                .filter_map(|route| match route.provenance {
-                                    crate::ScopeBindingProvenance::NamedImport(import)
-                                    | crate::ScopeBindingProvenance::GlobImport(import) => {
-                                        Some(import)
-                                    }
-                                    _ => None,
-                                })
-                                .collect(),
-                        },
-                        skip_shadowed,
-                    );
-                }
-            }
-        }
+        self.push(
+            VisibleScopeDef {
+                label: name.to_string(),
+                namespace,
+                def: binding.def,
+                origin,
+                attribute_import: binding.attribute_import(),
+                has_reexport: binding.has_reexport(),
+            },
+            skip_shadowed,
+        );
     }
 
     pub fn push(&mut self, def: VisibleScopeDef, skip_shadowed: bool) {

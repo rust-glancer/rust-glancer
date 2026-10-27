@@ -8,8 +8,7 @@ use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 use crate::{
     DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
-    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeBindingProvenance, ScopeEntry,
-    ScopeResolutionRef, Visibility, testonly::DefMapFixture,
+    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeEntry, Visibility, testonly::DefMapFixture,
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -254,20 +253,20 @@ impl<'a> FixtureEntry<'a> {
         self
     }
 
-    /// Asserts that the entry has at least one visible type binding.
+    /// Asserts that the entry has a selected type binding.
     pub(super) fn assert_type_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().bindings(Namespace::Types).is_empty(),
+            self.scope_entry().binding(Namespace::Types).is_some(),
             "{reason}: expected {} to have a type binding",
             self.context(),
         );
         self
     }
 
-    /// Asserts that the entry has at least one visible value binding.
+    /// Asserts that the entry has a selected value binding.
     pub(super) fn assert_value_exists(&self, reason: &str) -> &Self {
         assert!(
-            !self.scope_entry().bindings(Namespace::Values).is_empty(),
+            self.scope_entry().binding(Namespace::Values).is_some(),
             "{reason}: expected {} to have a value binding",
             self.context(),
         );
@@ -277,85 +276,47 @@ impl<'a> FixtureEntry<'a> {
     /// Asserts that the entry has no selected value binding.
     pub(super) fn assert_value_missing(&self, reason: &str) -> &Self {
         assert!(
-            self.scope_entry().bindings(Namespace::Values).is_empty(),
+            self.scope_entry().binding(Namespace::Values).is_none(),
             "{reason}: expected {} not to have a value binding",
             self.context(),
         );
         self
     }
 
-    /// Asserts that one selected value binding has the requested local definition kind.
+    /// Asserts that the selected value binding has the requested local definition kind.
     pub(super) fn assert_value_kind(&self, kind: LocalDefKind, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .bindings(Namespace::Values)
-                .iter()
-                .filter_map(|binding| self.binding_origin(binding))
-                .any(|origin| origin.local_def_kind() == Some(kind)),
+                .binding(Namespace::Values)
+                .and_then(|binding| self.binding_origin(binding))
+                .is_some_and(|origin| origin.local_def_kind() == Some(kind)),
             "{reason}: expected {} to have a `{kind}` value binding",
             self.context(),
         );
         self
     }
 
-    /// Asserts that one type binding resolves to a module with the requested name.
+    /// Asserts that the selected type binding resolves to a module with the requested name.
     pub(super) fn assert_module_named(&self, module_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .bindings(Namespace::Types)
-                .iter()
-                .filter_map(|binding| self.binding_origin(binding))
-                .any(|origin| origin.module_name() == Some(module_name)),
+                .binding(Namespace::Types)
+                .and_then(|binding| self.binding_origin(binding))
+                .is_some_and(|origin| origin.module_name() == Some(module_name)),
             "{reason}: expected {} to resolve to module `{module_name}`",
             self.context(),
         );
         self
     }
 
-    /// Asserts that one type binding points at an item lowered from the requested source file.
+    /// Asserts that the selected type binding points at an item lowered from the requested source file.
     pub(super) fn assert_type_source_file(&self, file_name: &str, reason: &str) -> &Self {
         assert!(
             self.scope_entry()
-                .bindings(Namespace::Types)
-                .iter()
-                .filter_map(|binding| self.binding_origin(binding))
-                .any(|origin| origin.source_file_name().as_deref() == Some(file_name)),
+                .binding(Namespace::Types)
+                .and_then(|binding| self.binding_origin(binding))
+                .is_some_and(|origin| origin.source_file_name().as_deref() == Some(file_name)),
             "{reason}: expected {} to have a type binding from `{file_name}`",
-            self.context(),
-        );
-        self
-    }
-
-    /// Asserts that the type namespace selected one definition with the requested route count.
-    pub(super) fn assert_type_resolved_with_routes(
-        &self,
-        route_count: usize,
-        reason: &str,
-    ) -> &Self {
-        let ScopeResolutionRef::Resolved(binding) = self.scope_entry().resolution(Namespace::Types)
-        else {
-            panic!("{reason}: expected {} to resolve uniquely", self.context());
-        };
-        assert_eq!(
-            binding.routes().len(),
-            route_count,
-            "{reason}: unexpected route count for {}",
-            self.context(),
-        );
-        self
-    }
-
-    /// Asserts that the type namespace retained an explicit ambiguity.
-    pub(super) fn assert_type_ambiguous(&self, candidate_count: usize, reason: &str) -> &Self {
-        let ScopeResolutionRef::Ambiguous(bindings) =
-            self.scope_entry().resolution(Namespace::Types)
-        else {
-            panic!("{reason}: expected {} to be ambiguous", self.context());
-        };
-        assert_eq!(
-            bindings.len(),
-            candidate_count,
-            "{reason}: unexpected candidate count for {}",
             self.context(),
         );
         self
@@ -793,51 +754,21 @@ impl<'a> CrateDefMapSnapshot<'a> {
 
     fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
         let mut parts = Vec::new();
-
-        if !entry.bindings(Namespace::Types).is_empty() {
-            parts.push(format!(
-                "type [{}]",
-                self.render_namespace_bindings(entry.bindings(Namespace::Types))
-            ));
+        for (label, namespace) in [
+            ("type", Namespace::Types),
+            ("value", Namespace::Values),
+            ("macro", Namespace::Macros),
+        ] {
+            if let Some(binding) = entry.binding(namespace)
+                && let Some(origin) = self.binding_origin(binding)
+            {
+                parts.push(format!("{label} [{}]", origin.render()));
+            }
         }
-
-        if !entry.bindings(Namespace::Values).is_empty() {
-            parts.push(format!(
-                "value [{}]",
-                self.render_namespace_bindings(entry.bindings(Namespace::Values))
-            ));
-        }
-
-        if !entry.bindings(Namespace::Macros).is_empty() {
-            parts.push(format!(
-                "macro [{}]",
-                self.render_namespace_bindings(entry.bindings(Namespace::Macros))
-            ));
-        }
-
         parts.join(" | ")
     }
 
-    fn render_namespace_bindings(&self, bindings: &[ScopeBinding]) -> String {
-        let mut rendered = bindings
-            .iter()
-            .flat_map(|binding| {
-                binding.routes().iter().filter_map(|route| {
-                    self.binding_origin_with_visibility(binding, route.visibility, route.provenance)
-                })
-            })
-            .map(|origin| origin.render())
-            .collect::<Vec<_>>();
-        rendered.sort();
-        rendered.join("; ")
-    }
-
-    fn binding_origin_with_visibility(
-        &self,
-        binding: &'a ScopeBinding,
-        visibility: Visibility,
-        provenance: ScopeBindingProvenance,
-    ) -> Option<BindingOrigin<'a>> {
+    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
@@ -850,21 +781,24 @@ impl<'a> CrateDefMapSnapshot<'a> {
             .get(crate_ref.package.0)?;
         self.project.resident_def_map(crate_ref)?;
 
-        let visibility_prefix = if provenance.is_direct() {
-            match binding.def {
-                DefId::Local(local_def) => self
-                    .project
-                    .resident_def_map(crate_ref)?
-                    .local_def(local_def.local_def)
-                    .map(|data| BindingOrigin::source_visibility_prefix(&data.visibility))
-                    .unwrap_or_else(|| BindingOrigin::semantic_visibility_prefix(visibility)),
-                DefId::Module(_) | DefId::EnumVariant(_) => {
-                    BindingOrigin::semantic_visibility_prefix(visibility)
+        let visibility_prefix =
+            if binding.attribute_import().is_none() && binding.has_direct_declaration() {
+                match binding.def {
+                    DefId::Local(local_def) => self
+                        .project
+                        .resident_def_map(crate_ref)?
+                        .local_def(local_def.local_def)
+                        .map(|data| BindingOrigin::source_visibility_prefix(&data.visibility))
+                        .unwrap_or_else(|| {
+                            BindingOrigin::semantic_visibility_prefix(binding.visibility)
+                        }),
+                    DefId::Module(_) | DefId::EnumVariant(_) => {
+                        BindingOrigin::semantic_visibility_prefix(binding.visibility)
+                    }
                 }
-            }
-        } else {
-            BindingOrigin::semantic_visibility_prefix(visibility)
-        };
+            } else {
+                BindingOrigin::semantic_visibility_prefix(binding.visibility)
+            };
 
         Some(BindingOrigin {
             project: self.project,
