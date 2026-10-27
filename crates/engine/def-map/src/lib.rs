@@ -32,8 +32,10 @@ pub use self::{
         BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
         ExpandedBodyMacro,
     },
-    map::{DefMap, DefMapBuilder, PartialDefMap},
-    module::{ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin},
+    map::{DefMap, DefMapBuilder, ModuleBuilder},
+    module::{
+        ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin, ModuleResolutionView,
+    },
     package::{
         CrateData, CrateDefMapManifest, MacroExpansionLimitGroup, MacroExpansionLimitReport,
         PackageDefMaps, PackageDefMapsManifest,

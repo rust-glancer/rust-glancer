@@ -295,7 +295,7 @@ impl CrateBuilder {
         }
 
         let root = ModuleRef::krate(self.crate_ref, self.root_module);
-        let def_map = self.def_map_builder.partial();
+        let def_map = &self.def_map_builder;
         scope.censor_public_bindings(root, |namespace, binding| {
             if namespace != Namespace::Macros
                 || !binding

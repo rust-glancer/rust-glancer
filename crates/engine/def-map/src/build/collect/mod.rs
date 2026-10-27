@@ -7,8 +7,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateId, CrateRef, ModuleRef, PackageSlot};
-use rg_item_tree::{Package as ItemTreePackage, UserFacingAttrs};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleRef, PackageSlot};
+use rg_item_tree::Package as ItemTreePackage;
 use rg_parse::{ModuleFileContext, Package};
 use rg_text::Name;
 
@@ -17,9 +17,7 @@ use super::{
     crates::{CrateBuilder, ExternPreludeBuilder, KnownModuleFiles},
     macros::{MacroCallOrigin, TextualMacroScopes},
 };
-use crate::{
-    DefMapBuilder, ModuleData, ModuleDocumentation, ModuleOrigin, ModuleScope, Visibility,
-};
+use crate::{DefMapBuilder, ModuleBuilder, ModuleDocumentation, ModuleOrigin, Visibility};
 
 mod declarations;
 pub(crate) use self::declarations::DeclarationCollector;
@@ -48,26 +46,18 @@ pub(super) fn collect_package_crates(
         let root_file = item_tree_package
             .file(target_root.root_file)
             .context("target root file should be lowered")?;
-        let mut builder = DefMapBuilder::new(crate_ref);
+        let mut builder = DefMapBuilder::new(DefMapRef::Crate(crate_ref));
         // A target root has neither a declaration name nor a parent. All descendants use the
         // shared collector, just like files and declarations discovered by macro expansion.
-        let root_module = builder.alloc_module(ModuleData {
-            name: None,
-            name_span: None,
-            docs: ModuleDocumentation::new(None, root_file.docs.clone()),
-            user_facing_attrs: UserFacingAttrs::default(),
-            visibility: Visibility::Public,
-            parent: None,
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: Vec::new(),
-            imports: Vec::new(),
-            unresolved_imports: Vec::new(),
-            scope: ModuleScope::default(),
-            origin: ModuleOrigin::Root {
+        let mut root = ModuleBuilder::new(
+            ModuleOrigin::Root {
                 file_id: target.root_file,
             },
-        });
+            Visibility::Public,
+            None,
+        );
+        root.docs = ModuleDocumentation::new(None, root_file.docs.clone());
+        let root_module = builder.alloc_module(root);
         let mut state = CrateBuilder {
             crate_ref,
             cargo_target: target.id,

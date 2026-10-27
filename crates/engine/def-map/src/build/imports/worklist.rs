@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use super::{ImportApplicationStats, ModuleSetShape};
 use crate::{
     CrateResolutionEnv, ImportKind, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    ModuleData, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    ModuleResolutionView, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
     build::{crates::CrateBuildStore, resolution_env::BuildResolutionEnv},
 };
 
@@ -69,7 +69,7 @@ impl ImportWorklist {
         let mut imports_by_module = FxHashMap::<ModuleRef, Vec<ImportId>>::default();
         for package_states in states.iter_dirty() {
             for state in package_states {
-                for (import_id, import) in state.def_map_builder.partial().imports_with_ids() {
+                for (import_id, import) in state.def_map_builder.imports_with_ids() {
                     imports_by_module
                         .entry(ModuleRef::krate(state.crate_ref, import.module))
                         .or_default()
@@ -248,7 +248,6 @@ impl ModuleImportUpdate {
         for import_id in imports {
             let import = state
                 .def_map_builder
-                .partial()
                 .imports()
                 .get(import_id.0)
                 .expect("worklist import id should remain valid during one fixed-point run");
@@ -405,8 +404,11 @@ impl<'env, E> TrackingResolutionEnv<'env, E> {
 impl<E: ScopeResolutionEnv> ScopeResolutionEnv for TrackingResolutionEnv<'_, E> {
     type Error = E::Error;
 
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
-        self.inner.module_data(module_ref)
+    fn module_metadata(
+        &self,
+        module_ref: ModuleRef,
+    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+        self.inner.module_metadata(module_ref)
     }
 
     fn module_scope_entry<'a>(

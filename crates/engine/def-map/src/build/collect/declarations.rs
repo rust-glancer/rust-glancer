@@ -26,8 +26,8 @@ use rg_workspace::TargetKind;
 use crate::{
     GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
     ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-    MacroSourceFileRequest, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    ModuleScope, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         crates::CrateBuilder,
@@ -149,7 +149,6 @@ impl<'a> DeclarationCollector<'a> {
         let items = self
             .state
             .def_map_builder
-            .partial()
             .generated_source(generated_source)
             .expect("new generated source should exist")
             .top_level
@@ -199,7 +198,6 @@ impl<'a> DeclarationCollector<'a> {
             ItemSourceKind::Generated(source) => Cow::Owned(
                 self.state
                     .def_map_builder
-                    .partial()
                     .generated_source(source.source)
                     .and_then(|data| data.item(source.item))
                     .expect("generated item should exist while collecting declarations")
@@ -390,7 +388,6 @@ impl<'a> DeclarationCollector<'a> {
             ItemSourceKind::Generated(generated) => (
                 self.state
                     .def_map_builder
-                    .partial()
                     .generated_source(generated.source)
                     .expect("generated call source should exist")
                     .origin_source,
@@ -508,21 +505,12 @@ impl<'a> DeclarationCollector<'a> {
             .resolve_visibility(parent_module, &item.visibility);
         // Allocate the child's structure and scopes together, then expose it in the parent's
         // module tree and type namespace before collecting its contents.
-        let child = self.state.def_map_builder.alloc_module(ModuleData {
-            name: Some(name.clone()),
-            name_span: item.name_span,
-            docs: ModuleDocumentation::new(item.docs.clone(), inner_docs),
-            user_facing_attrs: item.user_facing_attrs,
-            visibility,
-            parent: Some(parent_module),
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: Vec::new(),
-            imports: Vec::new(),
-            unresolved_imports: Vec::new(),
-            scope: ModuleScope::default(),
-            origin,
-        });
+        let mut module = ModuleBuilder::new(origin, visibility, Some(parent_module));
+        module.name = Some(name.clone());
+        module.name_span = item.name_span;
+        module.docs = ModuleDocumentation::new(item.docs.clone(), inner_docs);
+        module.user_facing_attrs = item.user_facing_attrs;
+        let child = self.state.def_map_builder.alloc_module(module);
         self.state
             .def_map_builder
             .module_mut(parent_module)
@@ -854,7 +842,6 @@ impl<'a> DeclarationCollector<'a> {
                 let data = self
                     .state
                     .def_map_builder
-                    .partial()
                     .generated_source(generated.source)
                     .expect("generated import source should exist");
                 (

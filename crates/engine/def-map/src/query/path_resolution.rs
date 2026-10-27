@@ -258,7 +258,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 return Ok(defs);
             }
 
-            let Some(module) = self.env.module_data(module_ref)? else {
+            let Some(module) = self.env.module_metadata(module_ref)? else {
                 return Ok(Vec::new());
             };
             if !matches!(module.origin, ModuleOrigin::Synthetic { .. }) {
@@ -404,7 +404,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 
             current = self
                 .env
-                .module_data(ModuleRef {
+                .module_metadata(ModuleRef {
                     origin: module.origin,
                     module: module_id,
                 })?
@@ -784,7 +784,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 let DefId::Module(module_ref) = def else {
                     continue;
                 };
-                let Some(module) = self.env.module_data(module_ref)? else {
+                let Some(module) = self.env.module_metadata(module_ref)? else {
                     continue;
                 };
                 for namespace in self.namespaces_for_def(def)?.iter() {
@@ -1026,7 +1026,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 }
             }
 
-            let Some(module) = self.env.module_data(module_ref)? else {
+            let Some(module) = self.env.module_metadata(module_ref)? else {
                 break;
             };
             if !matches!(module.origin, ModuleOrigin::Synthetic { .. }) {

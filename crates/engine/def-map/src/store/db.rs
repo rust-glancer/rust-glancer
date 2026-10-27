@@ -348,7 +348,7 @@ mod tests {
                 None,
                 Default::default(),
                 None,
-                DefMapBuilder::new(crate_ref).build(),
+                DefMapBuilder::new(rg_ir_model::DefMapRef::Crate(crate_ref)).build(),
             )],
             Vec::new(),
         )

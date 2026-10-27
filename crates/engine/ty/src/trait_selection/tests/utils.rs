@@ -3,8 +3,8 @@ use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
 use expect_test::Expect;
 use rg_def_map::{
     DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
-    ItemSourceKind, LocalDefData, LocalDefKind, ModuleData, ModuleOrigin, Namespace, NamespaceSet,
-    ScopeBinding, ScopeBindingProvenance, Visibility,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, Namespace,
+    NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
@@ -697,22 +697,12 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         type_aliases: Vec<TypeAliasData>,
         mut structs: Vec<StructData>,
     ) -> TraitSelectionFixture {
-        let mut def_map_builder = DefMapBuilder::new(target());
-        let root_module = def_map_builder.alloc_module(ModuleData {
-            name: None,
-            name_span: None,
-            docs: None,
-            user_facing_attrs: Default::default(),
-            visibility: Visibility::Public,
-            parent: None,
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: Vec::new(),
-            imports: Vec::new(),
-            unresolved_imports: Vec::new(),
-            scope: Default::default(),
-            origin: ModuleOrigin::Root { file_id: FileId(0) },
-        });
+        let mut def_map_builder = DefMapBuilder::new(origin());
+        let root_module = def_map_builder.alloc_module(ModuleBuilder::new(
+            ModuleOrigin::Root { file_id: FileId(0) },
+            Visibility::Public,
+            None,
+        ));
         debug_assert_eq!(root_module, module().module);
 
         let mut local_defs = Vec::new();

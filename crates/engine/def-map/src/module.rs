@@ -28,6 +28,27 @@ pub struct ModuleData {
     pub origin: ModuleOrigin,
 }
 
+impl ModuleData {
+    pub fn resolution_view(&self) -> ModuleResolutionView<'_> {
+        ModuleResolutionView {
+            parent: self.parent,
+            visibility: self.visibility,
+            origin: &self.origin,
+        }
+    }
+}
+
+/// Module metadata needed by path and visibility lookup, before or after freezing.
+///
+/// Scope bindings are read separately through the resolution environment. This lets the same
+/// lookup code read mutable and frozen modules without depending on either scope representation.
+#[derive(Debug, Clone, Copy)]
+pub struct ModuleResolutionView<'a> {
+    pub parent: Option<ModuleId>,
+    pub visibility: Visibility,
+    pub origin: &'a ModuleOrigin,
+}
+
 /// Module docs can contain comments written in two different scopes.
 ///
 /// ```text

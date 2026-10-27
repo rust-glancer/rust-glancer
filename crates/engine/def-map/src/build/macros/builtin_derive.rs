@@ -50,7 +50,7 @@ impl BuiltinDeriveExpansion {
         for package_states in states.iter_dirty() {
             for state in package_states {
                 let cfg = state.cfg_evaluator();
-                let map = state.def_map_builder.partial();
+                let map = &state.def_map_builder;
                 let interner = interners
                     .package_mut(state.crate_ref.package.0)
                     .context("fetch name interner for builtin derives")?;
@@ -154,7 +154,6 @@ impl BuiltinDeriveExpansion {
             ItemSourceKind::Generated(source) => {
                 let source_data = state
                     .def_map_builder
-                    .partial()
                     .generated_source(source.source)
                     .context("fetch generated derive input")?;
                 (source_data.item(source.item), source_data.origin_source)

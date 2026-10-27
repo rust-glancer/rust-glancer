@@ -400,7 +400,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             };
             module_scope_modules.push(module_ref);
 
-            current = ScopeResolutionEnv::module_data(query, module_ref)
+            current = ScopeResolutionEnv::module_metadata(query, module_ref)
                 .context("while attempting to fetch parent module for body macro lookup")?
                 .and_then(|module| module.parent);
         }

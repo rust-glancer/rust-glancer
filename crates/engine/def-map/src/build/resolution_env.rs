@@ -9,19 +9,15 @@ use rg_text::Name;
 
 use super::crates::CrateBuildStore;
 use crate::{
-    CrateResolutionEnv, DefMapReadTxn, LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry,
-    MacroDefinitionEnv, MacroDefinitionView, ModuleData, ModuleScopeBuilder, ScopeEntryRef,
-    ScopeResolutionEnv,
+    CrateResolutionEnv, DefMapReadTxn, DefMapSource, LocalDefData, LocalEnumVariantData,
+    LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView, ModuleBuilder, ModuleData,
+    ModuleResolutionView, ModuleScopeBuilder, ScopeEntryRef, ScopeResolutionEnv,
 };
 
 /// Resolution environment used while dirty package scopes are being fixed up.
 ///
 /// Dirty package reads come from fresh crate state and the current fixed-point module scopes.
 /// Clean package reads fall through to the frozen baseline.
-///
-/// For dirty crates, `PartialDefMap` exposes module metadata but its `ModuleData::scope` is not
-/// filled yet. Their scope queries read the builder's resolved scope instead. Borrowing all crates
-/// immutably keeps those scopes unchanged while import workers build their candidates.
 pub(crate) struct BuildResolutionEnv<'a> {
     baseline: &'a DefMapReadTxn<'a>,
     crates: &'a CrateBuildStore,
@@ -41,14 +37,17 @@ impl<'a> BuildResolutionEnv<'a> {
 impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
     type Error = rg_package_store::PackageStoreError;
 
-    fn module_data(
+    fn module_metadata(
         &self,
         module_ref: ModuleRef,
-    ) -> Result<Option<&ModuleData>, rg_package_store::PackageStoreError> {
+    ) -> Result<Option<ModuleResolutionView<'_>>, rg_package_store::PackageStoreError> {
         if let Some(crate_ref) = module_ref.origin.as_crate_ref()
             && let Some(state) = self.crates.crate_builder(crate_ref)
         {
-            return Ok(state.def_map_builder.partial().module(module_ref.module));
+            return Ok(state
+                .def_map_builder
+                .module(module_ref.module)
+                .map(ModuleBuilder::resolution_view));
         }
 
         let Some(crate_ref) = module_ref.origin.as_crate_ref() else {
@@ -57,7 +56,8 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         Ok(self
             .baseline
             .def_map(crate_ref)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
+            .and_then(|def_map| def_map.module(module_ref.module))
+            .map(ModuleData::resolution_view))
     }
 
     fn module_scope_entry<'a>(
@@ -77,6 +77,7 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         }
 
         Ok(self
+            .baseline
             .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
             .map(|entry| entry.as_ref()))
@@ -99,6 +100,7 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         }
 
         Ok(self
+            .baseline
             .module_data(module_ref)?
             .map(|module| {
                 module
@@ -117,10 +119,7 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         if let Some(crate_ref) = local_def_ref.origin.as_crate_ref()
             && let Some(state) = self.crates.crate_builder(crate_ref)
         {
-            return Ok(state
-                .def_map_builder
-                .partial()
-                .local_def(local_def_ref.local_def));
+            return Ok(state.def_map_builder.local_def(local_def_ref.local_def));
         }
 
         let Some(crate_ref) = local_def_ref.origin.as_crate_ref() else {
@@ -141,7 +140,6 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         {
             return Ok(state
                 .def_map_builder
-                .partial()
                 .local_enum_variant(variant_ref.local_enum_variant));
         }
 
@@ -163,7 +161,6 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         {
             return Ok(state
                 .def_map_builder
-                .partial()
                 .local_enum_variant_entries_for_enum(enum_def.local_def)
                 .collect());
         }
@@ -195,10 +192,7 @@ impl MacroDefinitionEnv for BuildResolutionEnv<'_> {
         let data = if let Some(crate_ref) = def_ref.origin.as_crate_ref()
             && let Some(state) = self.crates.crate_builder(crate_ref)
         {
-            state
-                .def_map_builder
-                .partial()
-                .macro_definition(def_ref.local_def)
+            state.def_map_builder.macro_definition(def_ref.local_def)
         } else {
             let Some(crate_ref) = def_ref.origin.as_crate_ref() else {
                 return Ok(None);

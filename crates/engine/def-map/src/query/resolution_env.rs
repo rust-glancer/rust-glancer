@@ -9,14 +9,17 @@ use rg_text::Name;
 
 use crate::{
     LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionView,
-    ModuleData, ScopeEntryRef,
+    ModuleResolutionView, ScopeEntryRef,
 };
 
 /// Minimal scope graph required by path and visibility lookup.
 pub trait ScopeResolutionEnv {
     type Error;
 
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error>;
+    fn module_metadata(
+        &self,
+        module_ref: ModuleRef,
+    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error>;
 
     fn module_scope_entry<'a>(
         &'a self,
@@ -54,7 +57,7 @@ pub trait ScopeResolutionEnv {
     }
 
     fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, Self::Error> {
-        let Some(module) = self.module_data(module_ref)? else {
+        let Some(module) = self.module_metadata(module_ref)? else {
             return Ok(None);
         };
 

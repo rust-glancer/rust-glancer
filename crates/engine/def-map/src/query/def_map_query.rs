@@ -18,8 +18,9 @@ use super::{
 };
 use crate::{
     DefMap, ImportData, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
-    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScopeBuilder, Namespace,
-    ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
+    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleResolutionView,
+    ModuleScopeBuilder, Namespace, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
+    VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and crate-level facts to concrete storage.
@@ -448,8 +449,14 @@ where
 {
     type Error = S::Error;
 
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
-        self.source.module_data(module_ref)
+    fn module_metadata(
+        &self,
+        module_ref: ModuleRef,
+    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+        Ok(self
+            .source
+            .module_data(module_ref)?
+            .map(ModuleData::resolution_view))
     }
 
     fn module_scope_entry<'a>(
@@ -457,7 +464,9 @@ where
         module_ref: ModuleRef,
         name: &str,
     ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
-        Ok(<Self as ScopeResolutionEnv>::module_data(self, module_ref)?
+        Ok(self
+            .source
+            .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
             .map(|entry| entry.as_ref()))
     }
@@ -466,7 +475,9 @@ where
         &'a self,
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
-        Ok(<Self as ScopeResolutionEnv>::module_data(self, module_ref)?
+        Ok(self
+            .source
+            .module_data(module_ref)?
             .map(|module| {
                 module
                     .scope
