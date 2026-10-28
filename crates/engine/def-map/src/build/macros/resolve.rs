@@ -10,7 +10,7 @@ use rg_text::Name;
 use super::{ItemOrder, MacroCallSite};
 use crate::{
     CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, NameBinding, NameResolver,
-    build::crates::{CrateBuildStore, CrateBuilder},
+    build::crates::CrateBuilder,
 };
 
 /// Macro definition resolved through the ordinary macro namespace.
@@ -29,7 +29,6 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
-    states: &'a CrateBuildStore,
     state: &'a CrateBuilder,
 }
 
@@ -39,8 +38,8 @@ where
         + MacroDefinitionEnv
         + ?Sized,
 {
-    pub(super) fn new(env: &'a E, states: &'a CrateBuildStore, state: &'a CrateBuilder) -> Self {
-        Self { env, states, state }
+    pub(super) fn new(env: &'a E, state: &'a CrateBuilder) -> Self {
+        Self { env, state }
     }
 
     /// Find the selected macro definition visible at a call.
@@ -216,13 +215,16 @@ where
         let Some(payload) = MacroDefinitionEnv::macro_definition_view(self.env, def)? else {
             return Ok(None);
         };
-        let order = payload
-            .def_ref
-            .origin
-            .as_crate_ref()
-            .and_then(|crate_ref| self.states.crate_builder(crate_ref))
-            .and_then(|state| state.macro_definitions.get(&payload.def_ref.local_def))
-            .map(|record| &record.order);
+        // Textual order matters only inside the active crate. External definitions belong to
+        // completed dependencies, whose source-order worklists have already been discarded.
+        let order = if payload.def_ref.origin == DefMapRef::Crate(self.state.crate_ref) {
+            self.state
+                .macro_definitions
+                .get(&payload.def_ref.local_def)
+                .map(|record| &record.order)
+        } else {
+            None
+        };
 
         Ok(Some(ResolvedMacroDefinition {
             definition: payload,

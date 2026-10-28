@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use rg_ir_model::{CrateRef, FileId, ModuleId, Span};
-use rg_item_tree::{ItemTreeDb, ItemTreeRef};
+use rg_item_tree::{ItemTreeRef, Package as ItemTreePackage};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
 use rg_text::NameInterner;
@@ -19,9 +19,8 @@ use super::{
 use crate::{
     ItemSource, MacroSourceFileRequest,
     build::{
-        MacroSourceFileResolution, MacroSourceFileResolutions,
-        collect::DeclarationCollector,
-        crates::{CrateBuildStore, CrateBuilder},
+        MacroSourceFileResolution, MacroSourceFileResolutions, collect::DeclarationCollector,
+        crates::CrateBuilder,
     },
     profile::metric,
 };
@@ -51,7 +50,7 @@ impl GeneratedOrigin {
         self,
         state: &mut CrateBuilder,
         interner: &mut NameInterner,
-        item_tree: &ItemTreeDb,
+        package: &ItemTreePackage,
         resolutions: &MacroSourceFileResolutions,
         expansion: ExpansionSyntax,
         macro_name: Option<&str>,
@@ -76,9 +75,6 @@ impl GeneratedOrigin {
         )
         .context("lower macro expansion declarations")?;
         let source = state.def_map_builder.alloc_generated_source(source);
-        let package = item_tree
-            .package(state.crate_ref.package.0)
-            .context("generated source package should exist")?;
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         let result = DeclarationCollector::new(
             state,
@@ -124,70 +120,57 @@ pub(crate) struct PendingGeneratedInclude {
 
 /// Collect each answered module or include without replaying its surrounding expansion.
 pub(crate) fn apply_pending_macro_source_files(
-    item_tree: &ItemTreeDb,
-    states: &mut CrateBuildStore,
+    package: &ItemTreePackage,
+    state: &mut CrateBuilder,
     resolutions: &MacroSourceFileResolutions,
 ) -> Result<()> {
-    for (package_slot, states) in states.iter_dirty_mut_enumerated() {
-        let package = item_tree
-            .package(package_slot)
-            .context("pending source package should exist")?;
-        for state in states {
-            let pending = std::mem::take(&mut state.pending_generated_modules);
-            for pending in pending {
-                match resolutions
-                    .get(&pending.request)
-                    .expect("pending module request should be answered")
-                {
-                    MacroSourceFileResolution::Missing => {}
-                    MacroSourceFileResolution::Module { .. } => {
-                        // File contents use their own crate for `$crate`, even when the module
-                        // declaration came from a macro expansion.
-                        DeclarationCollector::new(
-                            state,
-                            package,
-                            resolutions,
-                            pending.origin,
-                            None,
-                        )
-                        .collect_pending_module(pending)?;
-                    }
-                    MacroSourceFileResolution::Include { .. } => {
-                        unreachable!("module request received an include answer")
-                    }
-                }
+    let pending = std::mem::take(&mut state.pending_generated_modules);
+    for pending in pending {
+        match resolutions
+            .get(&pending.request)
+            .expect("pending module request should be answered")
+        {
+            MacroSourceFileResolution::Missing => {}
+            MacroSourceFileResolution::Module { .. } => {
+                // File contents use their own crate for `$crate`, even when the module
+                // declaration came from a macro expansion.
+                DeclarationCollector::new(state, package, resolutions, pending.origin, None)
+                    .collect_pending_module(pending)?;
             }
-            let pending = std::mem::take(&mut state.pending_generated_includes);
-            for pending in pending {
-                match resolutions
-                    .get(&pending.request)
-                    .expect("pending include request should be answered")
-                {
-                    MacroSourceFileResolution::Missing => {}
-                    MacroSourceFileResolution::Include { file_id } => {
-                        // Collection failure finishes this include just as it does an ordinary
-                        // expansion. Source loading has answered the request, so there is no retry.
-                        let _ = DeclarationCollector::new(
-                            state,
-                            package,
-                            resolutions,
-                            MacroCallOrigin::Generated {
-                                parent_call: pending.origin.parent_call,
-                            },
-                            None,
-                        )
-                        .collect_file(
-                            pending.origin.module,
-                            *file_id,
-                            pending.origin.order,
-                            pending.origin.placement,
-                            pending.origin.module_file_context,
-                        );
-                    }
-                    MacroSourceFileResolution::Module { .. } => {
-                        unreachable!("include request received a module answer")
-                    }
-                }
+            MacroSourceFileResolution::Include { .. } => {
+                unreachable!("module request received an include answer")
+            }
+        }
+    }
+    let pending = std::mem::take(&mut state.pending_generated_includes);
+    for pending in pending {
+        match resolutions
+            .get(&pending.request)
+            .expect("pending include request should be answered")
+        {
+            MacroSourceFileResolution::Missing => {}
+            MacroSourceFileResolution::Include { file_id } => {
+                // Collection failure finishes this include just as it does an ordinary
+                // expansion. Source loading has answered the request, so there is no retry.
+                let _ = DeclarationCollector::new(
+                    state,
+                    package,
+                    resolutions,
+                    MacroCallOrigin::Generated {
+                        parent_call: pending.origin.parent_call,
+                    },
+                    None,
+                )
+                .collect_file(
+                    pending.origin.module,
+                    *file_id,
+                    pending.origin.order,
+                    pending.origin.placement,
+                    pending.origin.module_file_context,
+                );
+            }
+            MacroSourceFileResolution::Module { .. } => {
+                unreachable!("include request received a module answer")
             }
         }
     }

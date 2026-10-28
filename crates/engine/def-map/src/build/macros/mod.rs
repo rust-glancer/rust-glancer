@@ -38,7 +38,7 @@ mod textual_scope;
 
 pub(super) use self::{
     attempts::{
-        MacroExpansionAttempt, MacroExpansionCursors, MacroExpansionScan, apply_expansion_attempts,
+        MacroExpansionAttempt, MacroExpansionScan, apply_expansion_attempts,
         collect_expansion_attempts,
     },
     builtin_derive::BuiltinDeriveExpansion,

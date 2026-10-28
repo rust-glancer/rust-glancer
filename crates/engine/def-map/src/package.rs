@@ -318,7 +318,7 @@ impl PackageDefMaps {
         self.crate_data(crate_id).map(CrateData::def_map)
     }
 
-    /// Returns bounded diagnostics retained when this package hit the global macro pass limit.
+    /// Returns bounded diagnostics for crates that reached their macro-expansion pass limit.
     pub fn macro_expansion_limits(&self) -> &[MacroExpansionLimitReport] {
         &self.macro_expansion_limits
     }

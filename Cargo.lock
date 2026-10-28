@@ -1868,6 +1868,7 @@ dependencies = [
  "rg_workspace",
  "rustc-hash",
  "test_fixture",
+ "tracing",
  "wincode",
 ]
 

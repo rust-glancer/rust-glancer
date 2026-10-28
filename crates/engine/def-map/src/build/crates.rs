@@ -1,227 +1,30 @@
 //! Mutable crate ownership during DefMap construction.
 //!
-//! Collection, import resolution, and macro expansion work on the same builders. File loading can
-//! grow their source context without replacing the builders or the module scopes they already own.
-//! Freezing moves only settled crate data into package payloads; macro queues and file maps stay here.
+//! Collection, import resolution, and macro expansion work on the active builder. File loading can
+//! grow its source context without replacing its module scopes. Finishing consumes the builder,
+//! keeping frozen crate data and generated declarations while dropping the build-only queues.
 
 use std::{collections::HashMap, mem, path::PathBuf, sync::Arc};
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
-use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef, PackageSlot};
-use rg_item_tree::{ItemTreeDb, Package as ItemTreePackage};
+use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef};
+use rg_item_tree::Package as ItemTreePackage;
 use rg_parse::{CargoTargetId, ModuleFileContext, Package};
-use rg_std::UniqueVec;
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
 
-use super::macros::{
-    MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-    MacroUseImport, PendingGeneratedInclude, PendingGeneratedModule,
-    PendingMacroExpansionLimitReport, TextualMacroScopes,
+use super::{
+    macros::{
+        MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
+        MacroUseImport, PendingGeneratedInclude, PendingGeneratedModule,
+        PendingMacroExpansionLimitReport, TextualMacroScopes,
+    },
+    output::CrateBuildOutput,
 };
 use crate::{
-    CrateData, DefMapBuilder, GeneratedItemStores, ItemScopeBuilder, MacroExpansionLimitReport,
-    MacroSourceFileRequest, NameBinding, Namespace, PackageDefMaps,
+    CrateData, DefMapBuilder, ItemScopeBuilder, MacroExpansionLimitReport, MacroSourceFileRequest,
+    NameBinding, Namespace,
 };
-
-/// Mutable crate builders indexed by package slot and Cargo target.
-///
-/// Selected packages own fresh builders. Absent package slots are read through the frozen baseline
-/// by `BuildResolutionEnv`. This store stays alive across import collection, macro batches, and source
-/// loading; only `freeze_package` moves settled data into a retained package.
-pub(crate) struct CrateBuildStore {
-    packages: Vec<Option<Vec<CrateBuilder>>>,
-}
-
-impl CrateBuildStore {
-    pub(crate) fn new(package_count: usize) -> Self {
-        Self {
-            packages: (0..package_count).map(|_| None).collect(),
-        }
-    }
-
-    pub(crate) fn replace_package(
-        &mut self,
-        package: PackageSlot,
-        states: Vec<CrateBuilder>,
-    ) -> Option<()> {
-        *self.packages.get_mut(package.0)? = Some(states);
-        Some(())
-    }
-
-    pub(crate) fn package(&self, package: PackageSlot) -> Option<&[CrateBuilder]> {
-        self.packages.get(package.0)?.as_deref()
-    }
-
-    pub(crate) fn crate_builder(&self, crate_ref: CrateRef) -> Option<&CrateBuilder> {
-        self.package(crate_ref.package)?.get(crate_ref.crate_id.0)
-    }
-
-    pub(crate) fn crate_builder_mut(&mut self, crate_ref: CrateRef) -> Option<&mut CrateBuilder> {
-        self.packages
-            .get_mut(crate_ref.package.0)?
-            .as_deref_mut()?
-            .get_mut(crate_ref.crate_id.0)
-    }
-
-    pub(crate) fn iter_dirty(&self) -> impl Iterator<Item = &[CrateBuilder]> {
-        self.packages.iter().filter_map(Option::as_deref)
-    }
-
-    pub(crate) fn iter_dirty_mut(&mut self) -> impl Iterator<Item = &mut [CrateBuilder]> {
-        self.packages.iter_mut().filter_map(Option::as_deref_mut)
-    }
-
-    pub(crate) fn iter_dirty_mut_enumerated(
-        &mut self,
-    ) -> impl Iterator<Item = (usize, &mut [CrateBuilder])> {
-        self.packages
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(package_slot, states)| {
-                states.as_deref_mut().map(|states| (package_slot, states))
-            })
-    }
-
-    /// Clears the source batch after the loader has supplied its results.
-    pub(crate) fn clear_macro_source_file_requests(&mut self) {
-        for package_states in self.iter_dirty_mut() {
-            for state in package_states {
-                state.macro_source_file_requests.clear();
-            }
-        }
-    }
-
-    /// Refreshes known package files after late Parse/ItemTree growth.
-    pub(crate) fn refresh_known_module_files(
-        &mut self,
-        packages: &[Package],
-        item_tree: &ItemTreeDb,
-    ) {
-        for (package_slot, package_states) in self.iter_dirty_mut_enumerated() {
-            let item_tree_package = item_tree
-                .package(package_slot)
-                .expect("dirty package should have an item tree during construction");
-            let known_module_files = Arc::new(KnownModuleFiles::from_package(
-                &packages[package_slot],
-                item_tree_package,
-            ));
-            for state in package_states {
-                state.known_module_files = Arc::clone(&known_module_files);
-            }
-        }
-    }
-
-    /// Coalesces construction requests without retaining them in frozen package payloads.
-    pub(crate) fn macro_source_file_requests(&self) -> Vec<MacroSourceFileRequest> {
-        let mut requests = UniqueVec::new();
-
-        for package_states in self.iter_dirty() {
-            for state in package_states {
-                for request in &state.macro_source_file_requests {
-                    requests.push(request.clone());
-                }
-            }
-        }
-
-        requests.into_vec()
-    }
-
-    pub(crate) fn module_scope(&self, module: ModuleRef) -> Option<&ItemScopeBuilder> {
-        self.crate_builder(module.origin.as_crate_ref()?)?
-            .def_map_builder
-            .module_scope(module.module)
-    }
-
-    /// Keep proc-macro implementation items private before another crate can import them.
-    pub(crate) fn censor_proc_macro_exports(&mut self) {
-        for package_states in self.iter_dirty_mut() {
-            for state in package_states {
-                if state.target_kind != TargetKind::ProcMacro {
-                    continue;
-                }
-                // Censoring reads declaration metadata while changing the module scope. Move the
-                // scope out briefly so those borrows stay separate without cloning its bindings.
-                let root = state.root_module;
-                let mut scope = mem::take(
-                    state
-                        .def_map_builder
-                        .module_scope_mut(root)
-                        .expect("proc-macro root scope should exist"),
-                );
-                state.censor_proc_macro_scope(root, &mut scope);
-                *state
-                    .def_map_builder
-                    .module_scope_mut(root)
-                    .expect("proc-macro root scope should remain allocated") = scope;
-            }
-        }
-    }
-
-    /// Move a settled package into retained data and separate its transient generated declarations.
-    pub(crate) fn freeze_package(
-        &mut self,
-        slot: PackageSlot,
-        package: &Package,
-        generated_items: &mut GeneratedItemStores,
-    ) -> PackageDefMaps {
-        let package_states = self
-            .packages
-            .get_mut(slot.0)
-            .and_then(Option::take)
-            .expect("selected package should have completed crate builders");
-        let package_name = package.package_name().to_string();
-        let mut crates = Vec::with_capacity(package_states.len());
-        let mut macro_expansion_limits = Vec::new();
-
-        // Split each builder by moving its frozen DefMap into the package and its generated syntax into
-        // the transient phase output. This avoids both cloning the expansion arena and materializing an
-        // intermediate collection that the caller would immediately consume.
-        for state in package_states {
-            if let Some(report) = &state.macro_expansion_limit {
-                macro_expansion_limits.push(MacroExpansionLimitReport {
-                    package_name: package_name.clone(),
-                    crate_name: state.crate_name.clone(),
-                    groups: report.groups.clone(),
-                    omitted_call_count: report.omitted_call_count,
-                });
-            }
-
-            let crate_ref = state.crate_ref;
-            let (def_map, crate_generated_items) = state.def_map_builder.into_parts();
-            generated_items.insert(crate_ref, crate_generated_items);
-
-            // Const arithmetic also needs the compilation target's usize width after parsed package
-            // data is offloaded. Missing target information must not fall back to the host width.
-            let target_pointer_width = state
-                .cfg_options
-                .key_values()
-                .iter()
-                .find(|value| value.key() == "target_pointer_width")
-                .and_then(|value| value.value().parse().ok());
-
-            // Persist both Cargo-provided roots and explicit crate-root aliases. Queries read this as a
-            // prelude rather than pretending any of these names are child modules of the crate root.
-            crates.push(CrateData::new(
-                state.cargo_target,
-                state.target_kind,
-                target_pointer_width,
-                state.crate_name,
-                Some(state.root_module),
-                state.extern_prelude.freeze(),
-                state.prelude,
-                def_map,
-            ));
-        }
-
-        PackageDefMaps::new(
-            package_name,
-            package.edition(),
-            crates,
-            macro_expansion_limits,
-        )
-    }
-}
 
 /// Collects one crate's declarations and build-only macro work before freezing.
 ///
@@ -263,6 +66,61 @@ pub(crate) struct CrateBuilder {
 }
 
 impl CrateBuilder {
+    /// Move settled data into the result and discard build-only queues and textual macro state.
+    /// Generated declarations remain separate because Semantic IR still needs their item syntax.
+    pub(crate) fn finish(self, package_name: &str) -> CrateBuildOutput {
+        let macro_expansion_limit =
+            self.macro_expansion_limit
+                .map(|report| MacroExpansionLimitReport {
+                    package_name: package_name.to_owned(),
+                    crate_name: self.crate_name.clone(),
+                    groups: report.groups,
+                    omitted_call_count: report.omitted_call_count,
+                });
+        // Const arithmetic must retain the compilation target's width after Parse is offloaded.
+        let target_pointer_width = self
+            .cfg_options
+            .key_values()
+            .iter()
+            .find(|value| value.key() == "target_pointer_width")
+            .and_then(|value| value.value().parse().ok());
+        let (def_map, generated_items) = self.def_map_builder.into_parts();
+        let data = CrateData::new(
+            self.cargo_target,
+            self.target_kind,
+            target_pointer_width,
+            self.crate_name,
+            Some(self.root_module),
+            self.extern_prelude.freeze(),
+            self.prelude,
+            def_map,
+        );
+        CrateBuildOutput {
+            crate_ref: self.crate_ref,
+            data,
+            generated_items,
+            macro_expansion_limit,
+        }
+    }
+
+    /// Keep the proc-macro implementation private before exposing the completed crate.
+    pub(crate) fn censor_proc_macro_exports(&mut self) {
+        if self.target_kind != TargetKind::ProcMacro {
+            return;
+        }
+        let root = self.root_module;
+        let mut scope = mem::take(
+            self.def_map_builder
+                .module_scope_mut(root)
+                .expect("proc-macro root scope exists"),
+        );
+        self.censor_proc_macro_scope(root, &mut scope);
+        *self
+            .def_map_builder
+            .module_scope_mut(root)
+            .expect("proc-macro root scope exists") = scope;
+    }
+
     pub(crate) fn push_macro_call(&mut self, call: MacroCallSite, origin: MacroCallOrigin) {
         self.macro_directives.push(MacroDirective {
             call,
@@ -345,9 +203,9 @@ pub(crate) struct ExternPreludeBuilder {
 }
 
 impl ExternPreludeBuilder {
-    pub(crate) fn new(implicit_roots: &HashMap<Name, ModuleRef>) -> Self {
+    pub(crate) fn new(implicit_roots: HashMap<Name, ModuleRef>) -> Self {
         Self {
-            implicit_roots: implicit_roots.clone(),
+            implicit_roots,
             explicit_aliases: HashMap::new(),
         }
     }

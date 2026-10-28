@@ -667,3 +667,49 @@ mod facade {
         "#]],
     );
 }
+
+#[test]
+fn dependency_generated_exports_reach_reexports_macros_and_sibling_targets() {
+    // Package-name order is the opposite of dependency order. The dependency first generates
+    // both its module and an exported macro; users must see those completed exports together.
+    utils::check_project_path_resolution(
+        r#"
+//- /a/src/lib.rs crate:a_app root:a deps:m_bridge
+use m_bridge::from_dependency;
+from_dependency!();
+pub use m_bridge::Final;
+
+//- /a/src/main.rs crate:a_app root:a kind:bin name:a-tool deps:m_bridge
+pub use a_app::{FromMacro, Final};
+fn main() {}
+
+//- /m/src/lib.rs crate:m_bridge root:m deps:z_dep
+pub use z_dep::generated::*;
+pub use z_dep::from_dependency;
+
+//- /z/src/lib.rs crate:z_dep root:z
+macro_rules! make_exports {
+    () => {
+        pub mod generated { pub struct Final; }
+        #[macro_export]
+        macro_rules! from_dependency {
+            () => { pub use $crate::generated::Final as FromMacro; };
+        }
+    };
+}
+make_exports!();
+"#,
+        &[
+            utils::PathResolutionQuery::lib("a_app", "crate", "Final").types(),
+            utils::PathResolutionQuery::lib("a_app", "crate", "FromMacro").types(),
+            utils::PathResolutionQuery::bin("a_app", "crate", "Final").types(),
+            utils::PathResolutionQuery::bin("a_app", "crate", "FromMacro").types(),
+        ],
+        expect![[r#"
+            a_app [lib] crate resolves Final [types] -> struct z_dep[lib]::crate::generated::Final
+            a_app [lib] crate resolves FromMacro [types] -> struct z_dep[lib]::crate::generated::Final
+            a_app [bin] crate resolves Final [types] -> struct z_dep[lib]::crate::generated::Final
+            a_app [bin] crate resolves FromMacro [types] -> struct z_dep[lib]::crate::generated::Final
+        "#]],
+    );
+}

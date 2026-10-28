@@ -1,13 +1,13 @@
 //! Bounds recursive item-macro expansion and records why calls were skipped.
 //!
-//! The expansion pass budget belongs to the whole construction run. When it is exhausted, keep a
+//! Each crate has its own expansion pass budget. When it is exhausted, keep a
 //! bounded report with one ancestry example per macro identity, then finish the remaining queued
 //! calls as skipped so construction can freeze the answers it already has.
 
 use std::collections::HashMap;
 
 use super::{MacroCallOrigin, MacroDirective, MacroDirectiveState};
-use crate::{MacroExpansionLimitGroup, build::crates::CrateBuildStore, profile::metric};
+use crate::{MacroExpansionLimitGroup, build::crates::CrateBuilder, profile::metric};
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the
 // cap high enough for real nested expansions while still bounding broken projects.
@@ -153,22 +153,18 @@ impl PendingMacroExpansionLimitGroup {
 }
 
 /// Captures a bounded report, then marks retryable calls as skipped after the guard fires.
-pub(crate) fn mark_retryable_macros_skipped_by_limit(states: &mut CrateBuildStore) {
+pub(crate) fn mark_retryable_macros_skipped_by_limit(
+    state: &mut CrateBuilder,
+    remaining_groups: &mut usize,
+) {
     let mut skipped = 0;
-    let mut remaining_groups = 64;
 
-    for package_states in states.iter_dirty_mut() {
-        for state in package_states {
-            state.macro_expansion_limit = PendingMacroExpansionLimitReport::collect(
-                &state.macro_directives,
-                &mut remaining_groups,
-            );
-            for directive in &mut state.macro_directives {
-                if directive.is_retryable() {
-                    directive.state = MacroDirectiveState::Complete;
-                    skipped += 1;
-                }
-            }
+    state.macro_expansion_limit =
+        PendingMacroExpansionLimitReport::collect(&state.macro_directives, remaining_groups);
+    for directive in &mut state.macro_directives {
+        if directive.is_retryable() {
+            directive.state = MacroDirectiveState::Complete;
+            skipped += 1;
         }
     }
 

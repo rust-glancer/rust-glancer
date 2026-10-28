@@ -79,7 +79,7 @@ pub(crate) struct MacroExpansionJob {
 }
 
 impl MacroExpansionJob {
-    fn expand(self) -> MacroExpansionOutput {
+    pub(crate) fn expand(self) -> MacroExpansionOutput {
         let started_at = Instant::now();
         let syntax = self.work.expand_syntax();
         let elapsed = started_at.elapsed();

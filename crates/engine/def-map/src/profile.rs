@@ -5,6 +5,7 @@
 //! This keeps profiling details out of import collection and makes column changes update one
 //! small area.
 
+use rg_ir_model::CrateRef;
 use rg_profile::{
     ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
     ProfileReport, ProfileReportSort, declare_metrics,
@@ -55,7 +56,11 @@ pub(crate) struct ImportResolutionMetrics {
 ///
 /// The column and value arrays share `IMPORT_RESOLUTION_RUN_COLUMN_COUNT`. If a column is added or
 /// removed, the compiler requires the value list to be updated as well.
-pub(crate) fn record_import_resolution_run(run_ordinal: usize, metrics: ImportResolutionMetrics) {
+pub(crate) fn record_import_resolution_run(
+    krate: CrateRef,
+    run_ordinal: usize,
+    metrics: ImportResolutionMetrics,
+) {
     let counts: [usize; IMPORT_RESOLUTION_RUN_COLUMN_COUNT] = [
         metrics.evaluated_packages,
         metrics.evaluated_crates,
@@ -75,7 +80,13 @@ pub(crate) fn record_import_resolution_run(run_ordinal: usize, metrics: ImportRe
         })
         .collect();
 
-    metric::IMPORT_RESOLUTION_RUN_CHECKPOINTS.record(format!("run {run_ordinal}"), values);
+    metric::IMPORT_RESOLUTION_RUN_CHECKPOINTS.record(
+        format!(
+            "crate {}:{} run {run_ordinal}",
+            krate.package.0, krate.crate_id.0
+        ),
+        values,
+    );
 }
 
 declare_metrics! {
@@ -91,7 +102,7 @@ declare_metrics! {
             counter IMPORT_GLOB_LIMIT_HITS = "import_resolution.glob_limit_hits";
             /// Number of macro-expansion passes performed during scope construction.
             counter EXPANSION_PASSES = "expansion_passes";
-            /// Maximum number of macro-expansion passes allowed for one construction run.
+            /// Maximum number of macro-expansion passes allowed for one crate.
             gauge EXPANSION_PASS_LIMIT = "expansion_pass_limit" [Count];
             /// Whether scope construction stopped because the macro-expansion pass limit was reached.
             gauge EXPANSION_PASS_LIMIT_REACHED = "expansion_pass_limit_reached" [None];

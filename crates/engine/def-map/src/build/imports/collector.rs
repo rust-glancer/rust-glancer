@@ -40,7 +40,7 @@ pub struct ModuleImportInput<'a> {
 ///
 /// The caller owns module metadata, item data, and access to frozen dependencies. The collector
 /// temporarily owns the mutable scope buffers and overlays them on these reads. Keeping that
-/// split lets the same algorithm serve a set of dirty crates or one body-local DefMap.
+/// split lets the same algorithm serve an active crate or one body-local DefMap.
 pub trait ImportCollectionEnv: CrateResolutionEnv<Error = PackageStoreError> {
     /// All modules with imports in this build, including those registered by an earlier call.
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>>;
@@ -193,8 +193,8 @@ impl ImportCollector {
 
         // 2. Reconsider named imports after collection has had a chance to add declarations.
         // For example, `use bridge::Item` may first see a glob import in `bridge`; a macro can
-        // then declare `Item` there and shadow that glob. Dirty dependency crates also advance
-        // together, so crossing a crate boundary does not mean its exports are finished.
+        // then declare `Item` there and shadow that glob. Crate construction completes dependencies
+        // first, but names inside the active crate can still change between macro batches.
         // Keep the old scope answers and winner IDs: the same import can refresh its own target.
         let mut pending = Vec::new();
         for (id, directive) in self.directives.iter_mut().enumerate() {

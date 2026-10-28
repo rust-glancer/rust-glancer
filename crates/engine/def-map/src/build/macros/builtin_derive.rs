@@ -11,26 +11,23 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, Span};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
-    GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeDb, ItemTreeRef,
-    TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment,
-    TypeRef, VisibilityLevel, WherePredicate,
+    GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef,
+    Package as ItemTreePackage, TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath,
+    TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_std::UniqueVec;
-use rg_text::{Name, NameInterner, PackageNameInterners};
+use rg_text::{Name, NameInterner};
 
 use crate::{
     CrateResolutionEnv, GeneratedItemRef, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
-    MacroDefinitionEnv, NameResolver,
-    build::crates::{CrateBuildStore, CrateBuilder},
-    source::GeneratedSourceData,
+    MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder, source::GeneratedSourceData,
 };
 
 /// One derived impl waiting to be attached to the module that owns its struct or enum.
 ///
-/// Resolving derives borrows the collected crate states. Keep the resulting impls here until
-/// collection finishes, then add them to those states with `apply`.
+/// Resolving derives borrows the active builder. Keep the resulting impls here until
+/// collection finishes, then add them to that builder with `apply`.
 pub(crate) struct BuiltinDeriveExpansion {
-    crate_ref: CrateRef,
     module: ModuleId,
     source: GeneratedSourceData,
 }
@@ -39,86 +36,73 @@ impl BuiltinDeriveExpansion {
     /// Resolve enabled derives using the scopes left by import resolution and macro expansion.
     pub(crate) fn collect<E>(
         env: &E,
-        states: &CrateBuildStore,
-        item_tree: &ItemTreeDb,
-        interners: &mut PackageNameInterners,
+        state: &CrateBuilder,
+        package: &ItemTreePackage,
+        interner: &mut NameInterner,
     ) -> anyhow::Result<Vec<Self>>
     where
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
     {
         let mut expansions = Vec::new();
-        for package_states in states.iter_dirty() {
-            for state in package_states {
-                let cfg = state.cfg_evaluator();
-                let map = &state.def_map_builder;
-                let interner = interners
-                    .package_mut(state.crate_ref.package.0)
-                    .context("fetch name interner for builtin derives")?;
-                for declaration in map.local_defs() {
-                    if !matches!(declaration.kind, LocalDefKind::Struct | LocalDefKind::Enum) {
-                        // TODO: Support union derives and declarations collected inside bodies.
-                        continue;
-                    }
-                    let Some((item, origin_source)) =
-                        Self::source_item(state, item_tree, declaration.source)
-                            .context("read builtin derive input")?
-                    else {
-                        continue;
-                    };
-                    let calls = match &item.kind {
-                        ItemKind::Struct(item) => &item.derives.calls,
-                        ItemKind::Enum(item) => &item.derives.calls,
-                        _ => continue,
-                    };
-                    let module = ModuleRef::krate(state.crate_ref, declaration.module);
-                    for call in calls {
-                        if call
-                            .predicate
-                            .as_ref()
-                            .is_some_and(|predicate| !cfg.is_predicate_enabled(predicate))
-                        {
-                            continue;
-                        }
-
-                        let Some((kind, defining_crate)) =
-                            Self::resolve_builtin(env, module, &call.path)
-                                .context("resolve builtin derive")?
-                        else {
-                            continue;
-                        };
-                        let Some(root) = Self::trait_root(state, defining_crate) else {
-                            continue;
-                        };
-                        // Derive paths in generated syntax still use offsets into that syntax.
-                        // The item span already points to the source macro call, so use it instead.
-                        let span = match declaration.source.kind {
-                            ItemSourceKind::Generated(_) => item.span,
-                            _ => call.span,
-                        };
-                        let Some(impl_item) =
-                            Self::lower_impl(kind, root, item, span, cfg, interner)
-                        else {
-                            continue;
-                        };
-                        expansions.push(Self::from_impl(
-                            module,
-                            item.file_id,
-                            origin_source,
-                            span,
-                            impl_item,
-                        ));
-                    }
+        let cfg = state.cfg_evaluator();
+        let map = &state.def_map_builder;
+        for declaration in map.local_defs() {
+            if !matches!(declaration.kind, LocalDefKind::Struct | LocalDefKind::Enum) {
+                // TODO: Support union derives and declarations collected inside bodies.
+                continue;
+            }
+            let Some((item, origin_source)) = Self::source_item(state, package, declaration.source)
+                .context("read builtin derive input")?
+            else {
+                continue;
+            };
+            let calls = match &item.kind {
+                ItemKind::Struct(item) => &item.derives.calls,
+                ItemKind::Enum(item) => &item.derives.calls,
+                _ => continue,
+            };
+            let module = ModuleRef::krate(state.crate_ref, declaration.module);
+            for call in calls {
+                if call
+                    .predicate
+                    .as_ref()
+                    .is_some_and(|predicate| !cfg.is_predicate_enabled(predicate))
+                {
+                    continue;
                 }
+
+                let Some((kind, defining_crate)) = Self::resolve_builtin(env, module, &call.path)
+                    .context("resolve builtin derive")?
+                else {
+                    continue;
+                };
+                let Some(root) = Self::trait_root(state, defining_crate) else {
+                    continue;
+                };
+                // Derive paths in generated syntax still use offsets into that syntax.
+                // The item span already points to the source macro call, so use it instead.
+                let span = match declaration.source.kind {
+                    ItemSourceKind::Generated(_) => item.span,
+                    _ => call.span,
+                };
+                let Some(impl_item) = Self::lower_impl(kind, root, item, span, cfg, interner)
+                else {
+                    continue;
+                };
+                expansions.push(Self::from_impl(
+                    module,
+                    item.file_id,
+                    origin_source,
+                    span,
+                    impl_item,
+                ));
             }
         }
         Ok(expansions)
     }
 
     /// Add the impl to generated-item storage and the owning module's impl list.
-    pub(crate) fn apply(self, states: &mut CrateBuildStore) {
-        let state = states
-            .crate_builder_mut(self.crate_ref)
-            .expect("derive belongs to a collected crate");
+    pub(crate) fn apply(self, state: &mut CrateBuilder) {
         let file_id = self.source.origin_file_id;
         let span = self.source.origin_span;
         let item = self.source.top_level[0];
@@ -141,16 +125,11 @@ impl BuiltinDeriveExpansion {
     /// item-tree source alongside the item so the generated impl retains its source provenance.
     fn source_item<'a>(
         state: &'a CrateBuilder,
-        item_tree: &'a ItemTreeDb,
+        package: &'a ItemTreePackage,
         source: ItemSource,
     ) -> anyhow::Result<Option<(&'a ItemNode, ItemTreeRef)>> {
         let (item, origin_source) = match source.kind {
-            ItemSourceKind::ItemTree(source) => (
-                item_tree
-                    .package(state.crate_ref.package.0)
-                    .and_then(|package| package.item(source)),
-                source,
-            ),
+            ItemSourceKind::ItemTree(source) => (package.item(source), source),
             ItemSourceKind::Generated(source) => {
                 let source_data = state
                     .def_map_builder
@@ -237,7 +216,6 @@ impl BuiltinDeriveExpansion {
             file_id,
         ));
         Self {
-            crate_ref: module.origin.origin_crate(),
             module: module.module,
             source: GeneratedSourceData {
                 origin_file_id: file_id,

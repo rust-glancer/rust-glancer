@@ -1,10 +1,11 @@
 use expect_test::expect;
 use rg_cfg_eval::CfgOptions;
+use rg_ir_model::ModuleId;
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use super::utils;
-use crate::{DefMapLoader, DefMapSource, testonly::DefMapFixture};
+use crate::{DefMapLoader, DefMapSource, Namespace, testonly::DefMapFixture};
 
 #[test]
 fn retains_compilation_target_width_without_loading_offloaded_scopes() {
@@ -237,5 +238,62 @@ fn main() {}
             mixed_targets [bin] crate resolves proc_macro::TokenStream -> <none> (unresolved at segment #0)
             mixed_targets [bin] crate resolves TokenStream -> <none> (unresolved at segment #0)
         "#]],
+    );
+}
+
+#[test]
+fn development_package_cycle_has_an_acyclic_target_order() {
+    let fixture = DefMapFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["a", "b"]
+resolver = "3"
+
+//- /a/Cargo.toml
+[package]
+name = "a"
+version = "0.1.0"
+edition = "2024"
+
+[dev-dependencies]
+b = { path = "../b" }
+
+//- /a/src/lib.rs
+macro_rules! make_item { () => { pub struct Generated; }; }
+make_item!();
+
+//- /a/tests/smoke.rs
+use a::Generated;
+use b::FromA;
+
+//- /b/Cargo.toml
+[package]
+name = "b"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+a = { path = "../a" }
+
+//- /b/src/lib.rs
+pub use a::Generated as FromA;
+"#,
+    );
+    let krate = fixture.crate_ref("a", TargetKind::Test);
+    let map = fixture
+        .resident_def_map(krate)
+        .expect("test target should exist");
+    let root = map.module(ModuleId(0)).expect("test root should exist");
+    let bindings = ["Generated", "FromA"].map(|name| {
+        root.scope
+            .entry(name)
+            .and_then(|entry| entry.binding(Namespace::Types))
+            .expect("test target should resolve both routes to the generated dependency item")
+            .def
+    });
+    assert_eq!(
+        bindings[0], bindings[1],
+        "a[test] -> b[lib] -> a[lib] should retain both usable imports"
     );
 }

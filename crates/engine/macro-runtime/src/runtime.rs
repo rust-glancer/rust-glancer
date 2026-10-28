@@ -120,9 +120,14 @@ impl MacroExpansionRuntime {
             })
             .collect::<Vec<_>>();
 
-        let outputs = self
-            .executor()?
-            .expand_jobs(jobs)
+        // Crate-local collectors often expose just one call at a time, especially along a chain
+        // of generated macros. A single job has no parallel work; avoid a worker-pool round trip.
+        let outputs = if jobs.len() == 1 {
+            vec![jobs.into_iter().next().expect("one expansion job").expand()]
+        } else {
+            self.executor()?.expand_jobs(jobs)
+        };
+        let outputs = outputs
             .into_iter()
             .map(|output| self.record_output(output))
             .collect::<Vec<_>>();

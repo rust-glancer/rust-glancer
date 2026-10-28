@@ -38,7 +38,7 @@ impl PackageBatchSchedule {
             let mut batch = Vec::with_capacity(batch_size.get().min(remaining_package_count));
 
             // A dependent may join the same batch after its dependency has been added because
-            // DefMap resolves all packages in the batch together. Check dependencies again while
+            // DefMap orders individual crates within the batch. Check dependencies again while
             // filling so a narrow dependency chain does not create mostly empty batches.
             while batch.len() < batch_size.get() {
                 let ready = source_packages
@@ -64,9 +64,10 @@ impl PackageBatchSchedule {
                 continue;
             }
 
-            // Building the complete unresolved remainder together keeps the cycle's crate roots
-            // and any dependents waiting on them visible, matching the ordinary all-package DefMap
-            // build. This final batch may therefore be larger than the configured size.
+            // A package cycle can have an acyclic crate order, such as a test using a helper that
+            // depends on the package's library. Keep these packages in one batch so DefMap can
+            // order their individual targets before any complete package artifact is published.
+            // This final batch may therefore be larger than the configured size.
             let cycle_blocked = source_packages
                 .iter()
                 .filter(|package| pending.get(package.0).copied().unwrap_or(false))
