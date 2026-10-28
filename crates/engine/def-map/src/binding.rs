@@ -322,6 +322,8 @@ impl NameBinding {
         // In `macro_rules! m { ... } pub(crate) use m;`, the import supplies attributes while the
         // declaration flags above preserve textual-order and re-export rules. Between imports,
         // prefer an ordinary API source; stable ties keep the first source.
+        // TODO: Mixed public/private routes may need different attribute sources for callers in
+        // different visibility regions; this keeps one source for every caller.
         if incoming.attribute_import().is_some()
             && (self.attribute_import().is_none()
                 || incoming.preferred_import && !self.preferred_import)

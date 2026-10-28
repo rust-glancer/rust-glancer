@@ -246,6 +246,7 @@ pub(crate) struct CrateBuilder {
     pub(crate) prelude: Option<ModuleRef>,
     pub(crate) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     pub(crate) textual_macro_scopes: TextualMacroScopes,
+    /// Legacy macro imports sorted by declaration order, including generated declarations.
     pub(crate) macro_use_imports: Vec<MacroUseImport>,
     pub(crate) macro_directives: Vec<MacroDirective>,
     /// Requests from the latest expansion batch, cleared after source loading.

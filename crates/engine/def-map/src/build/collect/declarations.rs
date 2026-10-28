@@ -308,7 +308,7 @@ impl<'a> DeclarationCollector<'a> {
         match &item.kind {
             ItemKind::ExternBlock(block) => self.collect_extern_block(module, source, block),
             ItemKind::ExternCrate(extern_crate) => {
-                self.collect_extern_crate(module, item, extern_crate)
+                self.collect_extern_crate(module, item, extern_crate, order)
             }
             ItemKind::Module(child) => {
                 self.collect_module(module, item, source, child, order, context)?
@@ -899,6 +899,7 @@ impl<'a> DeclarationCollector<'a> {
         module_id: ModuleId,
         item: &ItemNode,
         extern_crate: &ExternCrateItem,
+        order: ItemOrder,
     ) {
         let Some(extern_name) = extern_crate.name.clone() else {
             return;
@@ -922,11 +923,21 @@ impl<'a> DeclarationCollector<'a> {
         if let Some(macro_use) = &extern_crate.macro_use
             && let Some(selector) = macro_use.active_selector(&self.state.cfg_evaluator())
         {
-            self.state.macro_use_imports.push(MacroUseImport {
-                module: module_id,
-                source_module: module_ref,
-                selector,
-            });
+            // Expansion may collect an earlier declaration after later written imports. Keep
+            // source order here so fallback lookup can prefer the last declared macro import.
+            let index = self
+                .state
+                .macro_use_imports
+                .partition_point(|import| import.order <= order);
+            self.state.macro_use_imports.insert(
+                index,
+                MacroUseImport {
+                    module: module_id,
+                    source_module: module_ref,
+                    selector,
+                    order,
+                },
+            );
         }
 
         let Some(binding_name) =

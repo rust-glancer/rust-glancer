@@ -90,6 +90,61 @@ pub use child::ChildHiddenViaMacroUse;
 }
 
 #[test]
+fn macro_use_extern_crate_conflicts_follow_declaration_order() {
+    for (case, imports, expected, other) in [
+        (
+            "the later written import wins",
+            "#[macro_use] extern crate first; #[macro_use] extern crate second;",
+            "FromSecond",
+            "FromFirst",
+        ),
+        (
+            "reversing written declarations reverses the winner",
+            "#[macro_use] extern crate second; #[macro_use] extern crate first;",
+            "FromFirst",
+            "FromSecond",
+        ),
+        (
+            "an earlier generated import does not shadow a later written import",
+            "import_first!(); #[macro_use] extern crate second;",
+            "FromSecond",
+            "FromFirst",
+        ),
+        (
+            "a later generated import shadows an earlier written import",
+            "#[macro_use] extern crate first; import_second!();",
+            "FromSecond",
+            "FromFirst",
+        ),
+    ] {
+        let fixture = format!(
+            r#"
+//- /first/src/lib.rs crate:first root:first
+#[macro_export]
+macro_rules! shared {{ () => {{ pub struct FromFirst; }}; }}
+
+//- /second/src/lib.rs crate:second root:second
+#[macro_export]
+macro_rules! shared {{ () => {{ pub struct FromSecond; }}; }}
+
+//- /app/src/lib.rs crate:app root:app deps:first,second
+macro_rules! import_first {{ () => {{ #[macro_use] extern crate first; }}; }}
+macro_rules! import_second {{ () => {{ #[macro_use] extern crate second; }}; }}
+{imports}
+
+// Generate the consumer too, so it resolves after the generated extern crates are collected.
+macro_rules! invoke_selected {{ () => {{ shared!(); }}; }}
+invoke_selected!();
+"#,
+        );
+        let project = utils::DefMapFixtureDb::build(&fixture);
+        let target = project.lib("app");
+        target.entry(expected).assert_type_exists(case);
+        target.entry(other).assert_missing(case);
+    }
+}
+
+#[test]
 fn local_macro_import_shadows_macro_use_extern_crate_fallback() {
     let project = utils::DefMapFixtureDb::build(
         r#"

@@ -118,6 +118,7 @@ pub(super) struct MacroUseImport {
     pub(super) module: ModuleId,
     pub(super) source_module: ModuleRef,
     pub(super) selector: MacroUseSelector,
+    pub(super) order: ItemOrder,
 }
 
 /// One queued item-shaped macro call plus the call-site state needed after ItemTree lowering.

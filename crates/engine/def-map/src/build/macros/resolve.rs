@@ -158,7 +158,9 @@ where
         &self,
         name: &Name,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-        for macro_use in &self.state.macro_use_imports {
+        // `#[macro_use] extern crate` conflicts prefer the last declaration. Collection keeps
+        // source order even when a macro emits an import after written items were collected.
+        for macro_use in self.state.macro_use_imports.iter().rev() {
             if !macro_use.selector.allows(name) {
                 continue;
             }
