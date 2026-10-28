@@ -1,45 +1,29 @@
-//! Runs import resolution while DefMap scopes are still mutable.
+//! Adds imported names to the module scopes being built.
 //!
-//! Imports can depend on names introduced by other imports, so one pass is not enough. For example:
+//! A `use` path can depend on another import, and a resolved glob can gain names when its source
+//! grows. The collector owns those dependencies while `ScopeResolver` handles path lookup and
+//! visibility. Crate construction and body-local construction use the same collector.
 //!
-//! ```text
-//! mod source { pub struct User; }
-//! mod bridge { pub use crate::source::*; }
-//! pub use bridge::*;
-//! ```
-//!
-//! `bridge` gains `User` in one wave. The crate root can import that new binding only in a later
-//! wave. `ScopeResolver` owns the Rust lookup rules; this module owns the repeated work around it.
-//! It groups imports by their destination module, remembers which mutable module scopes each group
-//! read, and reruns a group only after one of those scopes changed.
-//!
-//! Each rebuilt scope is paired with its unresolved-import list. Once no group needs another run,
-//! both results can be frozen without one more traversal over every import in the project.
+//! Scopes keep the answers already found. Named imports wait for missing namespace answers;
+//! globs remember their source and forward later changes. During crate construction, the scope
+//! buffers return to their builders for macro expansion, then come back here with new declarations.
+//! Only the selected scope contents and unresolved-import reports survive freezing.
 
-mod worklist;
+mod resolver;
 
 use rg_ir_model::ModuleRef;
 
-pub(super) use self::worklist::{ImportResolutionExecutor, ImportWorklist};
+pub use self::resolver::{
+    ImportResolutionEnv, ImportResolutionOutput, ImportResolver, ModuleImportInput,
+    ResolvedModuleImports,
+};
 
-/// Import counters collected by the workers in one wave.
-///
-/// Every module job can update these counters without shared state; the coordinator merges them
-/// after all jobs finish. Package, crate, and module counts come from the worklist itself and live
-/// in `ModuleSetShape` instead.
+/// Work performed while collecting imports and forwarding glob bindings.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct ImportApplicationStats {
     pub(super) imports_evaluated: usize,
     pub(super) glob_imports_evaluated: usize,
     pub(super) glob_bindings_emitted: usize,
-}
-
-impl ImportApplicationStats {
-    pub(super) fn merge(&mut self, other: Self) {
-        self.imports_evaluated += other.imports_evaluated;
-        self.glob_imports_evaluated += other.glob_imports_evaluated;
-        self.glob_bindings_emitted += other.glob_bindings_emitted;
-    }
 }
 
 /// Number of packages, crates, and modules represented by a sorted module list.
@@ -53,7 +37,7 @@ impl ImportApplicationStats {
 /// package 2 / crate 0 / module 0
 /// ```
 ///
-/// has two packages, three crates, and four modules. Worklist modules already use this order, so
+/// has two packages, three crates, and four modules. The collector reports modules in this order, so
 /// adjacent package and crate changes give the counts without allocating temporary sets.
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct ModuleSetShape {
@@ -75,10 +59,7 @@ impl ModuleSetShape {
         let mut previous_crate = None;
 
         for module in modules {
-            let crate_ref = module
-                .origin
-                .as_crate_ref()
-                .expect("crate import should belong to a crate module");
+            let crate_ref = module.origin.origin_crate();
             if previous_package != Some(crate_ref.package) {
                 shape.packages += 1;
                 previous_package = Some(crate_ref.package);

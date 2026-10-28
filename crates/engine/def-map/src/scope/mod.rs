@@ -8,7 +8,9 @@
 
 mod namespace_bindings;
 
-use rg_ir_model::{DefId, ImportRef, ModuleRef};
+use std::cmp::Ordering;
+
+use rg_ir_model::{DefId, ImportId, ImportRef, ModuleRef};
 use rg_item_tree::FieldList;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -18,6 +20,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use self::namespace_bindings::{
     FrozenScopeBindings, MutableNamespaceBindingArena, ScopeEntryBuilder,
 };
+use crate::ImportData;
 
 /// The three independent meaning slots represented by a DefMap scope.
 ///
@@ -85,6 +88,20 @@ impl NamespaceSet {
         } else {
             Self::TYPES
         }
+    }
+}
+
+impl FromIterator<Namespace> for NamespaceSet {
+    fn from_iter<T: IntoIterator<Item = Namespace>>(namespaces: T) -> Self {
+        let mut set = Self::EMPTY;
+        for namespace in namespaces {
+            set.0 |= match namespace {
+                Namespace::Types => Self::TYPES.0,
+                Namespace::Values => Self::VALUES.0,
+                Namespace::Macros => Self::MACROS.0,
+            };
+        }
+        set
     }
 }
 
@@ -248,7 +265,7 @@ impl ScopeBinding {
         def: DefId,
         visibility: Visibility,
         provenance: ScopeBindingProvenance,
-        import: &crate::ImportData,
+        import: &ImportData,
     ) -> Self {
         Self {
             has_reexport: import.is_reexport,
@@ -261,6 +278,10 @@ impl ScopeBinding {
     /// Direct-only macro bindings are subject to textual source-order filtering.
     pub fn is_direct_only(self) -> bool {
         self.direct_only
+    }
+
+    pub(crate) fn is_explicit(self) -> bool {
+        self.priority == ScopeBindingPriority::Explicit
     }
 
     pub fn has_reexport(self) -> bool {
@@ -293,10 +314,10 @@ impl ScopeBinding {
         broadest_visibility: impl FnOnce(Visibility, Visibility) -> Result<Visibility, E>,
     ) -> Result<Self, E> {
         match incoming.priority.cmp(&self.priority) {
-            std::cmp::Ordering::Greater => return Ok(incoming),
-            std::cmp::Ordering::Less => return Ok(self),
-            std::cmp::Ordering::Equal if self.def != incoming.def => return Ok(self),
-            std::cmp::Ordering::Equal => {}
+            Ordering::Greater => return Ok(incoming),
+            Ordering::Less => return Ok(self),
+            Ordering::Equal if self.def != incoming.def => return Ok(self),
+            Ordering::Equal => {}
         }
 
         if self.visibility != incoming.visibility {
@@ -322,7 +343,7 @@ impl ScopeBinding {
     }
 
     /// Keep a binding usable inside its crate while restricting external proc-macro exports.
-    fn restrict_public_visibility_to(&mut self, visible_from: ModuleRef) {
+    pub(crate) fn restrict_public_visibility_to(&mut self, visible_from: ModuleRef) {
         if self.visibility == Visibility::Public {
             self.visibility = Visibility::Module(visible_from);
         }
@@ -373,11 +394,13 @@ pub(crate) struct ScopeNameEntry {
 
 /// Mutable module scope used while collecting declarations and applying imports.
 ///
-/// Each fixed-point pass needs fast lookup and insertion, so names live in a hash map. One
+/// Import propagation needs fast lookup and insertion, so names live in a hash map. One
 /// `ScopeEntryBuilder` keeps the first occupied namespace inline, while the scope-owned arena holds
-/// second and third slots. Arena ids are only storage handles: equality follows the selected
-/// namespace contents because `ModuleScopeBuilder` equality decides when import resolution has
-/// converged.
+/// second and third slots. Winning import IDs are construction-only data in those slots; they are
+/// independent of the import selected for presentation attributes and disappear when frozen.
+/// The ID answers "which `use` may refresh this target?"; presentation attributes answer "which
+/// `use` should supply documentation and stability flags?". Those can be different routes to the
+/// same definition.
 #[derive(Debug, Clone, Default)]
 pub struct ModuleScopeBuilder {
     names: FxHashMap<Name, ScopeEntryBuilder>,
@@ -385,34 +408,39 @@ pub struct ModuleScopeBuilder {
     unnamed_trait_bindings: Vec<ScopeBinding>,
 }
 
-// Do not derive this equality. Arena ids depend on name and namespace insertion order, but the
-// import fixed point must stop when two scopes expose the same semantic bindings.
-impl PartialEq for ModuleScopeBuilder {
-    fn eq(&self, other: &Self) -> bool {
-        self.names.len() == other.names.len()
-            && self.unnamed_trait_bindings == other.unnamed_trait_bindings
-            && self.names.iter().all(|(name, entry)| {
-                other.names.get(name).is_some_and(|other_entry| {
-                    entry.has_same_bindings(
-                        &self.additional_namespace_bindings,
-                        other_entry,
-                        &other.additional_namespace_bindings,
-                    )
-                })
-            })
-    }
-}
-
-impl Eq for ModuleScopeBuilder {}
-
 impl ModuleScopeBuilder {
     /// Store the binding selected by declaration collection or import resolution.
     pub fn set_binding(&mut self, name: &Name, namespace: Namespace, binding: ScopeBinding) {
         self.names.entry(name.clone()).or_default().set_binding(
             namespace,
             binding,
+            None,
             &mut self.additional_namespace_bindings,
         )
+    }
+
+    /// Import allowed to refresh this slot's target, independent of its presentation attributes.
+    pub(crate) fn binding_import(&self, name: &str, namespace: Namespace) -> Option<ImportId> {
+        self.names
+            .get(name)?
+            .binding_import(namespace, &self.additional_namespace_bindings)
+    }
+
+    /// Store the selected answer together with the import route that won the slot.
+    /// A slot selected from a direct declaration has no winning import ID.
+    pub(crate) fn set_import_binding(
+        &mut self,
+        name: &Name,
+        namespace: Namespace,
+        binding: ScopeBinding,
+        import: Option<ImportId>,
+    ) {
+        self.names.entry(name.clone()).or_default().set_binding(
+            namespace,
+            binding,
+            import,
+            &mut self.additional_namespace_bindings,
+        );
     }
 
     pub fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
@@ -552,6 +580,8 @@ impl<'a> ScopeEntryRef<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::convert::Infallible;
+
     use rg_ir_model::{
         CrateId, CrateRef, DefId, DefMapRef, ImportId, ImportRef, ModuleId, ModuleRef, PackageSlot,
     };
@@ -565,7 +595,7 @@ mod tests {
         let glob = glob_binding(1);
         for (first, second) in [(explicit, glob), (glob, explicit)] {
             let selected = first
-                .select(second, |left, _| Ok::<_, std::convert::Infallible>(left))
+                .select(second, |left, _| Ok::<_, Infallible>(left))
                 .expect("test visibility comparison is infallible");
             assert_eq!(selected, explicit);
         }
@@ -575,9 +605,7 @@ mod tests {
     fn equal_priority_conflicting_definitions_keep_the_first() {
         let first = direct_binding(0);
         let selected = first
-            .select(direct_binding(1), |left, _| {
-                Ok::<_, std::convert::Infallible>(left)
-            })
+            .select(direct_binding(1), |left, _| Ok::<_, Infallible>(left))
             .expect("test visibility comparison is infallible");
         assert_eq!(selected, first);
     }
@@ -589,9 +617,7 @@ mod tests {
         private.visibility = Visibility::Module(owner(0));
         for (first, second) in [(private, public), (public, private)] {
             let selected = first
-                .select(second, |_, _| {
-                    Ok::<_, std::convert::Infallible>(Visibility::Public)
-                })
+                .select(second, |_, _| Ok::<_, Infallible>(Visibility::Public))
                 .expect("test visibility comparison is infallible");
             assert_eq!(selected.visibility, Visibility::Public);
             assert_eq!(selected.def, public.def);
@@ -670,7 +696,7 @@ mod tests {
     }
 
     #[test]
-    fn scope_equality_ignores_name_and_namespace_insertion_order() {
+    fn frozen_scope_equality_ignores_name_and_namespace_insertion_order() {
         let alpha = Name::new("Alpha");
         let beta = Name::new("Beta");
 
@@ -687,7 +713,6 @@ mod tests {
         right.set_binding(&alpha, Namespace::Values, direct_binding(1));
         right.set_binding(&alpha, Namespace::Types, direct_binding(0));
 
-        assert_eq!(left, right);
         assert_eq!(left.freeze(), right.freeze());
     }
 

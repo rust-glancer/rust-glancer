@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::Infallible, mem};
 
 use rg_arena::Arena;
 use rg_ir_model::{
@@ -6,7 +6,7 @@ use rg_ir_model::{
     LocalImplId, LocalImplRef, ModuleId, ModuleRef, Span,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, UserFacingAttrs, VisibilityLevel};
-use rg_std::{MemorySize, Shrink};
+use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_text::{Name, identifier_text};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -36,28 +36,15 @@ struct DefMapData {
 
 /// One module while declarations and imports are still being collected.
 ///
-/// `direct_scope` contains bindings collected without resolving `use` items: local declarations,
-/// child modules, `extern crate` bindings, and macro exports. Declarations produced by macros
-/// count as direct bindings too.
+/// Declarations, child modules, extern crates and imported names enter the same retained scope.
+/// For `struct Local; use crate::other::Remote as Alias;`, it first contains `Local`, then gains
+/// `Alias` when its import resolves. Macro-generated declarations use that same scope too. Here
+/// "direct" describes how a binding arrived; it does not mean there is a separate declaration-only
+/// scope to replay imports from.
 ///
-/// `resolved_scope` is what lookup reads: direct bindings plus the names that this module's `use`
-/// items resolved to. For example:
-///
-/// ```text
-/// struct Local;
-/// use crate::other::Remote as Alias;
-///
-/// // direct_scope: Local
-/// // resolved_scope once the import resolves: Local, Alias
-/// ```
-///
-/// New declarations enter both scopes immediately. Each import wave rebuilds from `direct_scope`,
-/// then publishes `resolved_scope` together with `unresolved_imports`. Starting from the old
-/// resolved scope could keep obsolete bindings: `use bridge::Item` may resolve to a different item
-/// after a macro adds `Item` to `bridge`.
-///
-/// Freezing combines these declarations, settled bindings, and the matching import report into
-/// `ModuleData`. There is no frozen scope while this module is being built.
+/// Import collection takes the buffer and returns it before macro lookup resumes. Winning import
+/// routes live only in mutable namespace slots; freezing keeps the selected bindings and
+/// unresolved-import report in `ModuleData`, without the collector's scheduling state.
 #[derive(Debug)]
 pub struct ModuleBuilder {
     pub name: Option<Name>,
@@ -71,8 +58,7 @@ pub struct ModuleBuilder {
     pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
     pub origin: ModuleOrigin,
-    direct_scope: ModuleScopeBuilder,
-    resolved_scope: ModuleScopeBuilder,
+    scope: ModuleScopeBuilder,
     unresolved_imports: Vec<ImportId>,
 }
 
@@ -90,8 +76,7 @@ impl ModuleBuilder {
             impls: Vec::new(),
             imports: Vec::new(),
             origin,
-            direct_scope: ModuleScopeBuilder::default(),
-            resolved_scope: ModuleScopeBuilder::default(),
+            scope: ModuleScopeBuilder::default(),
             unresolved_imports: Vec::new(),
         }
     }
@@ -117,7 +102,7 @@ impl ModuleBuilder {
             impls: self.impls,
             imports: self.imports,
             unresolved_imports: self.unresolved_imports,
-            scope: self.resolved_scope.freeze(),
+            scope: self.scope.freeze(),
             origin: self.origin,
         }
     }
@@ -125,8 +110,8 @@ impl ModuleBuilder {
 
 /// Collects declarations and import results before producing a frozen DefMap.
 ///
-/// Collectors add modules, items, and direct bindings here. Import resolution reads those
-/// declarations and replaces each module's resolved scope after a complete wave.
+/// Collectors add modules, items, and direct bindings here. Import resolution retains those
+/// bindings and adds imported answers to the same scope.
 ///
 /// Crate builds also retain generated syntax for Semantic IR. Freezing moves that syntax out
 /// separately, so the queryable DefMap does not keep the expansion arena alive.
@@ -175,8 +160,11 @@ impl DefMapBuilder {
         self.modules.alloc(module)
     }
 
-    /// Direct declarations must survive later import replays and be visible to newly queued macros.
-    /// Keep those two insertions here so collectors cannot update only one of the scopes.
+    /// Collect a declaration into the scope used by both import and macro lookup.
+    ///
+    /// Expansion can add a declaration after imports have already populated the scope. Select it
+    /// against the existing answer too: a declaration shadows a glob, while equal-priority
+    /// conflicts keep the earlier answer.
     pub fn insert_direct_binding(
         &mut self,
         module: ModuleId,
@@ -184,66 +172,59 @@ impl DefMapBuilder {
         namespace: Namespace,
         binding: ScopeBinding,
     ) {
-        let select = |existing: Option<&ScopeBinding>| {
-            existing.map_or(binding, |existing| {
+        let binding = self
+            .module_scope(module)
+            .and_then(|scope| scope.binding(name, namespace))
+            .map_or(binding, |existing| {
                 existing
                     .select(binding, |left, right| {
-                        Ok::<_, std::convert::Infallible>(self.broadest_visibility(left, right))
+                        Ok::<_, Infallible>(self.broadest_visibility(left, right))
                     })
                     .expect("local visibility comparison is infallible")
-            })
-        };
-        let direct = select(
-            self.module_direct_scope(module)
-                .and_then(|scope| scope.binding(name, namespace)),
-        );
-        let resolved = select(
-            self.module_scope(module)
-                .and_then(|scope| scope.binding(name, namespace)),
-        );
-        let module = self
-            .modules
-            .get_mut(module)
-            .expect("binding module should exist");
-        module.direct_scope.set_binding(name, namespace, direct);
-        module.resolved_scope.set_binding(name, namespace, resolved);
-    }
-
-    pub fn module_direct_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
-        self.modules.get(module).map(|module| &module.direct_scope)
-    }
-
-    /// Read the last import result together with any direct declarations added since that wave.
-    pub fn module_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
+            });
         self.modules
-            .get(module)
-            .map(|module| &module.resolved_scope)
+            .get_mut(module)
+            .expect("binding module should exist")
+            .scope
+            .set_binding(name, namespace, binding);
+    }
+
+    /// Lend the scope buffer to import resolution; return it before macro lookup or freezing.
+    ///
+    /// The module keeps its metadata and an empty scope placeholder. Import lookup must use the
+    /// resolver's overlay until `apply_module_imports` puts the updated buffer back.
+    pub fn take_module_scope(&mut self, module: ModuleId) -> ModuleScopeBuilder {
+        mem::take(
+            &mut self
+                .modules
+                .get_mut(module)
+                .expect("import module exists")
+                .scope,
+        )
+    }
+
+    /// Read declarations and retained import answers.
+    pub fn module_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
+        self.modules.get(module).map(|module| &module.scope)
     }
 
     pub(crate) fn module_scope_mut(&mut self, module: ModuleId) -> Option<&mut ModuleScopeBuilder> {
-        self.modules
-            .get_mut(module)
-            .map(|module| &mut module.resolved_scope)
+        self.modules.get_mut(module).map(|module| &mut module.scope)
     }
 
-    /// Publish one module's import replay after all readers of the previous wave have finished.
-    ///
-    /// `scope: None` means the candidate matched the existing scope. A glob such as `use empty::*`
-    /// can resolve without introducing any names, so its unresolved-import report still needs
-    /// replacing even when the scope did not change.
+    /// Return the scope buffer and its unresolved-import report after import collection.
+    /// A glob can resolve to an empty module, so the report can change even without new bindings.
     pub fn apply_module_imports(
         &mut self,
         module: ModuleId,
-        scope: Option<ModuleScopeBuilder>,
+        scope: ModuleScopeBuilder,
         unresolved_imports: Vec<ImportId>,
     ) {
         let module = self
             .modules
             .get_mut(module)
             .expect("import module should exist");
-        if let Some(scope) = scope {
-            module.resolved_scope = scope;
-        }
+        module.scope = scope;
         module.unresolved_imports = unresolved_imports;
     }
 
@@ -700,7 +681,7 @@ impl DefMap {
 }
 
 impl MemorySize for DefMap {
-    fn record_memory_children(&self, recorder: &mut rg_std::MemoryRecorder) {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("data", |recorder| {
             MemorySize::record_memory_children(&self.data, recorder);
         });

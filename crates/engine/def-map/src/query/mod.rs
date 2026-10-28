@@ -10,6 +10,6 @@ mod resolution_env;
 
 pub use self::{
     def_map_query::{DefMapQuery, DefMapSource},
-    path_resolution::{GlobImportSource, ImportResolution, ResolvePathResult, ScopeResolver},
+    path_resolution::{GlobImportSource, ResolvePathResult, ScopeResolver},
     resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
 };

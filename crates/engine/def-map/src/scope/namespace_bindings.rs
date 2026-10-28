@@ -14,6 +14,7 @@
 
 use std::num::NonZeroU32;
 
+use rg_ir_model::ImportId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -67,8 +68,7 @@ pub(super) struct FrozenNamespaceBinding {
 /// Mutable namespace state for one name in `ModuleScopeBuilder::names`.
 ///
 /// Glob imports copy large numbers of names that occupy only one namespace. Three inline
-/// bindings would make every such name pay for two empty slots while old and new scopes
-/// overlap during import resolution.
+/// bindings would make every such name pay for two empty slots throughout construction.
 ///
 /// The first binding therefore stays inline. There can only be two more namespaces: their IDs fit
 /// together in eight bytes and point into the scope-owned arena. The arena stores only occupied
@@ -88,23 +88,40 @@ pub(super) struct ScopeEntryBuilder {
 
 impl ScopeEntryBuilder {
     /// Store a selected binding, allocating an extra slot only for a newly occupied namespace.
+    ///
+    /// `import` identifies the winning route, not the source of presentation attributes. A changed
+    /// binding replaces that route; an unchanged write with no import ID preserves it. Declaration
+    /// collection needs the latter when a new declaration loses to an existing explicit import.
     pub(super) fn set_binding(
         &mut self,
         namespace: Namespace,
         binding: ScopeBinding,
+        import: Option<ImportId>,
         arena: &mut MutableNamespaceBindingArena,
     ) {
         let Some(first) = &mut self.first else {
-            self.first = Some(MutableNamespaceBinding { namespace, binding });
+            self.first = Some(MutableNamespaceBinding {
+                namespace,
+                binding,
+                import,
+            });
             return;
         };
         if first.namespace == namespace {
+            // A direct declaration can lose to an existing explicit import. The collector then
+            // writes the unchanged winner back; keep its producer so later import updates work.
+            if first.binding != binding || import.is_some() {
+                first.import = import;
+            }
             first.binding = binding;
             return;
         }
         for id in self.additional.iter().flatten() {
             let slot = arena.get_mut(*id);
             if slot.namespace == namespace {
+                if slot.binding != binding || import.is_some() {
+                    slot.import = import;
+                }
                 slot.binding = binding;
                 return;
             }
@@ -114,7 +131,23 @@ impl ScopeEntryBuilder {
             .iter_mut()
             .find(|slot| slot.is_none())
             .expect("a name has at most three namespaces");
-        *extra = Some(arena.push(MutableNamespaceBinding { namespace, binding }));
+        *extra = Some(arena.push(MutableNamespaceBinding {
+            namespace,
+            binding,
+            import,
+        }));
+    }
+
+    pub(super) fn binding_import(
+        &self,
+        namespace: Namespace,
+        arena: &MutableNamespaceBindingArena,
+    ) -> Option<ImportId> {
+        self.first
+            .iter()
+            .chain(self.additional.iter().flatten().map(|id| arena.get(*id)))
+            .find(|slot| slot.namespace == namespace)
+            .and_then(|slot| slot.import)
     }
 
     fn binding<'a>(
@@ -143,22 +176,6 @@ impl ScopeEntryBuilder {
                 self.binding(Namespace::Macros, arena),
             ),
         }
-    }
-
-    /// Compare the selected namespace contents used by import fixed-point convergence.
-    ///
-    /// Arena IDs only record insertion order. Two import passes can build the same visible scope
-    /// while assigning different IDs, so equality must follow namespace slots and compare their
-    /// bindings instead.
-    pub(super) fn has_same_bindings(
-        &self,
-        arena: &MutableNamespaceBindingArena,
-        other: &Self,
-        other_arena: &MutableNamespaceBindingArena,
-    ) -> bool {
-        Namespace::ALL.into_iter().all(|namespace| {
-            self.binding(namespace, arena) == other.binding(namespace, other_arena)
-        })
     }
 
     /// Visit the selected binding in each occupied namespace.
@@ -226,6 +243,11 @@ impl ScopeEntryBuilder {
 struct MutableNamespaceBinding {
     namespace: Namespace,
     binding: ScopeBinding,
+    // Winning import route: only this import may replace the selected target at equal priority.
+    // Another route to the same definition may supply presentation attributes without winning.
+    // All imports here belong to this scope's DefMap, so only its local ID is needed.
+    // This field is discarded when the slot is frozen.
+    import: Option<ImportId>,
 }
 
 /// One-based index into a module scope's additional namespace slots.

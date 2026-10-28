@@ -643,3 +643,27 @@ declare!();
         "#]],
     );
 }
+
+#[test]
+fn glob_updates_follow_the_winning_route_independently_of_attributes() {
+    utils::check_project_path_resolution(
+        r#"
+//- /src/lib.rs crate:glob_route_refresh
+mod original { pub struct Item; }
+mod bridge {
+    pub use crate::original::*;
+    macro_rules! declare_item { () => { pub struct Item; }; }
+    declare_item!();
+}
+mod facade {
+    #[doc(hidden)]
+    pub use crate::bridge::*;
+    pub use crate::original::*;
+}
+"#,
+        &[utils::PathResolutionQuery::lib("glob_route_refresh", "crate", "facade::Item").types()],
+        expect![[r#"
+            glob_route_refresh [lib] crate resolves facade::Item [types] -> struct glob_route_refresh[lib]::crate::bridge::Item
+        "#]],
+    );
+}

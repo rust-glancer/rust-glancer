@@ -4,12 +4,12 @@
 //! grow their source context without replacing the builders or the module scopes they already own.
 //! Freezing moves only settled crate data into package payloads; macro queues and file maps stay here.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, mem, path::PathBuf, sync::Arc};
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef, PackageSlot};
 use rg_item_tree::{ItemTreeDb, Package as ItemTreePackage};
-use rg_parse::{ModuleFileContext, Package};
+use rg_parse::{CargoTargetId, ModuleFileContext, Package};
 use rg_std::UniqueVec;
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
@@ -21,13 +21,13 @@ use super::macros::{
 };
 use crate::{
     CrateData, DefMapBuilder, GeneratedItemStores, MacroExpansionLimitReport,
-    MacroSourceFileRequest, ModuleScopeBuilder, Namespace, PackageDefMaps,
+    MacroSourceFileRequest, ModuleScopeBuilder, Namespace, PackageDefMaps, ScopeBinding,
 };
 
 /// Mutable crate builders indexed by package slot and Cargo target.
 ///
 /// Selected packages own fresh builders. Absent package slots are read through the frozen baseline
-/// by `BuildResolutionEnv`. This store stays alive across import waves, macro batches, and source
+/// by `BuildResolutionEnv`. This store stays alive across import collection, macro batches, and source
 /// loading; only `freeze_package` moves settled data into a retained package.
 pub(crate) struct CrateBuildStore {
     packages: Vec<Option<Vec<CrateBuilder>>>,
@@ -140,10 +140,10 @@ impl CrateBuildStore {
                 if state.target_kind != TargetKind::ProcMacro {
                     continue;
                 }
-                // Censoring reads declaration metadata while changing the resolved scope. Move the
+                // Censoring reads declaration metadata while changing the module scope. Move the
                 // scope out briefly so those borrows stay separate without cloning its bindings.
                 let root = state.root_module;
-                let mut scope = std::mem::take(
+                let mut scope = mem::take(
                     state
                         .def_map_builder
                         .module_scope_mut(root)
@@ -229,7 +229,7 @@ impl CrateBuildStore {
 /// Crate-wide context and pending macro work stay here.
 pub(crate) struct CrateBuilder {
     pub(crate) crate_ref: CrateRef,
-    pub(crate) cargo_target: rg_parse::CargoTargetId,
+    pub(crate) cargo_target: CargoTargetId,
     pub(crate) crate_name: String,
     pub(crate) root_module: ModuleId,
     pub(crate) edition: RustEdition,
@@ -284,32 +284,47 @@ impl CrateBuilder {
             .resolve(context, module_name, path_override)
     }
 
-    /// Make one rebuilt scope obey the external export rules of a proc-macro crate.
+    /// Make a collected scope obey the external export rules of a proc-macro crate.
     ///
     /// A function marked `#[proc_macro]` is a normal value inside its own source crate, but another
-    /// crate may see only its macro identity. Worklist candidates call this before comparison so
-    /// the hidden function value cannot look like a scope change and wake more import groups.
+    /// crate may see only its macro identity. Apply the same export boundary to initial
+    /// declarations and to imported bindings before other crates read them.
     pub(crate) fn censor_proc_macro_scope(&self, module: ModuleId, scope: &mut ModuleScopeBuilder) {
         if self.target_kind != TargetKind::ProcMacro || module != self.root_module {
             return;
         }
 
         let root = ModuleRef::krate(self.crate_ref, self.root_module);
-        let def_map = &self.def_map_builder;
         scope.censor_public_bindings(root, |namespace, binding| {
-            if namespace != Namespace::Macros || !binding.has_direct_declaration() {
-                return false;
-            }
-
-            let DefId::Local(local_def) = binding.def else {
-                return false;
-            };
-            local_def.origin == root.origin
-                && def_map
-                    .macro_definition(local_def.local_def)
-                    .and_then(|data| data.proc_macro_implementation())
-                    .is_some()
+            self.allow_public_binding(module, namespace, binding)
         });
+    }
+
+    /// Check what may stay public at a proc-macro crate root.
+    /// Initial scope censoring and later import insertions share this rule, so an imported name
+    /// cannot bypass the export boundary after other crates have started reading the scope.
+    pub(crate) fn allow_public_binding(
+        &self,
+        module: ModuleId,
+        namespace: Namespace,
+        binding: &ScopeBinding,
+    ) -> bool {
+        if self.target_kind != TargetKind::ProcMacro || module != self.root_module {
+            return true;
+        }
+        let root = ModuleRef::krate(self.crate_ref, self.root_module);
+        if namespace != Namespace::Macros || !binding.has_direct_declaration() {
+            return false;
+        }
+        let DefId::Local(local) = binding.def else {
+            return false;
+        };
+        local.origin == root.origin
+            && self
+                .def_map_builder
+                .macro_definition(local.local_def)
+                .and_then(|data| data.proc_macro_implementation())
+                .is_some()
     }
 }
 

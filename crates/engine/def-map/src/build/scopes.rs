@@ -1,12 +1,17 @@
 //! Builds module scopes by alternating import resolution and item macro expansion.
 //!
 //! Imports can expose a macro, and that macro can emit more imports or declarations. The outer
-//! loop settles imports; the inner loop expands the calls made available by direct declarations.
-//! Real files discovered by expansion are loaded and collected before that inner queue continues.
-//! Runtime caches, scan cursors, and the expansion budget live across the complete construction.
+//! loop collects import answers, then the inner loop expands calls made available by direct
+//! declarations. Real files discovered by expansion are loaded and collected before that inner
+//! queue continues. When expansion adds declarations, the outer loop refreshes imports again.
+//!
+//! The same scope buffers move between builders and the import resolver throughout construction.
+//! Macro expansion reads and extends the builders' scopes; import resolution takes those buffers,
+//! updates them, and returns them before expansion resumes. Glob links, macro runtime caches,
+//! scan cursors, and the expansion budget all survive these handoffs.
 
 use anyhow::Context as _;
-use rg_ir_model::{ModuleRef, PackageSlot, Path};
+use rg_ir_model::{ModuleId, ModuleRef, PackageSlot, Path};
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
 use rg_parse::{Package, ParseDb};
@@ -16,7 +21,7 @@ use rg_workspace::{PackageOrigin, SysrootCrate, WorkspaceMetadata};
 use super::{
     MacroSourceFileResolutions,
     crates::CrateBuildStore,
-    imports::{ImportResolutionExecutor, ImportWorklist},
+    imports::ImportResolver,
     macros::{
         BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, apply_pending_macro_source_files,
@@ -28,14 +33,14 @@ use super::{
 use crate::{
     DefMapReadTxn, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
     ScopeResolver,
-    profile::{ImportResolutionPassMetrics, metric, record_import_resolution_pass},
+    profile::{metric, record_import_resolution_run},
 };
 
 /// Selects the standard prelude module visible from each dirty crate.
 ///
 /// The prelude path depends on the crate's edition, and the module it resolves to can live in an
 /// unselected package. Resolution therefore uses the same fresh-state-plus-baseline environment
-/// as the later import fixed point.
+/// as the later import collection.
 pub(crate) fn select_preludes(
     baseline: &DefMapReadTxn<'_>,
     workspace: &WorkspaceMetadata,
@@ -137,11 +142,11 @@ pub(crate) fn select_preludes(
     Ok(())
 }
 
-/// Resolves imports and item-position macros until every dirty crate scope stops changing.
+/// Builds dirty crate scopes by alternating import collection and item-position macro expansion.
 ///
 /// Imports can depend on names introduced by other imports, and macro calls can depend on imports
 /// that make the macro definition visible. This function therefore runs a small fixed-point loop:
-/// resolve imports against the current crate builders, expand the macros that are now visible,
+/// extend the retained scopes with import answers, expand the macros that are now visible,
 /// splice generated items back into the mutable crate builders, and refresh imports whenever those
 /// generated items may have introduced new imports or exported names.
 ///
@@ -160,9 +165,9 @@ pub(crate) fn build_scopes(
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
     // One call owns the complete fixed point. Loading files cannot reset the expansion budget or
-    // discard compiled macros, import workers, or the scopes already produced by this build.
+    // discard compiled macros, registered glob links, or scopes already produced by this build.
     let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
-    let mut import_executor = ImportResolutionExecutor::new(performance_preference);
+    let mut import_resolver = ImportResolver::default();
     let mut import_resolution_runs = 0;
     let mut expansion_passes = 0;
     let mut macro_source_file_resolutions = MacroSourceFileResolutions::default();
@@ -173,16 +178,16 @@ pub(crate) fn build_scopes(
         resolve_import_scopes(
             baseline,
             crates,
-            &mut import_executor,
+            &mut import_resolver,
             &mut import_resolution_runs,
         )?;
         timer.finish();
         let mut next_scan_cursors = None;
-        // Direct additions are visible immediately; dependent imports and their reports need replay.
+        // Direct additions are visible immediately; dependent imports and their reports need refreshing.
         let mut needs_import_refresh = false;
 
         // Macro expansion can introduce more macro calls visible through direct bindings. Keep
-        // consuming that local queue before paying for another full import pass.
+        // consuming that local queue before paying for another import refresh.
         loop {
             if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
                 // Stop expanding but still freeze a coherent def-map. The final import refresh lets
@@ -192,7 +197,7 @@ pub(crate) fn build_scopes(
                 resolve_import_scopes(
                     baseline,
                     crates,
-                    &mut import_executor,
+                    &mut import_resolver,
                     &mut import_resolution_runs,
                 )?;
                 timer.finish();
@@ -209,7 +214,7 @@ pub(crate) fn build_scopes(
                 let env = BuildResolutionEnv::new(baseline, crates);
                 // The first pass in a round visits all pending macro calls. Follow-up passes only
                 // visit calls appended by the previous expansion, because older unresolved calls
-                // need a fresh import snapshot before their answer can change.
+                // need another import refresh before their answer can change.
                 let scan = next_scan_cursors
                     .as_ref()
                     .map(MacroExpansionScan::NewCallsSince)
@@ -241,7 +246,7 @@ pub(crate) fn build_scopes(
                 false
             } else {
                 // Expanded text is parsed into regular item-tree data and appended to the owning
-                // module. Direct bindings also enter its resolved scope, so simple chains like
+                // module. Direct bindings enter its scope immediately, so simple chains like
                 // `make_macro!(); generated_macro!();` work in one round.
                 apply_expansion_attempts(
                     item_tree,
@@ -339,61 +344,46 @@ pub(crate) fn build_scopes(
     Ok(())
 }
 
-/// Settle import-derived bindings without rebuilding every import group on every wave.
+/// Lend scope buffers to the import collector, then return them for macro lookup.
 ///
-/// The worklist starts with every module that owns imports. Each wave rebuilds only the active
-/// modules against one shared scope snapshot, installs all changed candidates together, and wakes
-/// groups which read a changed scope. For a chain such as `root -> bridge -> source`, this lets
-/// `bridge` gain a binding first and wakes `root` for the following wave.
-///
-/// When no changed scope has a reader, both the scopes and their latest unresolved-import reports
-/// are ready to freeze.
+/// Only modules with imports need to move: other modules can supply names through the environment
+/// without receiving imported bindings. While these buffers are out, the resolver overlays them
+/// on environment reads. Return both scopes and reports before the next macro batch can use them.
 fn resolve_import_scopes(
     baseline: &DefMapReadTxn<'_>,
     crates: &mut CrateBuildStore,
-    import_executor: &mut ImportResolutionExecutor,
+    import_resolver: &mut ImportResolver,
     import_resolution_runs: &mut usize,
 ) -> anyhow::Result<()> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
     *import_resolution_runs += 1;
-    let run_index = *import_resolution_runs;
-    let mut pass_index = 0;
-    let mut worklist = ImportWorklist::new(crates);
-
-    while !worklist.active_modules().is_empty() {
-        pass_index += 1;
-        metric::IMPORT_RESOLUTION_PASSES.inc();
-
-        // Finish the active wave before changing module scopes. If `root` imports from `bridge`
-        // and `bridge` imports from `source`, `root` must not see `bridge`'s new binding until the
-        // next wave; otherwise the result would depend on which worker happened to finish first.
-        let updates = {
-            let env = BuildResolutionEnv::new(baseline, crates);
-            import_executor
-                .apply_wave(&worklist, crates, &env)
-                .context("while attempting to resolve import wave")?
-        };
-        let outcome = worklist.apply_updates(crates, updates);
-        record_import_resolution_pass(
-            run_index,
-            pass_index,
-            ImportResolutionPassMetrics {
-                evaluated_packages: outcome.evaluated.packages,
-                evaluated_crates: outcome.evaluated.crates,
-                evaluated_modules: outcome.evaluated.modules,
-                changed_packages: outcome.changed.packages,
-                changed_crates: outcome.changed.crates,
-                changed_modules: outcome.changed.modules,
-                imports_evaluated: outcome.stats.imports_evaluated,
-                glob_imports_evaluated: outcome.stats.glob_imports_evaluated,
-                glob_bindings_emitted: outcome.stats.glob_bindings_emitted,
-            },
-        );
-
-        if outcome.finished {
-            break;
+    crates.censor_proc_macro_exports();
+    let mut scopes = Vec::new();
+    for states in crates.iter_dirty_mut() {
+        for state in states {
+            for index in 0..state.def_map_builder.module_count() {
+                let module = ModuleId(index);
+                if state
+                    .def_map_builder
+                    .module(module)
+                    .is_some_and(|data| !data.imports.is_empty())
+                {
+                    scopes.push((
+                        ModuleRef::krate(state.crate_ref, module),
+                        state.def_map_builder.take_module_scope(module),
+                    ));
+                }
+            }
         }
     }
-
+    let result = import_resolver.resolve(&BuildResolutionEnv::new(baseline, crates), scopes)?;
+    record_import_resolution_run(*import_resolution_runs, result.metrics);
+    for module in result.modules {
+        crates
+            .crate_builder_mut(module.module.origin.origin_crate())
+            .expect("dirty import owner exists")
+            .def_map_builder
+            .apply_module_imports(module.module.module, module.scope, module.unresolved);
+    }
     Ok(())
 }

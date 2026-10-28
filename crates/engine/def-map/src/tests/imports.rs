@@ -1,6 +1,7 @@
 use expect_test::expect;
 
 use super::utils;
+use crate::Namespace;
 
 #[test]
 fn explicit_bindings_shadow_globs_independent_of_import_order() {
@@ -362,4 +363,82 @@ use missing::Thing as _;
             - work : value [pub fn hidden_unresolved_import_fixture[lib]::crate::existing::work]
         "#]],
     );
+}
+
+#[test]
+fn cyclic_imports_keep_a_stable_declaration_backed_target() {
+    for (a_import, b_import, expected) in [
+        (
+            "pub use crate::b::*;",
+            "pub use crate::a::*;",
+            Some("DirectLeft"),
+        ),
+        ("pub use crate::b::Thing;", "pub use crate::a::*;", None),
+        ("pub use crate::b::Thing;", "pub use crate::a::Thing;", None),
+    ] {
+        let fixture = format!(
+            r#"
+//- /src/lib.rs crate:import_cycle
+mod a;
+mod b;
+mod left;
+mod right;
+pub use a::Thing as FromA;
+pub use b::Thing as FromB;
+pub use left::Thing as DirectLeft;
+pub use right::Thing as DirectRight;
+//- /src/a.rs
+{a_import}
+pub use crate::left::*;
+//- /src/b.rs
+{b_import}
+pub use crate::right::*;
+//- /src/left.rs
+pub struct Thing;
+//- /src/right.rs
+pub struct Thing;
+"#
+        );
+        let project = utils::DefMapFixtureDb::build(&fixture);
+        let target = project.lib("import_cycle");
+        let scope = &target.def_map().modules()[0].scope;
+        let binding = |name: &str| {
+            scope
+                .entry(name)
+                .and_then(|entry| entry.binding(Namespace::Types))
+                .expect("cycle should have a useful type target")
+                .def
+        };
+        assert!(
+            [binding("DirectLeft"), binding("DirectRight")].contains(&binding("FromB")),
+            "a conflicting cycle should retain a real declaration"
+        );
+        assert!(
+            [binding("DirectLeft"), binding("DirectRight")].contains(&binding("FromA")),
+            "a cycle must select a real declaration"
+        );
+        if let Some(expected) = expected {
+            assert_eq!(
+                binding("FromA"),
+                binding(expected),
+                "{a_import} / {b_import}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unseeded_import_cycles_finish_without_inventing_a_definition() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /src/lib.rs crate:unseeded_import_cycle
+mod a { pub use crate::b::Thing; pub use crate::b::*; }
+mod b { pub use crate::a::Thing; pub use crate::a::*; }
+use a::Thing;
+"#,
+    );
+    project
+        .lib("unseeded_import_cycle")
+        .entry("Thing")
+        .assert_missing("a cycle without a declaration should finish as unresolved");
 }

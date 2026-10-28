@@ -1,6 +1,6 @@
 use expect_test::expect;
-use rg_def_map::ItemSourceKind;
-use rg_ir_model::{BodyId, BodyRef, CrateRef, PackageSlot};
+use rg_def_map::{ItemSourceKind, ModuleOrigin, Namespace};
+use rg_ir_model::{BodyId, BodyRef, CrateId, CrateRef, DefId, PackageSlot};
 
 use super::utils::check_project_body_ir;
 use crate::testonly::BodyIrFixture;
@@ -39,7 +39,7 @@ pub fn outer() {
         .expect("fixture package should contain one target");
     let crate_ref = CrateRef {
         package: PackageSlot(0),
-        crate_id: rg_ir_model::CrateId(target.id.0),
+        crate_id: CrateId(target.id.0),
     };
     let crate_bodies = db
         .body_ir_db()
@@ -1429,7 +1429,7 @@ pub fn use_it() {
     let body_ref = BodyRef {
         crate_ref: CrateRef {
             package: PackageSlot(0),
-            crate_id: rg_ir_model::CrateId(target.id.0),
+            crate_id: CrateId(target.id.0),
         },
         body: BodyId(0),
     };
@@ -1556,5 +1556,51 @@ pub fn use_it() {
                 initializer
                   expr e0 path Active -> struct fn body_cfg_fixture[lib]::crate::use_it::Active @ 7:5-8:19 => nominal struct fn body_cfg_fixture[lib]::crate::use_it::Active @ 7:5-8:19 @ 14:27-14:33
         "#]],
+    );
+}
+
+#[test]
+fn body_local_import_cycles_settle_before_freezing() {
+    let db = BodyIrFixture::build(
+        r#"
+//- /src/lib.rs crate:body_import_cycle
+fn use_it() {
+    mod left { pub struct Thing; }
+    mod right { pub struct Thing; }
+    mod a { pub use super::b::Thing; pub use super::left::*; }
+    mod b { pub use super::a::*; pub use super::right::*; }
+    use a::Thing;
+    let _: Thing;
+}
+"#,
+    );
+    let package = db
+        .parse_db()
+        .packages()
+        .first()
+        .expect("fixture package exists");
+    let target = package.targets().first().expect("fixture target exists");
+    let map = db
+        .resident_body_def_map(BodyRef {
+            crate_ref: CrateRef {
+                package: PackageSlot(0),
+                crate_id: CrateId(target.id.0),
+            },
+            body: BodyId(0),
+        })
+        .expect("body declarations should be finalized");
+    let binding = map
+        .modules()
+        .iter()
+        .filter(|module| matches!(module.origin, ModuleOrigin::Synthetic { .. }))
+        .find_map(|module| module.scope.entry("Thing"))
+        .and_then(|entry| entry.binding(Namespace::Types))
+        .expect("body import should retain a target");
+    assert!(matches!(binding.def, DefId::Local(_)));
+    assert!(
+        map.modules()
+            .iter()
+            .all(|module| module.unresolved_imports.is_empty()),
+        "seeded body imports should all resolve"
     );
 }

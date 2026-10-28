@@ -1,24 +1,29 @@
 //! Collects and finalizes lexical declaration scopes as DefMap facts.
 //!
-//! Declaration scopes become synthetic modules. Direct declarations are collected first, then imports are
-//! resolved in a fixed-point loop before the final DefMap is frozen.
+//! Declaration scopes become synthetic modules. Direct declarations are collected first, then
+//! imports are resolved by the shared import collector before the final DefMap is frozen.
+//! Only this body's modules can change: crate scopes and other bodies are already frozen. Unlike
+//! crate construction, finalization needs one collector call, with no item-macro expansion between
+//! import runs.
 
 use rg_def_map::{
     BodyItemSourceRef, CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding,
-    ImportData, ImportKind, ImportPath, ItemSource, LocalDefData, LocalDefKind,
-    LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData, MacroDefinitionEnv,
-    MacroDefinitionView, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    ModuleResolutionView, Namespace, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    ScopeResolutionEnv, ScopeResolver, Visibility,
+    ImportData, ImportKind, ImportPath, ImportResolutionEnv, ImportResolver, ItemSource,
+    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    MacroDefinitionEnv, MacroDefinitionView, ModuleBuilder, ModuleDocumentation,
+    ModuleFileSelection, ModuleImportInput, ModuleOrigin, ModuleResolutionView, Namespace,
+    ScopeBinding, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, Visibility,
 };
 use rg_ir_model::{
-    BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId,
-    ModuleRef,
+    BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefId, LocalDefRef, LocalEnumVariantRef,
+    ModuleId, ModuleRef,
 };
 use rg_item_tree::{
-    EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+    EnumItem, ExternBlockItem, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleItem,
+    ModuleSource, UseItem,
 };
 use rg_package_store::PackageStoreError;
+use rg_std::CancellationToken;
 use rg_text::Name;
 
 use super::LocalItemSource;
@@ -42,10 +47,10 @@ impl<'source> LocalDefMapCollector<'source> {
         }
     }
 
-    /// Collects direct local scope facts. Imports are finalized in a separate fixed-point step.
+    /// Collects direct local scope facts. Imports are finalized by the shared collector after collection.
     pub fn collect(
         mut self,
-        cancellation: &rg_std::CancellationToken,
+        cancellation: &CancellationToken,
     ) -> anyhow::Result<LocalDefMapBuildState> {
         // First, go through all the scopes and allocate synthetic modules.
         for scope in self.source.scopes {
@@ -136,7 +141,7 @@ impl<'source> LocalDefMapCollector<'source> {
         module: ModuleId,
         item_id: ItemTreeId,
         item: &ItemNode,
-    ) -> Option<rg_ir_model::LocalDefId> {
+    ) -> Option<LocalDefId> {
         let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
         let name = item.name.clone()?;
         let namespaces = kind.scope_namespaces(&item.kind);
@@ -215,12 +220,7 @@ impl<'source> LocalDefMapCollector<'source> {
             .push(local_impl);
     }
 
-    fn collect_module(
-        &mut self,
-        parent: ModuleId,
-        item: &ItemNode,
-        module_item: &rg_item_tree::ModuleItem,
-    ) {
+    fn collect_module(&mut self, parent: ModuleId, item: &ItemNode, module_item: &ModuleItem) {
         let Some(module_name) = item.name.clone() else {
             return;
         };
@@ -286,7 +286,7 @@ impl<'source> LocalDefMapCollector<'source> {
         module: ModuleId,
         item_id: ItemTreeId,
         item: &ItemNode,
-        use_item: &rg_item_tree::UseItem,
+        use_item: &UseItem,
     ) {
         for (import_index, import) in use_item.imports.iter().enumerate() {
             let Some(path) = ImportPath::from_use_path(&import.path, None) else {
@@ -338,86 +338,65 @@ pub(crate) struct LocalDefMapBuildState {
 }
 
 impl LocalDefMapBuildState {
-    /// Replay local imports until no body scope changes, then freeze the scopes and their reports.
-    ///
-    /// Other crates and bodies are already frozen. This loop reruns the active body's imports
-    /// together, without the cross-package scheduling used during crate construction.
+    /// Settle imports with the same collector used for crate construction, then freeze.
+    /// Other crates and bodies are already frozen, so only this body's modules can change.
     pub(crate) fn finalize<S>(
         mut self,
         def_maps: S,
-        cancellation: &rg_std::CancellationToken,
+        cancellation: &CancellationToken,
     ) -> anyhow::Result<DefMap>
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        loop {
-            rg_std::check_cancel!(cancellation, "local import round");
-            let candidates = {
-                // Rebuild from declarations so an import's old target can disappear on replay.
-                let mut candidates = (0..self.builder.module_count())
-                    .map(|index| {
-                        (
-                            self.builder
-                                .module_direct_scope(ModuleId(index))
-                                .expect("body module should have direct bindings")
-                                .clone(),
-                            Vec::new(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                // Lookup reads the published scopes, not the candidates being filled. In
-                // `use crate::Id as Alias; use Alias as Other;`, Other gains its target next wave.
-                let env = LocalDefMapFinalizationEnv {
-                    def_maps,
-                    state: &self,
-                };
-                let resolver = ScopeResolver::new(&env);
-                for (import_id, import) in self.builder.imports_with_ids() {
-                    rg_std::check_cancel!(cancellation, "local import resolution");
-                    let importing_module = ModuleRef {
+        rg_std::check_cancel!(cancellation, "local import resolution");
+        // Only modules containing `use` items receive imported bindings. Lend those buffers;
+        // modules without imports stay readable in the builder as sources for path lookup.
+        let mut scopes = Vec::new();
+        for index in 0..self.builder.module_count() {
+            let module = ModuleId(index);
+            if self
+                .builder
+                .module(module)
+                .is_some_and(|module| !module.imports.is_empty())
+            {
+                scopes.push((
+                    ModuleRef {
                         origin: DefMapRef::Body(self.body_ref),
-                        module: import.module,
-                    };
-                    let (scope, unresolved_imports) = &mut candidates[import.module.0];
-                    let resolution = resolver.apply_import(
-                        importing_module,
-                        ImportRef {
-                            origin: importing_module.origin,
-                            import: import_id,
-                        },
-                        import,
-                        scope,
-                    )?;
-                    if !resolution.is_resolved() {
-                        unresolved_imports.push(import_id);
-                    }
-                }
-                candidates
-            };
-
-            // All lookups are done. Publish each scope with the report from that same wave,
-            // including the final unchanged wave whose reports will be frozen below.
-            let mut stable = true;
-            for (index, (scope, unresolved_imports)) in candidates.into_iter().enumerate() {
-                let module = ModuleId(index);
-                stable &= self.builder.module_scope(module) == Some(&scope);
-                self.builder
-                    .apply_module_imports(module, Some(scope), unresolved_imports);
-            }
-            if stable {
-                return Ok(self.builder.build());
+                        module,
+                    },
+                    self.builder.take_module_scope(module),
+                ));
             }
         }
+        // Lend scope buffers to the collector. Lookup reads module and declaration metadata from
+        // the builder, and bindings from the scopes now owned by the collector.
+        let env = LocalDefMapFinalizationEnv {
+            def_maps,
+            state: &self,
+            cancellation,
+        };
+        for result in ImportResolver::default().resolve(&env, scopes)?.modules {
+            self.builder.apply_module_imports(
+                result.module.module,
+                result.scope,
+                result.unresolved,
+            );
+        }
+        // Every lent buffer is back, so freezing can drop construction-only import routes and
+        // preserve the selected bindings together with their unresolved-import reports.
+        Ok(self.builder.build())
     }
 }
 
 /// Read builder scopes for the active body and frozen DefMaps for every other origin.
 ///
-/// A local import can name crate items or aliases produced by earlier waves in this body. Metadata
-/// is shared through a scope-free view; lookup reads the active body's resolved bindings separately.
+/// A local import can name crate items or aliases produced by other imports in this body. The
+/// collector overlays the buffers it has taken; this environment supplies the remaining body
+/// scopes, all declaration metadata, and frozen data from other origins.
 struct LocalDefMapFinalizationEnv<'state, S> {
     def_maps: S,
     state: &'state LocalDefMapBuildState,
+    cancellation: &'state CancellationToken,
 }
 
 impl<S> LocalDefMapFinalizationEnv<'_, S>
@@ -588,5 +567,46 @@ where
 
     fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
         self.def_maps.root_module(crate_ref)
+    }
+}
+
+impl<S> ImportResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
+where
+    S: DefMapSource<Error = PackageStoreError> + Copy,
+{
+    fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
+        (0..self.state.builder.module_count())
+            .filter_map(|index| {
+                let module = ModuleId(index);
+                let data = self
+                    .state
+                    .builder
+                    .module(module)
+                    .expect("body module exists");
+                if data.imports.is_empty() {
+                    return None;
+                }
+                Some(ModuleImportInput {
+                    module: ModuleRef {
+                        origin: DefMapRef::Body(self.state.body_ref),
+                        module,
+                    },
+                    imports: &data.imports,
+                })
+            })
+            .collect()
+    }
+
+    fn import_data(&self, import: ImportRef) -> &ImportData {
+        self.state
+            .builder
+            .imports()
+            .get(import.import.0)
+            .expect("body import exists")
+    }
+
+    fn check_cancelled(&self) -> anyhow::Result<()> {
+        rg_std::check_cancel!(self.cancellation, "local import resolution");
+        Ok(())
     }
 }

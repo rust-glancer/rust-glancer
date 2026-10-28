@@ -2,22 +2,22 @@
 //!
 //! DefMap construction, body-local resolution, and ordinary queries all need the same
 //! lookup rules while reading from different storage. This module owns those shared rules:
-//! lexical/body lookup, module path lookup, import expansion, visibility filtering, and the small
+//! lexical/body lookup, module path lookup, import source lookup, visibility filtering, and the small
 //! macro-namespace queries needed before macro-specific precedence is applied.
 //!
 //! The resolver does not own scopes. It reads through `ScopeResolutionEnv` and
-//! `CrateResolutionEnv`, so construction can pass current fixed-point snapshots while frozen
-//! queries read persisted DefMaps.
+//! `CrateResolutionEnv`, so construction can pass scopes under construction while frozen
+//! queries read persisted DefMaps. Import scheduling, inserting answers, and forwarding glob
+//! updates belong to construction; these queries only inspect the names available at the time.
 
-use rg_ir_model::{DefId, ImportRef, LocalDefRef, ModuleRef, Path, PathRoot};
+use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, Path, PathRoot};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
 use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
 use crate::{
-    ImportBinding, ImportData, ImportKind, LocalDefKind, ModuleOrigin, ModuleScopeBuilder,
-    Namespace, NamespaceSet, PerNs, ScopeBinding, ScopeBindingProvenance, ScopeEntryRef,
-    Visibility,
+    ImportData, LocalDefKind, ModuleOrigin, Namespace, NamespaceSet, PerNs, ScopeBinding,
+    ScopeBindingProvenance, ScopeEntryRef, Visibility,
 };
 
 /// Macro candidates kept in the buckets required by Rust lookup precedence.
@@ -56,34 +56,11 @@ pub enum GlobImportSource {
     Enum(LocalDefRef),
 }
 
-/// Status and work count from resolving one import against a scope snapshot.
-///
-/// Resolution status is separate from emitted bindings. For example, `use Trait as _` resolves its
-/// source even though it introduces no named path, while `use missing::*` remains unresolved and
-/// emits nothing. The builder uses this status to record unresolved imports while applying bindings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ImportResolution {
-    source_resolved: bool,
-    emitted_binding_count: usize,
-}
-
-impl ImportResolution {
-    /// Whether the source path resolved, even if the import introduced no named path.
-    pub fn is_resolved(&self) -> bool {
-        self.source_resolved
-    }
-
-    /// Number of bindings produced, used to profile the fan-out of glob imports.
-    pub(crate) fn emitted_binding_count(&self) -> usize {
-        self.emitted_binding_count
-    }
-}
-
 /// Applies name lookup rules over one abstract scope source.
 ///
 /// `ScopeResolver` is storage-agnostic on purpose. During construction the environment can expose
-/// partial builders plus the current fixed-point scope snapshot; after freezing the same lookup
-/// code reads frozen DefMaps through `DefMapQuery`.
+/// partial builders and their retained scopes; after freezing the same lookup code reads frozen
+/// DefMaps through `DefMapQuery`.
 pub struct ScopeResolver<'env, E: ?Sized> {
     env: &'env E,
 }
@@ -297,7 +274,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         enum_def: LocalDefRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Option<rg_ir_model::LocalEnumVariantRef>, E::Error> {
+    ) -> Result<Option<LocalEnumVariantRef>, E::Error> {
         if !self
             .env
             .local_def_kind(enum_def)?
@@ -383,25 +360,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             }))
     }
 
-    /// Choose one target before publishing it to the next import-wave scope.
-    fn insert_binding(
-        &self,
-        scope: &mut ModuleScopeBuilder,
-        name: &Name,
-        namespace: Namespace,
-        binding: ScopeBinding,
-    ) -> Result<(), E::Error> {
-        let binding = match scope.binding(name, namespace) {
-            Some(existing) => {
-                existing.select(binding, |left, right| self.broadest_visibility(left, right))?
-            }
-            None => binding,
-        };
-        scope.set_binding(name, namespace, binding);
-        Ok(())
-    }
-
-    fn broadest_visibility(
+    pub(crate) fn broadest_visibility(
         &self,
         left: Visibility,
         right: Visibility,
@@ -506,168 +465,6 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
 }
 
 impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
-    /// Resolve one import and write its bindings into `target_scope` as they are found.
-    ///
-    /// Crate and body DefMaps use different fixed-point loops, but both need the same insertion
-    /// rules. In particular, ordinary imports occupy name/namespace slots while `use Trait as _`
-    /// adds an unnamed trait binding. Keeping both cases here prevents the two builders from
-    /// implementing that split separately.
-    ///
-    /// Lookup reads the resolver's environment, not this output scope. A caller can therefore build
-    /// a whole wave of candidates without making partially applied imports visible.
-    ///
-    /// Glob bindings are inserted one at a time instead of first collecting an owned result.
-    pub fn apply_import(
-        &self,
-        importing_module: ModuleRef,
-        import_ref: ImportRef,
-        import: &ImportData,
-        target_scope: &mut ModuleScopeBuilder,
-    ) -> Result<ImportResolution, E::Error> {
-        match import.kind {
-            ImportKind::Glob => {
-                // `path::*` can name either a module or an enum. Finding either source resolves the
-                // import even when visibility filtering leaves it with no bindings to emit.
-                let source = self.import_glob_source(importing_module, import.path.semantic())?;
-                let source_resolved = source.is_some();
-                let mut emitted_binding_count = 0;
-
-                if let Some(source) = source {
-                    match source {
-                        GlobImportSource::Module(source_module) => {
-                            for (name, entry) in self.env.module_scope_entries(source_module)? {
-                                for namespace in Namespace::ALL {
-                                    if let Some(source_binding) = entry.binding(namespace) {
-                                        let Some(binding) = self.imported_binding(
-                                            importing_module,
-                                            source_binding,
-                                            import,
-                                            ScopeBindingProvenance::GlobImport(import_ref),
-                                        )?
-                                        else {
-                                            continue;
-                                        };
-                                        emitted_binding_count += 1;
-                                        self.insert_binding(
-                                            target_scope,
-                                            name,
-                                            namespace,
-                                            binding,
-                                        )?;
-                                    }
-                                }
-                            }
-                        }
-                        GlobImportSource::Enum(enum_def) => {
-                            for entry in self.env.local_enum_variant_entries_for_enum(enum_def)? {
-                                let source_binding = ScopeBinding::new(
-                                    DefId::EnumVariant(entry.variant_ref),
-                                    entry.data.visibility,
-                                    ScopeBindingProvenance::Direct,
-                                );
-                                for namespace in entry.data.namespaces.iter() {
-                                    let Some(binding) = self.imported_binding(
-                                        importing_module,
-                                        &source_binding,
-                                        import,
-                                        ScopeBindingProvenance::GlobImport(import_ref),
-                                    )?
-                                    else {
-                                        continue;
-                                    };
-                                    emitted_binding_count += 1;
-                                    self.insert_binding(
-                                        target_scope,
-                                        &entry.data.name,
-                                        namespace,
-                                        binding,
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Ok(ImportResolution {
-                    source_resolved,
-                    emitted_binding_count,
-                })
-            }
-            ImportKind::Named | ImportKind::SelfImport => {
-                let source_bindings = self.import_bindings(
-                    importing_module,
-                    import.path.semantic(),
-                    NamespaceSet::ALL,
-                )?;
-                let source_resolved = !source_bindings.is_empty();
-                if matches!(&import.binding, ImportBinding::Hidden) {
-                    // An underscore import affects method lookup only when its type-namespace
-                    // source is a trait. Repeated imports merge into the same trait binding.
-                    let mut emitted_binding_count = 0;
-                    for (namespace, source_binding) in source_bindings {
-                        let DefId::Local(local_def) = source_binding.def else {
-                            continue;
-                        };
-                        if namespace != Namespace::Types
-                            || self.env.local_def_kind(local_def)? != Some(LocalDefKind::Trait)
-                        {
-                            continue;
-                        }
-
-                        let Some(binding) = self.imported_binding(
-                            importing_module,
-                            &source_binding,
-                            import,
-                            ScopeBindingProvenance::NamedImport(import_ref),
-                        )?
-                        else {
-                            continue;
-                        };
-                        let binding = match target_scope.unnamed_trait_binding(binding.def) {
-                            Some(existing) => existing.select(binding, |left, right| {
-                                self.broadest_visibility(left, right)
-                            })?,
-                            None => binding,
-                        };
-                        target_scope.set_unnamed_trait_binding(binding);
-                        emitted_binding_count += 1;
-                    }
-                    return Ok(ImportResolution {
-                        source_resolved,
-                        emitted_binding_count,
-                    });
-                }
-
-                let Some(name) = import.binding_name() else {
-                    return Ok(ImportResolution {
-                        source_resolved,
-                        emitted_binding_count: 0,
-                    });
-                };
-
-                let mut emitted_binding_count = 0;
-                for (namespace, source_binding) in source_bindings {
-                    let Some(binding) = self.imported_binding(
-                        importing_module,
-                        &source_binding,
-                        import,
-                        ScopeBindingProvenance::NamedImport(import_ref),
-                    )?
-                    else {
-                        continue;
-                    };
-                    emitted_binding_count += 1;
-                    self.insert_binding(target_scope, &name, namespace, binding)?;
-                }
-
-                Ok(ImportResolution {
-                    source_resolved,
-                    emitted_binding_count,
-                })
-            }
-        }
-    }
-
     /// Visit visible selected bindings without copying them into construction storage.
     pub(crate) fn visit_visible_bindings(
         &self,

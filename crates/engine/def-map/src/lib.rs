@@ -18,8 +18,9 @@ pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
     build::{
-        DefMapBuildOutput, GeneratedItemStores, MacroSourceFileLoader, MacroSourceFileRequest,
-        MacroSourceFileResolution,
+        DefMapBuildOutput, GeneratedItemStores, ImportResolutionEnv, ImportResolutionOutput,
+        ImportResolver, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
+        ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     local::{
@@ -42,8 +43,8 @@ pub use self::{
     },
     profile::profile_descriptors,
     query::{
-        CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, ImportResolution,
-        MacroDefinitionEnv, ResolvePathResult, ScopeResolutionEnv, ScopeResolver,
+        CrateResolutionEnv, DefMapQuery, DefMapSource, GlobImportSource, MacroDefinitionEnv,
+        ResolvePathResult, ScopeResolutionEnv, ScopeResolver,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding,
