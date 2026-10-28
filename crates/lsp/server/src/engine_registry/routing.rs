@@ -21,7 +21,7 @@ pub(crate) struct EngineRouting {
 }
 
 impl EngineRouting {
-    /// Replaces the VS Code workspace folders that are allowed to auto-spawn engines.
+    /// Replaces the discovery folders that are allowed to auto-spawn engines.
     pub(crate) fn set_workspace_folders(
         &mut self,
         folders: impl IntoIterator<Item = NormalizedPathBuf>,

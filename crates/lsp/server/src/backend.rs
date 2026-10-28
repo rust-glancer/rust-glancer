@@ -214,6 +214,10 @@ impl LanguageServer for Backend {
             &workspace_folders,
         )
         .map_err(|error| Error::invalid_params(error.to_string()))?;
+        // Keep relative configuration paths anchored to the editor folders, then use Cargo's
+        // roots for analysis and watching so a member folder shares the whole workspace's state.
+        let workspace_roots = EngineRegistry::resolve_workspace_folders(&workspace_folders)
+            .map_err(methods::internal_error)?;
         let client_capabilities =
             EngineClientCapabilities::from_lsp_client_capabilities(&params.capabilities);
         let client_status_capabilities =
@@ -227,13 +231,13 @@ impl LanguageServer for Backend {
             })?;
         let engines = EngineRegistry::new(
             self.lsp_client.clone(),
-            workspace_folders.clone(),
+            workspace_roots.clone(),
             config,
             self.editor.clone(),
             client_status_capabilities,
         );
         let project_watcher = ProjectWatcher::spawn(
-            workspace_folders,
+            workspace_roots,
             engines.clone(),
             self.recent_editor_saves.clone(),
         );

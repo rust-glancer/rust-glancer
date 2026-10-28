@@ -52,6 +52,25 @@ pub(crate) struct EngineRegistry {
 }
 
 impl EngineRegistry {
+    /// Use the enclosing Cargo workspace for both engine routing and native file watching.
+    pub(crate) fn resolve_workspace_folders(
+        folders: &[NormalizedPathBuf],
+    ) -> anyhow::Result<Vec<NormalizedPathBuf>> {
+        let mut roots = Vec::new();
+        for folder in folders {
+            // Starting from a member or its src directory should behave like opening the Cargo
+            // workspace itself. Watching that root also keeps sibling packages and the workspace
+            // manifest coherent with the engine's saved project.
+            roots.push(
+                DocumentOwner::locate_workspace_root(folder, folder)?
+                    .unwrap_or_else(|| folder.clone()),
+            );
+        }
+        roots.sort();
+        roots.dedup();
+        Ok(roots)
+    }
+
     /// Creates a registry that can spawn engines and forward their notifications to the LSP client.
     pub(crate) fn new(
         lsp_client: LspClient,
@@ -669,6 +688,49 @@ edition = "2024"
 //- /workspace/project_a/src/lib.rs
 pub struct ProjectA;
 "#;
+
+    #[test]
+    fn member_and_source_folders_route_to_the_enclosing_cargo_workspace() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let workspace = normalized(fixture.path("workspace"));
+        let document = normalized(fixture.path("workspace/project_a/src/lib.rs"));
+        let folders = [
+            "workspace",
+            "workspace/project_a",
+            "workspace/project_a/src",
+        ]
+        .map(|path| normalized(fixture.path(path)));
+        let roots = EngineRegistry::resolve_workspace_folders(&folders)
+            .expect("Cargo should discover the shared workspace");
+        assert_eq!(
+            roots,
+            std::slice::from_ref(&workspace),
+            "folders in one Cargo workspace should share a root"
+        );
+
+        for folder in folders {
+            let roots = EngineRegistry::resolve_workspace_folders(std::slice::from_ref(&folder))
+                .expect("Cargo should discover the enclosing workspace");
+            assert_eq!(
+                roots,
+                std::slice::from_ref(&workspace),
+                "opening {} should resolve the enclosing workspace",
+                folder.display()
+            );
+
+            let mut inner = EngineRegistryInner::new(
+                roots,
+                ServerConfig::from_engine_config(EngineConfig::default()),
+            );
+            let owner = DocumentOwner::new(&mut inner, &document)
+                .expect("member document should route through Cargo")
+                .expect("member document should have an owner");
+            let ReservedEngineRoute::Spawn(start) = owner.into_route() else {
+                panic!("opening the first document should start a workspace engine");
+            };
+            assert_eq!(start.root, workspace.as_path());
+        }
+    }
 
     #[tokio::test]
     async fn watcher_captures_existing_rust_text_and_preserves_graph_or_deletion_paths() {

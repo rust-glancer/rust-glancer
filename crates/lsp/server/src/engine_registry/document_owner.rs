@@ -55,7 +55,7 @@ impl DocumentOwner {
             return Ok(Self::fallback(inner, path));
         };
 
-        // Ask Cargo for the workspace root from the containing VS Code workspace folder rather
+        // Ask Cargo for the workspace root from the containing discovery root rather
         // than from the document directory. Nested rust-toolchain overrides can be older than the
         // workspace itself and break lightweight routing before analysis gets involved.
         if let Some(workspace_root) = Self::locate_workspace_root(path, &discovery_workspace)?
@@ -116,7 +116,7 @@ impl DocumentOwner {
         }
     }
 
-    fn locate_workspace_root(
+    pub(super) fn locate_workspace_root(
         path: &NormalizedPathBuf,
         discovery_workspace: &NormalizedPathBuf,
     ) -> anyhow::Result<Option<NormalizedPathBuf>> {
@@ -128,9 +128,7 @@ impl DocumentOwner {
         else {
             return Ok(None);
         };
-        let Some(manifest_path) =
-            Self::nearest_manifest(&document_dir, discovery_workspace.as_path())
-        else {
+        let Some(manifest_path) = Self::nearest_manifest(&document_dir) else {
             return Ok(None);
         };
 
@@ -206,15 +204,14 @@ impl DocumentOwner {
             .output()
     }
 
-    fn nearest_manifest(document_dir: &Path, discovery_workspace: &Path) -> Option<PathBuf> {
-        let mut current = document_dir;
-        while current.starts_with(discovery_workspace) {
+    fn nearest_manifest(document_dir: &Path) -> Option<PathBuf> {
+        // Editors may open a package's src directory, so the manifest search must also reach
+        // ancestors of the editor folder, just as Cargo does from that directory.
+        for current in document_dir.ancestors() {
             let manifest_path = current.join("Cargo.toml");
             if manifest_path.is_file() {
                 return Some(manifest_path);
             }
-
-            current = current.parent()?;
         }
 
         None
@@ -260,9 +257,7 @@ pub struct App;
                 .expect("fixture path should normalize")
         };
         let document_dir = normalized("workspace/crates/app/src/nested");
-        let workspace = normalized("workspace");
-
-        let manifest = DocumentOwner::nearest_manifest(document_dir.as_path(), workspace.as_path())
+        let manifest = DocumentOwner::nearest_manifest(document_dir.as_path())
             .expect("nested source directory should resolve its package manifest");
 
         assert_eq!(
