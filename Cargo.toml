@@ -97,7 +97,7 @@ notify-debouncer-full = "0.7.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
 prettyplease = "0.2.37"
 proc-macro2 = "1.0.106"
-pulldown-cmark = { version = "0.13.4", default-features = false }
+pulldown-cmark = { version = "0.13.5", default-features = false }
 quote = "1.0.45"
 ra-ap-rustc_lexer = "=0.166.0"
 wincode = { version = "0.5.3", features = ["derive"] }
