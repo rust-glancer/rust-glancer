@@ -68,7 +68,9 @@ where
             MacroDirectiveState::Pending => {}
             MacroDirectiveState::WaitingForImports
                 if matches!(scan, MacroExpansionScan::AllPending) => {}
-            MacroDirectiveState::WaitingForImports | MacroDirectiveState::Complete => {
+            MacroDirectiveState::WaitingForImports
+            | MacroDirectiveState::Complete
+            | MacroDirectiveState::RecursionLimitReached => {
                 continue;
             }
         }
@@ -115,13 +117,17 @@ pub(crate) fn apply_expansion_attempts(
                 MacroExpansionAttemptOutcome::WaitingForImports => {
                     MacroDirectiveState::WaitingForImports
                 }
+                MacroExpansionAttemptOutcome::RecursionLimitReached => {
+                    MacroDirectiveState::RecursionLimitReached
+                }
                 _ => MacroDirectiveState::Complete,
             };
         }
 
         let syntax = match attempt.outcome {
             MacroExpansionAttemptOutcome::Complete
-            | MacroExpansionAttemptOutcome::WaitingForImports => {
+            | MacroExpansionAttemptOutcome::WaitingForImports
+            | MacroExpansionAttemptOutcome::RecursionLimitReached => {
                 continue;
             }
             MacroExpansionAttemptOutcome::Generated(source) => source,
@@ -392,6 +398,25 @@ impl MacroExpansionAttempt {
             ));
         };
 
+        // Stop only calls that would expand items. A lookup miss still waits for imports, while
+        // unsupported macros finish through their ordinary handling below.
+        let expands_items = !resolved.definition.is_proc_macro()
+            && matches!(
+                resolved.definition.data.builtin,
+                None | Some(BuiltinMacroKind::Include | BuiltinMacroKind::CfgSelect)
+            );
+        if expands_items
+            && state.macro_directives[call_id].reaches_recursion_limit(&state.macro_directives)
+        {
+            return Ok(Self::new(
+                call_id,
+                call,
+                Some(path_text.to_string()),
+                MacroExpansionAttemptOutcome::RecursionLimitReached,
+                MacroExpansionAttemptRecord::RecursionLimitReached,
+            ));
+        }
+
         if let Some(kind) = resolved.definition.data.builtin {
             return Ok(Self::builtin(
                 kind,
@@ -507,6 +532,7 @@ impl MacroExpansionAttempt {
 /// expansion-cache records; worker results are recorded later when execution finishes.
 enum MacroExpansionAttemptRecord {
     Skipped,
+    RecursionLimitReached,
     Unresolved,
     BuiltinExpanded,
     BuiltinFailed,
@@ -522,6 +548,12 @@ impl MacroExpansionAttemptRecord {
         metric::MACRO_CALLS_SEEN.inc();
 
         let (compile, expand) = match self {
+            Self::RecursionLimitReached => {
+                metric::MACRO_RECURSION_LIMIT_REACHED.record_bool(true);
+                metric::MACRO_CALLS_SKIPPED.inc();
+                metric::MACRO_CALLS_SKIPPED_BY_LIMIT.inc();
+                return;
+            }
             Self::Skipped => {
                 metric::MACRO_CALLS_SKIPPED.inc();
                 return;
@@ -595,6 +627,7 @@ enum MacroExpansionAttemptOutcome {
     Complete,
     /// Lookup may succeed after another import wave.
     WaitingForImports,
+    RecursionLimitReached,
     Generated(ExpansionSyntax),
     NeedsMacroIncludeFile(MacroSourceFileRequest),
     ItemTreeFile(FileId),

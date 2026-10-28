@@ -318,13 +318,13 @@ impl PackageDefMaps {
         self.crate_data(crate_id).map(CrateData::def_map)
     }
 
-    /// Returns bounded diagnostics for crates that reached their macro-expansion pass limit.
+    /// Returns bounded diagnostics for crates with invocations that reached the macro recursion limit.
     pub fn macro_expansion_limits(&self) -> &[MacroExpansionLimitReport] {
         &self.macro_expansion_limits
     }
 }
 
-/// Bounded summary of calls left retryable in one crate when the macro guard fired.
+/// Bounded summary of invocations stopped by the macro recursion limit in one crate.
 ///
 /// The summary groups calls by their rendered macro path and retains one ancestry example instead
 /// of tokens or a complete expansion graph. A pathological expansion therefore stays cheap to

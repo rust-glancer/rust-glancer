@@ -1,15 +1,15 @@
 //! Builds module scopes by alternating import resolution and item macro expansion.
 //!
 //! Imports can expose a macro, and that macro can emit more imports or declarations. The outer
-//! loop collects import answers, then the inner loop expands calls made available by direct
-//! declarations. Real files discovered by expansion are loaded and collected before that inner
-//! queue continues. When expansion adds declarations, the outer loop refreshes imports again.
+//! loop collects import answers, then expands a bounded burst of calls made available by direct
+//! declarations. Real files discovered by expansion are loaded before that burst continues. A burst
+//! yields to imports and retries even if another chain keeps producing calls.
 //!
 //! One crate owns this fixed point; external crates are already frozen. Its scope buffers move
 //! between the builder and the import collector throughout construction.
 //! Macro expansion reads and extends the builder's scopes; import resolution takes those buffers,
 //! updates them, and returns them before expansion resumes. Glob links, macro runtime caches,
-//! the scan cursor, and the per-crate expansion budget survive these handoffs.
+//! and the scan cursor survive these handoffs. Recursion is limited independently per invocation.
 
 use std::{mem, sync::Arc};
 
@@ -27,9 +27,9 @@ use super::{
     crates::{CrateBuilder, KnownModuleFiles},
     imports::ImportCollector,
     macros::{
-        BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionScan,
-        apply_expansion_attempts, apply_pending_macro_source_files, collect_expansion_attempts,
-        expand_expansion_attempts, mark_retryable_macros_skipped_by_limit,
+        BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_DEPTH, MacroExpansionScan,
+        PendingMacroExpansionLimitReport, apply_expansion_attempts,
+        apply_pending_macro_source_files, collect_expansion_attempts, expand_expansion_attempts,
     },
     output::CompletedCrateStore,
     resolution_env::BuildResolutionEnv,
@@ -39,6 +39,10 @@ use crate::{
     NameResolver,
     profile::{metric, record_import_resolution_run},
 };
+
+// Let local chains advance cheaply, but give generated imports and waiting calls a turn after
+// this many passes. This is a scheduling boundary; it never discards remaining work.
+const MAX_EXPANSION_BATCH_PASSES: usize = 32;
 
 /// Dependencies are frozen before this lookup, so their edition-prelude paths already have
 /// their final module structure. `std` and `core` first look for their own local prelude.
@@ -75,9 +79,9 @@ pub(crate) fn select_prelude(
 /// splice generated items back into the active builder, and refresh imports whenever those
 /// generated items may have introduced new imports or exported names.
 ///
-/// Source discovery happens inside the requesting macro batch. After loading, collect the real
-/// module/include into the same scopes and continue calls appended since before that batch. Import
-/// refresh waits until that queue drains, just as it does for directly generated declarations.
+/// Source discovery completes inside the requesting pass. After loading, collect the real
+/// module/include before continuing its generated calls. Each bounded burst then yields to imports
+/// and retries, even if some chains keep generating more work.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn resolve_crate(
     baseline: &DefMapReadTxn<'_>,
@@ -91,13 +95,12 @@ pub(crate) fn resolve_crate(
     remaining_report_groups: &mut usize,
     source_loader: &mut impl MacroSourceFileLoader,
 ) -> anyhow::Result<()> {
-    metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
+    metric::MACRO_RECURSION_LIMIT.record_count(MAX_MACRO_EXPANSION_DEPTH);
 
-    // The import worklist and expansion budget belong to this crate. The caller shares the macro
-    // runtime and source answers across crates, preserving compiled definitions and captured files.
+    // Import scheduling belongs to this crate; recursion belongs to each invocation's ancestry.
+    // The caller shares the macro runtime and source answers across crates.
     let mut import_collector = ImportCollector::default();
     let mut import_resolution_runs = 0;
-    let mut expansion_passes = 0;
 
     'construction: loop {
         metric::ROUNDS.inc();
@@ -114,26 +117,9 @@ pub(crate) fn resolve_crate(
         // Direct additions are visible immediately; dependent imports and their reports need refreshing.
         let mut needs_import_refresh = false;
 
-        // Macro expansion can introduce more macro calls visible through direct bindings. Keep
-        // consuming that local queue before paying for another import refresh.
-        loop {
-            if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
-                // Stop expanding but still freeze a coherent def-map. The final import refresh lets
-                // names generated before the cap settle into module scopes.
-                mark_retryable_macros_skipped_by_limit(state, remaining_report_groups);
-                let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                collect_imports(
-                    baseline,
-                    completed,
-                    state,
-                    &mut import_collector,
-                    &mut import_resolution_runs,
-                )?;
-                timer.finish();
-                break 'construction;
-            }
-
-            expansion_passes += 1;
+        // Advance a bounded burst of direct expansions before refreshing imports. A recursive
+        // chain cannot keep an independent call waiting for a generated `use` indefinitely.
+        for _ in 0..MAX_EXPANSION_BATCH_PASSES {
             metric::EXPANSION_PASSES.inc();
 
             // Prepare a batch against the active builder. Its borrows end before runtime
@@ -244,17 +230,17 @@ pub(crate) fn resolve_crate(
                 apply_pending_macro_source_files(package, state, macro_source_file_resolutions)?;
                 state.censor_proc_macro_exports();
 
-                // Even a missing result belongs to a batch that may have added other declarations.
-                // Drain both its generated calls and the newly loaded calls before refreshing
-                // imports, then require matching import reports before anything can freeze.
+                // Even a missing result belongs to a batch that may have added declarations.
+                // Newly loaded calls can run in the rest of this burst; imports refresh when the
+                // burst drains or yields, before unresolved calls are retried.
                 needs_import_refresh = true;
                 next_scan_start = Some(call_count_before_apply);
                 continue;
             }
 
             if declarations_changed {
-                // Generated calls can be resolved with the same module scopes, but generated
-                // imports cannot. Keep the cheap path going until no more direct expansion happens.
+                // Direct calls can continue within this burst. Generated imports participate
+                // when the burst drains or reaches its scheduling boundary.
                 next_scan_start = Some(call_count_before_apply);
                 continue;
             }
@@ -271,8 +257,13 @@ pub(crate) fn resolve_crate(
         }
     }
 
-    // Derives add impls without changing module bindings. Run them once after both ordinary
-    // expansion and import resolution have settled, including the expansion-limit exit.
+    // Only recursion-limited invocations belong in the report. Ordinary lookup misses remain
+    // unresolved, and sibling calls have had the opportunity to finish before we get here.
+    state.macro_expansion_limit =
+        PendingMacroExpansionLimitReport::collect(&state.macro_directives, remaining_report_groups);
+
+    // Derives add impls without changing module bindings. Run them once after imports and
+    // ordinary expansion have settled.
     let package = item_tree
         .package(state.crate_ref.package.0)
         .expect("active crate has an item-tree package");

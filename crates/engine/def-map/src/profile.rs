@@ -102,10 +102,10 @@ declare_metrics! {
             counter IMPORT_GLOB_LIMIT_HITS = "import_resolution.glob_limit_hits";
             /// Number of macro-expansion passes performed during scope construction.
             counter EXPANSION_PASSES = "expansion_passes";
-            /// Maximum number of macro-expansion passes allowed for one crate.
-            gauge EXPANSION_PASS_LIMIT = "expansion_pass_limit" [Count];
-            /// Whether scope construction stopped because the macro-expansion pass limit was reached.
-            gauge EXPANSION_PASS_LIMIT_REACHED = "expansion_pass_limit_reached" [None];
+            /// Maximum number of nested item-macro expansions in one invocation chain.
+            gauge MACRO_RECURSION_LIMIT = "macro_recursion_limit" [Count];
+            /// Whether any invocation was stopped by the recursion limit.
+            gauge MACRO_RECURSION_LIMIT_REACHED = "macro_recursion_limit_reached" [None];
 
             /// Time spent resolving import scopes during scope construction.
             duration TIMING_RESOLVE_IMPORT_SCOPES = "timings.resolve_import_scopes";
@@ -132,7 +132,7 @@ declare_metrics! {
             counter MACRO_CALLS_UNRESOLVED = "calls.unresolved";
             /// Macro calls skipped before expansion.
             counter MACRO_CALLS_SKIPPED = "calls.skipped";
-            /// Macro calls skipped because the expansion pass limit was reached.
+            /// Macro calls skipped because their invocation chain reached the recursion limit.
             counter MACRO_CALLS_SKIPPED_BY_LIMIT = "calls.skipped_by_limit";
             /// Macro calls expanded successfully.
             counter MACRO_CALLS_EXPANDED = "calls.expanded";

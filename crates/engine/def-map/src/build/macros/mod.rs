@@ -47,10 +47,7 @@ pub(super) use self::{
         GeneratedOrigin, PendingGeneratedInclude, PendingGeneratedModule,
         apply_pending_macro_source_files,
     },
-    limits::{
-        MAX_MACRO_EXPANSION_PASSES, PendingMacroExpansionLimitReport,
-        mark_retryable_macros_skipped_by_limit,
-    },
+    limits::{MAX_MACRO_EXPANSION_DEPTH, PendingMacroExpansionLimitReport},
     textual_scope::TextualMacroScopes,
 };
 
@@ -62,11 +59,17 @@ pub(super) struct MacroDirective {
 }
 
 impl MacroDirective {
-    fn is_retryable(&self) -> bool {
-        matches!(
-            self.state,
-            MacroDirectiveState::Pending | MacroDirectiveState::WaitingForImports
-        )
+    /// Count only this invocation's ancestors. Retries and work from sibling invocations do not
+    /// consume its recursion allowance, and walking the existing links needs no depth table.
+    fn reaches_recursion_limit(&self, directives: &[Self]) -> bool {
+        let mut current = self;
+        for _ in 0..MAX_MACRO_EXPANSION_DEPTH {
+            let MacroCallOrigin::Generated { parent_call } = current.origin else {
+                return false;
+            };
+            current = &directives[parent_call];
+        }
+        true
     }
 }
 
@@ -99,6 +102,9 @@ pub(super) enum MacroDirectiveState {
     Pending,
     /// Lookup failed; retry only after imports have been refreshed.
     WaitingForImports,
+    /// This invocation's ancestry reached the recursion limit. Keep the reason until the bounded
+    /// diagnostic is assembled; unrelated pending calls may still resolve and expand.
+    RecursionLimitReached,
     /// No further attempt is needed, including when source loading owns the remaining collection.
     Complete,
 }

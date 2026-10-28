@@ -25,7 +25,7 @@ use crate::{
 ///
 /// Request identity is coalesced by DefMap. This map coalesces physical paths while still lowering
 /// every distinct logical module context, even when requests arrive in different batches.
-/// DefMap's per-crate expansion budget also bounds that crate's source batches.
+/// DefMap bounds each invocation's ancestry while allowing unrelated source batches to finish.
 pub(super) struct MacroSourceFileLoader<'a> {
     source_packages: &'a PhasePackageSet,
     memory_hooks: &'a dyn ProjectMemoryHooks,

@@ -1,19 +1,20 @@
 //! Bounds recursive item-macro expansion and records why calls were skipped.
 //!
-//! Each crate has its own expansion pass budget. When it is exhausted, keep a
-//! bounded report with one ancestry example per macro identity, then finish the remaining queued
-//! calls as skipped so construction can freeze the answers it already has.
+//! An invocation stops when its ancestry reaches the recursion limit. Other invocations keep
+//! running. Once construction settles, collect only the stopped calls into a bounded report with
+//! one ancestry example per macro identity.
 
 use std::collections::HashMap;
 
 use super::{MacroCallOrigin, MacroDirective, MacroDirectiveState};
-use crate::{MacroExpansionLimitGroup, build::crates::CrateBuilder, profile::metric};
+use crate::MacroExpansionLimitGroup;
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the
 // cap high enough for real nested expansions while still bounding broken projects.
-pub(crate) const MAX_MACRO_EXPANSION_PASSES: usize = 128;
+// TODO: Honor crate-level `#![recursion_limit]` attributes.
+pub(crate) const MAX_MACRO_EXPANSION_DEPTH: usize = 128;
 
-/// Bounded diagnostic assembled before retryable macro calls are marked as skipped.
+/// Bounded diagnostic assembled from invocations stopped by the recursion limit.
 ///
 /// Calls are grouped by macro identity and keep at most one ancestry example per group. This makes
 /// the report useful for recursive expansions without making its size follow the token tree or the
@@ -25,18 +26,21 @@ pub(crate) struct PendingMacroExpansionLimitReport {
 }
 
 impl PendingMacroExpansionLimitReport {
-    /// Groups retryable calls while consuming the report-wide group budget.
-    fn collect(directives: &[MacroDirective], remaining_groups: &mut usize) -> Option<Self> {
+    /// Groups recursion-limited calls while consuming the report-wide group budget.
+    pub(crate) fn collect(
+        directives: &[MacroDirective],
+        remaining_groups: &mut usize,
+    ) -> Option<Self> {
         let mut groups = Vec::<PendingMacroExpansionLimitGroup>::new();
         let mut group_by_identity = HashMap::<&str, usize>::new();
         let mut omitted_call_count = 0;
-        let mut retryable_call_count = 0;
+        let mut limited_call_count = 0;
 
         for (call_id, directive) in directives.iter().enumerate() {
-            if !directive.is_retryable() {
+            if directive.state != MacroDirectiveState::RecursionLimitReached {
                 continue;
             }
-            retryable_call_count += 1;
+            limited_call_count += 1;
             let macro_name = directive.call.identity();
             let generated = matches!(directive.origin, MacroCallOrigin::Generated { .. });
 
@@ -78,7 +82,7 @@ impl PendingMacroExpansionLimitReport {
             group_by_identity.insert(macro_name, group_id);
         }
 
-        (retryable_call_count > 0).then_some(Self {
+        (limited_call_count > 0).then_some(Self {
             groups: groups
                 .into_iter()
                 .map(|group| group.finish(directives))
@@ -150,25 +154,4 @@ impl PendingMacroExpansionLimitGroup {
             chain_truncated,
         }
     }
-}
-
-/// Captures a bounded report, then marks retryable calls as skipped after the guard fires.
-pub(crate) fn mark_retryable_macros_skipped_by_limit(
-    state: &mut CrateBuilder,
-    remaining_groups: &mut usize,
-) {
-    let mut skipped = 0;
-
-    state.macro_expansion_limit =
-        PendingMacroExpansionLimitReport::collect(&state.macro_directives, remaining_groups);
-    for directive in &mut state.macro_directives {
-        if directive.is_retryable() {
-            directive.state = MacroDirectiveState::Complete;
-            skipped += 1;
-        }
-    }
-
-    metric::EXPANSION_PASS_LIMIT_REACHED.record_bool(true);
-    metric::MACRO_CALLS_SKIPPED.add(skipped as u64);
-    metric::MACRO_CALLS_SKIPPED_BY_LIMIT.add(skipped as u64);
 }
