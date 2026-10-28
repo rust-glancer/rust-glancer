@@ -56,7 +56,9 @@ impl GeneratedOrigin {
         macro_name: Option<&str>,
     ) -> Result<bool> {
         let timer = metric::TIMING_PARSE_GENERATED_SOURCES.start_timer();
-        let errors = expansion.parse.errors();
+        // Collection needs parsed declarations. Extra checks on literals and function bodies
+        // belong to diagnostics; they should not reject the expansion's declarations.
+        let errors = expansion.parse.parse_errors();
         timer.finish();
         if !errors.is_empty() {
             let name = macro_name.unwrap_or("<unknown>");

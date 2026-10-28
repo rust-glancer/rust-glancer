@@ -763,8 +763,10 @@ impl<'db> PackageLowering<'db> {
         for arm in cfg_select.arms() {
             let expansion =
                 ExpansionSyntax::from_token_tree(arm.payload.clone(), ExpansionParseKind::Items);
+            // As with ordinary macro output, collecting declarations only needs parser errors.
+            // Additional syntax validation belongs to diagnostics.
             let file = match ast::MacroItems::cast(expansion.parse.syntax_node()) {
-                Some(file) if expansion.parse.errors().is_empty() => file,
+                Some(file) if expansion.parse.parse_errors().is_empty() => file,
                 _ => {
                     arms.push(CfgSelectArmItem::lowering_failed(arm.predicate.clone()));
                     continue;

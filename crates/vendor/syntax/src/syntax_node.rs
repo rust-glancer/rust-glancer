@@ -89,6 +89,10 @@ pub(crate) struct SyntaxTree {
 }
 
 impl SyntaxTree {
+    pub(crate) fn parse_errors(&self) -> &[SyntaxError] {
+        &self.errors
+    }
+
     fn node(&self, id: NodeId) -> &NodeData {
         &self.nodes[id.0 as usize]
     }
@@ -373,10 +377,6 @@ impl SyntaxNode {
     pub fn child_or_token_at_range(&self, range: TextRange) -> Option<SyntaxElement> {
         self.children_with_tokens()
             .find(|child| child.text_range().contains_range(range))
-    }
-
-    pub(crate) fn parse_errors(&self) -> &[SyntaxError] {
-        &self.tree.errors
     }
 }
 

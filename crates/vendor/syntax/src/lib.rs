@@ -134,8 +134,15 @@ impl<T> Parse<T> {
         SyntaxNode::new_root(self.tree.clone())
     }
 
+    /// Returns errors recorded during parsing, without running additional syntax validation.
+    /// Use [`Self::errors`] when diagnostics also need checks on the parsed tree.
+    pub fn parse_errors(&self) -> &[SyntaxError] {
+        self.tree.parse_errors()
+    }
+
+    /// Returns parser errors together with additional syntax-validation diagnostics.
     pub fn errors(&self) -> Vec<SyntaxError> {
-        let mut errors = self.syntax_node().parse_errors().to_vec();
+        let mut errors = self.parse_errors().to_vec();
         validation::validate(&self.syntax_node(), &mut errors);
         errors
     }
