@@ -44,9 +44,9 @@ pub fn run(value: &Service) {
             trait Service @ 6:15-6:22 // object trait declaration
 
             // object methods
-            inherent_method inspect
-            trait_method parent
-            trait_method request
+            im inspect
+            tm parent
+            tm request
         "#]],
     );
 }
@@ -87,12 +87,12 @@ pub fn inspect<T: api::Render>(value: T) {
             fn render_base @ 3:12-3:23 // supertrait declaration
 
             // saved bound methods
-            trait_method render
-            trait_method render_base
+            tm render
+            tm render_base
 
             // request-local bound methods
-            trait_method render
-            trait_method render_base
+            tm render
+            tm render_base
         "#]],
     );
 }
@@ -135,12 +135,12 @@ where
             u32 // method through generic Deref chain
 
             // generic Deref members
-            field value
-            inherent_method value_len
+            fd value
+            im value_len
 
             // request-local Deref members
-            field value
-            inherent_method value_len
+            fd value
+            im value_len
         "#]],
     );
 }
@@ -217,17 +217,17 @@ impl Owner where Other: Marker {
         ],
         expect![[r#"
             bool // function bound
-            trait_method from_marker // saved function bound
-            trait_method from_marker // request-local function bound
+            tm from_marker // saved function bound
+            tm from_marker // request-local function bound
             bool // trait parameter bound
-            trait_method from_marker // saved trait parameter bound
-            trait_method from_marker // request-local trait parameter bound
+            tm from_marker // saved trait parameter bound
+            tm from_marker // request-local trait parameter bound
             u16 // implicit Self bound
-            trait_method from_render // saved implicit Self bound
-            trait_method from_render // request-local implicit Self bound
+            tm from_render // saved implicit Self bound
+            tm from_render // request-local implicit Self bound
             bool // nongeneric impl bound
-            trait_method from_marker // saved nongeneric impl bound
-            trait_method from_marker // request-local nongeneric impl bound
+            tm from_marker // saved nongeneric impl bound
+            tm from_marker // request-local nongeneric impl bound
         "#]],
     );
 }
@@ -265,14 +265,14 @@ pub fn use_it(user: User) {
 "#,
         expect![[r#"
             // partial dot completions
-            inherent_method id
-            inherent_method touch
-            trait_method trait_name
+            im id
+            im touch
+            tm trait_name
 
             // bare dot completions
-            inherent_method id
-            inherent_method touch
-            trait_method trait_name
+            im id
+            im touch
+            tm trait_name
         "#]],
     );
 }
@@ -335,36 +335,36 @@ pub fn inspect(value: Value) {
 "#,
         expect![[r#"
             // outer trait scope
-            trait_method aliased
-            trait_method named
-            trait_method underscore
-            trait_method wildcard
+            tm aliased
+            tm named
+            tm underscore
+            tm wildcard
 
             // block trait scope
-            trait_method aliased
-            trait_method hidden
-            trait_method named
-            trait_method underscore
-            trait_method wildcard
+            tm aliased
+            tm hidden
+            tm named
+            tm underscore
+            tm wildcard
 
             // block underscore trait scope
-            trait_method aliased
-            trait_method hidden
-            trait_method named
-            trait_method underscore
-            trait_method wildcard
+            tm aliased
+            tm hidden
+            tm named
+            tm underscore
+            tm wildcard
 
             // scope after block
-            trait_method aliased
-            trait_method named
-            trait_method underscore
-            trait_method wildcard
+            tm aliased
+            tm named
+            tm underscore
+            tm wildcard
 
             // type shadow keeps outer trait
-            trait_method aliased
-            trait_method named
-            trait_method underscore
-            trait_method wildcard
+            tm aliased
+            tm named
+            tm underscore
+            tm wildcard
         "#]],
     );
 }
@@ -414,7 +414,7 @@ pub fn inspect() {
             "receiver",
         )],
         expect![[r#"
-            inherent_method marker // inferred receiver with many unrelated impls
+            im marker // inferred receiver with many unrelated impls
         "#]],
     );
 }
@@ -491,24 +491,24 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 "#,
         expect![[r#"
             // reference completions
-            inherent_method id
-            field profile
+            im id
+            fd profile
 
             // double reference completions
-            inherent_method id
-            field profile
+            im id
+            fd profile
 
             // try completions
-            inherent_method id
-            field profile
+            im id
+            fd profile
 
             // await completions
-            inherent_method id
-            field profile
+            im id
+            fd profile
 
             // cast completions
-            inherent_method id
-            field profile
+            im id
+            fd profile
         "#]],
     );
 }
@@ -533,8 +533,8 @@ fn main() {
 "#,
         expect![[r#"
             // bin root completions
-            inherent_method ping
-            inherent_method work
+            im ping
+            im work
         "#]],
     );
 }
@@ -597,9 +597,9 @@ pub fn use_it(user: User) {
             u32 // inherent call takes precedence
 
             // same-name completions
-            inherent_method label
-            trait_method label
-            trait_method label
+            im label
+            tm label
+            tm label
         "#]],
     );
 }
@@ -638,8 +638,8 @@ pub fn use_it(error: Wrapper<Error>) {
 "#,
         expect![[r#"
             // wrong generic arg completions
-            inherent_method generic
-            field value
+            im generic
+            fd value
         "#]],
     );
 }
@@ -682,8 +682,8 @@ pub fn use_it(wrapper: Wrapper<User>) {
 "#,
         expect![[r#"
             // generic trait completions
-            trait_method generic_trait_name
-            field value
+            tm generic_trait_name
+            fd value
         "#]],
     );
 }
@@ -734,8 +734,8 @@ pub fn use_it(user: User) {
 }
 "#,
         expect![[r#"
-            inherent_method display // field receiver completions
-            field profile // outer receiver completions
+            im display // field receiver completions
+            fd profile // outer receiver completions
         "#]],
     );
 }
@@ -765,12 +765,12 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local field completions
-            field id
-            field profile
+            fd id
+            fd profile
 
             // body-local tuple field completions
-            field 0
-            field 1
+            fd 0
+            fd 1
         "#]],
     );
 }
@@ -802,12 +802,12 @@ pub fn use_it(user: Arc<User>, object: &dyn std::ops::Deref<Target = User>) {
 "#,
         expect![[r#"
             // Deref completions
-            field id
-            inherent_method label
+            fd id
+            im label
 
             // dyn Deref completions
-            field id
-            inherent_method label
+            fd id
+            im label
         "#]],
     );
 }
@@ -838,16 +838,16 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 "#,
         expect![[r#"
             // slice method completions
-            inherent_method first_ref
-            inherent_method len
+            im first_ref
+            im len
 
             // array method completions
-            inherent_method first_ref
-            inherent_method len
+            im first_ref
+            im len
 
             // array ref method completions
-            inherent_method first_ref
-            inherent_method len
+            im first_ref
+            im len
         "#]],
     );
 }
@@ -897,9 +897,9 @@ pub fn use_it(owned: OwnedText, borrowed: &str, scalar: u32) {
 }
 "#,
         expect![[r#"
-            inherent_method contains // primitive method through Deref
-            inherent_method contains // primitive method through reference
-            inherent_method count_ones // scalar primitive method
+            im contains // primitive method through Deref
+            im contains // primitive method through reference
+            im count_ones // scalar primitive method
         "#]],
     );
 }
@@ -958,9 +958,9 @@ pub fn use_it(value: u32) {
 "#,
         expect![[r#"
             // macro-generated methods
-            inherent_method generated_count
-            inherent_method generated_nested
-            trait_method generated_trait
+            im generated_count
+            im generated_nested
+            tm generated_trait
         "#]],
     );
 }
@@ -985,7 +985,7 @@ pub fn use_it(pointer: *const u8) {
 }
 "#,
         expect![[r#"
-            inherent_method is_null // raw pointer methods
+            im is_null // raw pointer methods
         "#]],
     );
 }
@@ -1055,18 +1055,18 @@ pub fn use_it(scalar: u32, array: [User; 3], user: User, reference: &User) {
 "#,
         expect![[r#"
             // primitive trait methods
-            trait_method blanket_label
-            trait_method scalar_label
+            tm blanket_label
+            tm scalar_label
 
             // array trait methods
-            trait_method array_element
-            trait_method blanket_label
+            tm array_element
+            tm blanket_label
 
-            trait_method blanket_label // blanket trait methods
+            tm blanket_label // blanket trait methods
 
             // reference trait methods
-            trait_method blanket_label
-            trait_method reference_identity
+            tm blanket_label
+            tm reference_identity
         "#]],
     );
 }
@@ -1164,17 +1164,17 @@ pub fn nested_body_owner() {
 "#,
         expect![[r#"
             // body-local type impl completions
-            field id
-            inherent_method id
+            fd id
+            im id
 
-            inherent_method local // body-local target impl completions
-            trait_method label // body-local target trait impl completions
+            im local // body-local target impl completions
+            tm label // body-local target trait impl completions
 
             // nested body-local impl completions
-            field id
-            inherent_method id
+            fd id
+            im id
 
-            inherent_method id // parent body-local impl completions from nested body
+            im id // parent body-local impl completions from nested body
         "#]],
     );
 }
@@ -1221,16 +1221,16 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // generic method return completions
-            field id
-            inherent_method label
+            fd id
+            im label
 
             // generic field receiver completions
-            field id
-            inherent_method label
+            fd id
+            im label
 
             // wrong generic receiver completions
-            inherent_method get
-            field value
+            im get
+            fd value
         "#]],
     );
 }
@@ -1281,39 +1281,39 @@ pub fn use_it(maybe: Option<User>) {
 "#,
         expect![[r#"
             // closure parameter completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // let pattern payload completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // if let-chain rhs completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // if let pattern payload completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // while let pattern payload completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // match guard payload completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
 
             // match pattern payload completions
-            field id
-            inherent_method is_valid
-            inherent_method label
+            fd id
+            im is_valid
+            im label
         "#]],
     );
 }
@@ -1334,8 +1334,8 @@ pub fn use_it(pair: Pair) {
 "#,
         expect![[r#"
             // tuple field completions
-            field 0
-            field 1
+            fd 0
+            fd 1
         "#]],
     );
 }

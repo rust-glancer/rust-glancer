@@ -112,24 +112,24 @@ pub fn method_edit(target: MemberTarget) {
 }
 "#,
         expect![[r#"
-            variable local_value // unfinished lexical candidate
-            type_parameter GenericTy // unfinished generic candidate
-            primitive_type u16 // unfinished primitive candidate
-            macro local_macro // unfinished macro candidate
-            macro exported_macro // unfinished qualified macro candidate
-            struct ModuleType // unfinished module candidate
+            vr local_value // unfinished lexical candidate
+            tp GenericTy // unfinished generic candidate
+            pt u16 // unfinished primitive candidate
+            ma local_macro // unfinished macro candidate
+            ma exported_macro // unfinished qualified macro candidate
+            st ModuleType // unfinished module candidate
             fn new // unfinished associated candidate
-            field field_name // unfinished field candidate
-            inherent_method method_name // unfinished method candidate
-            variable local_value // edited lexical candidate
-            type_parameter GenericTy // edited generic candidate
-            primitive_type u16 // edited primitive candidate
-            macro local_macro // edited macro candidate
-            macro exported_macro // edited qualified macro candidate
-            struct ModuleType // edited module candidate
+            fd field_name // unfinished field candidate
+            im method_name // unfinished method candidate
+            vr local_value // edited lexical candidate
+            tp GenericTy // edited generic candidate
+            pt u16 // edited primitive candidate
+            ma local_macro // edited macro candidate
+            ma exported_macro // edited qualified macro candidate
+            st ModuleType // edited module candidate
             fn new // edited associated candidate
-            field field_name // edited field candidate
-            inherent_method method_name // edited method candidate
+            fd field_name // edited field candidate
+            im method_name // edited method candidate
         "#]],
     );
 }

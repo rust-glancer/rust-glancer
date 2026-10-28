@@ -40,9 +40,9 @@ fn use_it() {
 }
 "#,
         expect![[r#"
-            struct Shared // visible re-export after hidden source
-            struct Shared // visible re-export before hidden source
-            macro facade_macro // macro re-export overrides declaration attributes
+            st Shared // visible re-export after hidden source
+            st Shared // visible re-export before hidden source
+            ma facade_macro // macro re-export overrides declaration attributes
         "#]],
     );
 }
@@ -180,14 +180,14 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // body-local imported type completions
-            struct User
-            module local
+            st User
+            md local
 
             // body-local imported value completions
-            struct User
-            const VALUE
-            variable _typed
-            module local
+            st User
+            ct VALUE
+            vr _typed
+            md local
             fn use_it
         "#]],
     );
@@ -209,11 +209,11 @@ fn main() {
 "#,
         expect![[r#"
             // unqualified use root completions
-            module analysis_unqualified_roots
+            md analysis_unqualified_roots
             fn main
 
             // unqualified value root completions
-            module analysis_unqualified_roots
+            md analysis_unqualified_roots
             fn main
         "#]],
     );
@@ -241,15 +241,15 @@ pub mod parent {
 "#,
         expect![[r#"
             // absolute root completions
-            module alloc
-            module core
-            module std
+            md alloc
+            md core
+            md std
 
-            module parent // crate root completions
+            md parent // crate root completions
 
             // super root completions
-            module child
-            module sibling
+            md child
+            md sibling
         "#]],
     );
 }
@@ -265,27 +265,27 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // unqualified prelude completions
-            trait Clone
-            trait Copy
-            trait Default
-            trait Eq
-            trait Fn
-            trait FnMut
-            trait FnOnce
-            trait IntoIterator
-            trait Iterator
-            enum Option
-            trait Ord
-            trait PartialEq
-            trait PartialOrd
-            enum Result
-            trait Send
-            struct String
-            trait Sync
-            struct Vec
-            module alloc
-            module core
-            module std
+            tt Clone
+            tt Copy
+            tt Default
+            tt Eq
+            tt Fn
+            tt FnMut
+            tt FnOnce
+            tt IntoIterator
+            tt Iterator
+            en Option
+            tt Ord
+            tt PartialEq
+            tt PartialOrd
+            en Result
+            tt Send
+            st String
+            tt Sync
+            st Vec
+            md alloc
+            md core
+            md std
         "#]],
     );
 }
@@ -315,13 +315,13 @@ pub mod api {
 "#,
         expect![[r#"
             // use path completions
-            type_alias ApiAlias
-            trait ApiNamed
-            enum ApiState
-            struct ApiUser
-            static FLAG
-            const VERSION
-            module api_nested
+            ta ApiAlias
+            tt ApiNamed
+            en ApiState
+            st ApiUser
+            sc FLAG
+            ct VERSION
+            md api_nested
             fn build_user
         "#]],
     );
@@ -341,8 +341,8 @@ pub mod api {
 "#,
         expect![[r#"
             // braced use path completions
-            struct ApiUser
-            module api_nested
+            st ApiUser
+            md api_nested
         "#]],
     );
 }
@@ -359,7 +359,7 @@ pub mod api_notify {
 }
 "#,
         expect![[r#"
-            struct Notification // bare use path completions
+            st Notification // bare use path completions
         "#]],
     );
 }
@@ -376,7 +376,7 @@ pub mod api_notify {
 use crate::api_notify::$0 // complete("incomplete bare use path completions")
 "#,
         expect![[r#"
-            struct Notification // incomplete bare use path completions
+            st Notification // incomplete bare use path completions
         "#]],
     );
 }
@@ -398,7 +398,7 @@ const DEFAULT_BASE_BRANCH: &str = "main";
 pub fn run() {}
 "#,
         expect![[r#"
-            struct Arc // incomplete sysroot use path completions
+            st Arc // incomplete sysroot use path completions
         "#]],
     );
 }

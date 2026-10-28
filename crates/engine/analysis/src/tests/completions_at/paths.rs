@@ -25,116 +25,116 @@ pub fn body(param: u8) {
 "#,
         expect![[r#"
             // empty import path
-            const MODULE_VALUE
-            struct ModuleType
-            struct Wrapper
+            ct MODULE_VALUE
+            st ModuleType
+            st Wrapper
             fn body
             fn consume
-            keyword crate
-            keyword self
+            kw crate
+            kw self
             fn signature
-            keyword super
+            kw super
 
             // empty type path
-            struct ModuleType
-            type_parameter T
-            struct Wrapper
-            primitive_type bool
-            primitive_type char
-            keyword crate
-            keyword dyn
-            primitive_type f128
-            primitive_type f16
-            primitive_type f32
-            primitive_type f64
-            keyword fn
-            keyword for
-            primitive_type i128
-            primitive_type i16
-            primitive_type i32
-            primitive_type i64
-            primitive_type i8
-            primitive_type isize
-            keyword self
-            primitive_type str
-            keyword super
-            primitive_type u128
-            primitive_type u16
-            primitive_type u32
-            primitive_type u64
-            primitive_type u8
-            primitive_type usize
+            st ModuleType
+            tp T
+            st Wrapper
+            pt bool
+            pt char
+            kw crate
+            kw dyn
+            pt f128
+            pt f16
+            pt f32
+            pt f64
+            kw fn
+            kw for
+            pt i128
+            pt i16
+            pt i32
+            pt i64
+            pt i8
+            pt isize
+            kw self
+            pt str
+            kw super
+            pt u128
+            pt u16
+            pt u32
+            pt u64
+            pt u8
+            pt usize
 
             // empty expression path
-            const MODULE_VALUE
-            struct ModuleType
-            struct Wrapper
-            keyword async
-            variable before
+            ct MODULE_VALUE
+            st ModuleType
+            st Wrapper
+            kw async
+            vr before
             fn body
             fn consume
-            keyword crate
-            keyword false
-            keyword if
-            keyword loop
-            keyword match
-            keyword move
-            variable param
-            keyword return
-            keyword self
+            kw crate
+            kw false
+            kw if
+            kw loop
+            kw match
+            kw move
+            vr param
+            kw return
+            kw self
             fn signature
-            keyword super
-            keyword true
+            kw super
+            kw true
 
             // empty argument path
-            const MODULE_VALUE
-            struct ModuleType
-            struct Wrapper
-            keyword async
-            variable before
+            ct MODULE_VALUE
+            st ModuleType
+            st Wrapper
+            kw async
+            vr before
             fn body
             fn consume
-            keyword crate
-            keyword false
-            keyword if
-            keyword loop
-            keyword match
-            keyword move
-            variable param
-            keyword return
-            keyword self
+            kw crate
+            kw false
+            kw if
+            kw loop
+            kw match
+            kw move
+            vr param
+            kw return
+            kw self
             fn signature
-            keyword super
-            keyword true
+            kw super
+            kw true
 
             // empty generic argument path
-            struct ModuleType
-            struct Wrapper
-            primitive_type bool
-            primitive_type char
-            keyword crate
-            keyword dyn
-            primitive_type f128
-            primitive_type f16
-            primitive_type f32
-            primitive_type f64
-            keyword fn
-            keyword for
-            primitive_type i128
-            primitive_type i16
-            primitive_type i32
-            primitive_type i64
-            primitive_type i8
-            primitive_type isize
-            keyword self
-            primitive_type str
-            keyword super
-            primitive_type u128
-            primitive_type u16
-            primitive_type u32
-            primitive_type u64
-            primitive_type u8
-            primitive_type usize
+            st ModuleType
+            st Wrapper
+            pt bool
+            pt char
+            kw crate
+            kw dyn
+            pt f128
+            pt f16
+            pt f32
+            pt f64
+            kw fn
+            kw for
+            pt i128
+            pt i16
+            pt i32
+            pt i64
+            pt i8
+            pt isize
+            kw self
+            pt str
+            kw super
+            pt u128
+            pt u16
+            pt u32
+            pt u64
+            pt u8
+            pt usize
         "#]],
     );
 }
@@ -175,27 +175,27 @@ pub fn use_it() {
         // types can be intermediate prefixes. Prefix filtering is left to the LSP client.
         expect![[r#"
             // type path completions
-            type_alias ApiAlias
-            trait ApiNamed
-            enum ApiState
-            struct ApiUser
-            module api_nested
+            ta ApiAlias
+            tt ApiNamed
+            en ApiState
+            st ApiUser
+            md api_nested
 
             // cast type path completions
-            type_alias ApiAlias
-            trait ApiNamed
-            enum ApiState
-            struct ApiUser
-            module api_nested
+            ta ApiAlias
+            tt ApiNamed
+            en ApiState
+            st ApiUser
+            md api_nested
 
             // value path completions
-            type_alias ApiAlias
-            trait ApiNamed
-            enum ApiState
-            struct ApiUser
-            static FLAG
-            const VERSION
-            module api_nested
+            ta ApiAlias
+            tt ApiNamed
+            en ApiState
+            st ApiUser
+            sc FLAG
+            ct VERSION
+            md api_nested
             fn build_user
         "#]],
     );
@@ -218,7 +218,7 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // bare value path completions
-            module api
+            md api
             fn make_root
             fn use_it
         "#]],
@@ -242,8 +242,8 @@ pub fn use_it() {
 "#,
         expect![[r#"
             // bare type path completions
-            struct RootType
-            module api
+            st RootType
+            md api
         "#]],
     );
 }

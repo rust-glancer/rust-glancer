@@ -85,20 +85,20 @@ pub fn pattern_edit(record: Record) {
 use crate::api::PathT$0 // complete_with_source("unfinished import path").matching("PathType")
 "#,
         expect![[r#"
-            struct PathType // edited import path
+            st PathType // edited import path
             fn new // unfinished associated path
-            inherent_method named_method // unfinished dot member
-            variable local_value // unfinished unqualified name
-            struct PathType // unfinished qualified type
-            field record_field // unfinished record field
-            field record_field // unfinished pattern field
+            im named_method // unfinished dot member
+            vr local_value // unfinished unqualified name
+            st PathType // unfinished qualified type
+            fd record_field // unfinished record field
+            fd record_field // unfinished pattern field
             fn new // edited associated path
-            inherent_method named_method // edited dot member
-            variable local_value // edited unqualified name
-            struct PathType // edited qualified type
-            field record_field // edited record field
-            field record_field // edited pattern field
-            struct PathType // unfinished import path
+            im named_method // edited dot member
+            vr local_value // edited unqualified name
+            st PathType // edited qualified type
+            fd record_field // edited record field
+            fd record_field // edited pattern field
+            st PathType // unfinished import path
         "#]],
     );
 }
@@ -187,16 +187,16 @@ pub fn run() {
         expect![[r#"
             fn new // associated path at EOF
             fn new // empty associated path at EOF
-            inherent_method named_method // dot member at EOF
-            inherent_method named_method // empty dot member at EOF
-            variable local_value // unqualified name at EOF
-            struct PathType // qualified type at EOF
-            struct PathType // empty qualified path at EOF
-            field record_field // record field at EOF
-            field record_field // empty record field at EOF
-            field record_field // pattern field at EOF
-            field record_field // empty pattern field at EOF
-            label 'inner // loop label at EOF
+            im named_method // dot member at EOF
+            im named_method // empty dot member at EOF
+            vr local_value // unqualified name at EOF
+            st PathType // qualified type at EOF
+            st PathType // empty qualified path at EOF
+            fd record_field // record field at EOF
+            fd record_field // empty record field at EOF
+            fd record_field // pattern field at EOF
+            fd record_field // empty pattern field at EOF
+            lb 'inner // loop label at EOF
         "#]],
     );
 }
@@ -240,12 +240,12 @@ pub fn body_local() {
 pub fn run<T: crate::Sequence<It$0 // complete_with_source("binding before equals at EOF").matching("Item")
 "#,
         expect![[r#"
-            type_alias Item // binding with existing equals
-            type_alias Item // binding before equals
-            struct PositionalType // ordinary positional type remains available
-            type_alias Output // binding after positional argument
-            type_alias LocalItem // body-local binding before equals
-            type_alias Item // binding before equals at EOF
+            ta Item // binding with existing equals
+            ta Item // binding before equals
+            st PositionalType // ordinary positional type remains available
+            ta Output // binding after positional argument
+            ta LocalItem // body-local binding before equals
+            ta Item // binding before equals at EOF
         "#]],
     );
 }

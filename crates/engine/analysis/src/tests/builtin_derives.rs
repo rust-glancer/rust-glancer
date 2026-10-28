@@ -34,8 +34,8 @@ pub fn use_it() {
             bool // all nine bounds
 
             // clone completion
-            trait_method clone
-            trait_method clone_from
+            tm clone
+            tm clone_from
         "#]],
     );
 }

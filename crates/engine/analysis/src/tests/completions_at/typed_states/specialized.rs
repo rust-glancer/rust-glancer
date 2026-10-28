@@ -110,25 +110,25 @@ pub fn run(condition: bool) {
             query("postfix at EOF", "postfix_eof", "if"),
         ],
         expect![[r#"
-            variable local_capture // format capture with closing syntax
-            variable local_capture // format capture in unterminated string
-            value CARGO_MANIFEST_DIR // environment with closing syntax
-            value CARGO_MANIFEST_DIR // environment in unterminated string
-            variable local_capture // format capture in unterminated raw string
-            value CARGO_MANIFEST_DIR // environment in unterminated raw string
-            value C-unwind // ABI with closing quote
-            value C-unwind // ABI before closing quote
+            vr local_capture // format capture with closing syntax
+            vr local_capture // format capture in unterminated string
+            vl CARGO_MANIFEST_DIR // environment with closing syntax
+            vl CARGO_MANIFEST_DIR // environment in unterminated string
+            vr local_capture // format capture in unterminated raw string
+            vl CARGO_MANIFEST_DIR // environment in unterminated raw string
+            vl C-unwind // ABI with closing quote
+            vl C-unwind // ABI before closing quote
 
             // macro fragment with closing syntax
-            value expr
-            value expr_2021
+            vl expr
+            vl expr_2021
 
             // macro fragment at EOF
-            value expr
-            value expr_2021
+            vl expr
+            vl expr_2021
 
-            postfix if // postfix inside complete expression
-            postfix if // postfix at EOF
+            po if // postfix inside complete expression
+            po if // postfix at EOF
         "#]],
     );
 }
@@ -198,18 +198,18 @@ struct Array([u8; $empty_array$
             ),
         ],
         expect![[r#"
-            variable local_capture // empty format capture at EOF
-            attribute derive // empty attribute path at EOF
+            vr local_capture // empty format capture at EOF
+            at derive // empty attribute path at EOF
 
             // empty macro fragment at EOF
-            value expr
-            value expr_2021
+            vl expr
+            vl expr_2021
 
-            lifetime 'scope // empty lifetime name at EOF
-            label 'inner // empty loop label at EOF
-            module visibility // empty restricted visibility segment at EOF
-            const LIMIT // empty const default expression at EOF
-            const LIMIT // empty array length expression at EOF
+            lt 'scope // empty lifetime name at EOF
+            lb 'inner // empty loop label at EOF
+            md visibility // empty restricted visibility segment at EOF
+            ct LIMIT // empty const default expression at EOF
+            ct LIMIT // empty array length expression at EOF
         "#]],
     );
 }
@@ -289,16 +289,16 @@ pub mod repr;
             app_query("compatibility input at EOF", "compatibility_eof", "since"),
         ],
         expect![[r#"
-            attribute derive // attribute path at EOF
-            macro traced // attribute proc macro at EOF
-            value Clone // builtin derive at EOF
-            macro Stored // derive proc macro at EOF
-            value dead_code // lint input at EOF
-            value transparent // repr input at EOF
-            value target_arch // cfg key at EOF
-            value serde-support // cfg feature in unterminated attribute string
-            value message // diagnostic input at EOF
-            value since // compatibility input at EOF
+            at derive // attribute path at EOF
+            ma traced // attribute proc macro at EOF
+            vl Clone // builtin derive at EOF
+            ma Stored // derive proc macro at EOF
+            vl dead_code // lint input at EOF
+            vl transparent // repr input at EOF
+            vl target_arch // cfg key at EOF
+            vl serde-support // cfg feature in unterminated attribute string
+            vl message // diagnostic input at EOF
+            vl since // compatibility input at EOF
         "#]],
     );
 }
@@ -438,22 +438,22 @@ pub fn run() {
             app_query("label at EOF", "label_eof", "'inner"),
         ],
         expect![[r#"
-            module visibility_edit // restricted visibility with closing syntax
-            module visibility_eof // restricted visibility at EOF
-            module dependency // extern crate before semicolon
-            module dependency // extern crate at EOF
-            const LIMIT // const default with closing syntax
-            const LIMIT // const default at EOF
-            const LIMIT // array length with closing syntax
-            const LIMIT // array length at EOF
-            const N // const parameter with closing syntax
-            const N // const parameter at EOF
-            const LIMIT // braced const argument with closing syntax
-            const LIMIT // braced const argument at EOF
-            lifetime 'outer // lifetime with following type
-            lifetime 'outer // lifetime at EOF
-            label 'inner // label with following break value
-            label 'inner // label at EOF
+            md visibility_edit // restricted visibility with closing syntax
+            md visibility_eof // restricted visibility at EOF
+            md dependency // extern crate before semicolon
+            md dependency // extern crate at EOF
+            ct LIMIT // const default with closing syntax
+            ct LIMIT // const default at EOF
+            ct LIMIT // array length with closing syntax
+            ct LIMIT // array length at EOF
+            ct N // const parameter with closing syntax
+            ct N // const parameter at EOF
+            ct LIMIT // braced const argument with closing syntax
+            ct LIMIT // braced const argument at EOF
+            lt 'outer // lifetime with following type
+            lt 'outer // lifetime at EOF
+            lb 'inner // label with following break value
+            lb 'inner // label at EOF
         "#]],
     );
 }
