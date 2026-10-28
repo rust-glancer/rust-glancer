@@ -1,10 +1,10 @@
 //! Lookup storage while DefMap scopes are being built.
 //!
 //! Dirty packages read fresh module builders; unchanged packages use lazy, fallible frozen reads.
-//! The shared `ScopeResolver` supplies Rust lookup rules. This adapter only routes its reads and
+//! The shared `NameResolver` supplies Rust lookup rules. This adapter only routes its reads and
 //! borrows the builders immutably; the import collector supplies scope buffers while updating them.
 //!
-//! During import collection, the resolver reads its lent scopes first and delegates other reads
+//! During import collection, the collector reads its lent scopes first and delegates other reads
 //! here. During macro lookup, all buffers are back in their builders, so this environment can be
 //! used directly. A missing name in a dirty crate never falls back to that crate's old frozen data.
 
@@ -16,13 +16,13 @@ use rg_text::Name;
 
 use super::{
     crates::CrateBuildStore,
-    imports::{ImportResolutionEnv, ModuleImportInput},
+    imports::{ImportCollectionEnv, ModuleImportInput},
 };
 use crate::{
     CrateResolutionEnv, DefMapReadTxn, DefMapSource, ImportData, LocalDefData,
     LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionEnv, MacroDefinitionView,
-    ModuleBuilder, ModuleData, ModuleResolutionView, Namespace, ScopeBinding, ScopeEntryRef,
-    ScopeResolutionEnv,
+    ModuleBuilder, ModuleData, ModuleResolutionView, NameBinding, NameBindingsView,
+    NameResolutionEnv, Namespace,
 };
 
 /// Reads fresh crate builders alongside unchanged packages from the frozen baseline.
@@ -40,7 +40,7 @@ impl<'a> BuildResolutionEnv<'a> {
     }
 }
 
-impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
+impl NameResolutionEnv for BuildResolutionEnv<'_> {
     type Error = PackageStoreError;
 
     fn module_metadata(
@@ -70,7 +70,7 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
         if module_ref
             .origin
             .as_crate_ref()
@@ -86,13 +86,13 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
             .baseline
             .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
-            .map(|entry| entry.as_ref()))
+            .map(|entry| entry.as_view()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
         if module_ref
             .origin
             .as_crate_ref()
@@ -112,7 +112,7 @@ impl ScopeResolutionEnv for BuildResolutionEnv<'_> {
                 module
                     .scope
                     .entries()
-                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .map(|(name, entry)| (name, entry.as_view()))
                     .collect()
             })
             .unwrap_or_default())
@@ -261,7 +261,7 @@ impl CrateResolutionEnv for BuildResolutionEnv<'_> {
     }
 }
 
-impl ImportResolutionEnv for BuildResolutionEnv<'_> {
+impl ImportCollectionEnv for BuildResolutionEnv<'_> {
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
         let mut result = Vec::new();
         for states in self.crates.iter_dirty() {
@@ -303,7 +303,7 @@ impl ImportResolutionEnv for BuildResolutionEnv<'_> {
         &self,
         module: ModuleRef,
         namespace: Namespace,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
     ) -> bool {
         module
             .origin

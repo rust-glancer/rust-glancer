@@ -77,7 +77,7 @@ where
     ) -> Result<TypePathResolution, D::Error> {
         let result =
             self.def_maps
-                .scope_resolver()
+                .name_resolver()
                 .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
         Ok(Self::type_resolution_from_items(
             self.semantic_items_for_defs(result.resolved)?,
@@ -152,10 +152,10 @@ where
         from: ModuleRef,
         path: &Path,
     ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
-        let result =
-            self.def_maps
-                .scope_resolver()
-                .resolve_path(from, path, NamespaceSet::TYPES)?;
+        let result = self
+            .def_maps
+            .name_resolver()
+            .resolve_path(from, path, NamespaceSet::TYPES)?;
         self.semantic_items_for_defs(result.resolved)
     }
 

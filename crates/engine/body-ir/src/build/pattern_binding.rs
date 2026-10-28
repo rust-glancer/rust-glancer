@@ -467,7 +467,7 @@ where
         };
         let def_maps = self.context.def_map_query();
         let body_defs = def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
             .resolved;
         if self.semantic_items_include_const_like(body_defs)? {
@@ -476,7 +476,7 @@ where
 
         let owner_module = self.body.body().owner_module();
         let owner_defs = def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(owner_module, path, NamespaceSet::VALUES)?
             .resolved;
         if self.semantic_items_include_const_like(owner_defs)? {
@@ -489,7 +489,7 @@ where
         }
 
         let fallback_defs = def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(fallback_module, path, NamespaceSet::VALUES)?
             .resolved;
         self.semantic_items_include_const_like(fallback_defs)

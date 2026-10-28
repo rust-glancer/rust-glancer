@@ -82,7 +82,7 @@ pub(crate) enum CompletionSortPriority {
     /// Owner generics and impl `Self`, after body locals but before module-scope names.
     GenericScope,
     /// A declaration or import visible directly from the containing module.
-    ModuleScope,
+    ItemScope,
     /// A builtin primitive type available in a type position.
     Primitive,
     /// A name introduced by the crate's configured prelude.
@@ -104,7 +104,7 @@ impl CompletionSortPriority {
     /// Returns the priority bucket for a visible module-scope name.
     pub(crate) fn visible_scope(origin: NameOrigin) -> Self {
         match origin {
-            NameOrigin::ModuleScope => Self::ModuleScope,
+            NameOrigin::ItemScope => Self::ItemScope,
             NameOrigin::Prelude => Self::Prelude,
             NameOrigin::ExternRoot => Self::ExternRoot,
         }
@@ -121,7 +121,7 @@ impl SortTextComponent for CompletionSortPriority {
                 write!(out, "00-body:{distance:04}").expect("string writes should not fail");
             }
             Self::GenericScope => out.push_str("01-generic"),
-            Self::ModuleScope => out.push_str("01-module"),
+            Self::ItemScope => out.push_str("01-module"),
             Self::Primitive => out.push_str("02-primitive"),
             Self::Prelude => out.push_str("03-prelude"),
             Self::ExternRoot => out.push_str("04-extern"),

@@ -3,12 +3,12 @@
 use rg_ir_model::{DefId, ImportRef};
 use rg_text::Name;
 
-use crate::scope::{Namespace, ScopeBinding};
+use crate::{NameBinding, Namespace};
 
 /// Where a visible definition came from during unqualified lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VisibleScopeOrigin {
-    ModuleScope,
+    ItemScope,
     Prelude,
     ExternRoot,
 }
@@ -40,7 +40,7 @@ impl VisibleScopeDefs {
         &mut self,
         name: &Name,
         namespace: Namespace,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
         origin: VisibleScopeOrigin,
         skip_shadowed: bool,
     ) {

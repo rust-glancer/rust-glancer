@@ -136,7 +136,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let mut declarations = Vec::new();
         let def_maps = DefMapQuery::new(self.0);
         for def in def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(module, path, NamespaceSet::ALL)?
             .resolved
         {

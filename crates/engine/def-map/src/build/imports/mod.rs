@@ -1,7 +1,7 @@
 //! Adds imported names to the module scopes being built.
 //!
 //! A `use` path can depend on another import, and a resolved glob can gain names when its source
-//! grows. The collector owns those dependencies while `ScopeResolver` handles path lookup and
+//! grows. The collector owns those dependencies while `NameResolver` handles path lookup and
 //! visibility. Crate construction and body-local construction use the same collector.
 //!
 //! Scopes keep the answers already found. Named imports wait for missing namespace answers;
@@ -9,12 +9,12 @@
 //! buffers return to their builders for macro expansion, then come back here with new declarations.
 //! Only the selected scope contents and unresolved-import reports survive freezing.
 
-mod resolver;
+mod collector;
 
 use rg_ir_model::ModuleRef;
 
-pub use self::resolver::{
-    ImportResolutionEnv, ImportResolutionOutput, ImportResolver, ModuleImportInput,
+pub use self::collector::{
+    ImportCollectionEnv, ImportCollectionOutput, ImportCollector, ModuleImportInput,
     ResolvedModuleImports,
 };
 

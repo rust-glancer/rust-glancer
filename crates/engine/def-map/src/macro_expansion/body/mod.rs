@@ -15,7 +15,7 @@ use rg_std::CancellationToken;
 use rg_syntax::{AstNode, Parse, SyntaxNode, ast};
 use rg_text::Name;
 
-use crate::{DefMapQuery, DefMapReadTxn, MacroDefinitionView, ScopeResolutionEnv};
+use crate::{DefMapQuery, DefMapReadTxn, MacroDefinitionView, NameResolutionEnv};
 
 mod call;
 mod expanded;
@@ -357,7 +357,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         }
 
         let binding = query
-            .scope_resolver()
+            .name_resolver()
             .macro_binding(module, path)
             .context("while attempting to resolve qualified body macro path")?;
         let Some(binding) = binding else {
@@ -392,13 +392,13 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             };
             module_scope_modules.push(module_ref);
 
-            current = ScopeResolutionEnv::module_metadata(query, module_ref)
+            current = NameResolutionEnv::module_metadata(query, module_ref)
                 .context("while attempting to fetch parent module for body macro lookup")?
                 .and_then(|module| module.parent);
         }
 
         let bindings = query
-            .scope_resolver()
+            .name_resolver()
             .visible_unqualified_macro_bindings(importing_module, module_scope_modules, name)
             .context("while attempting to resolve unqualified body macro")?;
 

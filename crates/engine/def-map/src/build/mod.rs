@@ -25,7 +25,7 @@ mod scopes;
 pub(crate) use self::macro_source_files::MacroSourceFileResolutions;
 pub use self::{
     imports::{
-        ImportResolutionEnv, ImportResolutionOutput, ImportResolver, ModuleImportInput,
+        ImportCollectionEnv, ImportCollectionOutput, ImportCollector, ModuleImportInput,
         ResolvedModuleImports,
     },
     macro_source_files::{

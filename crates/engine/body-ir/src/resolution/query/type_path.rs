@@ -113,7 +113,7 @@ where
         let def_maps = self.context.def_map_query();
         let result =
             def_maps
-                .scope_resolver()
+                .name_resolver()
                 .resolve_lexical_path(from, path, NamespaceSet::TYPES)?;
         if !result.resolved.is_empty() {
             return self.enum_variant_from_defs(result.resolved);
@@ -122,7 +122,7 @@ where
         let owner_module = self.context.body().owner_module();
         let result =
             def_maps
-                .scope_resolver()
+                .name_resolver()
                 .resolve_path(owner_module, path, NamespaceSet::TYPES)?;
         if !result.resolved.is_empty() {
             return self.enum_variant_from_defs(result.resolved);
@@ -134,7 +134,7 @@ where
         }
         let result =
             def_maps
-                .scope_resolver()
+                .name_resolver()
                 .resolve_path(fallback_module, path, NamespaceSet::TYPES)?;
         self.enum_variant_from_defs(result.resolved)
     }

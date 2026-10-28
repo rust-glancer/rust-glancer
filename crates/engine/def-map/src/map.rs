@@ -12,13 +12,14 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     ItemSource,
+    binding::{NameBinding, Namespace, NamespaceSet, PerNs, Visibility},
     import::ImportData,
+    item_scope::ItemScopeBuilder,
     local::{
         LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
         MacroDefinitionData,
     },
     module::{ModuleData, ModuleDocumentation, ModuleOrigin, ModuleResolutionView},
-    scope::{ModuleScopeBuilder, Namespace, NamespaceSet, PerNs, ScopeBinding, Visibility},
     source::{GeneratedItemStore, GeneratedSourceData, GeneratedSourceId},
 };
 
@@ -58,7 +59,7 @@ pub struct ModuleBuilder {
     pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
     pub origin: ModuleOrigin,
-    scope: ModuleScopeBuilder,
+    scope: ItemScopeBuilder,
     unresolved_imports: Vec<ImportId>,
 }
 
@@ -76,7 +77,7 @@ impl ModuleBuilder {
             impls: Vec::new(),
             imports: Vec::new(),
             origin,
-            scope: ModuleScopeBuilder::default(),
+            scope: ItemScopeBuilder::default(),
             unresolved_imports: Vec::new(),
         }
     }
@@ -170,7 +171,7 @@ impl DefMapBuilder {
         module: ModuleId,
         name: &Name,
         namespace: Namespace,
-        binding: ScopeBinding,
+        binding: NameBinding,
     ) {
         let binding = self
             .module_scope(module)
@@ -192,8 +193,8 @@ impl DefMapBuilder {
     /// Lend the scope buffer to import resolution; return it before macro lookup or freezing.
     ///
     /// The module keeps its metadata and an empty scope placeholder. Import lookup must use the
-    /// resolver's overlay until `apply_module_imports` puts the updated buffer back.
-    pub fn take_module_scope(&mut self, module: ModuleId) -> ModuleScopeBuilder {
+    /// collector's overlay until `apply_module_imports` puts the updated buffer back.
+    pub fn take_module_scope(&mut self, module: ModuleId) -> ItemScopeBuilder {
         mem::take(
             &mut self
                 .modules
@@ -204,11 +205,11 @@ impl DefMapBuilder {
     }
 
     /// Read declarations and retained import answers.
-    pub fn module_scope(&self, module: ModuleId) -> Option<&ModuleScopeBuilder> {
+    pub fn module_scope(&self, module: ModuleId) -> Option<&ItemScopeBuilder> {
         self.modules.get(module).map(|module| &module.scope)
     }
 
-    pub(crate) fn module_scope_mut(&mut self, module: ModuleId) -> Option<&mut ModuleScopeBuilder> {
+    pub(crate) fn module_scope_mut(&mut self, module: ModuleId) -> Option<&mut ItemScopeBuilder> {
         self.modules.get_mut(module).map(|module| &mut module.scope)
     }
 
@@ -217,7 +218,7 @@ impl DefMapBuilder {
     pub fn apply_module_imports(
         &mut self,
         module: ModuleId,
-        scope: ModuleScopeBuilder,
+        scope: ItemScopeBuilder,
         unresolved_imports: Vec<ImportId>,
     ) {
         let module = self

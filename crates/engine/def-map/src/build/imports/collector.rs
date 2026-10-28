@@ -15,10 +15,10 @@ use rustc_hash::FxHashMap;
 
 use super::{ImportApplicationStats, ModuleSetShape};
 use crate::{
-    CrateResolutionEnv, GlobImportSource, ImportBinding, ImportData, ImportKind, LocalDefData,
-    LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, ModuleResolutionView,
-    ModuleScopeBuilder, Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance,
-    ScopeEntryRef, ScopeResolutionEnv, ScopeResolver,
+    CrateResolutionEnv, GlobImportSource, ImportBinding, ImportData, ImportKind, ItemScopeBuilder,
+    LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, ModuleResolutionView,
+    NameBinding, NameBindingProvenance, NameBindingsView, NameResolutionEnv, NameResolver,
+    Namespace, NamespaceSet,
     profile::{ImportResolutionMetrics, metric},
 };
 
@@ -29,7 +29,7 @@ const GLOB_PROPAGATION_LIMIT: usize = 100;
 
 /// Borrowed import IDs for one mutable module, in collection order.
 ///
-/// Repeated calls must keep existing IDs in place and append newly collected imports. The resolver
+/// Repeated calls must keep existing IDs in place and append newly collected imports. The collector
 /// remembers how many imports it has registered for each module and reads only the appended tail.
 pub struct ModuleImportInput<'a> {
     pub module: ModuleRef,
@@ -38,10 +38,10 @@ pub struct ModuleImportInput<'a> {
 
 /// Supplies the declarations and lookup data needed to collect imports.
 ///
-/// The caller owns module metadata, item data, and access to frozen dependencies. The resolver
+/// The caller owns module metadata, item data, and access to frozen dependencies. The collector
 /// temporarily owns the mutable scope buffers and overlays them on these reads. Keeping that
 /// split lets the same algorithm serve a set of dirty crates or one body-local DefMap.
-pub trait ImportResolutionEnv: CrateResolutionEnv<Error = PackageStoreError> {
+pub trait ImportCollectionEnv: CrateResolutionEnv<Error = PackageStoreError> {
     /// All modules with imports in this build, including those registered by an earlier call.
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>>;
     fn import_data(&self, import: ImportRef) -> &ImportData;
@@ -50,7 +50,7 @@ pub trait ImportResolutionEnv: CrateResolutionEnv<Error = PackageStoreError> {
         &self,
         _module: ModuleRef,
         _namespace: Namespace,
-        _binding: &ScopeBinding,
+        _binding: &NameBinding,
     ) -> bool {
         true
     }
@@ -62,19 +62,19 @@ pub trait ImportResolutionEnv: CrateResolutionEnv<Error = PackageStoreError> {
 /// A scope buffer and its matching unresolved-import report, ready to return to its builder.
 pub struct ResolvedModuleImports {
     pub module: ModuleRef,
-    pub scope: ModuleScopeBuilder,
+    pub scope: ItemScopeBuilder,
     /// Imports for which no namespace answer or glob source was found. Partial answers count
     /// as usable imports, and an empty but resolved glob does not appear here.
     pub unresolved: Vec<ImportId>,
 }
 
 /// Updated scope buffers to put back into the builders after one collection run.
-pub struct ImportResolutionOutput {
+pub struct ImportCollectionOutput {
     pub modules: Vec<ResolvedModuleImports>,
     pub(crate) metrics: ImportResolutionMetrics,
 }
 
-/// How far one import has progressed within a call to `resolve`.
+/// How far one import has progressed within a call to `collect`.
 ///
 /// A name can have separate type, value, and macro answers. Finding one is already useful, but
 /// another import may expose an answer in a different namespace on the next pass.
@@ -98,7 +98,7 @@ struct ImportDirective {
 
 struct WorkingModule {
     module: ModuleRef,
-    scope: ModuleScopeBuilder,
+    scope: ItemScopeBuilder,
     /// Length of the append-only import list already registered in `directives`.
     import_count: usize,
     /// Per-run profiling flags; neither controls whether imports are retried.
@@ -121,7 +121,7 @@ struct ResolvedGlob {
 /// - `use source::*` resolves its source once, copies its visible names, and remembers a link.
 ///   Later changes in that source travel through the link as individual name/namespace updates.
 ///
-/// Keep this value across macro batches. Builders lend their scope buffers to `resolve` and take
+/// Keep this value across macro batches. Builders lend their scope buffers to `collect` and take
 /// them back before expanding macros. The import list and glob links survive between calls;
 /// named imports are reconsidered against the new declarations. No scheduling state is frozen.
 ///
@@ -130,7 +130,7 @@ struct ResolvedGlob {
 /// their source loses a namespace, and a resolved glob keeps its selected source. TODO: Handle
 /// removed namespaces and changed glob prefixes if these retained answers prove unhelpful.
 #[derive(Default)]
-pub struct ImportResolver {
+pub struct ImportCollector {
     modules: Vec<WorkingModule>,
     module_indices: FxHashMap<ModuleRef, usize>,
     directives: Vec<ImportDirective>,
@@ -143,7 +143,7 @@ pub struct ImportResolver {
     stats: ImportApplicationStats,
 }
 
-impl ImportResolver {
+impl ImportCollector {
     /// Extend the supplied scopes until pending imports make no more progress.
     ///
     /// Supply every mutable module with imports, including modules handled by earlier calls.
@@ -151,11 +151,11 @@ impl ImportResolver {
     /// added. Modules without imports can stay in `env`: they only supply names, never receive
     /// imported ones. All supplied buffers return in the output; builders must restore them before
     /// macro lookup or freezing.
-    pub fn resolve<E: ImportResolutionEnv>(
+    pub fn collect<E: ImportCollectionEnv>(
         &mut self,
         env: &E,
-        mut scopes: Vec<(ModuleRef, ModuleScopeBuilder)>,
-    ) -> anyhow::Result<ImportResolutionOutput> {
+        mut scopes: Vec<(ModuleRef, ItemScopeBuilder)>,
+    ) -> anyhow::Result<ImportCollectionOutput> {
         self.stats = ImportApplicationStats::default();
         // 1. Take the scope buffers back from the builders and register newly appended imports.
         // Stable package/crate/module order also makes first-winner conflict choices repeatable.
@@ -231,7 +231,7 @@ impl ImportResolver {
                 let data = env.import_data(directive.reference);
                 if data.kind == ImportKind::Glob {
                     self.stats.glob_imports_evaluated += 1;
-                    let source = ScopeResolver::new(&ImportQueryEnv { state: self, env })
+                    let source = NameResolver::new(&ImportQueryEnv { state: self, env })
                         .import_glob_source(module, data.path.semantic())?;
                     if let Some(source) = source {
                         // Finding an empty module still resolves the glob. The link will supply
@@ -253,7 +253,7 @@ impl ImportResolver {
                     }
                     continue;
                 }
-                let bindings = ScopeResolver::new(&ImportQueryEnv { state: self, env })
+                let bindings = NameResolver::new(&ImportQueryEnv { state: self, env })
                     .import_bindings(module, data.path.semantic(), NamespaceSet::ALL)?;
                 // Track occupied namespaces, not the identities selected inside them. A type
                 // alias may appear before a value of the same name; competing types alone must
@@ -276,7 +276,7 @@ impl ImportResolver {
                     let reference = self.directives[id].reference;
                     for (namespace, source) in bindings {
                         // `use Trait as _` adds method-lookup access without creating a name.
-                        // Other definitions imported as `_` resolve but add no scope binding.
+                        // Other definitions imported as `_` resolve but add no named binding.
                         if matches!(data.binding, ImportBinding::Hidden)
                             && !(namespace == Namespace::Types
                                 && matches!(source.def,
@@ -284,11 +284,11 @@ impl ImportResolver {
                         {
                             continue;
                         }
-                        if let Some(binding) = ScopeResolver::new(env).imported_binding(
+                        if let Some(binding) = NameResolver::new(env).imported_binding(
                             module,
                             &source,
                             data,
-                            ScopeBindingProvenance::NamedImport(reference),
+                            NameBindingProvenance::NamedImport(reference),
                         )? {
                             if matches!(data.binding, ImportBinding::Hidden) {
                                 let old = self.modules[owner]
@@ -377,7 +377,7 @@ impl ImportResolver {
             }
         }
         self.changes.shrink_to_fit();
-        Ok(ImportResolutionOutput { modules, metrics })
+        Ok(ImportCollectionOutput { modules, metrics })
     }
 
     fn module_key(module: &ModuleRef) -> (usize, usize, usize) {
@@ -386,28 +386,28 @@ impl ImportResolver {
     }
 
     /// Apply ordinary precedence and combine visibility/attributes for routes to the same item.
-    fn merge<E: ImportResolutionEnv>(
+    fn merge<E: ImportCollectionEnv>(
         &self,
         env: &E,
-        old: Option<ScopeBinding>,
-        incoming: ScopeBinding,
-    ) -> Result<ScopeBinding, PackageStoreError> {
+        old: Option<NameBinding>,
+        incoming: NameBinding,
+    ) -> Result<NameBinding, PackageStoreError> {
         old.map_or(Ok(incoming), |old| {
             old.select(incoming, |a, b| {
-                ScopeResolver::new(env).broadest_visibility(a, b)
+                NameResolver::new(env).broadest_visibility(a, b)
             })
         })
     }
 
     /// Select one import's answer for a slot, then enqueue any change for downstream globs.
     #[allow(clippy::too_many_arguments)]
-    fn insert<E: ImportResolutionEnv>(
+    fn insert<E: ImportCollectionEnv>(
         &mut self,
         env: &E,
         owner: usize,
         name: &Name,
         namespace: Namespace,
-        mut incoming: ScopeBinding,
+        mut incoming: NameBinding,
         import: ImportId,
         depth: usize,
     ) -> anyhow::Result<()> {
@@ -438,7 +438,7 @@ impl ImportResolver {
         }
         // Another route to the same definition can improve visibility or supply better display
         // attributes without becoming the route allowed to replace this target later. Preserve
-        // that distinction separately from ScopeBinding::attribute_import.
+        // that distinction separately from NameBinding::attribute_import.
         let winner = match old {
             Some(old) if old.def != binding.def || !old.is_explicit() && binding.is_explicit() => {
                 Some(import)
@@ -456,7 +456,7 @@ impl ImportResolver {
     }
 
     /// Seed a new glob, or refresh it after builders have added macro-generated declarations.
-    fn scan_glob<E: ImportResolutionEnv>(&mut self, env: &E, glob: usize) -> anyhow::Result<()> {
+    fn scan_glob<E: ImportCollectionEnv>(&mut self, env: &E, glob: usize) -> anyhow::Result<()> {
         let directive = &self.directives[self.globs[glob].directive];
         let owner = directive.module;
         self.modules[owner].evaluated = true;
@@ -481,11 +481,11 @@ impl ImportResolver {
                     })
                     .collect::<Vec<_>>();
                 for (name, namespace, source) in names {
-                    if let Some(binding) = ScopeResolver::new(env).imported_binding(
+                    if let Some(binding) = NameResolver::new(env).imported_binding(
                         module,
                         &source,
                         data,
-                        ScopeBindingProvenance::GlobImport(reference),
+                        NameBindingProvenance::GlobImport(reference),
                     )? {
                         self.stats.glob_bindings_emitted += 1;
                         self.insert(env, owner, &name, namespace, binding, reference.import, 0)?;
@@ -495,17 +495,17 @@ impl ImportResolver {
             GlobImportSource::Enum(def) => {
                 // `use Enum::*` imports variant constructors rather than a module scope.
                 for entry in env.local_enum_variant_entries_for_enum(def)? {
-                    let source = ScopeBinding::new(
+                    let source = NameBinding::new(
                         DefId::EnumVariant(entry.variant_ref),
                         entry.data.visibility,
-                        ScopeBindingProvenance::Direct,
+                        NameBindingProvenance::Direct,
                     );
                     for namespace in entry.data.namespaces.iter() {
-                        if let Some(binding) = ScopeResolver::new(env).imported_binding(
+                        if let Some(binding) = NameResolver::new(env).imported_binding(
                             module,
                             &source,
                             data,
-                            ScopeBindingProvenance::GlobImport(reference),
+                            NameBindingProvenance::GlobImport(reference),
                         )? {
                             self.stats.glob_bindings_emitted += 1;
                             self.insert(
@@ -530,7 +530,7 @@ impl ImportResolver {
     /// With `b: use a::*` and `c: use b::*`, inserting `a::Item` updates `b::Item`, queues
     /// that changed slot, then updates `c::Item`. An unchanged destination queues nothing, so
     /// ordinary cyclic globs stop once they already contain the same selected answers.
-    fn propagate<E: ImportResolutionEnv>(&mut self, env: &E) -> anyhow::Result<()> {
+    fn propagate<E: ImportCollectionEnv>(&mut self, env: &E) -> anyhow::Result<()> {
         let mut processed = 0usize;
         while let Some((source, name, namespace, depth)) = self.changes.pop_front() {
             if processed.is_multiple_of(1024) {
@@ -562,11 +562,11 @@ impl ImportResolver {
                 let reference = directive.reference;
                 // Reapply visibility at each hop. `pub use` cannot expose a source that this
                 // importing module cannot see, or widen a private source into a public binding.
-                if let Some(binding) = ScopeResolver::new(env).imported_binding(
+                if let Some(binding) = NameResolver::new(env).imported_binding(
                     module,
                     &binding,
                     env.import_data(reference),
-                    ScopeBindingProvenance::GlobImport(reference),
+                    NameBindingProvenance::GlobImport(reference),
                 )? {
                     self.stats.glob_bindings_emitted += 1;
                     self.modules[owner].evaluated = true;
@@ -586,15 +586,15 @@ impl ImportResolver {
     }
 }
 
-/// Makes ordinary path lookup read the live scopes owned by the import resolver.
+/// Makes ordinary path lookup read the live scopes owned by the import collector.
 ///
 /// Builders have empty placeholders while their buffers are lent out. Read those modules here;
 /// delegate modules without imports, frozen dependencies, and all declaration metadata to `env`.
 struct ImportQueryEnv<'a, E> {
-    state: &'a ImportResolver,
+    state: &'a ImportCollector,
     env: &'a E,
 }
-impl<E: ImportResolutionEnv> ScopeResolutionEnv for ImportQueryEnv<'_, E> {
+impl<E: ImportCollectionEnv> NameResolutionEnv for ImportQueryEnv<'_, E> {
     type Error = PackageStoreError;
     fn module_metadata(
         &self,
@@ -606,7 +606,7 @@ impl<E: ImportResolutionEnv> ScopeResolutionEnv for ImportQueryEnv<'_, E> {
         &'a self,
         module: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
         match self.state.module_indices.get(&module) {
             Some(&index) => Ok(self.state.modules[index].scope.entry(name)),
             None => self.env.module_scope_entry(module, name),
@@ -615,7 +615,7 @@ impl<E: ImportResolutionEnv> ScopeResolutionEnv for ImportQueryEnv<'_, E> {
     fn module_scope_entries<'a>(
         &'a self,
         module: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
         match self.state.module_indices.get(&module) {
             Some(&index) => Ok(self.state.modules[index].scope.entries().collect()),
             None => self.env.module_scope_entries(module),
@@ -637,7 +637,7 @@ impl<E: ImportResolutionEnv> ScopeResolutionEnv for ImportQueryEnv<'_, E> {
         self.env.local_enum_variant_entries_for_enum(def)
     }
 }
-impl<E: ImportResolutionEnv> CrateResolutionEnv for ImportQueryEnv<'_, E> {
+impl<E: ImportCollectionEnv> CrateResolutionEnv for ImportQueryEnv<'_, E> {
     fn extern_root(&self, krate: CrateRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
         self.env.extern_root(krate, name)
     }

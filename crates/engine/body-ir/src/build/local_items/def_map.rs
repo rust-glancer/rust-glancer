@@ -8,11 +8,11 @@
 
 use rg_def_map::{
     BodyItemSourceRef, CrateResolutionEnv, DefMap, DefMapBuilder, DefMapSource, ImportBinding,
-    ImportData, ImportKind, ImportPath, ImportResolutionEnv, ImportResolver, ItemSource,
+    ImportCollectionEnv, ImportCollector, ImportData, ImportKind, ImportPath, ItemSource,
     LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
     MacroDefinitionEnv, MacroDefinitionView, ModuleBuilder, ModuleDocumentation,
-    ModuleFileSelection, ModuleImportInput, ModuleOrigin, ModuleResolutionView, Namespace,
-    ScopeBinding, ScopeBindingProvenance, ScopeEntryRef, ScopeResolutionEnv, Visibility,
+    ModuleFileSelection, ModuleImportInput, ModuleOrigin, ModuleResolutionView, NameBinding,
+    NameBindingProvenance, NameBindingsView, NameResolutionEnv, Namespace, Visibility,
 };
 use rg_ir_model::{
     BodyRef, CrateRef, DefId, DefMapRef, ImportRef, LocalDefId, LocalDefRef, LocalEnumVariantRef,
@@ -175,10 +175,10 @@ impl<'source> LocalDefMapCollector<'source> {
                 module,
                 &name,
                 namespace,
-                ScopeBinding::new(
+                NameBinding::new(
                     def,
                     *visibilities.get(namespace),
-                    ScopeBindingProvenance::Direct,
+                    NameBindingProvenance::Direct,
                 ),
             );
         }
@@ -262,13 +262,13 @@ impl<'source> LocalDefMapCollector<'source> {
             parent,
             &module_name,
             Namespace::Types,
-            ScopeBinding::new(
+            NameBinding::new(
                 DefId::Module(ModuleRef {
                     origin: DefMapRef::Body(self.body_ref),
                     module: child,
                 }),
                 visibility,
-                ScopeBindingProvenance::Direct,
+                NameBindingProvenance::Direct,
             ),
         );
 
@@ -375,7 +375,7 @@ impl LocalDefMapBuildState {
             state: &self,
             cancellation,
         };
-        for result in ImportResolver::default().resolve(&env, scopes)?.modules {
+        for result in ImportCollector::default().collect(&env, scopes)?.modules {
             self.builder.apply_module_imports(
                 result.module.module,
                 result.scope,
@@ -408,7 +408,7 @@ where
     }
 }
 
-impl<S> ScopeResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
+impl<S> NameResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {
@@ -436,7 +436,7 @@ where
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
                 .state
@@ -449,13 +449,13 @@ where
             .def_maps
             .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
-            .map(|entry| entry.as_ref()))
+            .map(|entry| entry.as_view()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
             return Ok(self
                 .state
@@ -472,7 +472,7 @@ where
                 module
                     .scope
                     .entries()
-                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .map(|(name, entry)| (name, entry.as_view()))
                     .collect()
             })
             .unwrap_or_default())
@@ -570,7 +570,7 @@ where
     }
 }
 
-impl<S> ImportResolutionEnv for LocalDefMapFinalizationEnv<'_, S>
+impl<S> ImportCollectionEnv for LocalDefMapFinalizationEnv<'_, S>
 where
     S: DefMapSource<Error = PackageStoreError> + Copy,
 {

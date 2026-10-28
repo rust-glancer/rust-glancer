@@ -9,7 +9,7 @@ use rg_text::Name;
 
 use super::{ItemOrder, MacroCallSite};
 use crate::{
-    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, ScopeBinding, ScopeResolver,
+    CrateResolutionEnv, MacroDefinitionEnv, MacroDefinitionView, NameBinding, NameResolver,
     build::crates::{CrateBuildStore, CrateBuilder},
 };
 
@@ -25,7 +25,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 /// Macro calls are mostly path-shaped, but one-segment calls have extra Rust-specific behavior:
 /// textual `macro_rules!` definitions can shadow namespace bindings, legacy `#[macro_use]` imports
 /// are a fallback, and resolved compiler builtin definitions need to carry their builtin identity
-/// into expansion dispatch. This resolver keeps that policy together while reusing `ScopeResolver`
+/// into expansion dispatch. This resolver keeps that policy together while reusing `NameResolver`
 /// for the ordinary namespace work.
 pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
     env: &'a E,
@@ -57,7 +57,7 @@ where
 
         // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
         // binding so order filtering can distinguish direct definitions from exports/imports.
-        let binding = ScopeResolver::new(self.env)
+        let binding = NameResolver::new(self.env)
             .macro_binding(ModuleRef::krate(self.state.crate_ref, call.module), path)?;
         self.resolve_scope_macro_binding(call, binding)
     }
@@ -91,7 +91,7 @@ where
             origin: DefMapRef::Crate(self.state.crate_ref),
             module: call.module,
         };
-        let bindings = ScopeResolver::new(self.env).visible_unqualified_macro_bindings(
+        let bindings = NameResolver::new(self.env).visible_unqualified_macro_bindings(
             importing_module,
             [importing_module],
             name,
@@ -167,7 +167,7 @@ where
                 origin: DefMapRef::Crate(self.state.crate_ref),
                 module: macro_use.module,
             };
-            if let Some(binding) = ScopeResolver::new(self.env).visible_macro_binding(
+            if let Some(binding) = NameResolver::new(self.env).visible_macro_binding(
                 import_owner,
                 macro_use.source_module,
                 name,
@@ -187,7 +187,7 @@ where
     fn resolve_scope_macro_binding(
         &self,
         call: &MacroCallSite,
-        binding: Option<ScopeBinding>,
+        binding: Option<NameBinding>,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         let Some(binding) = binding else {
             return Ok(None);
@@ -200,7 +200,7 @@ where
     /// Converts a resolved macro binding into the payload needed by expansion.
     fn macro_record_for_binding(
         &self,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
     ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
         self.macro_record_for_def(binding.def, binding.is_direct_only())
     }

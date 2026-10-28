@@ -5,7 +5,7 @@
 //! declarations. Real files discovered by expansion are loaded and collected before that inner
 //! queue continues. When expansion adds declarations, the outer loop refreshes imports again.
 //!
-//! The same scope buffers move between builders and the import resolver throughout construction.
+//! The same scope buffers move between builders and the import collector throughout construction.
 //! Macro expansion reads and extends the builders' scopes; import resolution takes those buffers,
 //! updates them, and returns them before expansion resumes. Glob links, macro runtime caches,
 //! scan cursors, and the expansion budget all survive these handoffs.
@@ -21,7 +21,7 @@ use rg_workspace::{PackageOrigin, SysrootCrate, WorkspaceMetadata};
 use super::{
     MacroSourceFileResolutions,
     crates::CrateBuildStore,
-    imports::ImportResolver,
+    imports::ImportCollector,
     macros::{
         BuiltinDeriveExpansion, MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, apply_pending_macro_source_files,
@@ -32,7 +32,7 @@ use super::{
 };
 use crate::{
     DefMapReadTxn, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
-    ScopeResolver,
+    NameResolver,
     profile::{metric, record_import_resolution_run},
 };
 
@@ -111,7 +111,7 @@ pub(crate) fn select_preludes(
             for prelude_path in prelude_paths.into_iter().flatten() {
                 let root_module = ModuleRef::krate(state.crate_ref, state.root_module);
                 prelude_module =
-                    ScopeResolver::new(&env).import_module(root_module, &prelude_path)?;
+                    NameResolver::new(&env).import_module(root_module, &prelude_path)?;
                 if prelude_module.is_some() {
                     break;
                 }
@@ -167,7 +167,7 @@ pub(crate) fn build_scopes(
     // One call owns the complete fixed point. Loading files cannot reset the expansion budget or
     // discard compiled macros, registered glob links, or scopes already produced by this build.
     let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
-    let mut import_resolver = ImportResolver::default();
+    let mut import_collector = ImportCollector::default();
     let mut import_resolution_runs = 0;
     let mut expansion_passes = 0;
     let mut macro_source_file_resolutions = MacroSourceFileResolutions::default();
@@ -175,10 +175,10 @@ pub(crate) fn build_scopes(
     'construction: loop {
         metric::ROUNDS.inc();
         let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-        resolve_import_scopes(
+        collect_imports(
             baseline,
             crates,
-            &mut import_resolver,
+            &mut import_collector,
             &mut import_resolution_runs,
         )?;
         timer.finish();
@@ -194,10 +194,10 @@ pub(crate) fn build_scopes(
                 // names generated before the cap settle into module scopes.
                 mark_retryable_macros_skipped_by_limit(crates);
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
-                resolve_import_scopes(
+                collect_imports(
                     baseline,
                     crates,
-                    &mut import_resolver,
+                    &mut import_collector,
                     &mut import_resolution_runs,
                 )?;
                 timer.finish();
@@ -347,12 +347,12 @@ pub(crate) fn build_scopes(
 /// Lend scope buffers to the import collector, then return them for macro lookup.
 ///
 /// Only modules with imports need to move: other modules can supply names through the environment
-/// without receiving imported bindings. While these buffers are out, the resolver overlays them
+/// without receiving imported bindings. While these buffers are out, the collector overlays them
 /// on environment reads. Return both scopes and reports before the next macro batch can use them.
-fn resolve_import_scopes(
+fn collect_imports(
     baseline: &DefMapReadTxn<'_>,
     crates: &mut CrateBuildStore,
-    import_resolver: &mut ImportResolver,
+    import_collector: &mut ImportCollector,
     import_resolution_runs: &mut usize,
 ) -> anyhow::Result<()> {
     metric::IMPORT_RESOLUTION_RUNS.inc();
@@ -376,7 +376,7 @@ fn resolve_import_scopes(
             }
         }
     }
-    let result = import_resolver.resolve(&BuildResolutionEnv::new(baseline, crates), scopes)?;
+    let result = import_collector.collect(&BuildResolutionEnv::new(baseline, crates), scopes)?;
     record_import_resolution_run(*import_resolution_runs, result.metrics);
     for module in result.modules {
         crates

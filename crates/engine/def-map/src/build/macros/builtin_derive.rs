@@ -20,7 +20,7 @@ use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::{
     CrateResolutionEnv, GeneratedItemRef, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
-    MacroDefinitionEnv, ScopeResolver,
+    MacroDefinitionEnv, NameResolver,
     build::crates::{CrateBuildStore, CrateBuilder},
     source::GeneratedSourceData,
 };
@@ -173,7 +173,7 @@ impl BuiltinDeriveExpansion {
     where
         E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
     {
-        let resolver = ScopeResolver::new(env);
+        let resolver = NameResolver::new(env);
         let binding = if let Some(name) = path.relative_single_name() {
             let bindings = resolver
                 .visible_unqualified_macro_bindings(module, [module], name)

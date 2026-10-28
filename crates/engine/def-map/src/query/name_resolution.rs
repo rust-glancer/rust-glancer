@@ -1,11 +1,11 @@
-//! Scope-graph name lookup for DefMap-backed module scopes.
+//! Name and path lookup through DefMap item scopes.
 //!
 //! DefMap construction, body-local resolution, and ordinary queries all need the same
 //! lookup rules while reading from different storage. This module owns those shared rules:
 //! lexical/body lookup, module path lookup, import source lookup, visibility filtering, and the small
 //! macro-namespace queries needed before macro-specific precedence is applied.
 //!
-//! The resolver does not own scopes. It reads through `ScopeResolutionEnv` and
+//! The resolver does not own scopes. It reads through `NameResolutionEnv` and
 //! `CrateResolutionEnv`, so construction can pass scopes under construction while frozen
 //! queries read persisted DefMaps. Import scheduling, inserting answers, and forwarding glob
 //! updates belong to construction; these queries only inspect the names available at the time.
@@ -14,10 +14,10 @@ use rg_ir_model::{DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef, Path, Path
 use rg_std::UniqueVec;
 use rg_text::Name;
 
-use super::resolution_env::{CrateResolutionEnv, ScopeResolutionEnv};
+use super::resolution_env::{CrateResolutionEnv, NameResolutionEnv};
 use crate::{
-    ImportData, LocalDefKind, ModuleOrigin, Namespace, NamespaceSet, PerNs, ScopeBinding,
-    ScopeBindingProvenance, ScopeEntryRef, Visibility,
+    ImportData, LocalDefKind, ModuleOrigin, NameBinding, NameBindingProvenance, NameBindingsView,
+    Namespace, NamespaceSet, PerNs, Visibility,
 };
 
 /// Macro candidates kept in the buckets required by Rust lookup precedence.
@@ -25,8 +25,8 @@ use crate::{
 /// Callers try `module_scope` before `standard_prelude`; this type only preserves the split while
 /// sharing the visibility walk.
 pub struct UnqualifiedMacroBindings {
-    pub module_scope: Option<ScopeBinding>,
-    pub standard_prelude: Option<ScopeBinding>,
+    pub module_scope: Option<NameBinding>,
+    pub standard_prelude: Option<NameBinding>,
 }
 
 /// Result of walking a path through the current scope graph.
@@ -48,7 +48,7 @@ enum PrefixResolution {
 
 /// Item that can appear on the left side of a glob import.
 ///
-/// Modules export visible scope bindings. Enums export visible variant constructors into the value
+/// Modules export visible item bindings. Enums export visible variant constructors into the value
 /// namespace, as in `use Option::*`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlobImportSource {
@@ -56,16 +56,19 @@ pub enum GlobImportSource {
     Enum(LocalDefRef),
 }
 
-/// Applies name lookup rules over one abstract scope source.
+/// Finds item names and paths through the module graph exposed by an environment.
 ///
-/// `ScopeResolver` is storage-agnostic on purpose. During construction the environment can expose
+/// This also owns visibility checks and unqualified macro lookup. It reads the answers available
+/// in item scopes without collecting declarations or scheduling imports.
+///
+/// `NameResolver` is storage-agnostic on purpose. During construction the environment can expose
 /// partial builders and their retained scopes; after freezing the same lookup code reads frozen
 /// DefMaps through `DefMapQuery`.
-pub struct ScopeResolver<'env, E: ?Sized> {
+pub struct NameResolver<'env, E: ?Sized> {
     env: &'env E,
 }
 
-impl<'env, E: ?Sized> ScopeResolver<'env, E> {
+impl<'env, E: ?Sized> NameResolver<'env, E> {
     pub fn new(env: &'env E) -> Self {
         Self { env }
     }
@@ -78,7 +81,7 @@ impl<'env, E: ?Sized> ScopeResolver<'env, E> {
     }
 }
 
-impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
+impl<E: NameResolutionEnv + ?Sized> NameResolver<'_, E> {
     /// Return every namespace a resolved definition occupies when inserted through an import.
     pub fn namespaces_for_def(&self, def: DefId) -> Result<NamespaceSet, E::Error> {
         match def {
@@ -174,7 +177,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     fn visible_defs_in_entry(
         &self,
         importing_module: ModuleRef,
-        entry: ScopeEntryRef<'_>,
+        entry: NameBindingsView<'_>,
         filter: NamespaceSet,
     ) -> Result<Vec<DefId>, E::Error> {
         let mut defs = UniqueVec::new();
@@ -255,7 +258,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         module: ModuleRef,
         name: &str,
         namespace: Namespace,
-    ) -> Result<Option<ScopeBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, E::Error> {
         let Some(binding) = self
             .env
             .module_scope_entry(module, name)?
@@ -299,7 +302,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Option<ScopeEntryRef<'_>>, E::Error> {
+    ) -> Result<Option<NameBindingsView<'_>>, E::Error> {
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
             if let Some(entry) = self.env.module_scope_entry(module_ref, name)? {
@@ -326,7 +329,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     pub fn binding_is_visible(
         &self,
         importing_module: ModuleRef,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
     ) -> Result<bool, E::Error> {
         self.visibility_is_visible(importing_module, binding.visibility)
     }
@@ -338,10 +341,10 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     pub fn imported_binding(
         &self,
         importing_module: ModuleRef,
-        source: &ScopeBinding,
+        source: &NameBinding,
         import: &ImportData,
-        provenance: ScopeBindingProvenance,
-    ) -> Result<Option<ScopeBinding>, E::Error> {
+        provenance: NameBindingProvenance,
+    ) -> Result<Option<NameBinding>, E::Error> {
         if !self.binding_is_visible(importing_module, source)? {
             return Ok(None);
         }
@@ -355,9 +358,7 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         };
         Ok(self
             .intersect_visibility(source_visibility, import.visibility)?
-            .map(|visibility| {
-                ScopeBinding::from_import(source.def, visibility, provenance, import)
-            }))
+            .map(|visibility| NameBinding::from_import(source.def, visibility, provenance, import)))
     }
 
     pub(crate) fn broadest_visibility(
@@ -464,14 +465,14 @@ impl<E: ScopeResolutionEnv + ?Sized> ScopeResolver<'_, E> {
     }
 }
 
-impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
+impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
     /// Visit visible selected bindings without copying them into construction storage.
     pub(crate) fn visit_visible_bindings(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
         filter: NamespaceSet,
-        mut visit: impl FnMut(&Name, Namespace, &ScopeBinding) -> Result<(), E::Error>,
+        mut visit: impl FnMut(&Name, Namespace, &NameBinding) -> Result<(), E::Error>,
     ) -> Result<(), E::Error> {
         for (name, entry) in self.env.module_scope_entries(source_module)? {
             for namespace in filter.iter() {
@@ -491,7 +492,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         source_module: ModuleRef,
         name: &Name,
-    ) -> Result<Option<ScopeBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, E::Error> {
         self.binding_in_module(importing_module, source_module, name, Namespace::Macros)
     }
 
@@ -593,7 +594,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         path: &Path,
-    ) -> Result<Option<ScopeBinding>, E::Error> {
+    ) -> Result<Option<NameBinding>, E::Error> {
         let Some((terminal, prefix)) = path.segments().split_last() else {
             return Ok(None);
         };
@@ -623,7 +624,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, ScopeBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
         let Some((terminal, prefix)) = path.segments().split_last() else {
             let resolved = self.resolve_path(importing_module, path, terminal_filter)?;
             let mut bindings = Vec::new();
@@ -637,7 +638,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 for namespace in self.namespaces_for_def(def)?.iter() {
                     bindings.push((
                         namespace,
-                        ScopeBinding::new(def, module.visibility, ScopeBindingProvenance::Direct),
+                        NameBinding::new(def, module.visibility, NameBindingProvenance::Direct),
                     ));
                 }
             }
@@ -803,7 +804,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         absolute: bool,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<PerNs<Option<ScopeBinding>>, E::Error> {
+    ) -> Result<PerNs<Option<NameBinding>>, E::Error> {
         let mut bindings = PerNs::default();
         if absolute {
             if filter.contains(Namespace::Types) {
@@ -811,10 +812,10 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                     .env
                     .extern_root(importing_module.origin.origin_crate(), name)?
                     .map(|module| {
-                        ScopeBinding::new(
+                        NameBinding::new(
                             DefId::Module(module),
                             Visibility::Public,
-                            ScopeBindingProvenance::Direct,
+                            NameBindingProvenance::Direct,
                         )
                     });
             }
@@ -845,10 +846,10 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
                 .env
                 .extern_root(importing_module.origin.origin_crate(), name)?
         {
-            *bindings.get_mut(Namespace::Types) = Some(ScopeBinding::new(
+            *bindings.get_mut(Namespace::Types) = Some(NameBinding::new(
                 DefId::Module(module),
                 Visibility::Public,
-                ScopeBindingProvenance::Direct,
+                NameBindingProvenance::Direct,
             ));
         }
         if let Some(prelude) = self
@@ -870,7 +871,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         module_ref: ModuleRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, ScopeBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
         let Some(entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
@@ -892,7 +893,7 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
         enum_def: LocalDefRef,
         name: &str,
         filter: NamespaceSet,
-    ) -> Result<Vec<(Namespace, ScopeBinding)>, E::Error> {
+    ) -> Result<Vec<(Namespace, NameBinding)>, E::Error> {
         if !self
             .env
             .local_def_kind(enum_def)?
@@ -905,10 +906,10 @@ impl<E: CrateResolutionEnv + ?Sized> ScopeResolver<'_, E> {
             if entry.data.name != name {
                 continue;
             }
-            let binding = ScopeBinding::new(
+            let binding = NameBinding::new(
                 DefId::EnumVariant(entry.variant_ref),
                 entry.data.visibility,
-                ScopeBindingProvenance::Direct,
+                NameBindingProvenance::Direct,
             );
             if !self.binding_is_visible(importing_module, &binding)? {
                 return Ok(Vec::new());

@@ -27,7 +27,7 @@ use crate::{
     GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
     ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
     MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
-    Namespace, NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
     build::{
         MacroSourceFileResolution, MacroSourceFileResolutions,
         crates::CrateBuilder,
@@ -339,7 +339,7 @@ impl<'a> DeclarationCollector<'a> {
             }
             ItemKind::Function(function) => {
                 if let Some(implementation) =
-                    self.collect_local_def(module, item, source, ScopeBindingProvenance::Direct)
+                    self.collect_local_def(module, item, source, NameBindingProvenance::Direct)
                 {
                     self.collect_proc_macro_definition(
                         module,
@@ -353,7 +353,7 @@ impl<'a> DeclarationCollector<'a> {
             }
             ItemKind::Trait(trait_item) => {
                 if self
-                    .collect_local_def(module, item, source, ScopeBindingProvenance::Direct)
+                    .collect_local_def(module, item, source, NameBindingProvenance::Direct)
                     .is_some()
                 {
                     self.collect_associated_macro_calls(
@@ -366,7 +366,7 @@ impl<'a> DeclarationCollector<'a> {
                 }
             }
             _ => {
-                self.collect_local_def(module, item, source, ScopeBindingProvenance::Direct);
+                self.collect_local_def(module, item, source, NameBindingProvenance::Direct);
             }
         }
         Ok(())
@@ -521,10 +521,10 @@ impl<'a> DeclarationCollector<'a> {
             parent_module,
             &name,
             Namespace::Types,
-            ScopeBinding::new(
+            NameBinding::new(
                 DefId::Module(ModuleRef::krate(self.state.crate_ref, child)),
                 visibility,
-                ScopeBindingProvenance::Direct,
+                NameBindingProvenance::Direct,
             ),
         );
         self.state
@@ -596,7 +596,7 @@ impl<'a> DeclarationCollector<'a> {
                 module_id,
                 &child,
                 child_source,
-                ScopeBindingProvenance::Direct,
+                NameBindingProvenance::Direct,
             ) {
                 self.state
                     .def_map_builder
@@ -615,7 +615,7 @@ impl<'a> DeclarationCollector<'a> {
         module_id: ModuleId,
         item: &ItemNode,
         source: ItemSource,
-        provenance: ScopeBindingProvenance,
+        provenance: NameBindingProvenance,
     ) -> Option<LocalDefId> {
         let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
         let namespaces = kind.scope_namespaces(&item.kind);
@@ -654,7 +654,7 @@ impl<'a> DeclarationCollector<'a> {
                 module_id,
                 &name,
                 namespace,
-                ScopeBinding::new(def, *visibilities.get(namespace), provenance),
+                NameBinding::new(def, *visibilities.get(namespace), provenance),
             );
         }
 
@@ -670,7 +670,7 @@ impl<'a> DeclarationCollector<'a> {
         enum_item: &EnumItem,
     ) {
         let Some(local_def_id) =
-            self.collect_local_def(module_id, item, source, ScopeBindingProvenance::Direct)
+            self.collect_local_def(module_id, item, source, NameBindingProvenance::Direct)
         else {
             return;
         };
@@ -700,10 +700,10 @@ impl<'a> DeclarationCollector<'a> {
             MacroDefinitionItem::MacroRules { attrs, .. }
                 if self.macro_definition_is_exported(attrs) =>
             {
-                ScopeBindingProvenance::DirectMacroExport
+                NameBindingProvenance::DirectMacroExport
             }
-            MacroDefinitionItem::MacroRules { .. } => ScopeBindingProvenance::DirectMacroRules,
-            MacroDefinitionItem::MacroDef { .. } => ScopeBindingProvenance::Direct,
+            MacroDefinitionItem::MacroRules { .. } => NameBindingProvenance::DirectMacroRules,
+            MacroDefinitionItem::MacroDef { .. } => NameBindingProvenance::Direct,
         };
         let Some(local_def_id) = self.collect_local_def(module_id, item, source, provenance) else {
             return;
@@ -750,13 +750,13 @@ impl<'a> DeclarationCollector<'a> {
     /// Make a `#[macro_export]` definition visible through the crate root.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
         let root_module = self.state.root_module;
-        let binding = ScopeBinding::new(
+        let binding = NameBinding::new(
             DefId::Local(LocalDefRef {
                 origin: DefMapRef::Crate(self.state.crate_ref),
                 local_def: local_def_id,
             }),
             Visibility::Public,
-            ScopeBindingProvenance::MacroExport,
+            NameBindingProvenance::MacroExport,
         );
 
         self.state.def_map_builder.insert_direct_binding(
@@ -943,12 +943,12 @@ impl<'a> DeclarationCollector<'a> {
                 .insert_explicit_alias(binding_name.clone(), module_ref);
         }
 
-        let binding = ScopeBinding::new(
+        let binding = NameBinding::new(
             DefId::Module(module_ref),
             self.state
                 .def_map_builder
                 .resolve_visibility(module_id, &item.visibility),
-            ScopeBindingProvenance::ExternCrate,
+            NameBindingProvenance::ExternCrate,
         );
         self.state.def_map_builder.insert_direct_binding(
             module_id,
@@ -1007,7 +1007,7 @@ impl<'a> DeclarationCollector<'a> {
             module_id,
             &proc_macro.name,
             Namespace::Macros,
-            ScopeBinding::new(def, Visibility::Public, ScopeBindingProvenance::Direct),
+            NameBinding::new(def, Visibility::Public, NameBindingProvenance::Direct),
         );
         self.state.macro_definitions.insert(
             local_def_id,

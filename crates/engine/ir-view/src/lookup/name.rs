@@ -61,7 +61,7 @@ pub enum ValueOrTypeNamespace {
 /// Where a visible module-scope name came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameOrigin {
-    ModuleScope,
+    ItemScope,
     Prelude,
     ExternRoot,
 }
@@ -69,7 +69,7 @@ pub enum NameOrigin {
 impl From<VisibleScopeOrigin> for NameOrigin {
     fn from(origin: VisibleScopeOrigin) -> Self {
         match origin {
-            VisibleScopeOrigin::ModuleScope => Self::ModuleScope,
+            VisibleScopeOrigin::ItemScope => Self::ItemScope,
             VisibleScopeOrigin::Prelude => Self::Prelude,
             VisibleScopeOrigin::ExternRoot => Self::ExternRoot,
         }
@@ -249,7 +249,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             return Ok(names);
         }
         let resolved = def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(importing_module, qualifier, NamespaceSet::TYPES)
             .context("resolve module name qualifier")?;
         let mut names = Vec::new();

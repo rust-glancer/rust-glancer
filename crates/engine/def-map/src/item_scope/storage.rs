@@ -1,16 +1,9 @@
-//! Sparse storage for the namespace slots owned by one scope name.
+//! Storage for the namespace bindings belonging to one spelling.
 //!
-//! A [`ScopeEntryBuilder`] belongs to one spelling in `ModuleScopeBuilder`, such as `Widget`. That
-//! spelling can have a type, value, and macro meaning, but most names occupy only one of those
-//! slots. The first occupied slot therefore stays inside the entry. A second or third slot is kept
-//! in one arena shared by the complete module scope, which avoids a small allocation for every
-//! multi-namespace name.
-//!
-//! Freezing reverses that split representation. Each entry takes its additional arena bindings and
-//! writes a self-contained [`FrozenScopeBindings`] value in type/value/macro order. Frozen lookup
-//! can then borrow a normal `ScopeEntryRef` without exposing either the sparse layout or its arena
-//! ids. The surrounding `scope` module owns binding precedence and visibility semantics; this
-//! module only owns the mutable and retained storage shapes used to preserve those decisions.
+//! `NameBindings` owns the frozen answers; `NameBindingsView` is the read-only shape shared by
+//! mutable and frozen tables. The remaining types pack those answers: one occupied namespace
+//! stays inline, extra mutable slots share an arena, and extra frozen slots use a boxed slice.
+//! Storage slots are implementation details, not additional kinds of name resolution.
 
 use std::num::NonZeroU32;
 
@@ -18,29 +11,75 @@ use rg_ir_model::ImportId;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{Namespace, PerNs, ScopeBinding, ScopeEntry, ScopeEntryRef};
+use crate::{NameBinding, Namespace, PerNs};
+
+/// Selected bindings for one spelling, with at most one answer in each namespace.
+///
+/// The spelling itself is the key in `ItemScope`. This value keeps its type, value, and macro
+/// answers. Empty namespaces occupy no retained slot; `binding` returns `None` for them without
+/// exposing the sparse representation to query code.
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct NameBindings {
+    bindings: BindingsStorage,
+}
+
+impl NameBindings {
+    pub fn binding(&self, namespace: Namespace) -> Option<&NameBinding> {
+        self.bindings.binding(namespace)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
+    }
+
+    pub fn as_view(&self) -> NameBindingsView<'_> {
+        NameBindingsView {
+            bindings: PerNs::new(
+                self.binding(Namespace::Types),
+                self.binding(Namespace::Values),
+                self.binding(Namespace::Macros),
+            ),
+        }
+    }
+}
+
+/// Read-only namespace bindings for one spelling in a mutable or frozen item scope.
+///
+/// Path resolution reads this common shape while construction is still changing scopes and after
+/// those scopes have been frozen. Keeping the storage distinction behind this view prevents the
+/// resolver from having separate mutable and retained lookup paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NameBindingsView<'a> {
+    bindings: PerNs<Option<&'a NameBinding>>,
+}
+
+impl<'a> NameBindingsView<'a> {
+    pub fn binding(self, namespace: Namespace) -> Option<&'a NameBinding> {
+        *self.bindings.get(namespace)
+    }
+}
 
 /// Retained namespace slots for one textual name after scope resolution has settled.
 ///
 /// Most names occupy exactly one namespace. This includes the very large number of bindings
 /// copied through glob imports: a Vulkan bindings crate, for example, can expose thousands of
-/// types into hundreds of modules. Keeping three inline [`ScopeBinding`] values would make
+/// types into hundreds of modules. Keeping three inline [`NameBinding`] values would make
 /// every one of those entries pay for two empty slots. Store the common first slot inline and
 /// allocate only the additional occupied slots instead. A missing namespace is represented by the
-/// absence of a [`FrozenNamespaceBinding`], and lookup returns `None` for it.
+/// absence of a [`BindingSlot`], and lookup returns `None` for it.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(super) enum FrozenScopeBindings {
+enum BindingsStorage {
     #[default]
     Empty,
-    One(FrozenNamespaceBinding),
+    One(BindingSlot),
     Multiple {
-        first: FrozenNamespaceBinding,
-        rest: Box<[FrozenNamespaceBinding]>,
+        first: BindingSlot,
+        rest: Box<[BindingSlot]>,
     },
 }
 
-impl FrozenScopeBindings {
-    pub(super) fn binding(&self, namespace: Namespace) -> Option<&ScopeBinding> {
+impl BindingsStorage {
+    fn binding(&self, namespace: Namespace) -> Option<&NameBinding> {
         match self {
             Self::Empty => None,
             Self::One(binding) => (binding.namespace == namespace).then_some(&binding.binding),
@@ -50,7 +89,7 @@ impl FrozenScopeBindings {
         }
     }
 
-    pub(super) fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         matches!(self, Self::Empty)
     }
 }
@@ -60,12 +99,12 @@ impl FrozenScopeBindings {
 /// The namespace tag is needed because sparse slots are stored consecutively instead of in three
 /// fixed type/value/macro fields.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub(super) struct FrozenNamespaceBinding {
+struct BindingSlot {
     namespace: Namespace,
-    binding: ScopeBinding,
+    binding: NameBinding,
 }
 
-/// Mutable namespace state for one name in `ModuleScopeBuilder::names`.
+/// Mutable namespace state for one name in `ItemScopeBuilder::names`.
 ///
 /// Glob imports copy large numbers of names that occupy only one namespace. Three inline
 /// bindings would make every such name pay for two empty slots throughout construction.
@@ -81,12 +120,12 @@ pub(super) struct FrozenNamespaceBinding {
 ///
 /// The first slot follows insertion order. Namespace tags determine lookup and frozen ordering.
 #[derive(Debug, Clone, Default)]
-pub(super) struct ScopeEntryBuilder {
-    first: Option<MutableNamespaceBinding>,
-    additional: [Option<MutableNamespaceBindingId>; 2],
+pub(super) struct NameBindingsBuilder {
+    first: Option<BuildSlot>,
+    additional: [Option<SlotId>; 2],
 }
 
-impl ScopeEntryBuilder {
+impl NameBindingsBuilder {
     /// Store a selected binding, allocating an extra slot only for a newly occupied namespace.
     ///
     /// `import` identifies the winning route, not the source of presentation attributes. A changed
@@ -95,12 +134,12 @@ impl ScopeEntryBuilder {
     pub(super) fn set_binding(
         &mut self,
         namespace: Namespace,
-        binding: ScopeBinding,
+        binding: NameBinding,
         import: Option<ImportId>,
-        arena: &mut MutableNamespaceBindingArena,
+        arena: &mut SlotArena,
     ) {
         let Some(first) = &mut self.first else {
-            self.first = Some(MutableNamespaceBinding {
+            self.first = Some(BuildSlot {
                 namespace,
                 binding,
                 import,
@@ -131,7 +170,7 @@ impl ScopeEntryBuilder {
             .iter_mut()
             .find(|slot| slot.is_none())
             .expect("a name has at most three namespaces");
-        *extra = Some(arena.push(MutableNamespaceBinding {
+        *extra = Some(arena.push(BuildSlot {
             namespace,
             binding,
             import,
@@ -141,7 +180,7 @@ impl ScopeEntryBuilder {
     pub(super) fn binding_import(
         &self,
         namespace: Namespace,
-        arena: &MutableNamespaceBindingArena,
+        arena: &SlotArena,
     ) -> Option<ImportId> {
         self.first
             .iter()
@@ -153,8 +192,8 @@ impl ScopeEntryBuilder {
     fn binding<'a>(
         &'a self,
         namespace: Namespace,
-        arena: &'a MutableNamespaceBindingArena,
-    ) -> Option<&'a ScopeBinding> {
+        arena: &'a SlotArena,
+    ) -> Option<&'a NameBinding> {
         self.first
             .iter()
             .chain(self.additional.iter().flatten().map(|id| arena.get(*id)))
@@ -165,11 +204,8 @@ impl ScopeEntryBuilder {
     /// Reconstruct the dense borrowed view expected by scope consumers without allocating.
     ///
     /// The view hides which namespace is inline and which ones live in the shared arena.
-    pub(super) fn as_ref<'a>(
-        &'a self,
-        arena: &'a MutableNamespaceBindingArena,
-    ) -> ScopeEntryRef<'a> {
-        ScopeEntryRef {
+    pub(super) fn as_view<'a>(&'a self, arena: &'a SlotArena) -> NameBindingsView<'a> {
+        NameBindingsView {
             bindings: PerNs::new(
                 self.binding(Namespace::Types, arena),
                 self.binding(Namespace::Values, arena),
@@ -181,8 +217,8 @@ impl ScopeEntryBuilder {
     /// Visit the selected binding in each occupied namespace.
     pub(super) fn for_each_binding_mut(
         &mut self,
-        arena: &mut MutableNamespaceBindingArena,
-        mut apply: impl FnMut(Namespace, &mut ScopeBinding),
+        arena: &mut SlotArena,
+        mut apply: impl FnMut(Namespace, &mut NameBinding),
     ) {
         if let Some(first) = &mut self.first {
             apply(first.namespace, &mut first.binding);
@@ -195,8 +231,8 @@ impl ScopeEntryBuilder {
 
     /// Take this name's extra slots and retain occupied namespaces in type/value/macro order.
     ///
-    /// `ModuleScopeBuilder` checks that every arena slot was claimed after all names are frozen.
-    pub(super) fn freeze(self, arena: &mut MutableNamespaceBindingArena) -> ScopeEntry {
+    /// `ItemScopeBuilder` checks that every arena slot was claimed after all names are frozen.
+    pub(super) fn freeze(self, arena: &mut SlotArena) -> NameBindings {
         let mut sorted = [None, None, None];
         for binding in self.first.into_iter().chain(
             self.additional
@@ -205,7 +241,7 @@ impl ScopeEntryBuilder {
                 .map(|id| arena.take(id)),
         ) {
             let rank = usize::from(binding.namespace.sort_rank());
-            let previous = sorted[rank].replace(FrozenNamespaceBinding {
+            let previous = sorted[rank].replace(BindingSlot {
                 namespace: binding.namespace,
                 binding: binding.binding,
             });
@@ -216,33 +252,34 @@ impl ScopeEntryBuilder {
         }
         let mut bindings = sorted.into_iter().flatten();
         let Some(first) = bindings.next() else {
-            return ScopeEntry {
-                bindings: FrozenScopeBindings::Empty,
+            return NameBindings {
+                bindings: BindingsStorage::Empty,
             };
         };
         let bindings = match (bindings.next(), bindings.next()) {
-            (None, None) => FrozenScopeBindings::One(first),
-            (Some(second), None) => FrozenScopeBindings::Multiple {
+            (None, None) => BindingsStorage::One(first),
+            (Some(second), None) => BindingsStorage::Multiple {
                 first,
                 rest: Box::new([second]),
             },
-            (Some(second), Some(third)) => FrozenScopeBindings::Multiple {
+            (Some(second), Some(third)) => BindingsStorage::Multiple {
                 first,
                 rest: Box::new([second, third]),
             },
             (None, Some(_)) => unreachable!("namespace bindings should not contain gaps"),
         };
-        ScopeEntry { bindings }
+        NameBindings { bindings }
     }
 }
 
 /// One occupied mutable namespace slot.
 ///
-/// Empty namespaces have no slot, so this value only needs the namespace tag and its resolution.
+/// Empty namespaces have no slot. Occupied ones carry their namespace tag, selected binding,
+/// and the import route allowed to refresh that binding while construction continues.
 #[derive(Debug, Clone)]
-struct MutableNamespaceBinding {
+struct BuildSlot {
     namespace: Namespace,
-    binding: ScopeBinding,
+    binding: NameBinding,
     // Winning import route: only this import may replace the selected target at equal priority.
     // Another route to the same definition may supply presentation attributes without winning.
     // All imports here belong to this scope's DefMap, so only its local ID is needed.
@@ -255,9 +292,9 @@ struct MutableNamespaceBinding {
 /// Two optional 32-bit IDs occupy the same eight bytes as one pointer-sized link on a 64-bit host.
 /// The index bounds one module's extra slots, not the number of bindings in the whole project.
 #[derive(Debug, Clone, Copy)]
-struct MutableNamespaceBindingId(NonZeroU32);
+struct SlotId(NonZeroU32);
 
-impl MutableNamespaceBindingId {
+impl SlotId {
     fn from_index(index: usize) -> Self {
         let index = u32::try_from(index).expect("namespace binding index should fit u32");
         let one_based = index
@@ -273,39 +310,39 @@ impl MutableNamespaceBindingId {
 
 /// Scope-owned storage for namespace slots that do not fit inline in their name entry.
 ///
-/// Every slot belongs to exactly one `ScopeEntryBuilder`. Freezing names can happen in hash-map
+/// Every slot belongs to exactly one `NameBindingsBuilder`. Freezing names can happen in hash-map
 /// iteration order, so slots are wrapped in `Option`: an entry takes its bindings without moving the
 /// ids still held by other entries. The arena has no reuse path because scope construction only
 /// appends slots and the complete arena is discarded after freezing.
 #[derive(Debug, Clone, Default)]
-pub(super) struct MutableNamespaceBindingArena {
-    bindings: Vec<Option<MutableNamespaceBinding>>,
+pub(super) struct SlotArena {
+    bindings: Vec<Option<BuildSlot>>,
 }
 
-impl MutableNamespaceBindingArena {
+impl SlotArena {
     pub(super) fn is_drained(&self) -> bool {
         self.bindings.iter().all(Option::is_none)
     }
 
-    fn push(&mut self, binding: MutableNamespaceBinding) -> MutableNamespaceBindingId {
-        let id = MutableNamespaceBindingId::from_index(self.bindings.len());
+    fn push(&mut self, binding: BuildSlot) -> SlotId {
+        let id = SlotId::from_index(self.bindings.len());
         self.bindings.push(Some(binding));
         id
     }
 
-    fn get(&self, id: MutableNamespaceBindingId) -> &MutableNamespaceBinding {
+    fn get(&self, id: SlotId) -> &BuildSlot {
         self.bindings[id.index()]
             .as_ref()
             .expect("live namespace binding id should resolve")
     }
 
-    fn get_mut(&mut self, id: MutableNamespaceBindingId) -> &mut MutableNamespaceBinding {
+    fn get_mut(&mut self, id: SlotId) -> &mut BuildSlot {
         self.bindings[id.index()]
             .as_mut()
             .expect("live namespace binding id should resolve")
     }
 
-    fn take(&mut self, id: MutableNamespaceBindingId) -> MutableNamespaceBinding {
+    fn take(&mut self, id: SlotId) -> BuildSlot {
         self.bindings[id.index()]
             .take()
             .expect("frozen namespace binding should be live")

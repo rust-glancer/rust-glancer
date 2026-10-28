@@ -20,8 +20,8 @@ use super::macros::{
     PendingMacroExpansionLimitReport, TextualMacroScopes,
 };
 use crate::{
-    CrateData, DefMapBuilder, GeneratedItemStores, MacroExpansionLimitReport,
-    MacroSourceFileRequest, ModuleScopeBuilder, Namespace, PackageDefMaps, ScopeBinding,
+    CrateData, DefMapBuilder, GeneratedItemStores, ItemScopeBuilder, MacroExpansionLimitReport,
+    MacroSourceFileRequest, NameBinding, Namespace, PackageDefMaps,
 };
 
 /// Mutable crate builders indexed by package slot and Cargo target.
@@ -127,7 +127,7 @@ impl CrateBuildStore {
         requests.into_vec()
     }
 
-    pub(crate) fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
+    pub(crate) fn module_scope(&self, module: ModuleRef) -> Option<&ItemScopeBuilder> {
         self.crate_builder(module.origin.as_crate_ref()?)?
             .def_map_builder
             .module_scope(module.module)
@@ -289,7 +289,7 @@ impl CrateBuilder {
     /// A function marked `#[proc_macro]` is a normal value inside its own source crate, but another
     /// crate may see only its macro identity. Apply the same export boundary to initial
     /// declarations and to imported bindings before other crates read them.
-    pub(crate) fn censor_proc_macro_scope(&self, module: ModuleId, scope: &mut ModuleScopeBuilder) {
+    pub(crate) fn censor_proc_macro_scope(&self, module: ModuleId, scope: &mut ItemScopeBuilder) {
         if self.target_kind != TargetKind::ProcMacro || module != self.root_module {
             return;
         }
@@ -307,7 +307,7 @@ impl CrateBuilder {
         &self,
         module: ModuleId,
         namespace: Namespace,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
     ) -> bool {
         if self.target_kind != TargetKind::ProcMacro || module != self.root_module {
             return true;

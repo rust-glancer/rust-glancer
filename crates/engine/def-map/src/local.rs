@@ -29,7 +29,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     ItemSource,
-    scope::{NamespaceSet, Visibility},
+    binding::{NamespaceSet, Visibility},
 };
 
 /// One module-scope definition collected from source.

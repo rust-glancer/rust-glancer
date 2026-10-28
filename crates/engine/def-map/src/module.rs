@@ -4,7 +4,7 @@ use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::scope::{ModuleScope, Visibility};
+use crate::{ItemScope, Visibility};
 
 /// One module in the frozen namespace graph.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
@@ -24,7 +24,7 @@ pub struct ModuleData {
     pub impls: Vec<LocalImplId>,
     pub imports: Vec<ImportId>,
     pub unresolved_imports: Vec<ImportId>,
-    pub scope: ModuleScope,
+    pub scope: ItemScope,
     pub origin: ModuleOrigin,
 }
 

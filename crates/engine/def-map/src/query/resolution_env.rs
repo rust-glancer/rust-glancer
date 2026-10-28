@@ -1,7 +1,7 @@
-//! Source traits used by path resolution.
+//! Storage access needed by name, path, and visibility lookup.
 //!
-//! These traits describe where resolution reads scope data from. The path-walking algorithm lives
-//! separately in `path_resolution`, while each storage owner implements this contract next to its
+//! These traits describe where resolution reads scope data from. The name lookup algorithm lives
+//! separately in `name_resolution`, while each storage owner implements this contract next to its
 //! own data access methods.
 
 use rg_ir_model::{CrateRef, DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef};
@@ -9,11 +9,11 @@ use rg_text::Name;
 
 use crate::{
     LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, MacroDefinitionView,
-    ModuleResolutionView, ScopeEntryRef,
+    ModuleResolutionView, NameBindingsView,
 };
 
-/// Minimal scope graph required by path and visibility lookup.
-pub trait ScopeResolutionEnv {
+/// Module metadata, item bindings, and declaration facts read by `NameResolver`.
+pub trait NameResolutionEnv {
     type Error;
 
     fn module_metadata(
@@ -25,12 +25,12 @@ pub trait ScopeResolutionEnv {
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error>;
+    ) -> Result<Option<NameBindingsView<'a>>, Self::Error>;
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error>;
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error>;
 
     fn local_def_data(
         &self,
@@ -74,10 +74,10 @@ pub trait ScopeResolutionEnv {
 
 /// Macro-definition facts needed by declarative macro resolution and expansion.
 ///
-/// This stays separate from `ScopeResolutionEnv` because path walking only needs generic scope
+/// This stays separate from `NameResolutionEnv` because path walking only needs generic scope
 /// facts. Macro callers additionally need to classify a resolved binding as an expandable macro
 /// and borrow the retained macro body in one step.
-pub trait MacroDefinitionEnv: ScopeResolutionEnv {
+pub trait MacroDefinitionEnv: NameResolutionEnv {
     /// Return the expandable macro view for `def`, or `None` for non-local/non-macro definitions.
     fn macro_definition_view<'a>(
         &'a self,
@@ -86,7 +86,7 @@ pub trait MacroDefinitionEnv: ScopeResolutionEnv {
 }
 
 /// Crate-level graph facts needed by normal Rust module path lookup.
-pub trait CrateResolutionEnv: ScopeResolutionEnv {
+pub trait CrateResolutionEnv: NameResolutionEnv {
     fn extern_root(
         &self,
         crate_ref: CrateRef,

@@ -13,13 +13,13 @@ use rg_text::Name;
 use rustc_hash::FxHashSet;
 
 use super::{
-    path_resolution::ScopeResolver,
-    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, ScopeResolutionEnv},
+    name_resolution::NameResolver,
+    resolution_env::{CrateResolutionEnv, MacroDefinitionEnv, NameResolutionEnv},
 };
 use crate::{
     DefMap, ImportData, LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry,
-    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleResolutionView, Namespace,
-    NamespaceSet, ScopeBinding, ScopeEntryRef, VisibleScopeDef, VisibleScopeDefs,
+    LocalImplData, MacroDefinitionView, ModuleData, ModuleOrigin, ModuleResolutionView,
+    NameBinding, NameBindingsView, Namespace, NamespaceSet, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
 
@@ -196,9 +196,9 @@ where
         self.source.target_pointer_width(crate_ref)
     }
 
-    /// Construct a scope resolver over this routed DefMap source.
-    pub fn scope_resolver(&self) -> ScopeResolver<'_, Self> {
-        ScopeResolver::new(self)
+    /// Construct a name resolver over this routed DefMap source.
+    pub fn name_resolver(&self) -> NameResolver<'_, Self> {
+        NameResolver::new(self)
     }
 
     /// Returns crates whose ordinary semantic items can participate in lookup from `root`.
@@ -256,7 +256,7 @@ where
         source_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
         let mut defs = VisibleScopeDefs::empty();
-        self.scope_resolver().visit_visible_bindings(
+        self.name_resolver().visit_visible_bindings(
             importing_module,
             source_module,
             NamespaceSet::ALL,
@@ -265,7 +265,7 @@ where
                     name,
                     namespace,
                     binding,
-                    VisibleScopeOrigin::ModuleScope,
+                    VisibleScopeOrigin::ItemScope,
                     false,
                 );
                 Ok(())
@@ -294,7 +294,7 @@ where
         &self,
         importing_module: ModuleRef,
     ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
-        let resolver = self.scope_resolver();
+        let resolver = self.name_resolver();
         let mut traits = UniqueVec::new();
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
@@ -332,7 +332,7 @@ where
         &self,
         importing_module: ModuleRef,
     ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
-        let resolver = self.scope_resolver();
+        let resolver = self.name_resolver();
         let mut occupied_type_names = FxHashSet::default();
         let mut traits = UniqueVec::new();
         resolver.visit_visible_bindings(
@@ -370,7 +370,7 @@ where
     fn push_named_trait(
         &self,
         traits: &mut UniqueVec<LocalDefRef>,
-        binding: &ScopeBinding,
+        binding: &NameBinding,
     ) -> Result<(), S::Error> {
         if let DefId::Local(local_def) = binding.def
             && self.source.local_def_data(local_def)?.map(|data| data.kind)
@@ -385,7 +385,7 @@ where
     fn push_unnamed_traits(
         &self,
         traits: &mut UniqueVec<LocalDefRef>,
-        resolver: &ScopeResolver<'_, Self>,
+        resolver: &NameResolver<'_, Self>,
         importing_module: ModuleRef,
         module: &ModuleData,
     ) -> Result<(), S::Error> {
@@ -404,7 +404,7 @@ where
         &self,
         importing_module: ModuleRef,
     ) -> Result<VisibleScopeDefs, S::Error> {
-        let resolver = self.scope_resolver();
+        let resolver = self.name_resolver();
 
         // First-segment resolution checks the current module scope before extern roots and the
         // standard prelude. Completion follows the same namespace-specific shadowing order.
@@ -418,7 +418,7 @@ where
                     name,
                     namespace,
                     binding,
-                    VisibleScopeOrigin::ModuleScope,
+                    VisibleScopeOrigin::ItemScope,
                     false,
                 );
                 Ok(())
@@ -478,7 +478,7 @@ where
     }
 }
 
-impl<S> ScopeResolutionEnv for DefMapQuery<S>
+impl<S> NameResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
@@ -498,18 +498,18 @@ where
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
         Ok(self
             .source
             .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
-            .map(|entry| entry.as_ref()))
+            .map(|entry| entry.as_view()))
     }
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
         Ok(self
             .source
             .module_data(module_ref)?
@@ -517,7 +517,7 @@ where
                 module
                     .scope
                     .entries()
-                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .map(|(name, entry)| (name, entry.as_view()))
                     .collect()
             })
             .unwrap_or_default())

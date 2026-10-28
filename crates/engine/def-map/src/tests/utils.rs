@@ -7,8 +7,9 @@ use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 use crate::{
-    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, Namespace,
-    NamespaceSet, ResolvePathResult, ScopeBinding, ScopeEntry, Visibility, testonly::DefMapFixture,
+    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind,
+    NameBinding, NameBindings, Namespace, NamespaceSet, ResolvePathResult, Visibility,
+    testonly::DefMapFixture,
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -239,7 +240,7 @@ pub(super) struct FixtureEntry<'a> {
     package_name: &'a str,
     target: &'a CargoTarget,
     name: String,
-    entry: Option<&'a ScopeEntry>,
+    entry: Option<&'a NameBindings>,
 }
 
 impl<'a> FixtureEntry<'a> {
@@ -329,7 +330,7 @@ impl<'a> FixtureEntry<'a> {
         )
     }
 
-    fn scope_entry(&self) -> &ScopeEntry {
+    fn scope_entry(&self) -> &NameBindings {
         self.entry.unwrap_or_else(|| {
             panic!(
                 "expected {} to exist before asserting on its bindings",
@@ -338,7 +339,7 @@ impl<'a> FixtureEntry<'a> {
         })
     }
 
-    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<FixtureBindingOrigin<'a>> {
+    fn binding_origin(&self, binding: &'a NameBinding) -> Option<FixtureBindingOrigin<'a>> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,
@@ -475,7 +476,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .def_map_db()
             .read_txn(crate::DefMapLoader::resident_only("def-map fixture query"));
         let result = crate::DefMapQuery::new(&def_map)
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(
                 ModuleRef {
                     origin: DefMapRef::Crate(crate_ref),
@@ -743,7 +744,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         modules
     }
 
-    fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
+    fn sorted_scope_names(&self, scope: &crate::ItemScope) -> Vec<String> {
         let mut names = scope
             .entries()
             .map(|(name, _)| name.clone())
@@ -752,7 +753,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         names.into_iter().map(|name| name.to_string()).collect()
     }
 
-    fn render_scope_entry(&self, entry: &ScopeEntry) -> String {
+    fn render_scope_entry(&self, entry: &NameBindings) -> String {
         let mut parts = Vec::new();
         for (label, namespace) in [
             ("type", Namespace::Types),
@@ -768,7 +769,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         parts.join(" | ")
     }
 
-    fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
+    fn binding_origin(&self, binding: &'a NameBinding) -> Option<BindingOrigin<'a>> {
         let origin = match binding.def {
             DefId::Module(module_ref) => module_ref.origin,
             DefId::Local(local_def_ref) => local_def_ref.origin,

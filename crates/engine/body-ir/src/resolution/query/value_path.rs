@@ -325,7 +325,7 @@ where
             let defs = self
                 .context
                 .def_map_query()
-                .scope_resolver()
+                .name_resolver()
                 .resolve_lexical_name_in_module(from, module, name, NamespaceSet::VALUES)?;
             let value_name = BodyValueName::Candidates(self.value_candidates_for_defs(defs)?);
             if let Some(resolution) = self.value_name_resolution(value_name, cx)? {
@@ -347,7 +347,7 @@ where
         let def_maps = self.context.def_map_query();
         let result =
             def_maps
-                .scope_resolver()
+                .name_resolver()
                 .resolve_path(owner_module, path, NamespaceSet::VALUES)?;
         if !result.resolved.is_empty() {
             return Ok(result);
@@ -359,7 +359,7 @@ where
         }
 
         def_maps
-            .scope_resolver()
+            .name_resolver()
             .resolve_path(fallback_module, path, NamespaceSet::VALUES)
     }
 
@@ -377,7 +377,7 @@ where
         let defs = self
             .context
             .def_map_query()
-            .scope_resolver()
+            .name_resolver()
             .resolve_lexical_path(from, path, NamespaceSet::VALUES)?
             .resolved;
         self.value_name_resolution(

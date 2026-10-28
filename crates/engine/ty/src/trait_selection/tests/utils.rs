@@ -3,8 +3,8 @@ use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
 use expect_test::Expect;
 use rg_def_map::{
     DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
-    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, Namespace,
-    NamespaceSet, ScopeBinding, ScopeBindingProvenance, Visibility,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, NameBinding,
+    NameBindingProvenance, Namespace, NamespaceSet, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
@@ -734,10 +734,10 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 root_module,
                 &struct_data.name,
                 Namespace::Types,
-                ScopeBinding::new(
+                NameBinding::new(
                     DefId::Local(local_def_ref),
                     Visibility::Public,
-                    ScopeBindingProvenance::Direct,
+                    NameBindingProvenance::Direct,
                 ),
             );
         }
@@ -765,10 +765,10 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 root_module,
                 &trait_data.name,
                 Namespace::Types,
-                ScopeBinding::new(
+                NameBinding::new(
                     DefId::Local(local_def_ref),
                     Visibility::Public,
-                    ScopeBindingProvenance::Direct,
+                    NameBindingProvenance::Direct,
                 ),
             );
         }

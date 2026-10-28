@@ -12,7 +12,7 @@ use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemSource, scope::Visibility};
+use crate::{ItemSource, binding::Visibility};
 
 /// One lowered import declaration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
