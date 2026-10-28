@@ -3,9 +3,9 @@ use std::{collections::HashMap, convert::Infallible, mem};
 use rg_arena::Arena;
 use rg_ir_model::{
     DefMapRef, FileId, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef, Span,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef,
 };
-use rg_item_tree::{EnumItem, FieldList, ItemKind, UserFacingAttrs, VisibilityLevel};
+use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_text::{Name, identifier_text};
 use wincode::{SchemaRead, SchemaWrite};
@@ -15,11 +15,9 @@ use crate::{
     binding::{NameBinding, Namespace, NamespaceSet, PerNs, Visibility},
     import::ImportData,
     item_scope::ItemScopeBuilder,
-    local::{
-        LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
-        MacroDefinitionData,
-    },
-    module::{ModuleData, ModuleDocumentation, ModuleOrigin, ModuleResolutionView},
+    local::{LocalDefData, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData},
+    macro_definition::MacroDefinitionData,
+    module::{ModuleBuilder, ModuleData},
     source::{GeneratedItemStore, GeneratedSourceData, GeneratedSourceId},
 };
 
@@ -33,80 +31,6 @@ struct DefMapData {
     foreign_blocks: HashMap<LocalDefId, ItemSource>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
-}
-
-/// One module while declarations and imports are still being collected.
-///
-/// Declarations, child modules, extern crates and imported names enter the same retained scope.
-/// For `struct Local; use crate::other::Remote as Alias;`, it first contains `Local`, then gains
-/// `Alias` when its import resolves. Macro-generated declarations use that same scope too. Here
-/// "direct" describes how a binding arrived; it does not mean there is a separate declaration-only
-/// scope to replay imports from.
-///
-/// Import collection takes the buffer and returns it before macro lookup resumes. Winning import
-/// routes live only in mutable namespace slots; freezing keeps the selected bindings and
-/// unresolved-import report in `ModuleData`, without the collector's scheduling state.
-#[derive(Debug)]
-pub struct ModuleBuilder {
-    pub name: Option<Name>,
-    pub name_span: Option<Span>,
-    pub docs: Option<ModuleDocumentation>,
-    pub user_facing_attrs: UserFacingAttrs,
-    pub visibility: Visibility,
-    pub parent: Option<ModuleId>,
-    pub children: Vec<(Name, ModuleId)>,
-    pub local_defs: Vec<LocalDefId>,
-    pub impls: Vec<LocalImplId>,
-    pub imports: Vec<ImportId>,
-    pub origin: ModuleOrigin,
-    scope: ItemScopeBuilder,
-    unresolved_imports: Vec<ImportId>,
-}
-
-impl ModuleBuilder {
-    pub fn new(origin: ModuleOrigin, visibility: Visibility, parent: Option<ModuleId>) -> Self {
-        Self {
-            name: None,
-            name_span: None,
-            docs: None,
-            user_facing_attrs: UserFacingAttrs::default(),
-            visibility,
-            parent,
-            children: Vec::new(),
-            local_defs: Vec::new(),
-            impls: Vec::new(),
-            imports: Vec::new(),
-            origin,
-            scope: ItemScopeBuilder::default(),
-            unresolved_imports: Vec::new(),
-        }
-    }
-
-    pub fn resolution_view(&self) -> ModuleResolutionView<'_> {
-        ModuleResolutionView {
-            parent: self.parent,
-            visibility: self.visibility,
-            origin: &self.origin,
-        }
-    }
-
-    fn freeze(self) -> ModuleData {
-        ModuleData {
-            name: self.name,
-            name_span: self.name_span,
-            docs: self.docs,
-            user_facing_attrs: self.user_facing_attrs,
-            visibility: self.visibility,
-            parent: self.parent,
-            children: self.children,
-            local_defs: self.local_defs,
-            impls: self.impls,
-            imports: self.imports,
-            unresolved_imports: self.unresolved_imports,
-            scope: self.scope.freeze(),
-            origin: self.origin,
-        }
-    }
 }
 
 /// Collects declarations and import results before producing a frozen DefMap.

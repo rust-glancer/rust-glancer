@@ -153,7 +153,7 @@ pub(crate) fn select_preludes(
 /// Source discovery happens inside the requesting macro batch. After loading, collect the real
 /// module/include into the same scopes and continue calls appended since before that batch. Import
 /// refresh waits until that queue drains, just as it does for directly generated declarations.
-pub(crate) fn build_scopes(
+pub(crate) fn resolve_scopes(
     baseline: &DefMapReadTxn<'_>,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,

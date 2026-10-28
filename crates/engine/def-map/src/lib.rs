@@ -11,13 +11,18 @@
 //! adds import answers to mutable tables; `NameResolver` reads names and paths through an
 //! environment that can expose either those tables or frozen DefMaps. Lexical variable bindings
 //! and type-dependent lookup belong to later Body IR and type analysis.
+//!
+//! Construction starts at `DefMapDb::build_packages`. Body macro expansion has a separate entry
+//! point, `BodyMacroExpander`, which reads frozen definitions and returns syntax for body lowering
+//! or source queries without changing the saved item scopes.
 
 mod binding;
+mod body_macros;
 mod build;
 mod import;
 mod item_scope;
 mod local;
-mod macro_expansion;
+mod macro_definition;
 mod map;
 mod module;
 mod package;
@@ -33,6 +38,12 @@ pub use rg_macro_runtime::MacroExpansionPerformancePreference;
 
 pub use self::{
     binding::{NameBinding, NameBindingProvenance, Namespace, NamespaceSet, PerNs, Visibility},
+    body_macros::{
+        BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
+        BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
+        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
+        ExpandedBodyMacro,
+    },
     build::{
         DefMapBuildOutput, GeneratedItemStores, ImportCollectionEnv, ImportCollectionOutput,
         ImportCollector, MacroSourceFileLoader, MacroSourceFileRequest, MacroSourceFileResolution,
@@ -42,17 +53,14 @@ pub use self::{
     item_scope::{ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},
     local::{
         LocalDefData, LocalDefKind, LocalEnumVariantData, LocalEnumVariantEntry, LocalImplData,
+    },
+    macro_definition::{
         MacroDefinitionData, MacroDefinitionKind, MacroDefinitionPayload, MacroDefinitionView,
     },
-    macro_expansion::{
-        BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExpansionOutcome,
-        BodyMacroExpansionScope, BodyMacroExprExpansion, BodyMacroExprExpansionOutcome,
-        BodyMacroPatExpansionOutcome, BodyMacroStmtExpansionOutcome, BodyMacroTypeExpansionOutcome,
-        ExpandedBodyMacro,
-    },
-    map::{DefMap, DefMapBuilder, ModuleBuilder},
+    map::{DefMap, DefMapBuilder},
     module::{
-        ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin, ModuleResolutionView,
+        ModuleBuilder, ModuleData, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
+        ModuleResolutionView,
     },
     package::{
         CrateData, CrateDefMapManifest, MacroExpansionLimitGroup, MacroExpansionLimitReport,
