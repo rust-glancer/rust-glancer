@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.1](https://github.com/rust-glancer/rust-glancer/compare/v0.4.0...v0.4.1) (2026-10-29)
+
+
+### Features
+
+* Make all-offloadable the only supported policy for users ([#276](https://github.com/rust-glancer/rust-glancer/issues/276)) ([7bfe14e](https://github.com/rust-glancer/rust-glancer/commit/7bfe14eac1916f5883d670bfc0d519ca51246846))
+* Minimal support for opening from subdirs ([#284](https://github.com/rust-glancer/rust-glancer/issues/284)) ([86dc5de](https://github.com/rust-glancer/rust-glancer/commit/86dc5dee760b4ab9aa8a4a5a234f4bc48d922d8f))
+* Rework defmap 2 ([#283](https://github.com/rust-glancer/rust-glancer/issues/283)) ([b5ec01f](https://github.com/rust-glancer/rust-glancer/commit/b5ec01f086bea021ed828004ba318929d30d0714))
+* Simplify defmap ([#281](https://github.com/rust-glancer/rust-glancer/issues/281)) ([dbc7ca5](https://github.com/rust-glancer/rust-glancer/commit/dbc7ca59f2f70d26da09f9bc99904dcfb8bbbee8))
+
+
+### Bug Fixes
+
+* Do not follow symlinked directories in the workspace watcher ([#272](https://github.com/rust-glancer/rust-glancer/issues/272)) ([aac870a](https://github.com/rust-glancer/rust-glancer/commit/aac870a118288ddb307f84d47b3cb9e78f96006f))
+* Stack overflow on cyclic dyn impl candidate ([#287](https://github.com/rust-glancer/rust-glancer/issues/287)) ([1a3faf4](https://github.com/rust-glancer/rust-glancer/commit/1a3faf41b29591bb2ed6cdbc7b2a9f093c16ad7d))
+
 ## [0.4.0](https://github.com/rust-glancer/rust-glancer/compare/v0.3.0...v0.4.0) (2026-10-21)
 
 
