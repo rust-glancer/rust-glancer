@@ -25,7 +25,7 @@ jobs:
         run: python3 .github/scripts/check_release_versions.py
       - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2.82.7
         with:
-          tool: cargo-dylint@6.0.4,dylint-link@6.0.4,just@1.48.1
+          tool: cargo-dylint@6.3.0,dylint-link@6.0.4,just@1.48.1
       - uses: ./.github/actions/cargo-cache
         with:
           scope: ci-${{ github.job }}
