@@ -595,10 +595,6 @@ impl<'s> Relate<Interner<'s>>
         a: Self,
         b: Self,
     ) -> RelateResult<Interner<'s>, Self> {
-        if a == b {
-            return Ok(a);
-        }
-
         if a.len() != b.len() {
             return Err(ir::error::TypeError::Mismatch);
         }
@@ -639,9 +635,6 @@ impl<'s> Relate<Interner<'s>> for GenericArgs<'s> {
         a: Self,
         b: Self,
     ) -> RelateResult<Interner<'s>, Self> {
-        if a == b {
-            return Ok(a);
-        }
         if a.len() != b.len() {
             return Err(ir::error::TypeError::Mismatch);
         }

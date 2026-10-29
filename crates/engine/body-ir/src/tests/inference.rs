@@ -828,3 +828,53 @@ pub fn use_match(guess: Guess) {
         "#]],
     );
 }
+
+#[test]
+fn rejects_impl_candidate_that_makes_dyn_type_contain_itself() {
+    // Matching `(): Pick<?T, ?T>` against the first impl needs `?T = dyn Tr<?T>`. Generalization
+    // must reject that cycle so the second impl decides `?T = u8`. Accepting it made canonical
+    // response resolution unfold `dyn Tr<dyn Tr<...>>` until the body-resolve thread overflowed its stack.
+    check_project_body_ir(
+        r#"
+//- /src/lib.rs crate:body_cyclic_dyn_candidate_fixture
+pub trait Tr<T: ?Sized> {}
+pub trait Pick<A: ?Sized, B: ?Sized> {}
+
+impl<X: ?Sized> Pick<X, dyn Tr<X>> for () {}
+impl Pick<u8, u8> for () {}
+
+pub fn call<T>() -> T where (): Pick<T, T> {}
+
+pub fn use_it() {
+    let value = call();
+}
+"#,
+        expect![[r#"
+            package body_cyclic_dyn_candidate_fixture
+
+            body_cyclic_dyn_candidate_fixture [lib]
+            body b0 fn body_cyclic_dyn_candidate_fixture[lib]::crate::call @ 7:1-7:46
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 7:44-7:46
+
+
+            body b1 fn body_cyclic_dyn_candidate_fixture[lib]::crate::use_it @ 9:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let value `value` => u8 @ 10:9-10:14
+            body
+            expr e2 block s1 => () @ 9:17-11:2
+              stmt s0 let v0 @ 10:5-10:24
+                initializer
+                  expr e1 call => u8 @ 10:17-10:23
+                    callee
+                      expr e0 path call -> fn body_cyclic_dyn_candidate_fixture[lib]::crate::call => function item fn body_cyclic_dyn_candidate_fixture[lib]::crate::call<<unknown>> @ 10:17-10:21
+        "#]],
+    );
+}
