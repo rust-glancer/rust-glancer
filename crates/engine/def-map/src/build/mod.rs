@@ -19,7 +19,6 @@ use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 use rg_macro_runtime::MacroExpansionRuntime;
 use rg_parse::ParseDb;
-use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use self::{
@@ -70,7 +69,6 @@ impl DefMapDb {
         item_tree: &mut ItemTreeDb,
         packages: &[PackageSlot],
         reallocate_payloads: bool,
-        interners: &mut PackageNameInterners,
         source_loader: &mut impl MacroSourceFileLoader,
     ) -> anyhow::Result<DefMapBuildOutput> {
         let mut packages = packages.to_vec();
@@ -80,7 +78,7 @@ impl DefMapDb {
         // Resolve each dependency completely before collecting its users. This order comes from
         // the same target-specific roots used by name lookup, including sibling libraries and
         // compiler-provided crates. Original slots stay unchanged in the completed output.
-        let plan = CrateBuildPlan::prepare(workspace, parse.packages(), &packages, interners)
+        let plan = CrateBuildPlan::prepare(workspace, parse.packages(), &packages)
             .context("prepare crate dependencies")?;
         let mut completed = CompletedCrateStore::new(parse.packages(), &packages);
 
@@ -119,9 +117,6 @@ impl DefMapDb {
                 &BuildResolutionEnv::new(baseline_read, &completed, &state),
                 &state,
                 &metadata.origin,
-                interners
-                    .package_mut(krate.package.0)
-                    .context("read selected name interner")?,
             )?;
             resolve_crate(
                 baseline_read,
@@ -129,7 +124,6 @@ impl DefMapDb {
                 parse,
                 item_tree,
                 &mut state,
-                interners,
                 &mut runtime,
                 &mut source_resolutions,
                 &mut remaining_report_groups,

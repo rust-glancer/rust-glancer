@@ -5,12 +5,11 @@ use rg_item_tree::{
     ConstItem, Documentation, FromAst as _, FunctionItem, ItemKind, ItemNode, MaybeFromAst,
     OuterDocs, StaticItem, TypeAliasItem, VisibilityLevel,
 };
-use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _, HasVisibility as _},
 };
-use rg_text::NameInterner;
+use rg_text::Name;
 
 use crate::BodySource;
 
@@ -20,32 +19,30 @@ impl LocalItemLowering {
     /// The caller supplies mapped spans so generated syntax keeps its invocation provenance.
     pub(crate) fn declaration(
         item: &ast::Item,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
         source: BodySource,
         name_span: Option<Span>,
     ) -> Option<ItemNode> {
         let (kind, name, visibility, docs) = match item {
             ast::Item::Fn(item) => (
-                ItemKind::Function(FunctionItem::from_ast(item, (line_index, &mut *interner))),
+                ItemKind::Function(FunctionItem::from_ast(item, ())),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::Const(item) => (
-                ItemKind::Const(ConstItem::from_ast(item, (line_index, &mut *interner))),
+                ItemKind::Const(ConstItem::from_ast(item, ())),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::Static(item) => (
-                ItemKind::Static(StaticItem::from_ast(item, (line_index, &mut *interner))),
+                ItemKind::Static(StaticItem::from_ast(item, ())),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::TypeAlias(item) => (
-                ItemKind::TypeAlias(TypeAliasItem::from_ast(item, (line_index, &mut *interner))),
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(item, ())),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
@@ -54,7 +51,7 @@ impl LocalItemLowering {
         };
         Some(ItemNode::source(
             kind,
-            name.map(|name| interner.intern(name.text())),
+            name.map(|name| Name::new(name.text())),
             name_span,
             visibility,
             docs,

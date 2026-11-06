@@ -123,7 +123,7 @@ impl BodyLowering<'_> {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 let name_span = self.source(name_ast.syntax()).span;
-                let name = self.intern_ast_name(name_ast);
+                let name = Name::new(name_ast.text());
                 let mode = Self::pat_binding_mode_from_ast(&pat);
                 let ambiguous_path = pat
                     .is_simple_ident()
@@ -208,7 +208,7 @@ impl BodyLowering<'_> {
                         continue;
                     };
                     let key_span = self.source(field_name.syntax()).span;
-                    let name = self.intern_ast_name_or_name_ref(field_name);
+                    let name = Name::new(field_name.text());
                     let key = FieldKey::Named(name.clone());
                     let source_span = self.source(field.syntax()).span;
                     let syntax = Self::record_pat_field_syntax(&field);

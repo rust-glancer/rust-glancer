@@ -29,7 +29,6 @@ use std::{collections::HashMap, sync::Arc};
 use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::{IncludePathExpression, ItemTreeDb};
 use rg_parse::{ModuleFileContext, ParseDb};
-use rg_text::PackageNameInterners;
 
 /// Captures and lowers a complete batch of real files needed by macro expansion.
 ///
@@ -41,7 +40,6 @@ pub trait MacroSourceFileLoader {
         &mut self,
         parse: &mut ParseDb,
         item_tree: &mut ItemTreeDb,
-        interners: &mut PackageNameInterners,
         requests: &[MacroSourceFileRequest],
     ) -> anyhow::Result<Vec<MacroSourceFileResolution>>;
 }

@@ -16,7 +16,6 @@ use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
     MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
 };
-use rg_text::NameInterner;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
@@ -102,7 +101,6 @@ where
 pub(crate) fn apply_expansion_attempts(
     package: &ItemTreePackage,
     state: &mut CrateBuilder,
-    interner: &mut NameInterner,
     attempts: Vec<MacroExpansionAttempt>,
     macro_source_file_resolutions: &MacroSourceFileResolutions,
 ) -> bool {
@@ -191,11 +189,10 @@ pub(crate) fn apply_expansion_attempts(
             }
         };
         let macro_name = attempt.macro_name;
-        // Generated items are collected with the crate's normal name interner so later stages see
-        // the same names and source references as they do for ordinary items.
+        // Generated items use ordinary item lowering so later stages can read their declarations
+        // and source references in the same way as source-written items.
         let collected = attempt.origin.collect_syntax(
             state,
-            interner,
             package,
             macro_source_file_resolutions,
             syntax,

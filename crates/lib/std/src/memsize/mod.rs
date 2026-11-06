@@ -254,7 +254,7 @@ impl MemoryRecorder {
 
     /// Returns `true` the first time this recorder sees a shared heap allocation.
     ///
-    /// Values such as interned names can appear in many phase structures through cloned `Arc`
+    /// Values such as interned names can appear in many phase structures through cloned shared
     /// handles. Their `MemorySize` implementations use the allocation address to attribute the
     /// payload once without requiring the reuse table to remain its accounting owner.
     pub fn visit_shared_allocation(&mut self, address: *const ()) -> bool {

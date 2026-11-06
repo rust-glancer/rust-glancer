@@ -53,8 +53,8 @@ mod lowering;
 pub use rg_ir_model::FieldKey;
 
 pub use self::lowering::{
-    FromAst, ImplItemContext, InnerDocs, MacroCallContext, MacroDefAst, MacroDefContext,
-    MacroRulesAst, MacroRulesContext, MaybeFromAst, OuterDocs, TraitItemContext,
+    FromAst, InnerDocs, MacroCallContext, MacroDefAst, MacroDefContext, MacroRulesAst,
+    MacroRulesContext, MaybeFromAst, OuterDocs,
 };
 
 /// Stable file-local identifier for one lowered item-tree node.

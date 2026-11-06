@@ -10,7 +10,6 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrBuilder;
 use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
-use rg_std::Shrink;
 
 use super::macro_source_files;
 use crate::{
@@ -66,12 +65,9 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
-    let mut item_tree = ItemTreeDb::build_packages(
-        Arc::make_mut(&mut state.parse),
-        &package_indices,
-        &mut state.names,
-    )
-    .context("while attempting to rebuild affected item-tree packages")?;
+    let mut item_tree =
+        ItemTreeDb::build_packages(Arc::make_mut(&mut state.parse), &package_indices)
+            .context("while attempting to rebuild affected item-tree packages")?;
 
     // Rebuilds follow the same lifetime rule as fresh indexing: item-tree owns the lowered
     // declarations, and body lowering reparses only the files it needs.
@@ -99,7 +95,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
             &mut item_tree,
             packages.as_slice(),
             reallocate_payloads,
-            &mut state.names,
             &mut macro_source_files::MacroSourceFileLoader::new(&packages, memory_hooks.as_ref()),
         )
         .context("while attempting to rebuild affected def-map packages")?;
@@ -132,7 +127,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &semantic_ir,
         packages.as_slice(),
         reallocate_payloads,
-        &mut state.names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
         &rebuild_subset,
@@ -146,7 +140,6 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         &semantic_ir,
         packages.as_slice(),
         reallocate_payloads,
-        &mut state.names,
         loaders.def_map.clone(),
         loaders.semantic_ir.clone(),
         &rebuild_subset,
@@ -166,15 +159,14 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
         .context("while attempting to validate captured project source generation")?;
     state.parse.evict_saved_source_text();
 
-    // ItemTree is a transient rebuild input. Drop it before pruning the weak interner so names
-    // that did not survive into retained DBs are no longer treated as live.
+    // ItemTree is a transient rebuild input. Release its declarations before retaining the
+    // completed phase databases.
     drop(item_tree);
 
     state.macro_expansion_limit_summary = macro_expansion_limit_summary;
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    Shrink::shrink_to_fit(&mut state.names);
     ResidencyApplication::restore(state, packages.as_slice())
         .apply()
         .context("while attempting to apply package cache residency after package rebuild")?;

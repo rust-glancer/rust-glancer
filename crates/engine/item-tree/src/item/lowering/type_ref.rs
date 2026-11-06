@@ -1,10 +1,9 @@
 use rg_ir_model::{Mutability, Span};
-use rg_parse::LineIndex;
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericArgs},
 };
-use rg_text::NameInterner;
+use rg_text::Name;
 
 use super::{FromAst, normalized_syntax};
 use crate::item::{
@@ -14,14 +13,14 @@ use crate::item::{
 
 impl FromAst for TypeRef {
     type AstNode = ast::Type;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(ty: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(ty: &Self::AstNode, (): Self::Context<'_>) -> Self {
         match ty.clone() {
             ast::Type::ArrayType(ty) => Self::Array {
                 inner: Box::new(
                     ty.ty()
-                        .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                        .map(|ty| Self::from_ast(&ty, ()))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
                 len: ty.const_arg().map(|arg| {
@@ -31,11 +30,9 @@ impl FromAst for TypeRef {
                     )
                 }),
             },
-            ast::Type::DynTraitType(ty) => Self::DynTrait(type_bound_list_from_ast(
-                ty.type_bound_list(),
-                line_index,
-                interner,
-            )),
+            ast::Type::DynTraitType(ty) => {
+                Self::DynTrait(type_bound_list_from_ast(ty.type_bound_list()))
+            }
             ast::Type::FnPtrType(ty) => Self::FnPointer {
                 params: ty
                     .param_list()
@@ -44,26 +41,24 @@ impl FromAst for TypeRef {
                     .map(|param| {
                         param
                             .ty()
-                            .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                            .map(|ty| Self::from_ast(&ty, ()))
                             .unwrap_or_else(|| Self::Unknown(String::new()))
                     })
                     .collect(),
                 ret: Box::new(
                     ty.ret_type()
                         .and_then(|ret_ty| ret_ty.ty())
-                        .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                        .map(|ty| Self::from_ast(&ty, ()))
                         .unwrap_or(Self::Unit),
                 ),
             },
             ast::Type::ForType(ty) => ty
                 .ty()
-                .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                .map(|ty| Self::from_ast(&ty, ()))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
-            ast::Type::ImplTraitType(ty) => Self::ImplTrait(type_bound_list_from_ast(
-                ty.type_bound_list(),
-                line_index,
-                interner,
-            )),
+            ast::Type::ImplTraitType(ty) => {
+                Self::ImplTrait(type_bound_list_from_ast(ty.type_bound_list()))
+            }
             ast::Type::InferType(_) => Self::Infer,
             ast::Type::MacroType(ty) => Self::unknown_from_text(normalized_syntax(&ty)),
             // TODO: Consider supporting std's pattern_type! uses if their unknown types
@@ -72,40 +67,38 @@ impl FromAst for TypeRef {
             ast::Type::NeverType(_) => Self::Never,
             ast::Type::ParenType(ty) => ty
                 .ty()
-                .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                .map(|ty| Self::from_ast(&ty, ()))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PathType(ty) => ty
                 .path()
-                .map(|path| Self::Path(TypePath::from_ast(&path, (line_index, &mut *interner))))
+                .map(|path| Self::Path(TypePath::from_ast(&path, ())))
                 .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             ast::Type::PtrType(ty) => Self::RawPointer {
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
                 inner: Box::new(
                     ty.ty()
-                        .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                        .map(|ty| Self::from_ast(&ty, ()))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
             },
             ast::Type::RefType(ty) => Self::Reference {
-                lifetime: ty
-                    .lifetime()
-                    .map(|lifetime| interner.intern(lifetime.text())),
+                lifetime: ty.lifetime().map(|lifetime| Name::new(lifetime.text())),
                 mutability: Mutability::from_mut_token(ty.mut_token().is_some()),
                 inner: Box::new(
                     ty.ty()
-                        .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                        .map(|ty| Self::from_ast(&ty, ()))
                         .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
                 ),
             },
             ast::Type::SliceType(ty) => Self::Slice(Box::new(
                 ty.ty()
-                    .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                    .map(|ty| Self::from_ast(&ty, ()))
                     .unwrap_or_else(|| Self::unknown_from_text(normalized_syntax(&ty))),
             )),
             ast::Type::TupleType(ty) => {
                 let fields = ty
                     .fields()
-                    .map(|ty| Self::from_ast(&ty, (line_index, &mut *interner)))
+                    .map(|ty| Self::from_ast(&ty, ()))
                     .collect::<Vec<_>>();
                 if fields.is_empty() {
                     Self::Unit
@@ -119,9 +112,9 @@ impl FromAst for TypeRef {
 
 impl FromAst for TypePath {
     type AstNode = ast::Path;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(path: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(path: &Self::AstNode, (): Self::Context<'_>) -> Self {
         let source_span = Span::from_text_range(path.syntax().text_range());
         let mut ast_segments = Vec::new();
         collect_ast_path_segments(path, &mut ast_segments);
@@ -134,8 +127,7 @@ impl FromAst for TypePath {
         // Rust stores `<T>::Assoc` and `<T as Trait>::Assoc` as a leading type path segment.
         // Keep that as a path anchor and let the rest of the path use ordinary named segments.
         if let Some(first_segment) = ast_segments.first()
-            && let Some(anchor_from_segment) =
-                type_path_anchor_from_ast(first_segment, line_index, &mut *interner)
+            && let Some(anchor_from_segment) = type_path_anchor_from_ast(first_segment)
         {
             anchor = Some(anchor_from_segment);
             segment_start = 1;
@@ -144,7 +136,7 @@ impl FromAst for TypePath {
         let segments = ast_segments
             .iter()
             .skip(segment_start)
-            .map(|segment| type_path_segment_from_ast(segment, line_index, &mut *interner))
+            .map(type_path_segment_from_ast)
             .collect();
 
         Self {
@@ -166,11 +158,7 @@ fn collect_ast_path_segments(path: &ast::Path, segments: &mut Vec<ast::PathSegme
     }
 }
 
-fn type_path_anchor_from_ast(
-    segment: &ast::PathSegment,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Option<TypePathAnchor> {
+fn type_path_anchor_from_ast(segment: &ast::PathSegment) -> Option<TypePathAnchor> {
     let ast::PathSegmentKind::Type {
         type_ref,
         trait_ref,
@@ -179,15 +167,13 @@ fn type_path_anchor_from_ast(
         return None;
     };
 
-    let self_ty = type_ref
-        .as_ref()
-        .map(|ty| TypeRef::from_ast(ty, (line_index, &mut *interner)))?;
+    let self_ty = type_ref.as_ref().map(|ty| TypeRef::from_ast(ty, ()))?;
 
     let trait_ty = match trait_ref {
         Some(trait_ref) => Some(
             trait_ref
                 .path()
-                .map(|path| TypeRef::Path(TypePath::from_ast(&path, (line_index, interner))))?,
+                .map(|path| TypeRef::Path(TypePath::from_ast(&path, ())))?,
         ),
         None => None,
     };
@@ -195,15 +181,11 @@ fn type_path_anchor_from_ast(
     Some(TypePathAnchor::from_parts(self_ty, trait_ty))
 }
 
-fn type_path_segment_from_ast(
-    segment: &ast::PathSegment,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> TypePathSegment {
+fn type_path_segment_from_ast(segment: &ast::PathSegment) -> TypePathSegment {
     let name = segment
         .name_ref()
-        .map(|name| interner.intern(name.text()))
-        .unwrap_or_else(|| interner.intern_missing());
+        .map(|name| Name::new(name.text()))
+        .unwrap_or_else(Name::missing);
     let span = segment
         .name_ref()
         .map(|name| name.syntax().text_range())
@@ -214,7 +196,7 @@ fn type_path_segment_from_ast(
         args.extend(
             arg_list
                 .generic_args()
-                .map(|arg| GenericArg::from_ast(&arg, (line_index, &mut *interner))),
+                .map(|arg| GenericArg::from_ast(&arg, ())),
         );
     }
 
@@ -223,14 +205,14 @@ fn type_path_segment_from_ast(
             .type_args()
             .map(|arg| {
                 arg.ty()
-                    .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                    .map(|ty| TypeRef::from_ast(&ty, ()))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&arg)))
             })
             .collect();
         let ret = segment
             .ret_type()
             .and_then(|ret_ty| ret_ty.ty())
-            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+            .map(|ty| TypeRef::from_ast(&ty, ()))
             .unwrap_or(TypeRef::Unit);
 
         args.push(GenericArg::FnTraitArgs {
@@ -248,24 +230,22 @@ fn type_path_segment_from_ast(
 
 impl FromAst for GenericArg {
     type AstNode = ast::GenericArg;
-    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+    type Context<'a> = ();
 
-    fn from_ast(arg: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
+    fn from_ast(arg: &Self::AstNode, (): Self::Context<'_>) -> Self {
         match arg.clone() {
             ast::GenericArg::AssocTypeArg(arg) => {
                 let name_ref = arg.name_ref();
                 Self::AssocType {
                     name: name_ref
                         .as_ref()
-                        .map(|name| interner.intern(name.text()))
-                        .unwrap_or_else(|| interner.intern_missing()),
+                        .map(|name| Name::new(name.text()))
+                        .unwrap_or_else(Name::missing),
                     name_span: name_ref
                         .as_ref()
                         .map(|name| Span::from_text_range(name.syntax().text_range()))
                         .unwrap_or_else(|| Span::from_text_range(arg.syntax().text_range())),
-                    ty: arg
-                        .ty()
-                        .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+                    ty: arg.ty().map(|ty| TypeRef::from_ast(&ty, ())),
                 }
             }
             ast::GenericArg::ConstArg(arg) => Self::Const(ConstExpr::new(
@@ -274,36 +254,28 @@ impl FromAst for GenericArg {
             )),
             ast::GenericArg::LifetimeArg(arg) => arg
                 .lifetime()
-                .map(|lifetime| Self::Lifetime(interner.intern(lifetime.text())))
+                .map(|lifetime| Self::Lifetime(Name::new(lifetime.text())))
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
             ast::GenericArg::TypeArg(arg) => arg
                 .ty()
-                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                .map(|ty| TypeRef::from_ast(&ty, ()))
                 .map(Self::Type)
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
         }
     }
 }
 
-pub(crate) fn type_bound_list_from_ast(
-    bound_list: Option<ast::TypeBoundList>,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> Vec<TypeBound> {
+pub(crate) fn type_bound_list_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<TypeBound> {
     bound_list
         .into_iter()
         .flat_map(|bound_list| bound_list.bounds())
-        .map(|bound| type_bound_from_ast(bound, line_index, interner))
+        .map(type_bound_from_ast)
         .collect()
 }
 
-fn type_bound_from_ast(
-    bound: ast::TypeBound,
-    line_index: &LineIndex,
-    interner: &mut NameInterner,
-) -> TypeBound {
+fn type_bound_from_ast(bound: ast::TypeBound) -> TypeBound {
     if let Some(lifetime) = bound.lifetime() {
-        return TypeBound::Lifetime(interner.intern(lifetime.text()));
+        return TypeBound::Lifetime(Name::new(lifetime.text()));
     }
 
     if let Some(ty) = bound.ty() {
@@ -313,7 +285,7 @@ fn type_bound_from_ast(
             TraitBoundModifier::None
         };
         return TypeBound::Trait {
-            ty: TypeRef::from_ast(&ty, (line_index, interner)),
+            ty: TypeRef::from_ast(&ty, ()),
             modifier,
         };
     }
