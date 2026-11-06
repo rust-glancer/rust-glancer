@@ -5,7 +5,6 @@ use divan::{
     counter::{BytesCount, ItemsCount},
 };
 use rg_parse::ParseDb;
-use rg_text::PackageNameInterners;
 
 use self::shared::{BenchFixture, BenchTarget, bench_targets};
 
@@ -31,14 +30,9 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     let fixture = BenchFixture::get(target);
     bencher
         .counter(ItemsCount::new(fixture.item_tree_items))
-        .with_inputs(|| {
-            (
-                fixture.parse.clone(),
-                PackageNameInterners::new(fixture.parse.package_count()),
-            )
-        })
-        .bench_local_values(|(mut parse, mut names)| {
-            let item_tree = rg_project::bench_support::build_item_tree(&mut parse, &mut names)
+        .with_inputs(|| fixture.parse.clone())
+        .bench_local_values(|mut parse| {
+            let item_tree = rg_project::bench_support::build_item_tree(&mut parse)
                 .expect("item tree should build");
             black_box_drop(item_tree);
         });
@@ -53,15 +47,13 @@ fn def_map_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             (
                 fixture.parse_before_def_map.clone(),
                 fixture.item_tree_before_def_map.clone(),
-                fixture.names_before_def_map.clone(),
             )
         })
-        .bench_local_values(|(mut parse, mut item_tree, mut names)| {
+        .bench_local_values(|(mut parse, mut item_tree)| {
             let def_map = rg_project::bench_support::build_def_map(
                 &fixture.workspace,
                 &mut parse,
                 &mut item_tree,
-                &mut names,
             )
             .expect("def map should build");
             black_box_drop(def_map);
@@ -96,18 +88,12 @@ fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     let fixture = BenchFixture::get(target);
     bencher
         .counter(ItemsCount::new(fixture.body_expressions))
-        .with_inputs(|| {
-            (
-                fixture.parse_after_def_map.clone(),
-                fixture.names_after_semantic_ir.clone(),
-            )
-        })
-        .bench_local_values(|(parse, mut names)| {
+        .with_inputs(|| fixture.parse_after_def_map.clone())
+        .bench_local_values(|parse| {
             let body_ir = rg_project::bench_support::build_body_ir(
                 &parse,
                 &fixture.def_map,
                 &fixture.semantic_ir,
-                &mut names,
             )
             .expect("body IR should build");
             black_box_drop(body_ir);

@@ -15,7 +15,6 @@ use rg_def_map::{MacroSourceFileRequest, MacroSourceFileResolution};
 use rg_ir_model::{FileId, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
-use rg_text::PackageNameInterners;
 
 use crate::{
     ProjectMemoryHooks, ProjectMemoryPurgePoint, profile::metric, selection::PhasePackageSet,
@@ -50,7 +49,6 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
         &mut self,
         parse: &mut ParseDb,
         item_tree: &mut ItemTreeDb,
-        names: &mut PackageNameInterners,
         requests: &[MacroSourceFileRequest],
     ) -> anyhow::Result<Vec<MacroSourceFileResolution>> {
         let _timer = metric::TIMING_MACRO_SOURCE_FILE_LOADING.start_timer();
@@ -198,7 +196,6 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                     package_slot.0,
                     file_id,
                     lowering_context.as_ref().clone(),
-                    names,
                 )
                 .with_context(|| {
                     format!(

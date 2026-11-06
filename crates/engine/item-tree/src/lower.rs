@@ -12,12 +12,12 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_ir_model::{FileId, PackageSlot, Span};
 use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
-use rg_parse::{LineIndex, ModuleFileContext, Package as ParsePackage, syntax_edition};
+use rg_parse::{ModuleFileContext, Package as ParsePackage, syntax_edition};
 use rg_syntax::{
     AstNode as _, TextRange,
     ast::{self, HasAttrs, HasModuleItem, HasName, HasVisibility},
 };
-use rg_text::{Name, NameInterner};
+use rg_text::Name;
 use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
@@ -25,12 +25,12 @@ use rg_tt::{
 
 use super::{
     BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
-    ExternBlockItem, ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext,
+    ExternBlockItem, ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem,
     IncludePathExpression, InnerDocs, ItemKind, ItemNode, ItemTreeId, LangItem, MacroCallContext,
     MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem, MacroRulesAst,
     MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource, Package, StaticItem,
-    StructItem, TargetRoot, TraitItem, TraitItemContext, TypeAliasItem, UnionItem, UseItem,
-    UserFacingAttrs, VisibilityLevel,
+    StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem, UserFacingAttrs,
+    VisibilityLevel,
 };
 
 /// Lowers the files reachable from every target root and records those target entrypoints.
@@ -38,17 +38,10 @@ pub(super) fn build_package(
     package_slot: PackageSlot,
     parse_package: &mut ParsePackage,
     sources: &rg_source::SourceInventory,
-    interner: &mut NameInterner,
 ) -> anyhow::Result<Package> {
     let mut file_trees = Arena::new();
-    let target_roots = PackageLowering::new(
-        package_slot,
-        parse_package,
-        sources,
-        interner,
-        &mut file_trees,
-    )
-    .lower_target_roots()?;
+    let target_roots = PackageLowering::new(package_slot, parse_package, sources, &mut file_trees)
+        .lower_target_roots()?;
 
     Ok(Package {
         files: file_trees,
@@ -61,7 +54,6 @@ pub(super) fn extend_package(
     package_slot: PackageSlot,
     parse_package: &mut ParsePackage,
     sources: &rg_source::SourceInventory,
-    interner: &mut NameInterner,
     item_tree_package: &mut Package,
     file_id: FileId,
     module_file_context: ModuleFileContext,
@@ -70,7 +62,6 @@ pub(super) fn extend_package(
         package_slot,
         parse_package,
         sources,
-        interner,
         &mut item_tree_package.files,
     );
     lowering.lower_file(file_id, module_file_context)?;
@@ -93,7 +84,6 @@ struct PackageLowering<'db> {
     package: u32,
     parse_package: &'db mut ParsePackage,
     sources: &'db rg_source::SourceInventory,
-    interner: &'db mut NameInterner,
     active_files: HashSet<FileId>,
     file_trees: &'db mut Arena<FileId, Option<FileTree>>,
     stats: PackageLoweringStats,
@@ -104,7 +94,6 @@ impl<'db> PackageLowering<'db> {
         package_slot: PackageSlot,
         parse_package: &'db mut ParsePackage,
         sources: &'db rg_source::SourceInventory,
-        interner: &'db mut NameInterner,
         file_trees: &'db mut Arena<FileId, Option<FileTree>>,
     ) -> Self {
         Self {
@@ -112,7 +101,6 @@ impl<'db> PackageLowering<'db> {
                 .expect("package slot should fit macro span storage"),
             parse_package,
             sources,
-            interner,
             active_files: HashSet::default(),
             file_trees,
             stats: PackageLoweringStats::default(),
@@ -166,7 +154,7 @@ impl<'db> PackageLowering<'db> {
                 format!("while attempting to load syntax for {:?}", current_file_id)
             })?;
 
-        let (items, docs, line_index) = {
+        let (items, docs) = {
             let parsed_file = self
                 .parse_package
                 .parsed_file(current_file_id)
@@ -185,7 +173,6 @@ impl<'db> PackageLowering<'db> {
             (
                 syntax.items().collect::<Vec<_>>(),
                 <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(&syntax, InnerDocs),
-                parsed_file.line_index()?.clone(),
             )
         };
 
@@ -196,7 +183,7 @@ impl<'db> PackageLowering<'db> {
             return Ok(());
         }
 
-        let mut builder = FileTreeBuilder::new(self.package, current_file_id, &line_index);
+        let mut builder = FileTreeBuilder::new(self.package, current_file_id);
         let top_level = self
             .collect_items(&mut builder, items, &module_file_context)
             .with_context(|| {
@@ -335,18 +322,18 @@ impl<'db> PackageLowering<'db> {
         }
     }
 
-    fn intern_ast_name(&mut self, name: Option<ast::Name>) -> Option<Name> {
-        name.map(|name| self.interner.intern(name.text()))
+    fn name_from_ast(name: Option<ast::Name>) -> Option<Name> {
+        name.map(|name| Name::new(name.text()))
     }
 
-    fn intern_ast_name_ref(&mut self, name: Option<ast::NameRef>) -> Option<Name> {
-        name.map(|name| self.interner.intern(name.text()))
+    fn name_ref_from_ast(name: Option<ast::NameRef>) -> Option<Name> {
+        name.map(|name| Name::new(name.text()))
     }
 
     /// Lowers all top-level items from one file into item-tree nodes.
     fn collect_items(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         items: Vec<ast::Item>,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Vec<ItemTreeId>> {
@@ -374,7 +361,7 @@ impl<'db> PackageLowering<'db> {
     /// to later phases.
     fn lower_item(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: ast::Item,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
@@ -389,21 +376,15 @@ impl<'db> PackageLowering<'db> {
                 item.syntax().text_range(),
             )),
             ast::Item::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(ConstItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Const(ConstItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Enum(item) => Some(builder.alloc_documented_item(
-                ItemKind::Enum(EnumItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner, None),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Enum(EnumItem::from_ast(&item, None)),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -420,8 +401,8 @@ impl<'db> PackageLowering<'db> {
             }
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, &mut *self.interner)),
-                    self.intern_ast_name_ref(item.name_ref()),
+                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, ())),
+                    Self::name_ref_from_ast(item.name_ref()),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text_range()),
                     VisibilityLevel::from_ast(&item.visibility(), ()),
@@ -429,11 +410,8 @@ impl<'db> PackageLowering<'db> {
                 ),
             ),
             ast::Item::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(FunctionItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Function(FunctionItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -459,7 +437,6 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
                         MacroCallContext {
-                            interner: &mut *self.interner,
                             builtin,
                             span_for_range: &mut span_for_range,
                         },
@@ -481,7 +458,7 @@ impl<'db> PackageLowering<'db> {
                             },
                         ),
                     ),
-                    self.intern_ast_name(item.name()),
+                    Self::name_from_ast(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
@@ -498,14 +475,14 @@ impl<'db> PackageLowering<'db> {
                             },
                         ),
                     ),
-                    self.intern_ast_name(item.name()),
+                    Self::name_from_ast(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
             ast::Item::Module(item) => {
-                let module_name = self.intern_ast_name(item.name());
+                let module_name = Self::name_from_ast(item.name());
                 let module_name_range = item.name().map(|name| name.syntax().text_range());
                 let module_item = self
                     .collect_module(builder, &item, module_file_context)
@@ -527,21 +504,15 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::Static(item) => Some(builder.alloc_documented_item(
-                ItemKind::Static(StaticItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Static(StaticItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Struct(item) => Some(builder.alloc_documented_item(
-                ItemKind::Struct(StructItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner, None),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Struct(StructItem::from_ast(&item, None)),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -552,34 +523,28 @@ impl<'db> PackageLowering<'db> {
                     .context("while attempting to lower trait declaration")?;
                 Some(builder.alloc_documented_item(
                     ItemKind::Trait(trait_item),
-                    self.intern_ast_name(item.name()),
+                    Self::name_from_ast(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
                     VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
             ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Union(item) => Some(builder.alloc_documented_item(
-                ItemKind::Union(UnionItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Union(UnionItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner)),
+                ItemKind::Use(UseItem::from_ast(&item, ())),
                 None,
                 None,
                 VisibilityLevel::from_ast(&item.visibility(), ()),
@@ -597,7 +562,7 @@ impl<'db> PackageLowering<'db> {
     /// rather than ordinary item-position macro collection.
     fn lower_extern_block(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         block: &ast::ExternBlock,
     ) -> ExternBlockItem {
         let mut items = Vec::new();
@@ -605,31 +570,22 @@ impl<'db> PackageLowering<'db> {
             for item in item_list.extern_items() {
                 let item = match item {
                     ast::ExternItem::Fn(item) => builder.alloc_documented_item(
-                        ItemKind::Function(FunctionItem::from_ast(
-                            &item,
-                            (builder.line_index, &mut *self.interner),
-                        )),
-                        self.intern_ast_name(item.name()),
+                        ItemKind::Function(FunctionItem::from_ast(&item, ())),
+                        Self::name_from_ast(item.name()),
                         item.name().map(|name| name.syntax().text_range()),
                         VisibilityLevel::from_ast(&item.visibility(), ()),
                         &item,
                     ),
                     ast::ExternItem::Static(item) => builder.alloc_documented_item(
-                        ItemKind::Static(StaticItem::from_ast(
-                            &item,
-                            (builder.line_index, &mut *self.interner),
-                        )),
-                        self.intern_ast_name(item.name()),
+                        ItemKind::Static(StaticItem::from_ast(&item, ())),
+                        Self::name_from_ast(item.name()),
                         item.name().map(|name| name.syntax().text_range()),
                         VisibilityLevel::from_ast(&item.visibility(), ()),
                         &item,
                     ),
                     ast::ExternItem::TypeAlias(item) => builder.alloc_documented_item(
-                        ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                            &item,
-                            (builder.line_index, &mut *self.interner),
-                        )),
-                        self.intern_ast_name(item.name()),
+                        ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ())),
+                        Self::name_from_ast(item.name()),
                         item.name().map(|name| name.syntax().text_range()),
                         VisibilityLevel::from_ast(&item.visibility(), ()),
                         &item,
@@ -642,7 +598,6 @@ impl<'db> PackageLowering<'db> {
                             ItemKind::MacroCall(MacroCallItem::from_ast(
                                 &item,
                                 MacroCallContext {
-                                    interner: &mut *self.interner,
                                     builtin: None,
                                     span_for_range: &mut span_for_range,
                                 },
@@ -668,7 +623,7 @@ impl<'db> PackageLowering<'db> {
     /// semantic decision to reuse real source nodes without reparsing or rediscovering files.
     fn lower_builtin_macro(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<BuiltinMacroItem>> {
@@ -741,7 +696,7 @@ impl<'db> PackageLowering<'db> {
     /// all arms here preserves file-relative module resolution for whichever arm def-map chooses.
     fn lower_cfg_select_arms(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<BuiltinMacroItem>> {
@@ -794,7 +749,7 @@ impl<'db> PackageLowering<'db> {
     /// Lowers one module declaration while keeping out-of-line file selection context-free.
     fn collect_module(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: &ast::Module,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<ModuleItem> {
@@ -816,7 +771,7 @@ impl<'db> PackageLowering<'db> {
                 inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(
                     item, InnerDocs,
                 ),
-                macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+                macro_use: MacroUseAttr::maybe_from_ast(item, ()),
                 path_override,
                 source: ModuleSource::Inline { items },
             });
@@ -825,7 +780,7 @@ impl<'db> PackageLowering<'db> {
         let Some(resolution) = module_file_context.resolve_module_file(self.sources, item)? else {
             return Ok(ModuleItem {
                 inner_docs: None,
-                macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+                macro_use: MacroUseAttr::maybe_from_ast(item, ()),
                 path_override,
                 source: ModuleSource::OutOfLine,
             });
@@ -853,7 +808,7 @@ impl<'db> PackageLowering<'db> {
 
         Ok(ModuleItem {
             inner_docs: None,
-            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
+            macro_use: MacroUseAttr::maybe_from_ast(item, ()),
             path_override,
             source: ModuleSource::OutOfLine,
         })
@@ -861,7 +816,7 @@ impl<'db> PackageLowering<'db> {
 
     fn lower_trait_item(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: &ast::Trait,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<TraitItem> {
@@ -873,19 +828,12 @@ impl<'db> PackageLowering<'db> {
             .collect_assoc_items(builder, assoc_items, module_file_context)
             .context("while attempting to lower trait associated items")?;
 
-        Ok(TraitItem::from_ast(
-            item,
-            TraitItemContext {
-                items,
-                line_index: builder.line_index,
-                interner: &mut *self.interner,
-            },
-        ))
+        Ok(TraitItem::from_ast(item, items))
     }
 
     fn lower_impl_item(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: &ast::Impl,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<ImplItem> {
@@ -896,19 +844,12 @@ impl<'db> PackageLowering<'db> {
         let items = self
             .collect_assoc_items(builder, assoc_items, module_file_context)
             .context("while attempting to lower impl associated items")?;
-        Ok(ImplItem::from_ast(
-            item,
-            ImplItemContext {
-                items,
-                line_index: builder.line_index,
-                interner: &mut *self.interner,
-            },
-        ))
+        Ok(ImplItem::from_ast(item, items))
     }
 
     fn collect_assoc_items(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         items: Vec<ast::AssocItem>,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Vec<ItemTreeId>> {
@@ -925,27 +866,21 @@ impl<'db> PackageLowering<'db> {
 
     fn lower_assoc_item(
         &mut self,
-        builder: &mut FileTreeBuilder<'_>,
+        builder: &mut FileTreeBuilder,
         item: ast::AssocItem,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let item_id = match item {
             ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
-                ItemKind::Const(ConstItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Const(ConstItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::AssocItem::Fn(item) => Some(builder.alloc_documented_item(
-                ItemKind::Function(FunctionItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::Function(FunctionItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -965,7 +900,6 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
                         MacroCallContext {
-                            interner: &mut *self.interner,
                             builtin,
                             span_for_range: &mut span_for_range,
                         },
@@ -977,11 +911,8 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
-                ItemKind::TypeAlias(TypeAliasItem::from_ast(
-                    &item,
-                    (builder.line_index, &mut *self.interner),
-                )),
-                self.intern_ast_name(item.name()),
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(&item, ())),
+                Self::name_from_ast(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
@@ -1000,20 +931,18 @@ impl<'db> PackageLowering<'db> {
 }
 
 /// File-local item arena under construction.
-struct FileTreeBuilder<'a> {
+struct FileTreeBuilder {
     package: u32,
     current_file_id: FileId,
-    line_index: &'a LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
     span_map: Option<ExpansionSpanMap>,
 }
 
-impl<'a> FileTreeBuilder<'a> {
-    fn new(package: u32, current_file_id: FileId, line_index: &'a LineIndex) -> Self {
+impl FileTreeBuilder {
+    fn new(package: u32, current_file_id: FileId) -> Self {
         Self {
             package,
             current_file_id,
-            line_index,
             items: Arena::new(),
             span_map: None,
         }

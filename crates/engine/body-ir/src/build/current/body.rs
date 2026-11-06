@@ -25,7 +25,6 @@ use rg_ir_model::{
 use rg_parse::{CurrentSource, DeclarationAssociationIndex};
 use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemStoreQuery};
 use rg_std::ExpectedUnique;
-use rg_text::NameInterner;
 
 use super::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
@@ -290,8 +289,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             &cancellation,
         )
         .context("build the current body's visible item lookup query")?;
-
-        let mut interner = NameInterner::new();
         let task_source = BodyTaskSource::Current {
             package: self.parse_package,
             file: self.file,
@@ -314,14 +311,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             self.cfg,
             cancellation.clone(),
         );
-        let lowered_roots = BodyTaskLowering::new(
-            task_source,
-            &mut lowered,
-            self.cfg,
-            &mut interner,
-            &cancellation,
-        )
-        .lower_tasks(&tasks, &mut macro_expansion)?;
+        let lowered_roots =
+            BodyTaskLowering::new(task_source, &mut lowered, self.cfg, &cancellation)
+                .lower_tasks(&tasks, &mut macro_expansion)?;
         anyhow::ensure!(
             lowered_roots.len() == roots.len(),
             "an associated current body could not be lowered from its captured syntax",
@@ -349,7 +341,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             self.parse_package,
             lowered,
             root_body_refs,
-            &mut interner,
             cancellation.clone(),
         )?;
         build.materialize_body_local_items(
@@ -430,7 +421,6 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             file_id = self.file.0,
             body_count = bodies.len(),
             unavailable_count = unavailable.len(),
-            interned_name_count = interner.len(),
             parse_us,
             association_us,
             lowering_us,

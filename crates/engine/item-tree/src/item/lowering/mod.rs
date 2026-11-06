@@ -9,7 +9,6 @@ mod visibility;
 
 pub(crate) use self::type_ref::type_bound_list_from_ast;
 pub use self::{
-    decl::{ImplItemContext, TraitItemContext},
     docs::{InnerDocs, OuterDocs},
     macro_item::{
         MacroCallContext, MacroDefAst, MacroDefContext, MacroRulesAst, MacroRulesContext,

@@ -11,7 +11,6 @@ use rg_def_map::{DefMapDb, GeneratedItemStores};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
-use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 static CARGO_FETCH_LOCK: OnceLock<Mutex<HashSet<BenchTarget>>> = OnceLock::new();
@@ -188,10 +187,8 @@ pub(crate) struct BenchFixture {
     pub(crate) parse: ParseDb,
     pub(crate) parse_before_def_map: ParseDb,
     pub(crate) item_tree_before_def_map: ItemTreeDb,
-    pub(crate) names_before_def_map: PackageNameInterners,
     pub(crate) parse_after_def_map: ParseDb,
     pub(crate) item_tree_after_def_map: ItemTreeDb,
-    pub(crate) names_after_semantic_ir: PackageNameInterners,
     pub(crate) def_map: DefMapDb,
     pub(crate) generated_items: GeneratedItemStores,
     pub(crate) semantic_ir: SemanticIrDb,
@@ -247,12 +244,10 @@ impl BenchFixture {
         // Building item trees evicts syntax from its parse input. Keep the original parsed syntax
         // for the item-tree benchmark, and use the post-item-tree parse for downstream phases.
         let mut parse_before_def_map = parse.clone();
-        let mut names = PackageNameInterners::new(parse_before_def_map.package_count());
         let item_tree_before_def_map =
-            rg_project::bench_support::build_item_tree(&mut parse_before_def_map, &mut names)
+            rg_project::bench_support::build_item_tree(&mut parse_before_def_map)
                 .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
         let item_tree_items = Self::count_item_tree_items(&workspace, &item_tree_before_def_map);
-        let names_before_def_map = names.clone();
 
         // DefMap source discovery can grow both inputs. Preserve the phase boundary above for
         // measured DefMap iterations, while downstream benchmarks receive the completed state.
@@ -262,7 +257,6 @@ impl BenchFixture {
             &workspace,
             &mut parse_after_def_map,
             &mut item_tree_after_def_map,
-            &mut names,
         )
         .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
         let (def_map, generated_items) = def_map_output.into_parts();
@@ -284,15 +278,10 @@ impl BenchFixture {
             + semantic_stats.type_alias_count
             + semantic_stats.const_count
             + semantic_stats.static_count;
-        let names_after_semantic_ir = names.clone();
 
-        let body_ir = rg_project::bench_support::build_body_ir(
-            &parse_after_def_map,
-            &def_map,
-            &semantic_ir,
-            &mut names,
-        )
-        .unwrap_or_else(|error| panic!("{target} body IR should build: {error}"));
+        let body_ir =
+            rg_project::bench_support::build_body_ir(&parse_after_def_map, &def_map, &semantic_ir)
+                .unwrap_or_else(|error| panic!("{target} body IR should build: {error}"));
         let body_expressions = body_ir.stats().expression_count;
 
         Self {
@@ -300,10 +289,8 @@ impl BenchFixture {
             parse,
             parse_before_def_map,
             item_tree_before_def_map,
-            names_before_def_map,
             parse_after_def_map,
             item_tree_after_def_map,
-            names_after_semantic_ir,
             def_map,
             generated_items,
             semantic_ir,

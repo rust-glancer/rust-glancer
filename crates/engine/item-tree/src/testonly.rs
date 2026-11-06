@@ -2,7 +2,7 @@ use rg_parse::ParseDb;
 use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use crate::{ItemTreeDb, PackageNameInterners};
+use crate::ItemTreeDb;
 
 /// End-to-end fixture for tests that need parsed files and item trees.
 pub struct ItemTreeFixture {
@@ -26,9 +26,8 @@ impl ItemTreeFixture {
 
     pub fn build_from_crate(fixture: CrateFixture, workspace: &WorkspaceMetadata) -> Self {
         let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
         let packages = (0..parse.package_count()).collect::<Vec<_>>();
-        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages, &mut names)
+        let item_tree = ItemTreeDb::build_packages(&mut parse, &packages)
             .expect("fixture item tree db should build");
 
         Self {

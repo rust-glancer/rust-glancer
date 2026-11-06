@@ -45,15 +45,12 @@ impl PackageArtifactReader {
             })?,
         );
         let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| {
-                PackageCacheCodec::decode_def_map_crate(
-                    &bytes,
-                    index.manifest(),
-                    CrateRef { package, crate_id },
-                )
-            })
-            .map_err(|error| self.decode_error(error));
+        let decoded = PackageCacheCodec::decode_def_map_crate(
+            &bytes,
+            index.manifest(),
+            CrateRef { package, crate_id },
+        )
+        .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("def_map.crate", started.elapsed());
         decoded
     }

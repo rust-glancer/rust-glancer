@@ -14,7 +14,6 @@ use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_std::MemorySize;
-use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
@@ -65,7 +64,6 @@ pub(crate) struct ProjectState {
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     #[memsize(skip)]
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    pub(crate) names: PackageNameInterners,
     /// Candidate updates share immutable source entries until their file inventory changes.
     pub(crate) parse: Arc<ParseDb>,
     pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,

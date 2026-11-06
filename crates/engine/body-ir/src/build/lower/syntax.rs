@@ -53,22 +53,6 @@ impl BodyLowering<'_> {
         Some(BodyPath::new(source_span, absolute, segments))
     }
 
-    pub(super) fn intern_ast_name(&mut self, name: ast::Name) -> Name {
-        self.interner.intern(name.text())
-    }
-
-    pub(super) fn intern_ast_name_ref(&mut self, name_ref: ast::NameRef) -> Name {
-        self.interner.intern(name_ref.text())
-    }
-
-    pub(super) fn intern_ast_name_or_name_ref(&mut self, name: ast::NameOrNameRef) -> Name {
-        self.interner.intern(name.text())
-    }
-
-    pub(super) fn intern_ast_lifetime(&mut self, lifetime: ast::Lifetime) -> Name {
-        self.interner.intern(lifetime.text())
-    }
-
     pub(super) fn lower_label(&mut self, label: Option<ast::Label>) -> Option<LabelData> {
         self.lower_lifetime_label(label.and_then(|label| label.lifetime()))
     }
@@ -83,7 +67,7 @@ impl BodyLowering<'_> {
             return expanded;
         }
 
-        let mut ty = TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner));
+        let mut ty = TypeRef::from_ast(&ty, ());
         // Item-tree lowering sees offsets in the parsed expansion. Translate every retained type
         // name before that temporary syntax tree is dropped, including names inside generic args.
         if self.macro_call_is_generated() {
@@ -94,7 +78,7 @@ impl BodyLowering<'_> {
 
     /// Turbofish arguments need the same source mapping as body type annotations.
     pub(super) fn lower_generic_arg(&mut self, arg: &ast::GenericArg) -> GenericArg {
-        let mut arg = GenericArg::from_ast(arg, (self.line_index, &mut *self.interner));
+        let mut arg = GenericArg::from_ast(arg, ());
         if self.macro_call_is_generated() {
             arg.map_spans(&mut |span| self.remap_span(span));
         }
@@ -131,7 +115,7 @@ impl BodyLowering<'_> {
     ) -> Option<LabelData> {
         let lifetime = lifetime?;
         Some(LabelData {
-            name: self.intern_ast_lifetime(lifetime.clone()),
+            name: Name::new(lifetime.text()),
             span: self.source(lifetime.syntax()).span,
         })
     }
@@ -157,7 +141,7 @@ impl BodyLowering<'_> {
         let (kind, span) = match segment.kind()? {
             PathSegmentKind::Name(name_ref) => {
                 let span = self.source(name_ref.syntax()).span;
-                let name = self.intern_ast_name_ref(name_ref);
+                let name = Name::new(name_ref.text());
                 // `$crate` is meaningful only for macro-generated syntax, where the temporary
                 // lowering context knows which crate defined the macro.
                 let kind = if name.as_str() == "$crate" {
@@ -205,10 +189,7 @@ impl BodyLowering<'_> {
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {
-                        let mut ty = TypeRef::Path(TypePath::from_ast(
-                            &path,
-                            (self.line_index, &mut *self.interner),
-                        ));
+                        let mut ty = TypeRef::Path(TypePath::from_ast(&path, ()));
                         if self.macro_call_is_generated() {
                             ty.map_spans(&mut |span| self.remap_span(span));
                         }

@@ -54,10 +54,7 @@ impl PackageArtifactReader {
         })?;
         let bytes = self.read_nested_range("body_ir.file", self.inner.layout.body_ir, range)?;
         let started = Instant::now();
-        let decoded = self
-            .decode_with_names(|| {
-                PackageCacheCodec::decode_body_file_shard(&bytes, crate_manifest, file)
-            })
+        let decoded = PackageCacheCodec::decode_body_file_shard(&bytes, crate_manifest, file)
             .map_err(|error| self.decode_error(error));
         metric::CACHE_SECTION_DECODE.record("body_ir.file", started.elapsed());
         decoded

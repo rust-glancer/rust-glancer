@@ -8,11 +8,11 @@ use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_item_tree::{DocumentationPlacement, FromAst, TypePath, TypeRef};
-use rg_parse::{LineIndex, parse_source_file};
+use rg_parse::parse_source_file;
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_syntax::{AstNode as _, ast};
-use rg_text::{NameInterner, RustEdition};
+use rg_text::RustEdition;
 
 use crate::{
     IndexedViewDb, SymbolKind,
@@ -143,10 +143,7 @@ impl<'a, 'db> DocumentationView<'a, 'db> {
         if ty.syntax().text() != destination {
             return None;
         }
-        let TypeRef::Path(type_path) = TypeRef::from_ast(
-            &ast::Type::PathType(ty),
-            (&LineIndex::new(&source), &mut NameInterner::default()),
-        ) else {
+        let TypeRef::Path(type_path) = TypeRef::from_ast(&ast::Type::PathType(ty), ()) else {
             return None;
         };
         Some((type_path, disambiguator))
