@@ -3,15 +3,11 @@
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use rg_ir_model::PackageSlot;
-use rg_project::{AnalysisSurface, Project, ProjectSnapshot, SavedBodyBuildInputs};
+use rg_project::{Project, ProjectSnapshot};
 
 /// Owns the one saved project used by all analysis queries in this engine.
 ///
-/// Background indexing tags each product batch with the project's generation id. The command loop
-/// forwards those batches to the project's publisher, which rejects work from replaced generations.
-/// Publishing body products or loading an offloaded package keeps the same id because the saved
-/// source did not change.
+/// Source changes publish a new identity. Loading or completing bodies keeps that identity.
 #[derive(Debug)]
 pub(super) struct ProjectState {
     saved: Option<Project>,
@@ -40,22 +36,6 @@ impl ProjectState {
             .unwrap_or(0)
     }
 
-    /// Return whether the saved project still has configured deferred work.
-    pub(super) fn has_unfinished_split_indexing(&self) -> bool {
-        self.saved
-            .as_ref()
-            .is_some_and(Project::has_unfinished_split_indexing)
-    }
-
-    /// Capture read-only declaration/source inputs and the unfinished target selection.
-    pub(super) fn saved_body_build_inputs(&self) -> anyhow::Result<SavedBodyBuildInputs> {
-        Ok(self
-            .saved
-            .as_ref()
-            .context("saved project is not initialized")?
-            .deferred_body_build())
-    }
-
     /// Run a mutation that may publish a new saved-source generation.
     ///
     /// The `Project` operation is responsible for its transactional update.
@@ -71,55 +51,11 @@ impl ProjectState {
         mutation(saved).context("mutate saved project")
     }
 
-    /// Enrich analysis data for the same saved source snapshot.
-    ///
-    /// Publishing body products can replace package payloads without changing source identity.
-    pub(super) fn mutate_saved_preserving_generation<T>(
-        &mut self,
-        mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let saved = self
-            .saved
-            .as_mut()
-            .context("saved project is not initialized")?;
-
-        mutation(saved).context("mutate saved project without generation change")
-    }
-
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
         self.saved
             .as_ref()
             .map(Project::snapshot)
             .context("saved project is not initialized")
-    }
-
-    pub(super) fn package_slots_for_path(
-        &self,
-        path: &std::path::Path,
-    ) -> anyhow::Result<Vec<PackageSlot>> {
-        self.saved
-            .as_ref()
-            .context("saved project is not initialized")?
-            .package_slots_for_path(path)
-    }
-
-    /// Load deferred analysis data needed by a query without changing the source generation.
-    pub(super) fn materialize_saved_project(
-        &mut self,
-        surface: AnalysisSurface<'_>,
-        cancellation: &rg_std::CancellationToken,
-    ) -> anyhow::Result<()> {
-        let saved = self
-            .saved
-            .as_mut()
-            .context("saved project is not initialized")?;
-        if saved.split_indexing().needs_materialization(surface) {
-            saved
-                .split_indexing()
-                .materialize(surface, cancellation)
-                .context("materialize saved project analysis surface")?;
-        }
-        Ok(())
     }
 
     /// Reconcile a failed candidate with every known source changed since the published snapshot.
@@ -136,12 +72,5 @@ impl ProjectState {
         if let Some(saved) = &mut self.saved {
             saved.release_query_memory();
         }
-    }
-
-    /// Reallocate a fully cache-backed saved project after transient indexing state has died.
-    pub(super) fn reallocate_if_fully_offloaded(&mut self) -> bool {
-        self.saved
-            .as_mut()
-            .is_some_and(Project::reallocate_if_fully_offloaded)
     }
 }

@@ -2,10 +2,8 @@
 
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget,
-    IndexingPerformancePreference as ProtoIndexingPerformancePreference,
     SysrootDiscovery as ProtoSysrootDiscovery,
 };
-use rg_project::{IndexingPerformancePreference, PackageBatchSize};
 #[cfg(test)]
 use rg_workspace::SysrootSources;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
@@ -15,8 +13,6 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig};
 pub(crate) struct ProjectConfiguration {
     pub(super) cargo_metadata_config: CargoMetadataConfig,
     pub(super) workspace_lowering_config: WorkspaceLoweringConfig,
-    pub(super) indexing_preference: IndexingPerformancePreference,
-    pub(super) package_batch_size: PackageBatchSize,
     pub(super) discover_sysroot: bool,
     #[cfg(test)]
     pub(crate) sysroot_sources: Option<SysrootSources>,
@@ -37,22 +33,10 @@ impl From<AnalysisConfig> for ProjectConfiguration {
         let workspace_lowering_config = WorkspaceLoweringConfig::default()
             .cfg_test(config.cfg.test)
             .custom_cfg_atoms(config.cfg.atoms);
-        let indexing_preference = match config.indexing_preference {
-            ProtoIndexingPerformancePreference::LowerPeakMemory => {
-                IndexingPerformancePreference::LowerPeakMemory
-            }
-            ProtoIndexingPerformancePreference::FasterBuilds => {
-                IndexingPerformancePreference::FasterBuilds
-            }
-        };
-        let package_batch_size = PackageBatchSize::new(config.package_batch_size.get())
-            .expect("protocol package batch size should remain positive");
 
         Self {
             cargo_metadata_config,
             workspace_lowering_config,
-            indexing_preference,
-            package_batch_size,
             discover_sysroot: matches!(config.sysroot_discovery, ProtoSysrootDiscovery::Auto),
             #[cfg(test)]
             sysroot_sources: None,

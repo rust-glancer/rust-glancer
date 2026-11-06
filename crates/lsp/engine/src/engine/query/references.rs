@@ -2,8 +2,8 @@
 //!
 //! Cross-file reference work has a two-step shape. First, resolve the cursor far enough to find
 //! candidate crates and safe identifier labels. Those labels can often prefilter the scan to exact
-//! source files. Then materialize the planned files or whole crates and run the real semantic
-//! query against a fresh snapshot.
+//! source files. Complete any targets skipped by the startup policy, then run the semantic query
+//! against a fresh snapshot using that file selection.
 //!
 //! Rename uses the same search plan, but has a stricter publication boundary: every target must be
 //! workspace-owned and every source span must still contain the text analysis expected to replace.
@@ -15,7 +15,7 @@ use anyhow::Context as _;
 use rg_analysis::{ReferenceQuery, ReferenceSearchFile, RenameEdit, RenameTarget};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_lsp_proto::{DocumentPositionSnapshot, GlobalPositionSnapshot};
-use rg_project::{AnalysisSurface, FileContext, ProjectSnapshot};
+use rg_project::{FileContext, ProjectSnapshot};
 use rg_std::UniqueVec;
 
 use super::{DocumentSelection, QueryCancellation, QueryRunError, QueryRunner};
@@ -25,7 +25,7 @@ use crate::proto::{references as references_proto, rename as rename_proto};
 ///
 /// `targets` is the conservative crate scope. `files = Some(...)` means identifier prefiltering
 /// safely narrowed that scope to concrete crate/file pairs. `None` means no safe label was
-/// available, so the query must materialize and scan every target crate.
+/// available, so the query must scan every target crate.
 ///
 /// For `struct User` and a cursor on `User`, a plan can keep only files containing that identifier
 /// token. Semantic reference matching still proves which of those textual occurrences mean this
@@ -37,7 +37,7 @@ struct ReferenceSearchPlan {
 }
 
 impl ReferenceSearchPlan {
-    /// Turn materialized coverage into the matching `rg_analysis` search scope.
+    /// Turn the selected files or targets into the matching `rg_analysis` search scope.
     fn query(&self, include_declaration: bool) -> ReferenceQuery<'_> {
         match self.files.as_deref() {
             Some(files) => ReferenceQuery::find_references_in_files(files, include_declaration),
@@ -47,34 +47,20 @@ impl ReferenceSearchPlan {
 }
 
 impl QueryRunner<'_> {
-    /// Materialize the one origin plan, retaining its cross-crate search scope.
+    /// Complete any targets in the search scope that startup left out.
     fn ensure_reference_plan(
         &mut self,
         query: &'static str,
         plan: &ReferenceSearchPlan,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<()> {
-        match &plan.files {
-            Some(files) => {
-                let files = files
-                    .iter()
-                    .map(|file| (file.crate_ref, file.file_id))
-                    .collect::<Vec<_>>();
-                self.project.materialize_saved_project(
-                    AnalysisSurface::Files(&files),
-                    &cancellation.token(),
-                )
-            }
-            None => self.project.materialize_saved_project(
-                AnalysisSurface::Crates(&plan.targets),
-                &cancellation.token(),
-            ),
-        }
-        .with_context(|| format!("prepare {query} reference scan"))?;
+        self.project
+            .ensure_body_analysis(&plan.targets, &cancellation.token())
+            .with_context(|| format!("prepare {query} reference scan"))?;
         Ok(())
     }
 
-    /// Keep owned identities and scan coverage across materialization, which replaces saved payloads.
+    /// Keep owned identities and scan coverage while completing any missing targets.
     fn reference_search_plan_for_position(
         &mut self,
         path: &Path,

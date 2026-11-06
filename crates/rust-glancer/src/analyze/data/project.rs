@@ -6,8 +6,6 @@ use crate::report::{ReportFieldsBuilder, ReportSectionBuilder};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectReport {
-    pub(crate) indexing_preference: String,
-    pub(crate) package_batch_size: usize,
     pub(crate) packages: PackageReport,
     pub(crate) def_map: DefMapReport,
     pub(crate) semantic_ir: SemanticIrReport,
@@ -26,8 +24,6 @@ impl ProjectReport {
         );
 
         Self {
-            indexing_preference: project.indexing_preference().config_name().to_string(),
-            package_batch_size: project.package_batch_size().get(),
             packages: PackageReport::capture(project, &stats),
             def_map: DefMapReport {
                 report_population: "resident_crate_maps",
@@ -83,14 +79,6 @@ impl ProjectReport {
 
     pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
         section.untitled();
-        section.fields("summary", |fields| {
-            fields.text("indexing_preference", &self.indexing_preference);
-            fields.count_as(
-                "package_batch_size",
-                "package batch size",
-                self.package_batch_size,
-            );
-        });
         section.fields("packages", |fields| self.packages.append_fields(fields));
         section.fields("def_map", |fields| {
             fields.title("def maps");

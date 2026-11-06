@@ -4,8 +4,6 @@
 //! protocol, while VS Code and other LSP clients can consume the same messages without knowing any
 //! Rust Glancer extensions.
 //!
-//! Foreground indexing and deferred completion use separate server-owned handles. Their titles make
-//! the queryable boundary explicit, while later phase/count signals update the deferred operation.
 //! Engine services can also supply their own tokens for bounded operations such as Cargo
 //! diagnostics; those begin/end messages are encoded here but do not change workspace lifecycle.
 
@@ -14,7 +12,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rg_lsp_proto::{IndexingProgress, IndexingStage};
 use tower_lsp_server::{
     Client as LspClient, NotCancellable, OngoingProgress, Unbounded,
     gen_lsp_types::{
@@ -43,11 +40,6 @@ pub(super) struct WorkspaceProgressState {
 impl WorkspaceProgressState {
     pub(super) async fn begin_foreground(&mut self, lsp_client: &LspClient, root: &Path) {
         self.begin(lsp_client, root, Self::foreground_indexing_title(root))
-            .await;
-    }
-
-    pub(super) async fn begin_deferred(&mut self, lsp_client: &LspClient, root: &Path) {
-        self.begin(lsp_client, root, Self::deferred_indexing_title(root))
             .await;
     }
 
@@ -83,32 +75,8 @@ impl WorkspaceProgressState {
         }
     }
 
-    /// Update one active workspace operation with an editor-facing package count.
-    pub(super) async fn report(&self, root: &Path, progress: IndexingProgress) {
-        if let Some(operation) = self.progress_by_root.get(root) {
-            operation
-                .report(Self::indexing_progress_message(progress))
-                .await;
-        }
-    }
-
     fn foreground_indexing_title(root: &Path) -> String {
         format!("Indexing {}", Self::workspace_name(root))
-    }
-
-    fn deferred_indexing_title(root: &Path) -> String {
-        format!("{} ready · background", Self::workspace_name(root))
-    }
-
-    fn indexing_progress_message(progress: IndexingProgress) -> String {
-        let stage = match progress.stage {
-            IndexingStage::LoweringBodies => "Lowering",
-            IndexingStage::ResolvingBodies => "Resolving",
-        };
-        format!(
-            "{stage} · {}/{}",
-            progress.completed_packages, progress.total_packages
-        )
     }
 
     fn workspace_name(root: &Path) -> String {

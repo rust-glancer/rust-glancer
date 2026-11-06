@@ -13,9 +13,6 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::{
-    DeferredIndexingOutcome, IndexingProgress, IndexingStage, ProjectInitialization,
-};
 use tower_lsp_server::{
     LspService,
     gen_lsp_types::{ClientCapabilities, WindowClientCapabilities},
@@ -23,9 +20,8 @@ use tower_lsp_server::{
 
 use self::utils::{ProtocolClient, TestBackend};
 use super::{
-    ActiveWorkspaceState, ActiveWorkspaceStatus, ClientStatusCapabilities, ClientStatusPublisher,
-    ClientStatusState, DeferredIndexingState, WorkspaceLifecycle, rust_analyzer,
-    work_done_progress,
+    ClientStatusCapabilities, ClientStatusPublisher, ClientStatusState, WorkspaceLifecycle,
+    rust_analyzer, work_done_progress,
 };
 
 #[test]
@@ -51,7 +47,7 @@ fn reads_negotiated_status_capabilities() {
 }
 
 #[test]
-fn rust_analyzer_status_separates_health_from_background_work() {
+fn rust_analyzer_status_separates_health_from_indexing() {
     let mut state = ClientStatusState::default();
     let ready = PathBuf::from("/workspace/ready");
     let failed = PathBuf::from("/workspace/failed");
@@ -82,40 +78,6 @@ fn rust_analyzer_status_separates_health_from_background_work() {
         partially_failed.message.as_deref(),
         Some("Workspace `/workspace/failed` failed: engine exited")
     );
-
-    state.deferred_indexing.insert(
-        ready.clone(),
-        DeferredIndexingState::Running {
-            generation: 1,
-            progress: None,
-        },
-    );
-    assert!(!state.rust_analyzer_status().quiescent);
-
-    state.workspaces.remove(&failed);
-    assert_eq!(
-        state.rust_analyzer_status().health,
-        rust_analyzer::Health::Ok
-    );
-
-    state.deferred_indexing.insert(
-        ready,
-        DeferredIndexingState::Failed {
-            generation: 1,
-            message: Arc::from("body indexing failed"),
-        },
-    );
-    assert_eq!(
-        state.rust_analyzer_status(),
-        rust_analyzer::StatusSnapshot {
-            health: rust_analyzer::Health::Warning,
-            quiescent: true,
-            message: Some(
-                "Workspace `/workspace/ready` background indexing failed: body indexing failed"
-                    .to_string()
-            ),
-        }
-    );
 }
 
 #[test]
@@ -142,15 +104,7 @@ async fn indexing_lifecycle_publishes_negotiated_client_protocol() {
     let root = Path::new("/workspace/project_a");
     let publish = async move {
         client_status.workspace_indexing(root).await;
-        client_status
-            .workspace_initialized(
-                root,
-                ProjectInitialization {
-                    generation: 1,
-                    has_deferred_indexing: false,
-                },
-            )
-            .await;
+        client_status.workspace_ready(root).await;
     };
     let observe = async {
         let create = client.next_request().await;
@@ -168,240 +122,6 @@ async fn indexing_lifecycle_publishes_negotiated_client_protocol() {
         notify $/progress {"token":"foreground","value":{"kind":"end","message":"Finished"}}
         notify experimental/serverStatus {"health":"ok","quiescent":true}
     "#]]);
-}
-
-#[tokio::test]
-async fn deferred_progress_replaces_foreground_progress_after_queryable_boundary() {
-    let capabilities = ClientStatusCapabilities {
-        work_done_progress: true,
-        rust_analyzer_server_status: false,
-    };
-    let (client_status, mut client) = ProtocolClient::initialized(capabilities).await;
-    let root = Path::new("/workspace/project_a");
-    let first_progress = IndexingProgress {
-        stage: IndexingStage::LoweringBodies,
-        completed_packages: 4,
-        total_packages: 12,
-    };
-    let second_progress = IndexingProgress {
-        stage: IndexingStage::ResolvingBodies,
-        completed_packages: 7,
-        total_packages: 12,
-    };
-    let publish = async move {
-        client_status.workspace_indexing(root).await;
-        client_status.deferred_indexing_started(root, 7).await;
-        client_status
-            .deferred_indexing_progress(root, 7, first_progress)
-            .await;
-        client_status.workspace_ready(root).await;
-        client_status
-            .deferred_indexing_progress(root, 7, second_progress)
-            .await;
-        client_status
-            .deferred_indexing_finished(root, 7, DeferredIndexingOutcome::Succeeded)
-            .await;
-    };
-    let observe = async {
-        let create = client.next_request().await;
-        client.name_progress_token(&create, "foreground");
-        client.acknowledge(create).await;
-        let create = client.next_request().await;
-        client.name_progress_token(&create, "background");
-        client.acknowledge(create).await;
-        client.drain().await;
-    };
-
-    tokio::join!(publish, observe);
-    client.check(expect_test::expect![[r#"
-        request #0 window/workDoneProgress/create {"token":"foreground"}
-        reply #0 {"result":null}
-        notify $/progress {"token":"foreground","value":{"cancellable":false,"kind":"begin","title":"Indexing project_a"}}
-        notify rust-glancer/deferredIndexingStarted {"root":"/workspace/project_a"}
-        notify $/progress {"token":"foreground","value":{"kind":"end","message":"Finished"}}
-        request #1 window/workDoneProgress/create {"token":"background"}
-        reply #1 {"result":null}
-        notify $/progress {"token":"background","value":{"cancellable":false,"kind":"begin","title":"project_a ready · background"}}
-        notify $/progress {"token":"background","value":{"kind":"report","message":"Lowering · 4/12"}}
-        notify $/progress {"token":"background","value":{"kind":"report","message":"Resolving · 7/12"}}
-        notify $/progress {"token":"background","value":{"kind":"end","message":"Finished"}}
-        notify rust-glancer/deferredIndexingFinished {"outcome":"succeeded","root":"/workspace/project_a"}
-    "#]]);
-}
-
-#[tokio::test]
-async fn deferred_failure_ends_progress_and_publishes_degraded_ready_status() {
-    let capabilities = ClientStatusCapabilities {
-        work_done_progress: true,
-        rust_analyzer_server_status: true,
-    };
-    let (client_status, mut client) = ProtocolClient::initialized(capabilities).await;
-    let root = Path::new("/workspace/project_a");
-    let publish = async move {
-        client_status.workspace_ready(root).await;
-        client_status.deferred_indexing_started(root, 7).await;
-        client_status
-            .deferred_indexing_finished(
-                root,
-                7,
-                DeferredIndexingOutcome::Failed {
-                    message: "body indexing failed".to_string(),
-                },
-            )
-            .await;
-    };
-    let observe = async {
-        let create = client.next_request().await;
-        client.name_progress_token(&create, "background");
-        client.acknowledge(create).await;
-        client.drain().await;
-    };
-
-    tokio::join!(publish, observe);
-    client.check(expect_test::expect![[r#"
-        notify experimental/serverStatus {"health":"ok","quiescent":true}
-        request #0 window/workDoneProgress/create {"token":"background"}
-        reply #0 {"result":null}
-        notify $/progress {"token":"background","value":{"cancellable":false,"kind":"begin","title":"project_a ready · background"}}
-        notify experimental/serverStatus {"health":"ok","quiescent":false}
-        notify rust-glancer/deferredIndexingStarted {"root":"/workspace/project_a"}
-        notify $/progress {"token":"background","value":{"kind":"end","message":"Failed"}}
-        notify experimental/serverStatus {"health":"warning","message":"Workspace `/workspace/project_a` background indexing failed: body indexing failed","quiescent":true}
-        notify rust-glancer/deferredIndexingFinished {"message":"body indexing failed","outcome":"failed","root":"/workspace/project_a"}
-    "#]]);
-}
-
-#[tokio::test]
-async fn stale_deferred_generation_cannot_replace_or_finish_current_progress() {
-    let (service, _socket) = LspService::new(|client| TestBackend {
-        client_status: ClientStatusPublisher::new(client, ClientStatusCapabilities::default()),
-    });
-    let client_status = service.inner().client_status.clone();
-    let root = Path::new("/workspace/project_a");
-    let progress = IndexingProgress {
-        stage: IndexingStage::ResolvingBodies,
-        completed_packages: 2,
-        total_packages: 8,
-    };
-
-    client_status.deferred_indexing_started(root, 9).await;
-    client_status
-        .deferred_indexing_progress(root, 8, progress)
-        .await;
-    client_status
-        .deferred_indexing_finished(root, 8, DeferredIndexingOutcome::Succeeded)
-        .await;
-
-    let state = client_status.state.lock().await;
-    assert_eq!(
-        state.deferred_indexing.get(root),
-        Some(&DeferredIndexingState::Running {
-            generation: 9,
-            progress: None,
-        })
-    );
-}
-
-#[tokio::test]
-async fn rust_glancer_notifications_remain_additive_without_negotiation() {
-    let (client_status, mut client) =
-        ProtocolClient::initialized(ClientStatusCapabilities::default()).await;
-    let root = Path::new("/workspace/project_a");
-    let publish = async move {
-        client_status
-            .active_workspace_changed(Some(ActiveWorkspaceStatus {
-                root: root.to_path_buf(),
-                state: ActiveWorkspaceState::Ready,
-                message: None,
-            }))
-            .await;
-        client_status.deferred_indexing_started(root, 1).await;
-        client_status
-            .deferred_indexing_finished(
-                root,
-                1,
-                DeferredIndexingOutcome::Failed {
-                    message: "body indexing failed".to_string(),
-                },
-            )
-            .await;
-    };
-
-    tokio::join!(publish, client.drain());
-    client.check(expect_test::expect![[r#"
-        notify rust-glancer/activeWorkspaceChanged {"root":"/workspace/project_a","state":"ready"}
-        notify rust-glancer/deferredIndexingStarted {"root":"/workspace/project_a"}
-        notify rust-glancer/deferredIndexingFinished {"message":"body indexing failed","outcome":"failed","root":"/workspace/project_a"}
-    "#]]);
-}
-
-#[tokio::test]
-async fn startup_quiescence_accounts_for_pending_and_completed_work() {
-    // The response and worker notifications travel through separate channels. Neither order
-    // should make clients proceed before completion or wait forever after it.
-    for (worker_finishes_first, expected_quiescence, message) in [
-        (false, false, "pending work should keep the server busy"),
-        (
-            true,
-            true,
-            "initialization should not restart completed work",
-        ),
-    ] {
-        let (service, _socket) = LspService::new(|client| TestBackend {
-            client_status: ClientStatusPublisher::new(client, ClientStatusCapabilities::default()),
-        });
-        let client_status = &service.inner().client_status;
-        let root = Path::new("/workspace/project");
-        client_status.workspace_indexing(root).await;
-        if worker_finishes_first {
-            client_status.deferred_indexing_started(root, 1).await;
-            client_status
-                .deferred_indexing_finished(root, 1, DeferredIndexingOutcome::Succeeded)
-                .await;
-        }
-        client_status
-            .workspace_initialized(
-                root,
-                ProjectInitialization {
-                    generation: 1,
-                    has_deferred_indexing: true,
-                },
-            )
-            .await;
-        assert_eq!(
-            client_status
-                .state
-                .lock()
-                .await
-                .rust_analyzer_status()
-                .quiescent,
-            expected_quiescence,
-            "{message}",
-        );
-
-        if !worker_finishes_first {
-            client_status.deferred_indexing_started(root, 1).await;
-            assert!(
-                !client_status
-                    .state
-                    .lock()
-                    .await
-                    .rust_analyzer_status()
-                    .quiescent
-            );
-            client_status
-                .deferred_indexing_finished(root, 1, DeferredIndexingOutcome::Succeeded)
-                .await;
-            assert!(
-                client_status
-                    .state
-                    .lock()
-                    .await
-                    .rust_analyzer_status()
-                    .quiescent
-            );
-        }
-    }
 }
 
 #[tokio::test]
@@ -417,14 +137,12 @@ async fn terminal_engine_failure_ignores_late_project_status() {
         .await;
     client_status.workspace_indexing(root).await;
     client_status.workspace_ready(root).await;
-    client_status.deferred_indexing_started(root, 1).await;
 
     let state = client_status.state.lock().await;
     assert_eq!(
         state.workspaces.get(root),
         Some(&WorkspaceLifecycle::Unavailable(Arc::from("engine exited")))
     );
-    assert!(state.deferred_indexing.is_empty());
 }
 
 #[tokio::test]

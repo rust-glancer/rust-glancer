@@ -1,9 +1,8 @@
-mod body_products;
 pub(crate) mod cancellation;
 mod cargo_build_outputs;
 mod current_source;
+mod eager_indexing;
 mod generated_modules;
-mod split_indexing;
 mod utils;
 
 use std::{
@@ -19,12 +18,11 @@ use expect_test::expect;
 use rg_analysis::ReferenceQuery;
 use rg_ir_model::{PackageSlot, Span};
 use rg_source::CapturedSource;
-use rg_std::MemorySize as _;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisChangeSummary, AnalysisSurface, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SavedFileChange, SplitIndexingMode, SplitIndexingStage,
+    AnalysisChangeSummary, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectMemoryPurgePoint, SavedFileChange,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -744,223 +742,7 @@ pub struct User;
 }
 
 #[test]
-fn early_start_build_can_finish_split_indexing_later() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "early_start_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub fn value() -> usize {
-    1
-}
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .build()
-        .expect("early-start project build should succeed");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.crate_count, 1);
-    assert_eq!(stats.complete_crate_count, 0);
-    assert_eq!(stats.missing_crate_count, 1);
-    assert_eq!(stats.body_count, 0);
-
-    let source_path = fixture
-        .path("src/lib.rs")
-        .canonicalize()
-        .expect("fixture source path should canonicalize");
-    let source_entry = project
-        .state
-        .parse_db()
-        .source_inventory()
-        .entry(&source_path)
-        .expect("fixture source should have a generation entry");
-    let evicted_source_memory = source_entry.memory_size();
-
-    project
-        .split_indexing()
-        .finish()
-        .expect("deferred indexing should succeed");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.crate_count, 1);
-    assert_eq!(stats.complete_crate_count, 1);
-    assert_eq!(stats.missing_crate_count, 0);
-    assert_eq!(stats.body_count, 1);
-    assert_eq!(
-        source_entry.memory_size(),
-        evicted_source_memory,
-        "deferred finishing should release source text reloaded by Body IR",
-    );
-}
-
-#[test]
-fn early_start_source_update_keeps_body_ir_deferred() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "early_start_update_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub fn before() -> usize {
-    1
-}
-"#,
-    );
-    let source = fixture.path("src/lib.rs");
-    let mut project = Project::builder(fixture.workspace_metadata())
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .build()
-        .expect("early-start project build should succeed");
-    project
-        .split_indexing()
-        .finish()
-        .expect("initial deferred indexing should succeed");
-    assert_eq!(project.stats().body_ir.complete_crate_count, 1);
-
-    std::fs::write(
-        &source,
-        r#"
-pub fn after() -> usize {
-    2
-}
-"#,
-    )
-    .expect("fixture source should be replaced");
-    project
-        .apply_change(SavedFileChange::fs_path(source))
-        .expect("saved source update should succeed");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_crate_count, 0);
-    assert_eq!(stats.missing_crate_count, 1);
-    assert_eq!(stats.body_count, 0);
-
-    project
-        .split_indexing()
-        .finish()
-        .expect("updated deferred indexing should succeed");
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_crate_count, 1);
-    assert_eq!(stats.missing_crate_count, 0);
-    assert_eq!(stats.body_count, 1);
-}
-
-#[test]
-fn file_prepare_materializes_deferred_analysis_incrementally() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "file_ensure_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod other;
-
-pub fn first() -> usize {
-    1
-}
-
-//- /src/other.rs
-pub fn second() -> usize {
-    2
-}
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .build()
-        .expect("early-start project build should succeed");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.missing_crate_count, 1);
-    assert_eq!(stats.body_count, 0);
-
-    let lib_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path("src/lib.rs"))
-        .expect("lib file contexts should resolve")
-        .expect("lib file should have one context");
-    let lib_path = fixture
-        .path("src/lib.rs")
-        .canonicalize()
-        .expect("lib source path should canonicalize");
-    let lib_source = project
-        .state
-        .parse_db()
-        .source_inventory()
-        .entry(&lib_path)
-        .expect("lib source should have a generation entry");
-    let evicted_lib_memory = lib_source.memory_size();
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&[(lib_context.crate_ref, lib_context.file)]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("lib file deferred analysis should materialize");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_crate_count, 0);
-    assert_eq!(stats.partial_crate_count, 1);
-    assert_eq!(stats.body_count, 1);
-    assert_eq!(
-        lib_source.memory_size(),
-        evicted_lib_memory,
-        "file materialization should release source text reloaded by Body IR",
-    );
-
-    let other_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path("src/other.rs"))
-        .expect("other file contexts should resolve")
-        .expect("other file should have one context");
-    let other_path = fixture
-        .path("src/other.rs")
-        .canonicalize()
-        .expect("other source path should canonicalize");
-    let other_source = project
-        .state
-        .parse_db()
-        .source_inventory()
-        .entry(&other_path)
-        .expect("other source should have a generation entry");
-    let evicted_other_memory = other_source.memory_size();
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&[(other_context.crate_ref, other_context.file)]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("other file deferred analysis should materialize");
-
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.complete_crate_count, 1);
-    assert_eq!(stats.partial_crate_count, 0);
-    assert_eq!(stats.body_count, 2);
-    assert_eq!(
-        other_source.memory_size(),
-        evicted_other_memory,
-        "incremental materialization should release newly reloaded source text",
-    );
-}
-
-#[test]
-fn split_indexing_prevents_reference_and_rename_false_negatives() {
+fn eager_indexing_includes_body_references_and_rename() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -986,10 +768,9 @@ pub fn demo(user: User) -> usize {
     );
     let workspace = fixture.workspace_metadata();
 
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
+    let project = Project::builder(workspace)
         .build()
-        .expect("early-start project build should succeed");
+        .expect("eager project build should succeed");
 
     let subject = fixture.markers().position("subject");
     let lib_context = project
@@ -1008,7 +789,7 @@ pub fn demo(user: User) -> usize {
         let snapshot = project.snapshot();
         let analysis = snapshot
             .full_analysis(rg_std::CancellationToken::new())
-            .expect("early-start analysis should materialize");
+            .expect("eager analysis should materialize");
         let declaration_targets = analysis
             .goto_definition(target, lib_context.file, subject.offset)
             .expect("definition lookup should resolve")
@@ -1044,18 +825,6 @@ pub fn demo(user: User) -> usize {
         files
     };
 
-    let search_body_files = search_files
-        .iter()
-        .map(|file| (file.crate_ref, file.file_id))
-        .collect::<Vec<_>>();
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&search_body_files),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("reference scan files should materialize on demand");
-
     let snapshot = project.snapshot();
     let analysis = snapshot
         .full_analysis(rg_std::CancellationToken::new())
@@ -1063,18 +832,18 @@ pub fn demo(user: User) -> usize {
     let query = ReferenceQuery::find_references_in_files(&search_files, true);
     let references = analysis
         .references(target, lib_context.file, subject.offset, query)
-        .expect("references should resolve after on-demand materialization");
+        .expect("references should resolve after indexing");
     assert!(
         references
             .iter()
             .any(|reference| reference.file_id == other_context.file),
-        "references should include body occurrences from the on-demand scan surface",
+        "references should include body occurrences from the indexed scan surface",
     );
 
     let query = ReferenceQuery::find_references_in_files(&search_files, true);
     let rename = analysis
         .rename(target, lib_context.file, subject.offset, "label", query)
-        .expect("rename should resolve after on-demand materialization")
+        .expect("rename should resolve after indexing")
         .expect("rename should be available for the selected field");
     assert!(
         rename.edits.iter().any(|edit| {
@@ -1082,362 +851,7 @@ pub fn demo(user: User) -> usize {
                 && edit.old_text == "name"
                 && edit.new_text == "label"
         }),
-        "rename should edit body occurrences from the on-demand scan surface",
-    );
-}
-
-#[test]
-fn merging_finished_split_indexing_does_not_downgrade_on_demand_package() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "background_merge_app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep", package = "background_merge_dep" }
-
-//- /src/lib.rs
-pub fn app_value() -> usize {
-    dep::dep_value()
-}
-
-//- /dep/Cargo.toml
-[package]
-name = "background_merge_dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub fn dep_value() -> usize {
-    let value = 1usize;
-    val$dep_ref$ue
-}
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .build()
-        .expect("early-start project build should succeed");
-    let finished = project
-        .deferred_body_build()
-        .build(&rg_std::CancellationToken::new())
-        .expect("background deferred indexing should succeed");
-    let dep_ref = fixture.markers().position("dep_ref");
-    let dep_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path(&dep_ref.path))
-        .expect("dependency file contexts should resolve")
-        .expect("dependency file should have one context");
-    let dep_target = dep_context.crate_ref;
-
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Crates(&[dep_context.crate_ref]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("on-demand dependency deferred indexing should succeed");
-    assert!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("analysis should materialize after on-demand dependency finish")
-            .type_at(dep_target, dep_context.file, dep_ref.offset)
-            .expect("dependency body-local type query should resolve")
-            .is_some(),
-        "dependency body should be queryable after on-demand finish",
-    );
-
-    assert!(
-        project
-            .split_indexing()
-            .publish(finished, &rg_std::CancellationToken::new())
-            .expect("background deferred indexing should publish")
-            .improved(),
-        "workspace package finish should still merge",
-    );
-    assert!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("analysis should materialize after background merge")
-            .type_at(dep_target, dep_context.file, dep_ref.offset)
-            .expect("dependency body-local type query should resolve after merge")
-            .is_some(),
-        "background publication must preserve on-demand dependency bodies",
-    );
-}
-
-#[test]
-fn streamed_products_publish_once_and_duplicate_keeps_package_offloaded() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "offloaded_priority_merge"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub fn value() -> usize {
-    1
-}
-"#,
-    );
-    let mut project = Project::builder(fixture.workspace_metadata())
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("early-start offloadable project build should succeed");
-    let priority_finished = Arc::new(Mutex::new(None));
-    let priority_publication = Arc::clone(&priority_finished);
-    let progress = Arc::new(Mutex::new(Vec::new()));
-    let progress_publication = Arc::clone(&progress);
-    let duplicate = project
-        .deferred_body_build()
-        .build(&rg_std::CancellationToken::new())
-        .expect("duplicate body work should build");
-    project
-        .deferred_body_build()
-        .build_with_package_priority(
-            &|| vec![PackageSlot(0)],
-            &move |finished| {
-                let previous = priority_publication
-                    .lock()
-                    .expect("priority publication should not be poisoned")
-                    .replace(finished);
-                assert!(
-                    previous.is_none(),
-                    "one-package build should publish priority data once",
-                );
-            },
-            &move |snapshot| {
-                progress_publication
-                    .lock()
-                    .expect("split indexing progress should not be poisoned")
-                    .push((
-                        snapshot.stage(),
-                        snapshot.completed_packages(),
-                        snapshot.total_packages(),
-                    ));
-            },
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("background deferred indexing should succeed");
-    assert_eq!(
-        *progress
-            .lock()
-            .expect("split indexing progress should not be poisoned"),
-        [
-            (SplitIndexingStage::LoweringBodies, 0, 1),
-            (SplitIndexingStage::LoweringBodies, 1, 1),
-            (SplitIndexingStage::ResolvingBodies, 0, 1),
-            (SplitIndexingStage::ResolvingBodies, 1, 1),
-        ],
-    );
-    let priority_finished = priority_finished
-        .lock()
-        .expect("priority publication should not be poisoned")
-        .take()
-        .expect("priority package should publish before the final result");
-
-    assert!(
-        project
-            .split_indexing()
-            .publish(priority_finished, &rg_std::CancellationToken::new())
-            .expect("streamed package should publish")
-            .improved(),
-        "priority publication should finish the saved package",
-    );
-    assert_eq!(
-        project.stats().body_ir.crate_count,
-        0,
-        "priority publication should return the finished package to offloaded residency",
-    );
-
-    assert!(
-        !project
-            .split_indexing()
-            .publish(duplicate, &rg_std::CancellationToken::new())
-            .expect("duplicate products should reconcile")
-            .improved(),
-        "duplicate work should not reinstall an already-offloaded package",
-    );
-    assert_eq!(
-        project.stats().body_ir.crate_count,
-        0,
-        "duplicate publication should preserve offloaded residency",
-    );
-}
-
-#[test]
-fn residency_keeps_partial_deferred_payload_transient_and_resident() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "helper"]
-
-//- /app/Cargo.toml
-[package]
-name = "partial_residency_app"
-version = "0.1.0"
-edition = "2024"
-
-//- /app/src/lib.rs
-mod other;
-
-pub fn first() -> usize {
-    let value = 1usize;
-    val$app_ref$ue
-}
-
-//- /app/src/other.rs
-pub fn second() -> usize {
-    2
-}
-
-//- /helper/Cargo.toml
-[package]
-name = "partial_residency_helper"
-version = "0.1.0"
-edition = "2024"
-
-//- /helper/src/lib.rs
-pub fn helper() -> usize {
-    1
-}
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("early-start project build should succeed");
-    let app_ref = fixture.markers().position("app_ref");
-    let lib_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path(&app_ref.path))
-        .expect("lib file contexts should resolve")
-        .expect("lib file should have one context");
-    let helper_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path("helper/src/lib.rs"))
-        .expect("helper file contexts should resolve")
-        .expect("helper file should have one context");
-    let app_target = lib_context.crate_ref;
-
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&[(lib_context.crate_ref, lib_context.file)]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("lib file deferred analysis should materialize");
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.partial_crate_count, 1);
-    assert_eq!(stats.body_count, 1);
-
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&[(helper_context.crate_ref, helper_context.file)]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("helper deferred indexing should apply residency");
-    let stats = project.stats().body_ir;
-    assert_eq!(stats.partial_crate_count, 1);
-    assert_eq!(stats.body_count, 1);
-
-    assert!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("analysis should materialize after helper residency")
-            .type_at(app_target, lib_context.file, app_ref.offset)
-            .expect("app body-local type query should resolve")
-            .is_some(),
-        "partial on-demand app body should remain resident after another package applies residency",
-    );
-}
-
-#[test]
-fn file_prepare_keeps_finished_offloaded_payload_lazy() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "finished_offload_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub fn value() -> usize {
-    let value = 1usize;
-    val$ref$ue
-}
-"#,
-    );
-    let workspace = fixture.workspace_metadata();
-
-    let mut project = Project::builder(workspace)
-        .split_indexing_mode(SplitIndexingMode::EarlyStart)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("early-start project build should succeed");
-    let reference = fixture.markers().position("ref");
-    let context = project
-        .snapshot()
-        .file_context_for_path(fixture.path(&reference.path))
-        .expect("fixture file contexts should resolve")
-        .expect("fixture file should have one context");
-    let target = context.crate_ref;
-
-    project
-        .split_indexing()
-        .finish()
-        .expect("deferred indexing should finish and restore residency");
-    assert!(
-        project
-            .state
-            .body_ir
-            .resident_package(context.crate_ref.package)
-            .is_none(),
-        "finished all-offloadable package should return to lazy cache-backed residency",
-    );
-
-    project
-        .split_indexing()
-        .materialize(
-            AnalysisSurface::Files(&[(target, context.file)]),
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("file-local preparation should treat finished offloaded payload as ready");
-    assert!(
-        project
-            .state
-            .body_ir
-            .resident_package(context.crate_ref.package)
-            .is_none(),
-        "file-local preparation should not rebuild a finished offloaded package from source",
-    );
-
-    assert!(
-        project
-            .snapshot()
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("analysis should lazy-load the finished offloaded package")
-            .type_at(target, context.file, reference.offset)
-            .expect("body-local type query should resolve from lazy package data")
-            .is_some(),
-        "finished offloaded body data should still be queryable through lazy loading",
+        "rename should edit body occurrences from the indexed scan surface",
     );
 }
 

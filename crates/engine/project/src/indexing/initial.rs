@@ -8,8 +8,7 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetada
 
 use super::phases;
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectMemoryHooks,
-    SplitIndexingMode, StartupCacheLoad,
+    PackageResidencyPolicy, ProjectMemoryHooks, StartupCacheLoad,
     profile::{BuildMemorySampler, metric},
     state::{ProjectGenerationId, ProjectState},
     storage::cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
@@ -22,9 +21,6 @@ pub(crate) fn build_state(
     cargo_metadata_config: CargoMetadataConfig,
     cache_instance: PackageCacheInstance,
     body_ir_policy: BodyIrBuildPolicy,
-    split_indexing_mode: SplitIndexingMode,
-    indexing_preference: IndexingPerformancePreference,
-    package_batch_size: PackageBatchSize,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
@@ -93,13 +89,10 @@ pub(crate) fn build_state(
     let phases = phases::build(
         &workspace,
         body_ir_policy,
-        indexing_preference,
-        package_batch_size,
         package_residency_policy,
         &cache_plan,
         &cache_store,
         startup_cache_load,
-        split_indexing_mode,
         memory_hooks.as_ref(),
         memory_sampler,
     )?;
@@ -114,9 +107,6 @@ pub(crate) fn build_state(
         cache_store,
         package_source_fingerprints: phases.package_source_fingerprints,
         body_ir_policy,
-        split_indexing_mode,
-        indexing_preference,
-        package_batch_size,
         package_residency_policy,
         memory_hooks,
         names: phases.names,

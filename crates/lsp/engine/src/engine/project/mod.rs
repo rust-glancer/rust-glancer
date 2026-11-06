@@ -1,14 +1,13 @@
 //! Keeps the saved `Project` on the engine thread and changes it in command order.
 //!
 //! Queries borrow this project and may ask the coordinator to load package data that was left on
-//! disk. Saves and file-watcher events build and publish a new project generation. Background
-//! indexing may do expensive work elsewhere, but its products come back through this module for
-//! publication. The project is therefore never shared as mutable state between those paths.
+//! disk. Saves and file-watcher events build and publish a new project generation. These
+//! operations share one command lane, so the project is never mutated by competing workers.
 //!
 //! A filesystem burst can keep changing after a watcher command reaches the engine. Project
 //! construction reports that race as a typed stale-source error. The coordinator waits for another
 //! quiet window and retries the same mutation on the lane; it never publishes the rejected
-//! candidate or starts deferred work for it. Retries are bounded so continuous writers cannot keep
+//! candidate. Retries are bounded so continuous writers cannot keep
 //! every later lifecycle command out of the single dispatcher lane forever.
 
 use std::{
@@ -19,30 +18,23 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{IndexingProgress, IndexingStage, ProjectInitialization, ServiceNotification};
+use rg_lsp_proto::ProjectInitialization;
 use rg_project::{
-    AnalysisChangeSummary, AnalysisSurface, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
-    ProjectSnapshot, SavedBodyProducts, SavedFileChange, SplitIndexingMode, SplitIndexingProgress,
-    SplitIndexingStage,
+    AnalysisChangeSummary, Project, ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
 };
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
-    engine::{
-        QueuedEngineCommand,
-        command::{DeferredIndexingResult, EngineCommand},
-    },
+    engine::{QueuedEngineCommand, command::EngineCommand},
     memory::{MemoryControl, ProjectMemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
-    service::ServiceNotificationsSink,
 };
 
 mod config;
-mod deferred;
 mod state;
 
 pub(crate) use self::config::ProjectConfiguration;
-use self::{deferred::DeferredIndexingFinish, state::ProjectState};
+use self::state::ProjectState;
 
 // A watcher batch can become stale again while its replacement project is being built. Waiting
 // for one more quiet window avoids rebuilding in a tight loop while a checkout or agent edit is
@@ -60,18 +52,14 @@ const MAX_STALE_SOURCE_RETRIES: usize = 3;
 
 /// The only type allowed to access the saved project on the engine thread.
 ///
-/// Queries, saved file changes, and completed background indexing all pass through this owner. It
-/// can therefore compare generation ids before merging background work without putting locks in
-/// the analysis databases. If a query discovers that disk has newer text, this owner also marks the
+/// Queries and saved file changes pass through this owner in command order. If a query discovers
+/// that disk has newer text, this owner marks the
 /// project stale so later queries stop until the queued file change publishes a replacement.
 #[derive(Debug)]
 pub(super) struct ProjectCoordinator {
     project: ProjectState,
-    deferred_indexing_finish: DeferredIndexingFinish,
     command_sender: Sender<QueuedEngineCommand>,
     stale_source: Option<PathBuf>,
-    workspace_root: Option<PathBuf>,
-    notifications: ServiceNotificationsSink,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
@@ -79,26 +67,18 @@ impl ProjectCoordinator {
     pub(super) fn new(
         sender: Sender<QueuedEngineCommand>,
         memory_control: Arc<dyn MemoryControl>,
-        notifications: ServiceNotificationsSink,
     ) -> Self {
         let memory_hooks = Arc::new(ProjectMemoryReporter::new(memory_control.clone()));
         Self {
             project: ProjectState::new(),
-            deferred_indexing_finish: DeferredIndexingFinish::new(sender.clone()),
             command_sender: sender,
             stale_source: None,
-            workspace_root: None,
-            notifications,
             memory_hooks,
         }
     }
 
-    /// Build the first queryable project, then finish any remaining work in the background.
-    ///
-    /// Faster indexing deliberately publishes a usable saved project before all Body IR is
-    /// available. Lower-memory batch indexing finishes that work before publication so completed
-    /// packages can be released. If workspace files keep changing during either build, only a
-    /// coherent attempt is published.
+    /// Build declarations and configured bodies before publishing a queryable project.
+    /// If workspace files change during indexing, only a coherent attempt is published.
     pub(super) fn initialize(
         &mut self,
         root: PathBuf,
@@ -111,8 +91,6 @@ impl ProjectCoordinator {
         };
         tracing::info!(
             root = %root.display(),
-            indexing_preference = configuration.indexing_preference.config_name(),
-            package_batch_size = configuration.package_batch_size.get(),
             cargo_target = configured_target,
             cargo_all_features = configuration.cargo_metadata_config.all_features_enabled(),
             cargo_no_default_features = configuration.cargo_metadata_config.no_default_features_enabled(),
@@ -186,17 +164,12 @@ impl ProjectCoordinator {
         #[cfg(test)]
         let sysroot = configuration.sysroot_sources.clone().or(sysroot);
 
-        // The faster path stops at its early-start boundary. Lower-memory indexing uses the same
-        // builder contract but completes Body IR inside each package batch before returning.
         let workspace = workspace.with_sysroot_sources(sysroot);
         let mut stale_retries = 0usize;
         let project = loop {
             let result = Project::builder(workspace.clone())
                 .workspace_lowering_config(configuration.workspace_lowering_config.clone())
                 .cargo_metadata_config(configuration.cargo_metadata_config.clone())
-                .indexing_preference(configuration.indexing_preference)
-                .package_batch_size(configuration.package_batch_size)
-                .split_indexing_mode(SplitIndexingMode::EarlyStart)
                 .package_residency_policy(rg_project::PackageResidencyPolicy::AllOffloadable)
                 .memory_hooks(Arc::clone(&self.memory_hooks))
                 .build();
@@ -214,9 +187,6 @@ impl ProjectCoordinator {
                 }
             }
         };
-        // Publish the saved project before deciding whether deferred work remains. If a worker is
-        // needed, any later source generation makes its products stale.
-        self.workspace_root = Some(workspace_root.clone());
         self.project.replace_saved(project);
         self.stale_source = None;
         let snapshot = self
@@ -228,28 +198,15 @@ impl ProjectCoordinator {
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
             stale_retries,
-            indexing_preference = configuration.indexing_preference.config_name(),
             "workspace indexing finished"
-        );
-        let has_deferred_indexing = self
-            .deferred_indexing_finish
-            .saved_project_changed(&self.project);
-        if has_deferred_indexing {
-            self.send_deferred_indexing_started();
-        }
-        // A worker that failed to start must not make startup look fully indexed.
-        anyhow::ensure!(
-            has_deferred_indexing || !self.project.has_unfinished_split_indexing(),
-            "initial deferred indexing could not start",
         );
 
         Ok(ProjectInitialization {
             generation: self.project.generation(),
-            has_deferred_indexing,
         })
     }
 
-    /// Rebuild the whole saved workspace and schedule deferred work for the new generation.
+    /// Rebuild the whole saved workspace before publishing the new generation.
     ///
     /// Source races are retried before this method returns, keeping the caller's foreground update
     /// live until a coherent replacement has actually been published. If files
@@ -261,7 +218,7 @@ impl ProjectCoordinator {
 
         tracing::info!("manual workspace reindex started");
         loop {
-            match self.mutate_saved_and_schedule_deferred_finish(Project::reindex_workspace) {
+            match self.project.mutate_saved(Project::reindex_workspace) {
                 Ok(()) => break,
                 Err(error) => {
                     let Some(_) = Self::wait_for_stale_source_retry(
@@ -352,9 +309,9 @@ impl ProjectCoordinator {
         let mut stale_retries = 0usize;
 
         loop {
-            let result = self.mutate_saved_and_schedule_deferred_finish(|project| {
-                project.apply_changes(changes.clone())
-            });
+            let result = self
+                .project
+                .mutate_saved(|project| project.apply_changes(changes.clone()));
             match result {
                 Ok(summary) => return Ok((summary, changes.len(), stale_retries)),
                 Err(error) => {
@@ -404,109 +361,19 @@ impl ProjectCoordinator {
         }
     }
 
-    /// Reconcile one background finish on the same lane that owns saved generations.
-    pub(super) fn deferred_indexing_finished(
-        &mut self,
-        generation: u64,
-        result: DeferredIndexingResult,
-    ) {
-        let terminal =
-            self.deferred_indexing_finish
-                .finish_returned(&mut self.project, generation, result);
-
-        // A successful finish is the first point where every package has completed its configured
-        // residency transition. If that offloaded every analysis payload, reallocate the small
-        // saved state now so the purge has a chance to release pages fragmented during indexing.
-        if terminal.as_ref().is_some_and(|terminal| {
-            matches!(
-                &terminal.outcome,
-                rg_lsp_proto::DeferredIndexingOutcome::Succeeded
-            )
-        }) {
-            self.project.reallocate_if_fully_offloaded();
-        }
-
-        // Completion arrives after every worker has drained and dropped its saved inputs. Purge
-        // after that ownership boundary so transient declaration and solver allocations can leave
-        // allocator arenas instead of waiting for the next query cleanup.
-        self.memory_hooks
-            .purge(ProjectMemoryPurgePoint::AfterDeferredIndexingFinish);
-        let Some(terminal) = terminal else {
-            return;
-        };
-
-        self.send_deferred_indexing_finished(terminal.generation, terminal.outcome);
-        if let Ok(snapshot) = self.project.saved_snapshot() {
-            Self::log_project_snapshot(snapshot, "deferred indexing finish");
-        }
-    }
-
-    /// Forward one current-generation progress snapshot to the editor-facing server.
-    pub(super) fn deferred_indexing_progress(
-        &self,
-        generation: u64,
-        progress: SplitIndexingProgress,
-    ) {
-        if self.project.generation() != generation {
-            tracing::trace!(
-                generation,
-                current_generation = self.project.generation(),
-                "discarding stale deferred indexing progress"
-            );
-            return;
-        }
-        let Some(root) = &self.workspace_root else {
-            tracing::warn!(
-                "deferred indexing reported progress before workspace root was recorded"
-            );
-            return;
-        };
-
-        let stage = match progress.stage() {
-            SplitIndexingStage::LoweringBodies => IndexingStage::LoweringBodies,
-            SplitIndexingStage::ResolvingBodies => IndexingStage::ResolvingBodies,
-        };
-        self.notifications
-            .send(ServiceNotification::DeferredIndexingProgress {
-                root: root.clone(),
-                generation,
-                progress: IndexingProgress {
-                    stage,
-                    completed_packages: progress
-                        .completed_packages()
-                        .try_into()
-                        .unwrap_or(u64::MAX),
-                    total_packages: progress.total_packages().try_into().unwrap_or(u64::MAX),
-                },
-            });
-    }
-
-    pub(super) fn deferred_indexing_products(&mut self, products: SavedBodyProducts) {
-        self.deferred_indexing_finish
-            .products_returned(&mut self.project, products);
-    }
-
-    /// Update package scheduling priority from an editor open/close hint.
-    pub(super) fn set_deferred_indexing_priority(&mut self, path: PathBuf, prioritized: bool) {
-        self.deferred_indexing_finish
-            .set_priority(&self.project, path, prioritized);
-    }
-
     pub(super) fn saved_snapshot(&self) -> anyhow::Result<ProjectSnapshot<'_>> {
         self.project
             .saved_snapshot()
             .context("borrow project snapshot")
     }
 
-    /// Load deferred package data needed by the next query.
-    pub(super) fn materialize_saved_project(
+    pub(super) fn ensure_body_analysis(
         &mut self,
-        surface: AnalysisSurface<'_>,
+        crates: &[rg_ir_model::CrateRef],
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<()> {
         self.project
-            .materialize_saved_project(surface, cancellation)
-            .context("materialize saved analysis surface")
+            .mutate_saved(|project| project.ensure_body_analysis(crates, cancellation))
     }
 
     /// Drop source data that was loaded only for the request that just finished.
@@ -569,9 +436,10 @@ impl ProjectCoordinator {
             "analysis query hit invalid package cache; rebuilding cache before next command"
         );
 
-        match self.mutate_saved_and_schedule_deferred_finish(|project| {
-            project.recover_after_cache_load_failure()
-        }) {
+        match self
+            .project
+            .mutate_saved(|project| project.recover_after_cache_load_failure())
+        {
             Ok(()) => {
                 let snapshot = self
                     .project
@@ -592,33 +460,6 @@ impl ProjectCoordinator {
                 );
             }
         }
-    }
-
-    /// Run one saved-project mutation and reconcile the background finish afterward.
-    ///
-    /// A successful mutation can make the active worker obsolete. The deferred controller cancels
-    /// it and waits for its jobs to drain before capturing replacement inputs. A rejected mutation
-    /// changes no generation, so it must not schedule a misleading deferred finish.
-    fn mutate_saved_and_schedule_deferred_finish<T>(
-        &mut self,
-        mutation: impl FnOnce(&mut Project) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let previous_generation = self.project.generation();
-        let result = self.project.mutate_saved(mutation);
-        // A rejected candidate leaves the published generation untouched. Starting deferred work
-        // for it would produce a false completion notification while recovery is still pending.
-        // Exact watcher replays are successful no-ops and likewise have no new generation to
-        // finish.
-        let deferred_started = result.is_ok()
-            && self.project.is_initialized()
-            && self.project.generation() != previous_generation
-            && self
-                .deferred_indexing_finish
-                .saved_project_changed(&self.project);
-        if deferred_started {
-            self.send_deferred_indexing_started();
-        }
-        result
     }
 
     /// Recognize a source-consistency race and wait before rebuilding from the newer disk state.
@@ -654,37 +495,6 @@ impl ProjectCoordinator {
         );
         thread::sleep(STALE_SOURCE_RETRY_DELAY);
         Some(path)
-    }
-
-    fn send_deferred_indexing_started(&self) {
-        let Some(root) = &self.workspace_root else {
-            tracing::warn!("deferred indexing started before workspace root was recorded");
-            return;
-        };
-
-        self.notifications
-            .send(ServiceNotification::DeferredIndexingStarted {
-                root: root.clone(),
-                generation: self.project.generation(),
-            });
-    }
-
-    fn send_deferred_indexing_finished(
-        &self,
-        generation: u64,
-        outcome: rg_lsp_proto::DeferredIndexingOutcome,
-    ) {
-        let Some(root) = &self.workspace_root else {
-            tracing::warn!("deferred indexing finished before workspace root was recorded");
-            return;
-        };
-
-        self.notifications
-            .send(ServiceNotification::DeferredIndexingFinished {
-                root: root.clone(),
-                generation,
-                outcome,
-            });
     }
 
     /// Log the retained project shape after a saved-state transition.

@@ -1,25 +1,15 @@
 //! Resolves independent crate payloads against immutable saved declarations.
 
-use std::{
-    collections::{BTreeSet, VecDeque},
-    num::NonZeroUsize,
-    sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
+use rayon::prelude::*;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
 use rg_text::{NameInterner, PackageNameInterners};
 
-use super::{
-    BodyIrBuildProgress, BodyIrBuildStage, local_thread_pool, lower::LoweredPackageBodies,
-    state::CrateBodyBuildState,
-};
+use super::{local_thread_pool, lower::LoweredPackageBodies, state::CrateBodyBuildState};
 use crate::CrateBodies;
 
 // Package resolution runs in parallel, so report only packages large enough to stand out from
@@ -39,12 +29,8 @@ pub(super) fn resolve_selected_packages(
     interners: &mut PackageNameInterners,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    priority_packages: &(dyn Fn() -> Vec<PackageSlot> + Sync),
-    publish: &(dyn Fn(Vec<(CrateRef, CrateBodies)>) + Sync),
-    worker_limit: Option<NonZeroUsize>,
-    report_progress: Option<&(dyn Fn(BodyIrBuildProgress) + Sync)>,
     cancellation: &rg_std::CancellationToken,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<(CrateRef, CrateBodies)>> {
     let profile_context = rg_profile::ProfileThreadContext::capture();
     let item_lookup_cache = ItemLookupQueryCache::new();
     // Selected builds can be sparse, but resolution may discover nested bodies and lower them,
@@ -83,87 +69,32 @@ pub(super) fn resolve_selected_packages(
         next_package_idx = package_slot.0 + 1;
     }
 
-    let thread_pool = local_thread_pool("rg-body-resolve", worker_limit)?;
-    let total_packages = jobs.len();
-    let completed_packages = AtomicUsize::new(0);
-    // Rayon normally commits the entire indexed iterator to its work-stealing queues up front.
-    // Keep package jobs in this small shared queue instead so a didOpen arriving during resolution
-    // can move its package ahead of work that has not started yet. Workers hold the lock only while
-    // selecting a package; resolution itself remains fully parallel.
-    let job_count = jobs.len();
-    let jobs = Mutex::new(VecDeque::from(jobs));
-    let resolved = Mutex::new(Vec::with_capacity(job_count));
-    let worker_count = thread_pool.current_num_threads().min(job_count);
-    thread_pool.scope(|scope| {
-        for _ in 0..worker_count {
-            scope.spawn(|_| {
-                loop {
-                    if cancellation.is_cancelled() {
-                        break;
-                    }
-                    let priorities = priority_packages().into_iter().collect::<BTreeSet<_>>();
-
-                    let job = {
-                        let mut jobs = jobs
-                            .lock()
-                            .expect("Body IR package resolution queue should not be poisoned");
-                        let job_idx = jobs
-                            .iter()
-                            .position(|(package, _, _, _)| priorities.contains(package))
-                            .unwrap_or(0);
-                        jobs.remove(job_idx)
-                    };
-                    let Some((package_slot, parse_package, package, interner)) = job else {
-                        break;
-                    };
-
-                    let result: anyhow::Result<()> = (|| {
-                        let _profile_guard = profile_context.enter();
-                        let package = resolve_package(
-                            package_slot,
-                            parse_package,
-                            package,
-                            interner,
-                            def_map,
-                            semantic_ir,
-                            &item_lookup_cache,
-                            cancellation,
-                        )?;
-                        // Transfer each finished payload once. A later cancellation can discard
-                        // unfinished work without retracting products already delivered.
-                        rg_std::check_cancel!(cancellation, "deliver resolved body products");
-                        publish(package);
-                        Ok(())
-                    })();
-                    if result.is_ok()
-                        && let Some(report_progress) = report_progress
-                    {
-                        let completed_packages =
-                            completed_packages.fetch_add(1, Ordering::Relaxed) + 1;
-                        report_progress(BodyIrBuildProgress::new(
-                            BodyIrBuildStage::Resolving,
-                            completed_packages,
-                            total_packages,
-                        ));
-                    }
-                    resolved
-                        .lock()
-                        .expect("Body IR package resolution results should not be poisoned")
-                        .push(result);
-                }
-            });
-        }
+    let thread_pool = local_thread_pool("rg-body-resolve")?;
+    let results = thread_pool.install(|| {
+        jobs.into_par_iter()
+            .map(|(package_slot, parse_package, package, interner)| {
+                let _profile_guard = profile_context.enter();
+                resolve_package(
+                    package_slot,
+                    parse_package,
+                    package,
+                    interner,
+                    def_map,
+                    semantic_ir,
+                    &item_lookup_cache,
+                    cancellation,
+                )
+            })
+            .collect::<Vec<_>>()
     });
 
-    // The scope has joined every started job. Prefer source failures over sibling cancellation.
-    // Completed products have already been transferred; checking these statuses does not undo them.
-    let results = resolved
-        .into_inner()
-        .expect("body resolution results should not be poisoned");
+    // Every worker has joined. Keep source failures visible if cancellation also reached a
+    // sibling; callers receive no partial products when any package failed.
+    let mut products = Vec::new();
     let mut cancelled = None;
     for result in results {
         match result {
-            Ok(()) => {}
+            Ok(mut package) => products.append(&mut package),
             Err(error) if error.chain().any(|cause| cause.is::<rg_std::Cancelled>()) => {
                 cancelled.get_or_insert(error);
             }
@@ -175,7 +106,7 @@ pub(super) fn resolve_selected_packages(
     }
     rg_std::check_cancel!(cancellation, "join body resolution workers");
     record_lookup_cache_stats(&item_lookup_cache);
-    Ok(())
+    Ok(products)
 }
 
 fn record_lookup_cache_stats(cache: &ItemLookupQueryCache) {

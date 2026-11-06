@@ -17,7 +17,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rg_ir_model::PackageSlot;
 use rg_item_tree::ItemTreeDb;
-use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
+use rg_macro_runtime::MacroExpansionRuntime;
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
@@ -71,7 +71,6 @@ impl DefMapDb {
         packages: &[PackageSlot],
         reallocate_payloads: bool,
         interners: &mut PackageNameInterners,
-        performance_preference: MacroExpansionPerformancePreference,
         source_loader: &mut impl MacroSourceFileLoader,
     ) -> anyhow::Result<DefMapBuildOutput> {
         let mut packages = packages.to_vec();
@@ -87,7 +86,7 @@ impl DefMapDb {
 
         // Reuse compilation/expansion caches, the worker pool, and file answers across crates.
         // Only import scheduling and pending macro directives are local to the active crate.
-        let mut runtime = MacroExpansionRuntime::new(performance_preference);
+        let mut runtime = MacroExpansionRuntime::new();
         let mut source_resolutions = MacroSourceFileResolutions::default();
         let mut remaining_report_groups = 64;
         let mut known_module_files = vec![None; parse.package_count()];

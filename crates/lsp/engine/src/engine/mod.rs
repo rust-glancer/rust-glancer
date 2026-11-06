@@ -51,8 +51,7 @@ impl EngineHandle {
         let (sender, receiver) = mpsc::channel();
         thread::spawn({
             let sender = sender.clone();
-            let notifications = notifications.clone();
-            move || EngineDispatcher::new(sender, memory_control, notifications).run(receiver)
+            move || EngineDispatcher::new(sender, memory_control).run(receiver)
         });
 
         Self {

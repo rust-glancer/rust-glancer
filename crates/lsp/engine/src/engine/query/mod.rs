@@ -29,8 +29,8 @@ use rg_lsp_proto::{
 };
 use rg_parse::{CurrentSource, LineIndex};
 use rg_project::{
-    AnalysisSurface, CurrentSourceBuildCheckpoint, CurrentSourceSelection, DocumentSourceView,
-    FileContext, ProjectSnapshot,
+    CurrentSourceBuildCheckpoint, CurrentSourceSelection, DocumentSourceView, FileContext,
+    ProjectSnapshot,
 };
 use rg_std::UniqueVec;
 
@@ -179,14 +179,10 @@ impl<'a> QueryRunner<'a> {
 
         let prepared = match source {
             DocumentSourceView::SavedExact(line_index) => {
-                // Exact text needs the ordinary saved bodies for this file. They are normally
-                // resident or lazy-loadable; during early startup this may finish the file's
-                // deferred Body IR before borrowing the read-only analysis snapshot.
+                // Primary targets already have saved bodies. A request into a target excluded
+                // by startup policy completes that target before borrowing the analysis view.
                 self.project
-                    .materialize_saved_project(
-                        AnalysisSurface::Files(&[(target.crate_ref, target.file)]),
-                        &cancellation.token(),
-                    )
+                    .ensure_body_analysis(&[target.crate_ref], &cancellation.token())
                     .context("prepare exact saved document analysis")?;
                 rg_std::check_cancel!(cancellation, "after exact saved document preparation");
 
@@ -253,7 +249,7 @@ impl<'a> QueryRunner<'a> {
         Ok(Some(prepared))
     }
 
-    /// Materialize the selected file interpretation, including a deferred secondary target.
+    /// Materialize the selected file interpretation, including a policy-excluded secondary target.
     fn ensure_path(
         &mut self,
         query: &'static str,
@@ -268,10 +264,7 @@ impl<'a> QueryRunner<'a> {
             return Ok(());
         };
         self.project
-            .materialize_saved_project(
-                AnalysisSurface::Files(&[(target.crate_ref, target.file)]),
-                &cancellation.token(),
-            )
+            .ensure_body_analysis(&[target.crate_ref], &cancellation.token())
             .with_context(|| format!("prepare {query} query path"))?;
         Ok(())
     }
