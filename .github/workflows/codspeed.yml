@@ -16,7 +16,7 @@ concurrency:
 jobs:
   benchmarks:
     name: Run benchmarks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       RUST_GLANCER_BENCH_TARGETS: small_app
 
@@ -49,7 +49,7 @@ jobs:
 
   query-benchmarks:
     name: Query benchmarks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     permissions:
       contents: read
