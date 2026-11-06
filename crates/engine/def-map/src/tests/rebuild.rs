@@ -184,7 +184,6 @@ impl RebuildFixture {
                 &packages,
                 true,
                 &mut names,
-                crate::MacroExpansionPerformancePreference::default(),
                 &mut crate::testonly::SourceClosedMacroSourceFileLoader,
             )
             .expect("fixture DefMap package should rebuild")

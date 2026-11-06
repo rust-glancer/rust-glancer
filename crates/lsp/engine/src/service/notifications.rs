@@ -25,7 +25,7 @@ impl ServiceNotificationsSink {
     /// Builds an in-process notification channel for embedded service consumers.
     ///
     /// The RPC process normally forwards these events over tarpc. Direct users still need the
-    /// ordered lifecycle stream, especially the deferred-indexing barrier, without standing up a
+    /// ordered notification stream without standing up a
     /// transport that adds no meaning inside the same process.
     pub fn channel() -> (Self, UnboundedReceiver<ServiceNotification>) {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();

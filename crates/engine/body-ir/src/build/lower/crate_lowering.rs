@@ -8,8 +8,7 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    ConstRef, CrateRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef,
-    TraitDefRef,
+    ConstRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, Span, StaticRef, TraitDefRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::NameInterner;
@@ -18,7 +17,7 @@ use super::{
     BodyMacroExpansion, LoweredCrateBodies,
     task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource},
 };
-use crate::{BodyOwner, build::materialization::BodyIrMaterialization};
+use crate::BodyOwner;
 
 type FunctionLoweringTarget = (FunctionRef, FileId, Span);
 type ConstLoweringTarget = (ConstRef, FileId, Span);
@@ -28,8 +27,6 @@ pub(super) struct CrateLowering<'a> {
     pub(super) parse_package: &'a rg_parse::Package,
     pub(super) def_map: &'a DefMapReadTxn<'a>,
     pub(super) semantic_ir: &'a SemanticIrReadTxn<'a>,
-    pub(super) scope: BodyIrMaterialization<'a>,
-    pub(super) crate_ref: CrateRef,
     pub(super) functions: Vec<FunctionLoweringTarget>,
     pub(super) consts: Vec<ConstLoweringTarget>,
     pub(super) statics: Vec<StaticLoweringTarget>,
@@ -69,9 +66,6 @@ impl<'a> CrateLowering<'a> {
 
         for &(function_ref, file_id, span) in &self.functions {
             rg_std::check_cancel!(self.cancellation, "select body task");
-            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
-                continue;
-            }
             let Some(function) = item_query.function_data(function_ref).with_context(|| {
                 format!(
                     "while attempting to inspect body availability for function {:?}",
@@ -106,9 +100,6 @@ impl<'a> CrateLowering<'a> {
 
         for &(const_ref, file_id, span) in &self.consts {
             rg_std::check_cancel!(self.cancellation, "select body task");
-            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
-                continue;
-            }
             let Some(owner_module) = Self::const_owner_module(self.semantic_ir, const_ref)? else {
                 continue;
             };
@@ -124,9 +115,6 @@ impl<'a> CrateLowering<'a> {
 
         for &(static_ref, file_id, span) in &self.statics {
             rg_std::check_cancel!(self.cancellation, "select body task");
-            if !self.scope.should_lower_body_file(self.crate_ref, file_id) {
-                continue;
-            }
             let Some(data) = item_query.static_data(static_ref).with_context(|| {
                 format!(
                     "while attempting to inspect body availability for static {:?}",

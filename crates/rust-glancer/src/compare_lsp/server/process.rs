@@ -30,7 +30,6 @@ use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLs
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
 const READY_TIMEOUT: Duration = Duration::from_secs(120);
-const SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
 const RUST_GLANCER_READY_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
@@ -45,7 +44,6 @@ pub(super) struct RunningServer {
     client: TowerLspTransport,
     stderr: StderrCapture,
     exited: bool,
-    rust_glancer_indexing_status: Option<IndexingStatus>,
 }
 
 impl RunningServer {
@@ -94,7 +92,6 @@ impl RunningServer {
             client,
             stderr,
             exited: false,
-            rust_glancer_indexing_status: None,
         })
     }
 
@@ -166,60 +163,6 @@ impl RunningServer {
             initialize_latency,
             ready_latency,
         ))
-    }
-
-    /// Wait for any background work that should not be charged to measured query latency.
-    ///
-    /// Rust-glancer reports structural readiness before deferred body indexes finish. That is the
-    /// behavior users care about for editor responsiveness, so `ready_ms` stops there. The
-    /// comparison harness then waits for healthy, quiescent server status before firing measured
-    /// body-sensitive queries, and reports that extra wait as `settle_ms`. Unlike a work-finished
-    /// event, this state also covers startup that needs no background indexing. A status received
-    /// before structural readiness is retained below.
-    pub(super) async fn settle_after_readiness(&mut self) -> anyhow::Result<Duration> {
-        match self.kind {
-            ServerKind::RustAnalyzer => {
-                tracing::info!(
-                    server = self.kind.display_name(),
-                    "compare-lsp post-ready settle skipped"
-                );
-                Ok(Duration::ZERO)
-            }
-            ServerKind::RustGlancer => {
-                match &self.rust_glancer_indexing_status {
-                    Some(IndexingStatus::Idle) => {
-                        tracing::info!(
-                            server = self.kind.display_name(),
-                            "compare-lsp post-ready settle already observed"
-                        );
-                        return Ok(Duration::ZERO);
-                    }
-                    Some(IndexingStatus::Failed(message)) => {
-                        anyhow::bail!(
-                            "{} indexing failed before post-ready settle: {message}",
-                            self.kind.display_name(),
-                        );
-                    }
-                    Some(IndexingStatus::Working) | None => {}
-                }
-
-                tracing::info!(
-                    server = self.kind.display_name(),
-                    "waiting for compare-lsp post-ready settle"
-                );
-                let started_at = Instant::now();
-                self.wait_until_indexing_settled()
-                    .await
-                    .context("Waiting for rust-glancer quiescence after readiness failed")?;
-                let settle_latency = started_at.elapsed();
-                tracing::info!(
-                    server = self.kind.display_name(),
-                    elapsed_ms = settle_latency.as_millis(),
-                    "compare-lsp post-ready settle observed"
-                );
-                Ok(settle_latency)
-            }
-        }
     }
 
     /// Run the LSP shutdown handshake, then wait until the OS process exits.
@@ -419,14 +362,6 @@ impl RunningServer {
                         self.stderr_note(),
                     )
                 })?;
-                if let Some(IndexingStatus::Failed(message)) =
-                    self.observe_indexing_status(&notification)
-                {
-                    anyhow::bail!(
-                        "{} reported indexing failure while becoming ready: {message}",
-                        self.kind.display_name(),
-                    );
-                }
                 match self.readiness_notification(&notification) {
                     ReadinessNotification::Ready => return Ok(()),
                     ReadinessNotification::Failed(message) => anyhow::bail!(
@@ -445,56 +380,6 @@ impl RunningServer {
                 self.stderr_note(),
             )
         })?
-    }
-
-    async fn wait_until_indexing_settled(&mut self) -> anyhow::Result<()> {
-        tokio::time::timeout(SETTLE_TIMEOUT, async {
-            loop {
-                let notification = self.client.next_notification().await.with_context(|| {
-                    format!(
-                        "Waiting for {} indexing status failed{}",
-                        self.kind.display_name(),
-                        self.stderr_note(),
-                    )
-                })?;
-                match self.observe_indexing_status(&notification) {
-                    Some(IndexingStatus::Idle) => return Ok(()),
-                    Some(IndexingStatus::Failed(message)) => anyhow::bail!(
-                        "{} reported indexing failure: {message}",
-                        self.kind.display_name(),
-                    ),
-                    Some(IndexingStatus::Working) | None => {}
-                }
-                if let ReadinessNotification::Failed(message) =
-                    self.readiness_notification(&notification)
-                {
-                    anyhow::bail!(
-                        "{} reported readiness failure while indexing was settling: {message}",
-                        self.kind.display_name(),
-                    );
-                }
-            }
-        })
-        .await
-        .with_context(|| {
-            format!(
-                "Waiting for {} quiescent indexing status timed out{}",
-                self.kind.display_name(),
-                self.stderr_note(),
-            )
-        })?
-    }
-
-    fn observe_indexing_status(
-        &mut self,
-        notification: &ServerNotification,
-    ) -> Option<IndexingStatus> {
-        if !matches!(self.kind, ServerKind::RustGlancer) {
-            return None;
-        }
-        let status = Self::rust_glancer_indexing_status(notification)?;
-        self.rust_glancer_indexing_status = Some(status.clone());
-        Some(status)
     }
 
     fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {
@@ -590,30 +475,6 @@ impl RunningServer {
         serde_json::to_value(params).with_context(|| format!("Serializing {description} failed"))
     }
 
-    fn rust_glancer_indexing_status(notification: &ServerNotification) -> Option<IndexingStatus> {
-        if notification.method() != SERVER_STATUS_METHOD {
-            return None;
-        }
-
-        let params = notification.params()?;
-        // A failed background build leaves the server queryable, but reports warning health. It must
-        // not count as successfully settled indexing just because the failed worker is now idle.
-        Some(match params.get("health").and_then(Value::as_str) {
-            Some("ok") => match params.get("quiescent").and_then(Value::as_bool) {
-                Some(true) => IndexingStatus::Idle,
-                Some(false) => IndexingStatus::Working,
-                None => IndexingStatus::Failed("server status omitted quiescence".to_string()),
-            },
-            _ => IndexingStatus::Failed(
-                params
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .unwrap_or("server did not report healthy indexing")
-                    .to_string(),
-            ),
-        })
-    }
-
     fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
         if notification.method() != RUST_GLANCER_READY_METHOD {
             return ReadinessNotification::Ignore;
@@ -685,11 +546,4 @@ enum ReadinessNotification {
     Ready,
     Failed(String),
     Ignore,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum IndexingStatus {
-    Working,
-    Idle,
-    Failed(String),
 }

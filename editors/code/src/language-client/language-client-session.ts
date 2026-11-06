@@ -19,7 +19,6 @@ import {
   ClientStatus,
   type ActiveWorkspaceState,
   type ClientStatusSnapshot,
-  type DeferredIndexingOutcome,
 } from "../status/client-status";
 import { StatusView } from "../status/status-view";
 import { isRustFile } from "../utils/lsp-utils";
@@ -83,7 +82,6 @@ export class LanguageClientSession implements vscode.Disposable {
       initializationOptions: {
         cfg: config.cfg,
         diagnostics: config.diagnostics,
-        indexing: config.indexing,
         inlayHints: config.inlayHints,
         cargo: config.cargo,
       },
@@ -120,19 +118,6 @@ export class LanguageClientSession implements vscode.Disposable {
         this.clientStatus.activeWorkspace(
           status.root,
           status.state,
-          status.message,
-          this.isActiveRustDocumentDirty(),
-        );
-      }),
-      client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingStarted, (params) => {
-        const status = params as DeferredIndexingParams;
-        this.clientStatus.deferredIndexingStarted(status.root, this.isActiveRustDocumentDirty());
-      }),
-      client.onNotification(SERVER_NOTIFICATIONS.deferredIndexingFinished, (params) => {
-        const status = params as DeferredIndexingFinishedParams;
-        this.clientStatus.deferredIndexingFinished(
-          status.root,
-          status.outcome,
           status.message,
           this.isActiveRustDocumentDirty(),
         );
@@ -236,14 +221,5 @@ export class LanguageClientSession implements vscode.Disposable {
 interface ActiveWorkspaceChangedParams {
   readonly root: string;
   readonly state: ActiveWorkspaceState;
-  readonly message?: string;
-}
-
-interface DeferredIndexingParams {
-  readonly root: string;
-}
-
-interface DeferredIndexingFinishedParams extends DeferredIndexingParams {
-  readonly outcome: DeferredIndexingOutcome;
   readonly message?: string;
 }

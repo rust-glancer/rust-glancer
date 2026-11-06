@@ -26,7 +26,6 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::{DeferredIndexingOutcome, IndexingProgress, ProjectInitialization};
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, gen_lsp_types::ClientCapabilities};
 
@@ -96,45 +95,6 @@ impl ClientStatusPublisher {
             .await;
     }
 
-    /// Merge the engine's startup snapshot before declaring its workspace ready.
-    ///
-    /// The response can overtake background notifications or arrive after the worker has already
-    /// finished. Fill in missing state without replacing a notification for the same generation.
-    /// This keeps quiescence truthful in both orders, including startup with no background work.
-    pub(crate) async fn workspace_initialized(
-        &self,
-        root: &Path,
-        initialization: ProjectInitialization,
-    ) {
-        {
-            let mut state = self.state.lock().await;
-            if matches!(
-                state.workspaces.get(root),
-                Some(WorkspaceLifecycle::Unavailable(_))
-            ) {
-                return;
-            }
-            if state
-                .deferred_indexing
-                .get(root)
-                .is_none_or(|deferred| deferred.generation() < initialization.generation)
-            {
-                let deferred = if initialization.has_deferred_indexing {
-                    DeferredIndexingState::Running {
-                        generation: initialization.generation,
-                        progress: None,
-                    }
-                } else {
-                    DeferredIndexingState::Idle {
-                        generation: initialization.generation,
-                    }
-                };
-                state.deferred_indexing.insert(root.to_path_buf(), deferred);
-            }
-        }
-        self.workspace_ready(root).await;
-    }
-
     pub(crate) async fn workspace_failed(&self, root: &Path, error: impl Into<Arc<str>>) {
         self.finish_workspace_indexing(root, WorkspaceLifecycle::Failed(error.into()), "Failed")
             .await;
@@ -155,132 +115,6 @@ impl ClientStatusPublisher {
         if let Some(status) = status {
             rust_glancer::active_workspace_changed(&self.lsp_client, &status).await;
         }
-    }
-
-    /// Mark background work while preserving the existing private VS Code notification.
-    pub(crate) async fn deferred_indexing_started(&self, root: &Path, generation: u64) {
-        {
-            let mut state = self.state.lock().await;
-            let workspace_is_available = !matches!(
-                state.workspaces.get(root),
-                Some(WorkspaceLifecycle::Unavailable(_))
-            );
-            if workspace_is_available {
-                let starts_new_generation = match state.deferred_indexing.get(root) {
-                    None => true,
-                    Some(previous) => {
-                        generation > previous.generation()
-                            || generation == previous.generation() && previous.is_failed()
-                    }
-                };
-                if starts_new_generation {
-                    state.deferred_indexing.insert(
-                        root.to_path_buf(),
-                        DeferredIndexingState::Running {
-                            generation,
-                            progress: None,
-                        },
-                    );
-
-                    if self.capabilities.work_done_progress
-                        && matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
-                    {
-                        state
-                            .workspace_progress
-                            .begin_deferred(&self.lsp_client, root)
-                            .await;
-                    }
-                    self.publish_rust_analyzer_status(&mut state).await;
-                }
-            }
-        }
-
-        // The private event is an independent compatibility contract. In particular, it is still
-        // sent when a late engine callback no longer changes the aggregate lifecycle above.
-        rust_glancer::deferred_indexing_started(&self.lsp_client, root).await;
-    }
-
-    /// Store and render progress only for the deferred generation that is still active.
-    pub(crate) async fn deferred_indexing_progress(
-        &self,
-        root: &Path,
-        generation: u64,
-        progress: IndexingProgress,
-    ) {
-        let mut state = self.state.lock().await;
-        {
-            let Some(DeferredIndexingState::Running {
-                generation: active_generation,
-                progress: active_progress,
-            }) = state.deferred_indexing.get_mut(root)
-            else {
-                return;
-            };
-            if *active_generation != generation || *active_progress == Some(progress) {
-                return;
-            }
-            *active_progress = Some(progress);
-        }
-
-        if self.capabilities.work_done_progress
-            && matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
-        {
-            state.workspace_progress.report(root, progress).await;
-        }
-    }
-
-    pub(crate) async fn deferred_indexing_finished(
-        &self,
-        root: &Path,
-        generation: u64,
-        outcome: DeferredIndexingOutcome,
-    ) {
-        {
-            let mut state = self.state.lock().await;
-            let generation_is_active = state.deferred_indexing.get(root).is_some_and(|deferred| {
-                matches!(
-                    deferred,
-                    DeferredIndexingState::Running {
-                        generation: active_generation,
-                        ..
-                    } if *active_generation == generation
-                )
-            });
-            if generation_is_active {
-                let progress_message = match &outcome {
-                    DeferredIndexingOutcome::Succeeded => {
-                        // Retain the generation so a later initialization response cannot turn
-                        // completed work back into a running operation.
-                        state.deferred_indexing.insert(
-                            root.to_path_buf(),
-                            DeferredIndexingState::Idle { generation },
-                        );
-                        "Finished"
-                    }
-                    DeferredIndexingOutcome::Failed { message } => {
-                        state.deferred_indexing.insert(
-                            root.to_path_buf(),
-                            DeferredIndexingState::Failed {
-                                generation,
-                                message: Arc::from(message.as_str()),
-                            },
-                        );
-                        "Failed"
-                    }
-                };
-                if self.capabilities.work_done_progress
-                    && matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
-                {
-                    state
-                        .workspace_progress
-                        .finish(root, progress_message)
-                        .await;
-                }
-                self.publish_rust_analyzer_status(&mut state).await;
-            }
-        }
-
-        rust_glancer::deferred_indexing_finished(&self.lsp_client, root, &outcome).await;
     }
 
     async fn finish_workspace_indexing(
@@ -304,29 +138,6 @@ impl ClientStatusPublisher {
             .workspace_progress
             .finish(root, progress_message)
             .await;
-        let workspace_failed = matches!(
-            state.workspaces.get(root),
-            Some(WorkspaceLifecycle::Failed(_) | WorkspaceLifecycle::Unavailable(_))
-        );
-        if workspace_failed {
-            state.deferred_indexing.remove(root);
-        } else if matches!(state.workspaces.get(root), Some(WorkspaceLifecycle::Ready))
-            && self.capabilities.work_done_progress
-        {
-            let progress = state
-                .deferred_indexing
-                .get(root)
-                .and_then(DeferredIndexingState::running_progress);
-            if let Some(progress) = progress {
-                state
-                    .workspace_progress
-                    .begin_deferred(&self.lsp_client, root)
-                    .await;
-                if let Some(progress) = progress {
-                    state.workspace_progress.report(root, progress).await;
-                }
-            }
-        }
         self.publish_rust_analyzer_status(&mut state).await;
     }
 
@@ -348,7 +159,6 @@ impl ClientStatusPublisher {
 #[derive(Debug, Default)]
 struct ClientStatusState {
     workspaces: BTreeMap<PathBuf, WorkspaceLifecycle>,
-    deferred_indexing: BTreeMap<PathBuf, DeferredIndexingState>,
     workspace_progress: WorkspaceProgressState,
     last_rust_analyzer_status: Option<self::rust_analyzer::StatusSnapshot>,
 }
@@ -366,30 +176,17 @@ impl ClientStatusState {
                 WorkspaceLifecycle::Indexing | WorkspaceLifecycle::Ready => None,
             })
             .collect::<Vec<_>>();
-        let deferred_failures = self
-            .deferred_indexing
-            .iter()
-            .filter_map(|(root, deferred)| match deferred {
-                DeferredIndexingState::Failed { message, .. } => Some((root, message)),
-                DeferredIndexingState::Idle { .. } | DeferredIndexingState::Running { .. } => None,
-            })
-            .collect::<Vec<_>>();
         let health = if !failures.is_empty() && failures.len() == self.workspaces.len() {
             rust_analyzer::Health::Error
-        } else if failures.is_empty() && deferred_failures.is_empty() {
+        } else if failures.is_empty() {
             rust_analyzer::Health::Ok
         } else {
             rust_analyzer::Health::Warning
         };
-        let issue_count = failures.len() + deferred_failures.len();
+        let issue_count = failures.len();
         let message = failures
             .first()
             .map(|(root, error)| ("failed", root, error))
-            .or_else(|| {
-                deferred_failures
-                    .first()
-                    .map(|(root, error)| ("background indexing failed", root, error))
-            })
             .map(|(description, root, error)| {
                 let additional = issue_count.saturating_sub(1);
                 let suffix = if additional == 0 {
@@ -406,52 +203,11 @@ impl ClientStatusState {
             .workspaces
             .values()
             .any(|lifecycle| matches!(lifecycle, WorkspaceLifecycle::Indexing));
-        let deferred_work = self
-            .deferred_indexing
-            .values()
-            .any(|deferred| matches!(deferred, DeferredIndexingState::Running { .. }));
 
         rust_analyzer::StatusSnapshot {
             health,
-            quiescent: !foreground_work && !deferred_work,
+            quiescent: !foreground_work,
             message,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum DeferredIndexingState {
-    Idle {
-        generation: u64,
-    },
-    Running {
-        generation: u64,
-        progress: Option<IndexingProgress>,
-    },
-    Failed {
-        generation: u64,
-        message: Arc<str>,
-    },
-}
-
-impl DeferredIndexingState {
-    fn generation(&self) -> u64 {
-        match self {
-            Self::Idle { generation }
-            | Self::Running { generation, .. }
-            | Self::Failed { generation, .. } => *generation,
-        }
-    }
-
-    fn is_failed(&self) -> bool {
-        matches!(self, Self::Failed { .. })
-    }
-
-    /// Preserve the distinction between no running operation and running without a first report.
-    fn running_progress(&self) -> Option<Option<IndexingProgress>> {
-        match self {
-            Self::Running { progress, .. } => Some(*progress),
-            Self::Idle { .. } | Self::Failed { .. } => None,
         }
     }
 }

@@ -1,20 +1,16 @@
 //! Rust Glancer's private status notifications.
 //!
-//! The VS Code extension uses the active-workspace and deferred-indexing events to render its
-//! detailed status bar. These notifications predate the portable progress and rust-analyzer-compatible
-//! health flows, so they remain additive compatibility contracts.
+//! The VS Code extension uses active-workspace events to render its status bar.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use rg_lsp_proto::{DeferredIndexingOutcome, path_for_editor};
+use rg_lsp_proto::path_for_editor;
 use tower_lsp_server::{
     Client as LspClient,
     gen_lsp_types::{LspAny, LspNotificationMethod, LspObject, MessageDirection, Notification},
 };
 
 const ACTIVE_WORKSPACE_CHANGED_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
-const DEFERRED_INDEXING_STARTED_METHOD: &str = "rust-glancer/deferredIndexingStarted";
-const DEFERRED_INDEXING_FINISHED_METHOD: &str = "rust-glancer/deferredIndexingFinished";
 
 pub(super) async fn active_workspace_changed(
     lsp_client: &LspClient,
@@ -22,24 +18,6 @@ pub(super) async fn active_workspace_changed(
 ) {
     lsp_client
         .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(status))
-        .await;
-}
-
-pub(super) async fn deferred_indexing_started(lsp_client: &LspClient, root: &Path) {
-    lsp_client
-        .send_notification::<DeferredIndexingStarted>(DeferredIndexingStarted::params(root))
-        .await;
-}
-
-pub(super) async fn deferred_indexing_finished(
-    lsp_client: &LspClient,
-    root: &Path,
-    outcome: &DeferredIndexingOutcome,
-) {
-    lsp_client
-        .send_notification::<DeferredIndexingFinished>(DeferredIndexingFinished::params(
-            root, outcome,
-        ))
         .await;
 }
 
@@ -56,9 +34,10 @@ impl Notification for ActiveWorkspaceChanged {
 impl ActiveWorkspaceChanged {
     fn params(status: &ActiveWorkspaceStatus) -> LspAny {
         let mut params = LspObject::new();
+        let root = path_for_editor(&status.root).unwrap_or_else(|_| status.root.clone());
         params.insert(
             "root".to_string(),
-            LspAny::String(editor_path_display(&status.root)),
+            LspAny::String(root.display().to_string()),
         );
         params.insert(
             "state".to_string(),
@@ -69,72 +48,6 @@ impl ActiveWorkspaceChanged {
         }
         LspAny::Object(params)
     }
-}
-
-/// Marks the beginning of background work for an already-queryable project generation.
-///
-/// This event is separate from the foreground `indexing` workspace state. A watcher batch can be
-/// an exact replay that publishes no generation and therefore starts no deferred work.
-struct DeferredIndexingStarted;
-
-impl Notification for DeferredIndexingStarted {
-    type Params = LspAny;
-
-    const METHOD: LspNotificationMethod<'static> =
-        LspNotificationMethod::Custom(DEFERRED_INDEXING_STARTED_METHOD);
-    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
-}
-
-impl DeferredIndexingStarted {
-    fn params(root: &Path) -> LspAny {
-        LspAny::Object(deferred_indexing_params(root))
-    }
-}
-
-/// Marks the terminal outcome of background work for the active saved project generation.
-struct DeferredIndexingFinished;
-
-impl Notification for DeferredIndexingFinished {
-    type Params = LspAny;
-
-    const METHOD: LspNotificationMethod<'static> =
-        LspNotificationMethod::Custom(DEFERRED_INDEXING_FINISHED_METHOD);
-    const MESSAGE_DIRECTION: MessageDirection = MessageDirection::ServerToClient;
-}
-
-impl DeferredIndexingFinished {
-    fn params(root: &Path, outcome: &DeferredIndexingOutcome) -> LspAny {
-        let mut params = deferred_indexing_params(root);
-        match outcome {
-            DeferredIndexingOutcome::Succeeded => {
-                params.insert(
-                    "outcome".to_string(),
-                    LspAny::String("succeeded".to_string()),
-                );
-            }
-            DeferredIndexingOutcome::Failed { message } => {
-                params.insert("outcome".to_string(), LspAny::String("failed".to_string()));
-                params.insert("message".to_string(), LspAny::String(message.clone()));
-            }
-        }
-        LspAny::Object(params)
-    }
-}
-
-fn deferred_indexing_params(root: &Path) -> LspObject {
-    let mut params = LspObject::new();
-    params.insert(
-        "root".to_string(),
-        LspAny::String(editor_path_display(root)),
-    );
-    params
-}
-
-fn editor_path_display(path: &Path) -> String {
-    path_for_editor(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .display()
-        .to_string()
 }
 
 /// Client-facing snapshot of the workspace currently selected by document routing.
@@ -209,34 +122,5 @@ mod tests {
         for (status, expected) in cases {
             assert_eq!(ActiveWorkspaceChanged::params(&status), expected);
         }
-    }
-
-    #[test]
-    fn deferred_indexing_params_render_root_and_terminal_outcome() {
-        let root = Path::new("workspace/project_a");
-        assert_eq!(
-            DeferredIndexingStarted::params(root),
-            serde_json::json!({ "root": "workspace/project_a" })
-        );
-        assert_eq!(
-            DeferredIndexingFinished::params(root, &DeferredIndexingOutcome::Succeeded,),
-            serde_json::json!({
-                "root": "workspace/project_a",
-                "outcome": "succeeded",
-            })
-        );
-        assert_eq!(
-            DeferredIndexingFinished::params(
-                root,
-                &DeferredIndexingOutcome::Failed {
-                    message: "body indexing failed".to_string(),
-                },
-            ),
-            serde_json::json!({
-                "root": "workspace/project_a",
-                "outcome": "failed",
-                "message": "body indexing failed",
-            })
-        );
     }
 }

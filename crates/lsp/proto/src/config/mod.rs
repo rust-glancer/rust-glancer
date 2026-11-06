@@ -2,7 +2,6 @@ mod analysis;
 mod cargo;
 mod cfg;
 mod diagnostics;
-mod indexing;
 mod inlay_hints;
 mod sysroot;
 
@@ -14,7 +13,6 @@ pub use self::{
     cargo::{CargoMetadataConfig, CargoMetadataTarget},
     cfg::AnalysisCfgConfig,
     diagnostics::DiagnosticsConfig,
-    indexing::{IndexingPerformancePreference, PackageBatchSize},
     inlay_hints::InlayHintsConfig,
     sysroot::SysrootDiscovery,
 };

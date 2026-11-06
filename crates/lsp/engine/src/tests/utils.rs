@@ -6,7 +6,6 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
 use expect_test::Expect;
@@ -20,8 +19,8 @@ use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
     DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
     FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
-    ProjectInitialization, QueryError, QueryValue, SaveProposal, SavedProjectChanges,
-    ServiceNotification, SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
+    QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
+    SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
 };
 use rg_parse::LineIndex;
 use rg_workspace::SysrootSources;
@@ -74,13 +73,13 @@ impl LspEngineFixture {
         let config = Self::engine_config();
         let mut configuration = ProjectConfiguration::from(config.analysis.clone());
         configuration.sysroot_sources = Some(sysroot);
-        let initialization = fixture
+        fixture
             .service
             .clone()
             .initialize_project(fixture.fixture.path(""), config, configuration)
             .await
             .expect("fixture LSP engine should initialize");
-        fixture.finish_initialization(initialization).await
+        fixture
     }
 
     pub(super) async fn initialized_with_cfg_test(fixture: &str, enabled: bool) -> Self {
@@ -120,27 +119,13 @@ impl LspEngineFixture {
         config: EngineConfig,
     ) -> Self {
         let fixture = Self::new(fixture);
-        let initialization = fixture
+        fixture
             .service
             .clone()
             .initialize(context::current(), fixture.fixture.path(""), config)
             .await
             .expect("fixture LSP engine should initialize");
-        fixture.finish_initialization(initialization).await
-    }
-
-    async fn finish_initialization(self, initialization: ProjectInitialization) -> Self {
-        // The startup response says whether any worker needs to be awaited. Bodyless projects,
-        // cached projects, and lower-memory builds can already be fully indexed here.
-        if initialization.has_deferred_indexing {
-            tokio::time::timeout(
-                Duration::from_secs(5),
-                self.notifications.wait_for_deferred_indexing(),
-            )
-            .await
-            .expect("fixture deferred indexing should finish");
-        }
-        self
+        fixture
     }
 
     pub(super) fn engine_config() -> EngineConfig {
@@ -442,14 +427,6 @@ impl LspEngineFixture {
                             .expect("snapshot should be writable");
                         rendered_inlay_hint_refresh = true;
                     }
-                }
-                ServiceNotification::DeferredIndexingStarted { .. }
-                | ServiceNotification::DeferredIndexingProgress { .. }
-                | ServiceNotification::DeferredIndexingFinished { .. } => {
-                    // Initial deferred indexing finishes on a background thread, so this lifecycle
-                    // notification can race with later fixture operations. These snapshots describe
-                    // stable editor-facing effects of the operation under test, not the whole event
-                    // stream.
                 }
                 ServiceNotification::LogMessage { level, message } => {
                     rendered_any_notification = true;
@@ -1710,20 +1687,5 @@ impl RecordingNotifications {
             .lock()
             .expect("recorded notifications should not be poisoned")
             .clone()
-    }
-
-    async fn wait_for_deferred_indexing(&self) {
-        loop {
-            let changed = self.changed.notified();
-            if self.snapshot().iter().any(|notification| {
-                matches!(
-                    notification,
-                    ServiceNotification::DeferredIndexingFinished { .. }
-                )
-            }) {
-                return;
-            }
-            changed.await;
-        }
     }
 }

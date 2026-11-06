@@ -90,7 +90,6 @@ Query file shape:
     "file": "crates/example/src/lib.rs",
     "format": "text",
     "readinessBarrier": "ready",
-    "deferredBarrier": "none",
     "queries": [
       {"kind": "hover", "label": "local", "marker": "let value", "delta": 5},
       {"kind": "completion", "label": "member", "marker": "value.", "delta": 6,
@@ -108,7 +107,6 @@ Notes:
   - --query-json avoids a plan file entirely.
   - agent-debug supplies its managed binary; direct invocation defaults to target/release/rust-glancer.
   - Use --workspace-root for an ad-hoc Cargo project under target/agent-debug/fixtures.
-  - Set deferredBarrier to before-queries or after-queries when deferred indexing is relevant.
   - A plan may contain bounded inline "text" instead of an overlay file.
   - --line/--col are 1-based for human ergonomics.
 """.strip()
@@ -484,9 +482,6 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
     readiness_barrier = plan.get("readinessBarrier", "ready")
     if readiness_barrier not in {"ready", "none"}:
         fail("readinessBarrier must be ready or none")
-    deferred_barrier = plan.get("deferredBarrier", "none")
-    if deferred_barrier not in {"none", "before-queries", "after-queries"}:
-        fail("deferredBarrier must be none, before-queries, or after-queries")
     if "cfgTest" in plan and plan["cfgTest"] is not None and not isinstance(plan["cfgTest"], bool):
         fail("cfgTest must be a boolean")
 
@@ -516,7 +511,6 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
         "format": output_format,
         "initializationOptions": initialization_options,
         "readinessBarrier": readiness_barrier,
-        "deferredBarrier": deferred_barrier,
     }
 
 
@@ -824,27 +818,6 @@ async def wait_until_ready(client: LspClient, timeout_ms: int) -> None:
         fail("workspace indexing failed: {}".format(params.get("message", "no reason reported")))
 
 
-async def wait_until_indexing_settled(client: LspClient, timeout_ms: int) -> None:
-    notification = await client.wait_for_notification(
-        lambda message: (
-            message.get("method") == SERVER_STATUS
-            and (
-                (message.get("params") or {}).get("health") != "ok"
-                or (message.get("params") or {}).get("quiescent") is True
-            )
-        )
-        or (
-            message.get("method") == ACTIVE_WORKSPACE_CHANGED
-            and (message.get("params") or {}).get("state") == "failed"
-        ),
-        "rust-glancer quiescent indexing status",
-        timeout_ms,
-    )
-    params = notification.get("params") or {}
-    if notification.get("method") == ACTIVE_WORKSPACE_CHANGED or params.get("health") != "ok":
-        fail("workspace indexing failed: {}".format(params.get("message", "no reason reported")))
-
-
 def hover_text(result: Any) -> Optional[str]:
     if not result or not isinstance(result, dict):
         return None
@@ -1073,12 +1046,9 @@ async def run(argv: Sequence[str]) -> None:
             },
         )
 
-        # Normal editor queries can start once the workspace is ready. Plans that need settled
-        # body indexes opt into the stronger deferred barrier instead of inventing sleeps.
+        # Readiness includes the configured body indexes.
         if plan["readinessBarrier"] == "ready":
             await wait_until_ready(client, options.timeout_ms)
-        if plan["deferredBarrier"] == "before-queries":
-            await wait_until_indexing_settled(client, options.timeout_ms)
 
         for query in plan["queries"]:
             if query["kind"] == "hover":
@@ -1219,8 +1189,6 @@ async def run(argv: Sequence[str]) -> None:
                         "raw": raw_hints,
                     }
                 )
-        if plan["deferredBarrier"] == "after-queries":
-            await wait_until_indexing_settled(client, options.timeout_ms)
     except Exception:
         if not options.show_logs and client.stderr.strip():
             print("lsp-query: server stderr tail:\n{}".format(client.stderr), file=sys.stderr)
@@ -1233,7 +1201,6 @@ async def run(argv: Sequence[str]) -> None:
         "binary": os.path.relpath(str(binary), str(TOOL_ROOT)),
         "barriers": {
             "readiness": plan["readinessBarrier"],
-            "deferred": plan["deferredBarrier"],
         },
         "results": results,
     }

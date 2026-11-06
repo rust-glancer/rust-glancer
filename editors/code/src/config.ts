@@ -7,16 +7,10 @@
  */
 import * as vscode from "vscode";
 
-const INDEXING_PERFORMANCE_PREFERENCE_VALUES = ["lower-peak-memory", "faster-builds"] as const;
-
-export type IndexingPerformancePreferenceSetting =
-  (typeof INDEXING_PERFORMANCE_PREFERENCE_VALUES)[number];
-
 export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly cfg: CfgConfig;
-  readonly indexing: IndexingConfig;
   readonly inlayHints: InlayHintsConfig;
   readonly cargo: CargoConfig;
   readonly diagnostics: DiagnosticsConfig;
@@ -25,11 +19,6 @@ export interface ExtensionConfig {
 export interface CfgConfig {
   readonly test: boolean;
   readonly atoms: string[];
-}
-
-export interface IndexingConfig {
-  readonly performancePreference: IndexingPerformancePreferenceSetting;
-  readonly packageBatchSize: number;
 }
 
 export interface InlayHintsConfig {
@@ -79,15 +68,6 @@ export namespace ExtensionConfig {
         test: readBoolean(config, "cfg.test", true),
         atoms: normalizeCfgAtoms(readUnknownArray(config, "cfg.atoms")),
       },
-      indexing: {
-        performancePreference: readStringEnum(
-          config,
-          "indexing.performancePreference",
-          INDEXING_PERFORMANCE_PREFERENCE_VALUES,
-          "faster-builds",
-        ),
-        packageBatchSize: readInteger(config, "indexing.packageBatchSize", 512, 1),
-      },
       inlayHints: {
         maxLength: readInteger(config, "inlayHints.maxLength", 25, 0),
       },
@@ -109,16 +89,6 @@ export namespace ExtensionConfig {
       },
     };
   }
-}
-
-function readStringEnum<T extends string>(
-  config: vscode.WorkspaceConfiguration,
-  key: string,
-  values: readonly T[],
-  fallback: T,
-): T {
-  const value = config.get<unknown>(key, fallback);
-  return typeof value === "string" && values.includes(value as T) ? (value as T) : fallback;
 }
 
 function readBoolean(

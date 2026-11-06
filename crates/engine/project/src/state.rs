@@ -8,7 +8,7 @@ use std::{
     },
 };
 
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb, CrateBodiesCoverage, PackageBodies};
+use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::DefMapDb;
 use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_parse::ParseDb;
@@ -18,17 +18,15 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    IndexingPerformancePreference, PackageBatchSize, PackageResidencyPolicy, ProjectMemoryHooks,
-    SplitIndexingMode,
+    PackageResidencyPolicy, ProjectMemoryHooks,
     stats::{MacroExpansionLimitBuildSummary, ProjectStats},
     storage::cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
 
 /// Identifies one saved version of a [`Project`](crate::Project).
 ///
-/// Publishing a source or workspace change gives the project a new id. Adding body analysis for
-/// the same source keeps the id, so [`SavedBodyProducts`](crate::SavedBodyProducts) can use it to
-/// check that their source and declarations still match before being installed.
+/// Publishing a source or workspace change gives the project a new id. Completing a target
+/// excluded by the eager build policy preserves the saved source identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub struct ProjectGenerationId(u64);
@@ -64,18 +62,11 @@ pub(crate) struct ProjectState {
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
-    #[memsize(skip)]
-    pub(crate) split_indexing_mode: SplitIndexingMode,
-    #[memsize(skip)]
-    pub(crate) indexing_preference: IndexingPerformancePreference,
-    #[memsize(skip)]
-    pub(crate) package_batch_size: PackageBatchSize,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     #[memsize(skip)]
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
-    /// Shared with saved body builds. Source updates copy the metadata before changing its file
-    /// and target inventory, so outstanding builds keep the source context they started with.
+    /// Candidate updates share immutable source entries until their file inventory changes.
     pub(crate) parse: Arc<ParseDb>,
     pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
     pub(crate) def_map: DefMapDb,
@@ -148,73 +139,6 @@ impl ProjectState {
                 file: file.file,
             })
             .collect()
-    }
-
-    /// Select targets whose saved coverage still needs work under the configured body policy.
-    pub(crate) fn unfinished_crates(&self) -> impl Iterator<Item = CrateRef> + '_ {
-        self.parse
-            .packages()
-            .iter()
-            .enumerate()
-            .flat_map(|(package, data)| {
-                data.targets()
-                    .iter()
-                    .enumerate()
-                    .map(move |(crate_id, _)| CrateRef {
-                        package: PackageSlot(package),
-                        crate_id: CrateId(crate_id),
-                    })
-            })
-            .filter(move |&crate_ref| {
-                !self
-                    .body_ir
-                    .crate_coverage(crate_ref)
-                    .is_some_and(|coverage| self.configured_crate_is_finished(crate_ref, coverage))
-            })
-    }
-
-    /// Whether this in-memory package has enough body analysis to be written to the cache.
-    /// Every target must be complete or skipped by policy; partial file results stay in memory.
-    pub(crate) fn package_deferred_payload_is_durable(&self, package: PackageSlot) -> bool {
-        self.body_ir
-            .resident_package(package)
-            .is_some_and(|bodies| self.configured_package_is_finished(package, bodies))
-    }
-
-    pub(crate) fn configured_package_is_finished(
-        &self,
-        package: PackageSlot,
-        bodies: &PackageBodies,
-    ) -> bool {
-        bodies.crates().iter().enumerate().all(|(index, bodies)| {
-            self.configured_crate_is_finished(
-                CrateRef {
-                    package,
-                    crate_id: CrateId(index),
-                },
-                bodies.coverage(),
-            )
-        })
-    }
-
-    fn configured_crate_is_finished(
-        &self,
-        crate_ref: CrateRef,
-        coverage: &CrateBodiesCoverage,
-    ) -> bool {
-        if coverage.is_complete() {
-            return true;
-        }
-        if !matches!(coverage, CrateBodiesCoverage::SkippedByPolicy) {
-            return false;
-        }
-        let Some(package) = self.parse.package(crate_ref.package.0) else {
-            return false;
-        };
-        let Some(target) = package.targets().get(crate_ref.crate_id.0) else {
-            return false;
-        };
-        !self.body_ir_policy.should_lower_target(package, target)
     }
 }
 

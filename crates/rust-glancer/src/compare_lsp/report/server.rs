@@ -13,7 +13,6 @@ pub(crate) struct ServerReport {
     command: String,
     initialize_ms: f64,
     ready_ms: f64,
-    settle_ms: f64,
 }
 
 impl ServerReport {
@@ -22,14 +21,12 @@ impl ServerReport {
         command: &str,
         initialize_latency: Duration,
         ready_latency: Duration,
-        settle_latency: Duration,
     ) -> Self {
         Self {
             name: name.to_string(),
             command: command.to_string(),
             initialize_ms: duration_ms(initialize_latency),
             ready_ms: duration_ms(ready_latency),
-            settle_ms: duration_ms(settle_latency),
         }
     }
 
@@ -53,8 +50,7 @@ impl ServerReport {
             .text_column("server")
             .text_column("command")
             .duration_column_as("initialize_ms", "Initialize")
-            .duration_column_as("ready_ms", "Ready")
-            .duration_column_as("settle_ms", "Settle");
+            .duration_column_as("ready_ms", "Ready");
     }
 
     fn append_row(&self, table: &mut ReportTableBuilder) {
@@ -62,8 +58,7 @@ impl ServerReport {
             row.text("server", &self.name)
                 .text("command", &self.command)
                 .duration_ms("initialize_ms", self.initialize_ms)
-                .duration_ms("ready_ms", self.ready_ms)
-                .duration_ms("settle_ms", self.settle_ms);
+                .duration_ms("ready_ms", self.ready_ms);
         });
     }
 }

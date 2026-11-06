@@ -347,7 +347,7 @@ mod tests {
 
     use rg_lsp_proto::{
         DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
-        OpenDocumentsRevision, QueryError, QueryScope, QueryValue, ServiceNotification,
+        OpenDocumentsRevision, QueryError, QueryScope, QueryValue,
     };
     use rg_std::CancellationToken;
     use tokio::sync::oneshot;
@@ -356,15 +356,7 @@ mod tests {
     use crate::{
         engine::{project::ProjectCoordinator, query::QueryRunner},
         memory::MemoryControl,
-        service::{ServiceNotificationPublisher, ServiceNotificationsSink},
     };
-
-    #[derive(Debug)]
-    struct NoopNotifications;
-
-    impl ServiceNotificationPublisher for NoopNotifications {
-        fn send(&self, _notification: ServiceNotification) {}
-    }
 
     #[test]
     fn cancelled_query_does_not_run_analysis() {
@@ -507,8 +499,7 @@ mod tests {
 
     fn test_project(memory_control: Arc<dyn MemoryControl>) -> ProjectCoordinator {
         let (sender, _receiver) = mpsc::channel();
-        let notifications = ServiceNotificationsSink::from_publisher(NoopNotifications);
-        ProjectCoordinator::new(sender, memory_control, notifications)
+        ProjectCoordinator::new(sender, memory_control)
     }
 
     #[test]
