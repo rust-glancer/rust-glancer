@@ -348,7 +348,7 @@ impl CrateBodyBuildState<'_> {
             });
         }
 
-        tasks.sort_by_key(|task| (task.file_id.0, task.span.start, task.span.end));
+        tasks.sort_by_key(|task| (task.file_id, task.span.start, task.span.end));
         Ok(tasks)
     }
 

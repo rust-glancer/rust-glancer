@@ -9,6 +9,7 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+ajika.workspace = true
 anyhow.workspace = true
 rg_cfg_eval.workspace = true
 rg_ir_model.workspace = true

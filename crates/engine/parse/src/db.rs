@@ -19,26 +19,34 @@ pub struct ParseDb {
     pub(crate) workspace_root: PathBuf,
     pub(crate) sources: Arc<SourceInventory>,
     pub(crate) packages: Vec<Package>,
+    #[memsize(skip)]
+    interner: ajika::Interner,
 }
 
 impl ParseDb {
     /// Builds parsed packages for one normalized workspace metadata graph.
-    pub fn build(workspace: &rg_workspace::WorkspaceMetadata) -> anyhow::Result<Self> {
+    pub fn build(
+        workspace: &rg_workspace::WorkspaceMetadata,
+        interner: ajika::Interner,
+    ) -> anyhow::Result<Self> {
         let sources = Arc::new(SourceInventory::new());
         let mut packages = Vec::with_capacity(workspace.packages().len());
         for package in workspace.packages() {
-            packages.push(Package::build(package, &sources).with_context(|| {
-                format!(
-                    "while attempting to build parsed package for {}",
-                    package.id
-                )
-            })?);
+            packages.push(
+                Package::build(package, &sources, interner.clone()).with_context(|| {
+                    format!(
+                        "while attempting to build parsed package for {}",
+                        package.id
+                    )
+                })?,
+            );
         }
 
         Ok(Self {
             workspace_root: workspace.workspace_root().to_path_buf(),
             sources,
             packages,
+            interner,
         })
     }
 
@@ -81,8 +89,8 @@ impl ParseDb {
     /// Recreates selected package file tables from their workspace target roots.
     ///
     /// ItemTree module discovery runs immediately after this reset and repopulates only source
-    /// files reachable by the new module graph. Downstream phases rebuild the same package set, so
-    /// assigning fresh package-local file ids does not reconnect retained IR to different files.
+    /// files reachable by the new module graph. Downstream phases rebuild the same package set.
+    /// The interner keeps each rediscovered file’s ID.
     pub fn reset_packages_from_workspace(
         &mut self,
         workspace: &rg_workspace::WorkspaceMetadata,
@@ -93,12 +101,13 @@ impl ParseDb {
                 format!("while attempting to fetch workspace package {package_slot}")
             })?;
             let replacement =
-                Package::build(workspace_package, &self.sources).with_context(|| {
-                    format!(
-                        "while attempting to reset parsed package {} from target roots",
-                        workspace_package.id,
-                    )
-                })?;
+                Package::build(workspace_package, &self.sources, self.interner.clone())
+                    .with_context(|| {
+                        format!(
+                            "while attempting to reset parsed package {} from target roots",
+                            workspace_package.id,
+                        )
+                    })?;
             let package = self.packages.get_mut(package_slot).with_context(|| {
                 format!("while attempting to fetch parsed package {package_slot}")
             })?;
@@ -107,25 +116,17 @@ impl ParseDb {
         Ok(())
     }
 
-    /// Restores package-local file ids and source maps from a validated package artifact.
+    /// Restores package membership and source maps from a validated package artifact.
     pub fn apply_package_parse_snapshot(
         &mut self,
         package_slot: usize,
         snapshot: PackageParseSnapshot,
     ) -> anyhow::Result<()> {
-        let files = snapshot
-            .files()
-            .iter()
-            .map(|file| {
-                self.sources
-                    .capture_descriptor(file.source_descriptor())
-                    .map(|source| (file.clone(), source))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let package = self
-            .package_mut(package_slot)
+            .packages
+            .get_mut(package_slot)
             .with_context(|| format!("while attempting to fetch parsed package {package_slot}"))?;
-        package.apply_parse_snapshot(snapshot, files)
+        package.apply_parse_snapshot(snapshot, &self.sources)
     }
 
     /// Captures every file named by a package artifact and verifies its exact source revision.
@@ -327,7 +328,7 @@ impl ParseDb {
         let sources = Arc::new(self.sources.reallocated());
         let mut packages = self.packages.clone();
         for package in &mut packages {
-            for file in package.files.parsed_files.iter_mut() {
+            for file in package.files.parsed_files.values_mut() {
                 file.source = sources
                     .entry(file.source.path())
                     .expect("parsed source must belong to the inventory");
@@ -350,6 +351,7 @@ impl ParseDb {
             workspace_root: self.workspace_root.clone(),
             sources,
             packages,
+            interner: self.interner.clone(),
         }
     }
 }
@@ -360,6 +362,7 @@ impl Clone for ParseDb {
             workspace_root: self.workspace_root.clone(),
             sources: Arc::new(self.sources.fork()),
             packages: self.packages.clone(),
+            interner: self.interner.clone(),
         }
     }
 }

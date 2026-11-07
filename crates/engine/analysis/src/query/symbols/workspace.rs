@@ -33,7 +33,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 symbol.container_name.clone(),
                 symbol.crate_ref.package.0,
                 symbol.crate_ref.crate_id.0,
-                symbol.file_id.0,
+                symbol.file_id,
                 symbol.span.map(|span| span.start),
             )
         });

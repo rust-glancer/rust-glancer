@@ -21,7 +21,8 @@ fn reallocated_parse_releases_old_sources_and_preserves_file_lookups() {
     );
     let workspace =
         rg_workspace::WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-    let mut parse = crate::ParseDb::build(&workspace).expect("fixture parse db should build");
+    let mut parse = crate::ParseDb::build(&workspace, Default::default())
+        .expect("fixture parse db should build");
     {
         let sources = parse.source_inventory_handle();
         for package in parse.packages_mut() {

@@ -176,7 +176,7 @@ impl CrateBodies {
             .map(|body| body.source().file_id)
             .collect::<Vec<_>>();
         let mut files = body_files.clone();
-        files.sort_by_key(|file| file.0);
+        files.sort_unstable();
         files.dedup();
 
         CrateBodiesManifest {

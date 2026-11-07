@@ -46,11 +46,11 @@ impl ExpansionSpanMap {
         &self,
         range: TextRange,
         origin_package: usize,
-        origin_file_id: usize,
+        origin_file_id: u32,
     ) -> Option<Span> {
         let span = self.span_for_range(range)?;
         (span.anchor.package as usize == origin_package
-            && span.anchor.file_id.raw_file_id() as usize == origin_file_id)
+            && span.anchor.file_id.raw_file_id() == origin_file_id)
             .then_some(span)
     }
 

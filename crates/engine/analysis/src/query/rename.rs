@@ -269,7 +269,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             (
                 edit.crate_ref.package.0,
                 edit.crate_ref.crate_id.0,
-                edit.file_id.0,
+                edit.file_id,
                 edit.span.start,
                 edit.span.end,
             )

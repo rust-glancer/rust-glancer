@@ -14,16 +14,18 @@
 use std::path::{Path, PathBuf};
 
 use rg_parse::syntax_edition;
+use rg_std::{MemorySize, Shrink};
 use rg_syntax::{AstNode as _, SyntaxKind, ast};
 use rg_text::RustEdition;
 use rg_tt::TopSubtree;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Small compile-time string language accepted for include paths.
 ///
 /// String literals, `env!("NAME")`, parentheses, and nested `concat!(...)` calls are flattened into
 /// literal and environment components. That covers ordinary relative includes and the common
 /// `OUT_DIR` build-script form without pretending to evaluate arbitrary Rust expressions.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct IncludePathExpression {
     components: Vec<IncludePathComponent>,
 }
@@ -233,7 +235,7 @@ impl IncludePathExpression {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 enum IncludePathComponent {
     Literal(String),
     Environment(String),

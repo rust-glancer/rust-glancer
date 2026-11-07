@@ -6,6 +6,7 @@ mod fs;
 mod line_index;
 mod module;
 mod package;
+mod query;
 mod target;
 mod text_range_map;
 
@@ -25,6 +26,7 @@ pub use self::{
         ModuleFileContext, ModuleFileResolution, enclosing_inline_module_path, module_path_override,
     },
     package::{Package, PackageParseSnapshot},
+    query::saved_syntax,
     target::{CargoTarget, CargoTargetId},
     text_range_map::{TextRangeMap, TextRangeMapping},
 };

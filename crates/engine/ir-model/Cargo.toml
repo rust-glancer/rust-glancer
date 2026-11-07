@@ -9,6 +9,7 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
+ajika.workspace = true
 derive_more = { workspace = true, features = ["display", "from"] }
 text-size.workspace = true
 wincode.workspace = true

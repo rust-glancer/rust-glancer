@@ -122,6 +122,9 @@ pub(crate) fn resolve_crate(
             // Prepare a batch against the active builder. Its borrows end before runtime
             // jobs execute or the source loader is allowed to grow Parse and ItemTree.
             let timer = metric::TIMING_COLLECT_EXPANSION_ATTEMPTS.start_timer();
+            let package = item_tree
+                .package(state.crate_ref.package.0)
+                .expect("active crate has an item-tree package");
             let mut expansion_attempts = {
                 let env = BuildResolutionEnv::new(baseline, completed, state);
                 // The first pass in a round visits all pending macro calls. Follow-up passes only
@@ -132,6 +135,7 @@ pub(crate) fn resolve_crate(
                     .unwrap_or(MacroExpansionScan::AllPending);
                 collect_expansion_attempts(
                     &env,
+                    package,
                     state,
                     scan,
                     macro_runtime,
@@ -159,9 +163,6 @@ pub(crate) fn resolve_crate(
                 // Expanded text is parsed into regular item-tree data and appended to the owning
                 // module. Direct bindings enter its scope immediately, so simple chains like
                 // `make_macro!(); generated_macro!();` work in one round.
-                let package = item_tree
-                    .package(state.crate_ref.package.0)
-                    .expect("active crate has an item-tree package");
                 apply_expansion_attempts(
                     package,
                     state,

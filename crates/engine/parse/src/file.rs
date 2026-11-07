@@ -1,10 +1,9 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 
-use rg_arena::Arena;
 use rg_ir_model::{FileId, Span};
 use rg_source::{SourceDescriptor, SourceEntry, SourceInventory, SourcePath};
 use rg_std::MemorySize;
@@ -14,7 +13,7 @@ use rg_syntax::{
 use rg_text::RustEdition;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{fs, line_index::LineIndex};
+use crate::{PackageParseSnapshot, fs, line_index::LineIndex};
 
 /// Parse source text with the Rust edition of its owning package.
 ///
@@ -138,10 +137,11 @@ impl ParsedFileData {
         }
     }
 
-    fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
-        Ok(ParsedFileSnapshot {
+    fn parse_snapshot(&self, id: FileId) -> ParsedFileSnapshot {
+        ParsedFileSnapshot {
+            id,
             source: self.source.descriptor().clone(),
-        })
+        }
     }
 
     fn from_parse_snapshot(snapshot: ParsedFileSnapshot, source: Arc<SourceEntry>) -> Self {
@@ -179,7 +179,7 @@ impl<'a> ParsedFile<'a> {
         }
     }
 
-    /// Returns the stable package-local id for this parsed source file.
+    /// Returns the canonical ID for this parsed source file.
     pub fn file_id(&self) -> FileId {
         self.file_id
     }
@@ -244,10 +244,11 @@ impl<'a> ParsedFile<'a> {
 
 /// Serializable file metadata retained after syntax trees are evicted.
 ///
-/// Cache-backed startup only needs the source identity that preserves package-local file ids.
+/// Cache-backed startup checks that a canonical file ID still names the captured source.
 /// Line indexes are derived from revision-validated source and remain lazy after restoration.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ParsedFileSnapshot {
+    pub(crate) id: FileId,
     pub(crate) source: SourceDescriptor,
 }
 
@@ -268,15 +269,18 @@ impl ParsedFileSnapshot {
 #[derive(Debug, Clone, MemorySize)]
 pub(super) struct FileDb {
     pub(crate) edition: RustEdition,
-    pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
+    pub(crate) parsed_files: BTreeMap<FileId, ParsedFileData>,
+    #[memsize(skip)]
+    interner: ajika::Interner,
     pub(crate) file_ids_by_path: HashMap<SourcePath, FileId>,
 }
 
 impl FileDb {
-    pub(super) fn new(edition: RustEdition) -> Self {
+    pub(super) fn new(edition: RustEdition, interner: ajika::Interner) -> Self {
         Self {
             edition,
-            parsed_files: Arena::new(),
+            parsed_files: BTreeMap::new(),
+            interner,
             file_ids_by_path: HashMap::new(),
         }
     }
@@ -296,9 +300,11 @@ impl FileDb {
         }
 
         let source_text = source.text()?;
-        let file_id =
-            self.parsed_files
-                .alloc(Self::parse_source(&source_text, self.edition, source));
+        let file_id = FileId::for_path(&self.interner, source.path())?;
+        self.parsed_files.insert(
+            file_id,
+            Self::parse_source(&source_text, self.edition, source),
+        );
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
@@ -314,13 +320,16 @@ impl FileDb {
         let source_text = source
             .text()
             .expect("freshly replaced saved source should remain resident");
-        self.parsed_files[file_id] = Self::parse_source(&source_text, self.edition, source);
+        self.parsed_files.insert(
+            file_id,
+            Self::parse_source(&source_text, self.edition, source),
+        );
         Some(file_id)
     }
 
     /// Ensures that syntax for an already known file is available for AST-consuming lowering.
     pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
-        let Some(parsed_file) = self.parsed_files.get(file_id) else {
+        let Some(parsed_file) = self.parsed_files.get(&file_id) else {
             anyhow::bail!("unknown file id {:?}", file_id);
         };
         if parsed_file.syntax.is_some() {
@@ -329,27 +338,29 @@ impl FileDb {
 
         let source = parsed_file.source.text()?;
         let source_backing = parsed_file.source.clone();
-        self.parsed_files[file_id] = Self::parse_source(&source, self.edition, source_backing);
+        self.parsed_files.insert(
+            file_id,
+            Self::parse_source(&source, self.edition, source_backing),
+        );
         Ok(())
     }
 
     /// Drops retained syntax trees while keeping source coordinates and file identity.
     pub(super) fn evict_syntax_trees(&mut self) {
-        for parsed_file in self.parsed_files.iter_mut() {
+        for parsed_file in self.parsed_files.values_mut() {
             parsed_file.syntax = None;
         }
     }
 
     pub(super) fn shrink_to_fit(&mut self) {
-        self.parsed_files.shrink_to_fit();
         self.file_ids_by_path.shrink_to_fit();
-        for parsed_file in self.parsed_files.iter_mut() {
+        for parsed_file in self.parsed_files.values_mut() {
             parsed_file.shrink_to_fit();
         }
     }
 
     pub(super) fn collect_line_indexes<'a>(&'a mut self, indexes: &mut Vec<&'a mut LineIndex>) {
-        for parsed_file in self.parsed_files.iter_mut() {
+        for parsed_file in self.parsed_files.values_mut() {
             if let Ok(line_index) = parsed_file.line_index.get_mut(&parsed_file.source) {
                 indexes.push(line_index);
             }
@@ -357,7 +368,7 @@ impl FileDb {
     }
 
     pub(super) fn offload_line_indexes(&mut self) {
-        for parsed_file in self.parsed_files.iter_mut() {
+        for parsed_file in self.parsed_files.values_mut() {
             parsed_file.line_index.offload();
         }
     }
@@ -365,55 +376,62 @@ impl FileDb {
     /// Returns the cached parsed file for a previously known `FileId`.
     pub(super) fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.parsed_files
-            .get(file_id)
+            .get(&file_id)
             .map(|data| ParsedFile::new(file_id, self.edition, data))
     }
 
     /// Returns all cached parsed files.
     pub(super) fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
         self.parsed_files
-            .iter_with_ids()
-            .map(|(file_id, data)| ParsedFile::new(file_id, self.edition, data))
+            .iter()
+            .map(|(&file_id, data)| ParsedFile::new(file_id, self.edition, data))
     }
 
-    /// Returns the package-local id for a canonical source path already known to this package.
+    /// Returns the canonical ID if this package already knows the source path.
     pub(super) fn file_id_for_path(&self, file_path: &Path) -> Option<FileId> {
         self.file_ids_by_path.get(file_path).copied()
     }
 
-    pub(super) fn parse_snapshot(&self) -> anyhow::Result<Vec<ParsedFileSnapshot>> {
+    pub(super) fn parse_snapshot(&self) -> Vec<ParsedFileSnapshot> {
         self.parsed_files
             .iter()
-            .map(ParsedFileData::parse_snapshot)
+            .map(|(&id, file)| file.parse_snapshot(id))
             .collect()
     }
 
-    pub(super) fn from_parse_snapshot(
-        edition: RustEdition,
-        files: Vec<(ParsedFileSnapshot, Arc<SourceEntry>)>,
-    ) -> Self {
-        let parsed_files = Arena::from_vec(
-            files
-                .into_iter()
-                .map(|(snapshot, source)| ParsedFileData::from_parse_snapshot(snapshot, source))
-                .collect::<Vec<_>>(),
-        );
-        let file_ids_by_path = parsed_files
-            .iter_with_ids()
-            .map(|(file_id, file)| (file.source.source_path().clone(), file_id))
-            .collect::<HashMap<_, _>>();
-
-        Self {
-            edition,
-            parsed_files,
-            file_ids_by_path,
+    pub(super) fn restore_snapshot(
+        &mut self,
+        snapshot: PackageParseSnapshot,
+        sources: &SourceInventory,
+    ) -> anyhow::Result<()> {
+        let mut parsed_files = BTreeMap::new();
+        let mut file_ids_by_path = HashMap::with_capacity(snapshot.files.len());
+        for file in snapshot.files {
+            let source = sources.capture_descriptor(file.source_descriptor())?;
+            let id = FileId::for_path(&self.interner, source.path())?;
+            anyhow::ensure!(
+                id == file.id,
+                "package artifact belongs to a different source interner"
+            );
+            file_ids_by_path.insert(source.source_path().clone(), id);
+            parsed_files.insert(id, ParsedFileData::from_parse_snapshot(file, source));
         }
+        anyhow::ensure!(
+            snapshot
+                .target_root_files
+                .iter()
+                .all(|file| parsed_files.contains_key(file)),
+            "package artifact is missing a target root"
+        );
+        self.parsed_files = parsed_files;
+        self.file_ids_by_path = file_ids_by_path;
+        Ok(())
     }
 
     /// Returns the canonical path associated with `file_id`.
     pub(super) fn file_path(&self, file_id: FileId) -> Option<&Path> {
         self.parsed_files
-            .get(file_id)
+            .get(&file_id)
             .map(|parsed_file| parsed_file.source.path())
     }
 

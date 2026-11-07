@@ -212,7 +212,7 @@ impl BodyMacroInvocation {
 
         let span_factory = SpanFactory::new(
             u32::try_from(package.0).expect("package slot should fit macro span storage"),
-            u32::try_from(file_id.0).expect("file id should fit macro span storage"),
+            file_id.as_raw(),
             syntax_edition(edition),
         );
         // Nested calls live in expanded text. Reuse the parent spans so tokens keep their original

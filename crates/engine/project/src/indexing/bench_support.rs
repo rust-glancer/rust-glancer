@@ -18,14 +18,18 @@ use super::macro_source_files;
 use crate::{memory::NoopProjectMemoryHooks, selection::PhasePackageSet};
 
 /// Builds ItemTree for every parsed benchmark package through the selected-package lowerer.
-pub fn build_item_tree(parse: &mut ParseDb) -> anyhow::Result<ItemTreeDb> {
+pub fn build_item_tree(
+    database: &mut ajika::Database,
+    parse: &mut ParseDb,
+) -> anyhow::Result<ItemTreeDb> {
     let packages = (0..parse.package_count()).collect::<Vec<_>>();
-    ItemTreeDb::build_packages(parse, &packages)
+    ItemTreeDb::build_packages(database, parse, &packages)
         .context("while attempting to build benchmark ItemTree packages")
 }
 
 /// Builds the DefMap phase for an all-source benchmark fixture.
 pub fn build_def_map(
+    database: &mut ajika::Database,
     workspace: &WorkspaceMetadata,
     parse: &mut ParseDb,
     item_tree: &mut ItemTreeDb,
@@ -49,6 +53,7 @@ pub fn build_def_map(
             source_packages.as_slice(),
             true,
             &mut macro_source_files::MacroSourceFileLoader::new(
+                database,
                 &source_packages,
                 &NoopProjectMemoryHooks,
             ),

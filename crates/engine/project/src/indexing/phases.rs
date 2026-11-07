@@ -47,6 +47,7 @@ pub(super) struct BuiltPhases {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build(
+    database: &mut ajika::Database,
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
     package_residency_policy: PackageResidencyPolicy,
@@ -59,7 +60,8 @@ pub(super) fn build(
     // ---------------------
     // 1. Parse all packages
     // ---------------------
-    let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
+    let mut parse = ParseDb::build(workspace, database.interner())
+        .context("while attempting to build parse db")?;
     let memory = checkpoint_memory!(parse);
     memory.checkpoint(sampler, metric::PARSE_MEMORY, &parse);
 
@@ -82,7 +84,7 @@ pub(super) fn build(
     // 3. Lower initial item trees
     // -------------------
     let package_indices = build_plan.source_packages.package_indices();
-    let mut item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices)
+    let mut item_tree = ItemTreeDb::build_packages(database, &mut parse, &package_indices)
         .context("while attempting to build item tree db")?;
     let memory = checkpoint_memory!(parse, build_plan, item_tree);
     memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
@@ -149,6 +151,7 @@ pub(super) fn build(
             build_plan.source_packages.as_slice(),
             reallocate_payloads,
             &mut macro_source_files::MacroSourceFileLoader::new(
+                database,
                 &build_plan.source_packages,
                 memory_hooks,
             ),
@@ -162,6 +165,7 @@ pub(super) fn build(
     // replace only its provisional fingerprints. Cache-backed loaders keep the validated values
     // captured above, and dirty packages never read an old payload through them.
     parse.seal_sources();
+    database.update_inputs(|update| parse.source_inventory().write_inputs(update))?;
     let provisional_source_fingerprints = build_plan
         .source_packages
         .as_slice()
@@ -280,11 +284,6 @@ pub(super) fn build(
     body_ir
         .replace_built_packages(products)
         .context("assemble body packages")?;
-    // This validation covers both captured late files and the missing-path probes that answered
-    // macro source-file requests, so a concurrent source change rejects the whole candidate.
-    parse
-        .validate_saved_sources()
-        .context("while attempting to validate captured project source generation")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     let memory = checkpoint_memory!(
         parse,

@@ -1,12 +1,9 @@
-//! Package-local module path resolution and ordinary module discovery.
-//!
-//! Parsing starts with Cargo target roots. Before the initial ItemTree pass, this module walks
-//! ordinary source declarations and captures their reachable out-of-line files without allocating
-//! item-tree payloads. Macro expansion can reveal more module declarations later, so late discovery
-//! reuses the same `ModuleFileContext` resolver instead of growing a second set of path rules.
+//! Module path resolution for ordinary source and macro expansion.
 
+#[cfg(test)]
+use std::collections::HashSet;
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::BTreeSet,
     fs as std_fs,
     path::{Path, PathBuf},
 };
@@ -20,7 +17,9 @@ use rg_syntax::{
 };
 use rg_text::{Name, identifier_text};
 
-use crate::{Package, fs};
+#[cfg(test)]
+use crate::Package;
+use crate::fs;
 
 /// Return the inline modules that contain `node`, from the outermost module inward.
 ///
@@ -37,9 +36,9 @@ pub fn enclosing_inline_module_path(node: &SyntaxNode) -> Vec<Name> {
     path
 }
 
+#[cfg(test)]
 impl Package {
-    /// Discovers out-of-line files reachable from ordinary source before ItemTree lowering.
-    pub fn discover_modules(&mut self, sources: &SourceInventory) -> anyhow::Result<()> {
+    pub(crate) fn discover_modules(&mut self, sources: &SourceInventory) -> anyhow::Result<()> {
         ModuleDiscovery::new(self, sources).discover()
     }
 }
@@ -236,7 +235,7 @@ impl ModuleFileContext {
     /// Resolves against files that an earlier source-discovery pass already captured.
     ///
     /// DefMap uses this after the source inventory is sealed. The callback only maps candidate
-    /// paths to existing package-local ids; it must not discover or parse new files.
+    /// paths to IDs for files already known to the package.
     pub fn resolve_known_module_name(
         &self,
         module_name: &str,
@@ -324,6 +323,9 @@ impl ModuleFileResolution {
     }
 }
 
+// TODO(ajika integration): Move the parse discovery cases to the target discovery fixtures, then remove
+// this test-only walker.
+#[cfg(test)]
 struct ModuleDiscovery<'db> {
     package: &'db mut Package,
     sources: &'db SourceInventory,
@@ -331,6 +333,7 @@ struct ModuleDiscovery<'db> {
     active_files: HashSet<FileId>,
 }
 
+#[cfg(test)]
 impl<'db> ModuleDiscovery<'db> {
     fn new(package: &'db mut Package, sources: &'db SourceInventory) -> Self {
         Self {
