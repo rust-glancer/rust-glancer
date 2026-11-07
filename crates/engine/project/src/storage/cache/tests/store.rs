@@ -153,7 +153,10 @@ pub struct App;
         "current artifact should exist before stale-generation cleanup",
     );
 
-    let packages_dir = store.root().join("packages");
+    let packages_dir = current_artifact
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("artifact should be inside a package cache generation");
     let stale_generation = packages_dir.join("graph-stale");
     fs::create_dir_all(&stale_generation).expect("stale generation dir should be creatable");
     fs::write(stale_generation.join("old.rgpkg"), b"old artifact")

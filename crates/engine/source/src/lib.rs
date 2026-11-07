@@ -16,6 +16,7 @@
 mod captured;
 mod entry;
 mod error;
+mod inputs;
 mod inventory;
 mod path;
 mod revision;
@@ -24,6 +25,7 @@ pub use self::{
     captured::CapturedSource,
     entry::{SourceEntry, read_source_text},
     error::SourceError,
+    inputs::{SourceInput, SourcePresence},
     inventory::SourceInventory,
     path::SourcePath,
     revision::{SourceDescriptor, SourceRevision},

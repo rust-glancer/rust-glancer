@@ -314,7 +314,7 @@ impl CrateBodyBuildState<'_> {
                 tracing::debug!(
                     body_id = body_id.0,
                     owner = ?body.owner(),
-                    file_id = body_source.file_id.0,
+                    file_id = body_source.file_id.as_raw(),
                     path = ?self.parse_package.file_path(body_source.file_id),
                     span = ?body_source.span,
                     elapsed_ms = elapsed.as_millis(),

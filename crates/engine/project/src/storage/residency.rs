@@ -123,8 +123,23 @@ impl<'a> ResidencyApplication<'a> {
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "before package cache write");
         }
-        self.write_package_artifacts(&self.packages_to_write)
-            .context("while attempting to persist selected package artifacts")?;
+        let artifacts = PackageArtifactWriter::for_project(self.project)
+            .prepare_packages(self.packages_to_write.as_slice())?;
+        // Encoding and writing the temporary files can take long enough for disk to advance.
+        // Validate before any replacement can change the accepted generation's backing.
+        self.project
+            .parse
+            .validate_saved_sources()
+            .context("while attempting to validate captured project source generation")?;
+
+        if !artifacts.is_empty() {
+            let update = self.project.cache_store.begin_artifact_update()?;
+            for artifact in artifacts {
+                artifact.commit()?;
+            }
+            update.commit()?;
+        }
+        self.project.parse.evict_saved_source_text();
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "after package cache write");
         }
@@ -146,11 +161,6 @@ impl<'a> ResidencyApplication<'a> {
         if record_residency_profile {
             self.record_project_checkpoint(&mut sampler, "after package offload cleanup");
         }
-        self.project
-            .cache_store
-            .cleanup_stale_generations()
-            .context("while attempting to clean stale package cache generations")?;
-
         Ok(())
     }
 
@@ -202,28 +212,6 @@ impl<'a> ResidencyApplication<'a> {
         !has_resident_payload || Self::package_artifact_is_writable(project, package)
     }
 
-    /// Writes every replacement artifact before any selected resident payload is dropped.
-    ///
-    /// Package-local writes can run in parallel, but the package-set marker is committed only
-    /// after every artifact succeeds.
-    fn write_package_artifacts(&self, packages: &PhasePackageSet) -> anyhow::Result<()> {
-        if packages.is_empty() {
-            return Ok(());
-        }
-
-        let update = self
-            .project
-            .cache_store
-            .begin_artifact_update()
-            .context("while attempting to begin package cache artifact update")?;
-        PackageArtifactWriter::for_project(self.project)
-            .write_packages(&update, packages.as_slice())
-            .context("while attempting to write package cache artifacts")?;
-        update
-            .commit()
-            .context("while attempting to commit package cache artifact update")
-    }
-
     /// Drop line indexes after package payloads have been offloaded.
     fn finish_offloading(&mut self, offloaded_packages: &PhasePackageSet) {
         if !offloaded_packages.is_empty() {
@@ -237,12 +225,19 @@ impl<'a> ResidencyApplication<'a> {
 }
 
 impl ProjectState {
+    /// Old graph artifacts are disposable after the host accepts this generation.
+    pub(crate) fn cleanup_cache(&self) {
+        if let Err(error) = self.cache_store.cleanup_stale_generations() {
+            tracing::warn!(%error, "could not clean stale package cache generations");
+        }
+    }
+
     /// Reallocate the small amount of metadata left after all analysis payloads are offloaded.
     ///
     /// Indexing can leave this metadata on the same allocator pages as larger, temporary data.
     /// Even after the temporary data is freed, the metadata can keep those pages occupied.
     /// Copying it before dropping the old state gives the allocator a chance to free those pages.
-    pub(crate) fn reallocate_if_fully_offloaded(&mut self) -> bool {
+    pub(crate) fn reallocated_if_fully_offloaded(&self) -> Option<Self> {
         let fully_offloaded = (0..self.parse.package_count()).all(|package_idx| {
             let package = PackageSlot(package_idx);
             self.def_map.resident_package(package).is_none()
@@ -250,7 +245,7 @@ impl ProjectState {
                 && self.body_ir.package_is_offloaded(package)
         });
         if !fully_offloaded {
-            return false;
+            return None;
         }
 
         let mut reallocated = self.clone();
@@ -258,8 +253,7 @@ impl ProjectState {
         // their Arc handles. Copy their contents too, so the old allocations can be freed.
         reallocated.parse = Arc::new(self.parse.reallocated());
         reallocated.def_map.reallocate_offloaded_metadata();
-        *self = reallocated;
-        true
+        Some(reallocated)
     }
 }
 

@@ -19,8 +19,8 @@ fn parse_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         .counter(BytesCount::new(fixture.source_bytes))
         .counter(ItemsCount::new(fixture.source_files))
         .bench_local(|| {
-            let parse =
-                ParseDb::build(black_box(&fixture.workspace)).expect("parse db should build");
+            let parse = ParseDb::build(black_box(&fixture.workspace), Default::default())
+                .expect("parse db should build");
             black_box_drop(parse);
         });
 }
@@ -30,10 +30,18 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     let fixture = BenchFixture::get(target);
     bencher
         .counter(ItemsCount::new(fixture.item_tree_items))
-        .with_inputs(|| fixture.parse.clone())
-        .bench_local_values(|mut parse| {
-            let item_tree = rg_project::bench_support::build_item_tree(&mut parse)
-                .expect("item tree should build");
+        .with_inputs(|| {
+            let phases = fixture.file_phases();
+            phases.reset_queries(&phases.workspace_inputs);
+            let parse = phases.parse.clone();
+            (phases, parse)
+        })
+        .bench_local_values(|(phases, mut parse)| {
+            let item_tree = rg_project::bench_support::build_item_tree(
+                &mut phases.database.borrow_mut(),
+                &mut parse,
+            )
+            .expect("item tree should build");
             black_box_drop(item_tree);
         });
 }
@@ -44,13 +52,15 @@ fn def_map_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     bencher
         .counter(ItemsCount::new(fixture.def_map_imports))
         .with_inputs(|| {
-            (
-                fixture.parse_before_def_map.clone(),
-                fixture.item_tree_before_def_map.clone(),
-            )
+            let phases = fixture.file_phases();
+            phases.reset_queries(&phases.def_map_inputs);
+            let parse = phases.parse_before_def_map.clone();
+            let item_tree = phases.item_tree_before_def_map.clone();
+            (phases, parse, item_tree)
         })
-        .bench_local_values(|(mut parse, mut item_tree)| {
+        .bench_local_values(|(phases, mut parse, mut item_tree)| {
             let def_map = rg_project::bench_support::build_def_map(
+                &mut phases.database.borrow_mut(),
                 &fixture.workspace,
                 &mut parse,
                 &mut item_tree,

@@ -1112,7 +1112,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 target.name.clone(),
                 target.crate_ref.package.0,
                 target.crate_ref.crate_id.0,
-                target.file_id.0,
+                target.file_id,
                 target.span.map(|span| span.start),
             )
         });
@@ -1321,7 +1321,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             (
                 edit.crate_ref.package.0,
                 edit.crate_ref.crate_id.0,
-                edit.file_id.0,
+                edit.file_id,
                 edit.span.start,
             )
         });

@@ -1,176 +1,195 @@
-//! Resident item-tree database and package-selection builders.
+//! Temporary package view of file queries for the legacy DefMap and Semantic IR builders.
+//!
+//! Phase 08 removes this bridge when those consumers read Ajika directly.
+
+use std::{collections::BTreeSet, sync::Arc};
 
 use anyhow::Context as _;
 use rayon::prelude::*;
+use rg_arena::Arena;
 use rg_ir_model::{FileId, PackageSlot};
-use rg_parse::ParseDb;
-use rg_std::{MemorySize, Shrink};
+use rg_parse::{ModuleFileContext, ParseDb};
+use rg_source::SourceInput;
+use rg_std::MemorySize;
 
-use crate::{Package, lower};
+use crate::{Package, TargetRoot, discovery::SourceDiscovery, file_declarations};
 
-/// File work performed while adding one captured source to an existing package tree.
-///
-/// The requested file may lead to ordinary descendants such as `mod nested;`, so both counts can
-/// cover more than the file passed to `ItemTreeDb::lower_package_file`.
+/// File work performed while adding a source discovery wave to the package view.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IncrementalItemTreeLowering {
-    /// Files that received a new `FileTree` during this call.
     pub newly_lowered_files: usize,
-    /// Files encountered through the module graph whose `FileTree` already existed.
     pub reused_files: usize,
 }
 
-/// Lowered item trees for all parsed packages.
-#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
+/// Lowered item trees for selected parsed packages.
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct ItemTreeDb {
-    pub(crate) packages: Vec<Option<Package>>,
+    packages: Vec<Option<Package>>,
 }
 
 impl ItemTreeDb {
-    /// Builds item trees only for selected packages from captured source.
-    ///
-    /// Project rebuilds use this as a temporary lowering input: affected packages are populated,
-    /// while unrelated packages stay absent so accidental cross-package item-tree access fails
-    /// loudly instead of retaining the whole item-tree graph.
-    pub fn build_packages(parse: &mut ParseDb, packages: &[usize]) -> anyhow::Result<Self> {
-        let package_slots = Self::normalized_package_slots(parse.package_count(), packages)?;
-
-        let mut trees = Self {
-            packages: vec![None; parse.package_count()],
-        };
-
+    /// Discovers the selected package files, then lowers the captured batch in parallel.
+    pub fn build_packages(
+        database: &mut ajika::Database,
+        parse: &mut ParseDb,
+        packages: &[usize],
+    ) -> anyhow::Result<Self> {
+        let mut selected = vec![false; parse.package_count()];
+        for &slot in packages {
+            *selected
+                .get_mut(slot)
+                .with_context(|| format!("unknown package slot {slot}"))? = true;
+        }
         let sources = parse.source_inventory_handle();
-        Self::build_packages_parallel(parse, &sources, &package_slots, &mut trees)?;
-        Shrink::shrink_to_fit(&mut trees);
 
+        // Discovery is still a host walk. It must capture module edges even when Ajika can
+        // reuse every declaration, and uses the logical directory at each visit.
+        let discovered = parse
+            .packages_mut()
+            .par_iter_mut()
+            .enumerate()
+            .map(|(slot, package)| {
+                if !selected[slot] {
+                    return Ok(None);
+                }
+                let roots = Arena::from_vec(
+                    package
+                        .targets()
+                        .iter()
+                        .map(|target| TargetRoot {
+                            target: target.id,
+                            root_file: target.root_file,
+                        })
+                        .collect(),
+                );
+                let mut discovery = SourceDiscovery::new(PackageSlot(slot), package, &sources);
+                for root in roots.iter() {
+                    discovery.visit_root(root.root_file)?;
+                }
+                let files = discovery.files;
+                let includes = discovery.includes;
+                package.evict_syntax_trees();
+                Ok(Some((
+                    Package {
+                        target_roots: roots,
+                        includes,
+                        ..Package::default()
+                    },
+                    files,
+                )))
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        database.update_inputs(|update| sources.write_inputs(update))?;
+        let files = discovered
+            .iter()
+            .enumerate()
+            .flat_map(|(slot, package)| {
+                package.iter().flat_map(move |(_, files)| {
+                    files.iter().map(move |&file| (PackageSlot(slot), file))
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut trees = Self {
+            packages: discovered
+                .into_iter()
+                .map(|package| package.map(|(package, _)| package))
+                .collect(),
+        };
+        trees.lower_files(database, &files)?;
         Ok(trees)
     }
 
-    /// Returns one package tree set by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)?.as_ref()
     }
 
-    /// Adds one captured package file through the ordinary package lowerer.
-    ///
-    /// The file may recursively add ordinary out-of-line descendants. Existing file trees and
-    /// target roots retain their package-local ids and are never replaced. Syntax loaded for this
-    /// incremental pass is evicted before the method returns.
-    pub fn lower_package_file(
+    /// Adds one discovery wave from DefMap to the package view.
+    pub fn lower_package_files(
         &mut self,
+        database: &mut ajika::Database,
         parse: &mut ParseDb,
-        package_slot: usize,
-        file_id: FileId,
-        module_file_context: rg_parse::ModuleFileContext,
+        requests: &[(PackageSlot, FileId, Arc<ModuleFileContext>)],
     ) -> anyhow::Result<IncrementalItemTreeLowering> {
         let sources = parse.source_inventory_handle();
-        let parse_package = parse
-            .package_mut(package_slot)
-            .with_context(|| format!("while attempting to fetch parsed package {package_slot}"))?;
-        let item_tree_package = self
-            .packages
-            .get_mut(package_slot)
-            .and_then(Option::as_mut)
-            .with_context(|| {
-                format!("while attempting to fetch item-tree package {package_slot}")
-            })?;
+        let mut touched = BTreeSet::new();
+        let mut new_files = BTreeSet::new();
+        let mut reused_files = 0;
+        for (slot, file, context) in requests {
+            let parse_package = parse
+                .package_mut(slot.0)
+                .context("unknown parsed package")?;
+            let package = self
+                .packages
+                .get_mut(slot.0)
+                .and_then(Option::as_mut)
+                .context("unknown item-tree package")?;
+            let mut discovery = SourceDiscovery::new(*slot, parse_package, &sources);
+            // Visits retain their logical directories, even if this file already has a tree.
+            discovery
+                .visit_file(*file, context)
+                .with_context(|| format!("discover source edges for {file:?} in {slot:?}"))?;
+            for file in discovery.files {
+                if package.files.contains_key(&file) || !new_files.insert((*slot, file)) {
+                    reused_files += 1;
+                }
+            }
+            for (origin, includes) in discovery.includes {
+                package.includes.entry(origin).or_default().extend(includes);
+            }
+            touched.insert(*slot);
+        }
+        for slot in touched {
+            parse
+                .package_mut(slot.0)
+                .expect("discovered package")
+                .evict_syntax_trees();
+        }
 
-        let stats = lower::extend_package(
-            PackageSlot(package_slot),
-            parse_package,
-            &sources,
-            item_tree_package,
-            file_id,
-            module_file_context,
-        )
-        .with_context(|| {
-            format!(
-                "while attempting to incrementally lower file {file_id:?} for package {package_slot}"
-            )
-        })?;
-        parse_package.evict_syntax_trees();
+        if !new_files.is_empty() {
+            // Publish all new entries before running any query so a field table is copied at
+            // most once for this wave, even when several requests reach the same source.
+            database.update_inputs(|update| {
+                for &(slot, file) in &new_files {
+                    let path = parse
+                        .package(slot.0)
+                        .and_then(|package| package.file_path(file))
+                        .expect("discovered file has a path");
+                    let entry = sources.entry(path).expect("discovered file was captured");
+                    SourceInput::set_captured(update, entry)?;
+                }
+                Ok(())
+            })?;
+            let files = new_files.iter().copied().collect::<Vec<_>>();
+            self.lower_files(database, &files)?;
+        }
 
         Ok(IncrementalItemTreeLowering {
-            newly_lowered_files: stats.lowered_files,
-            reused_files: stats.reused_files,
+            newly_lowered_files: new_files.len(),
+            reused_files,
         })
     }
 
-    fn build_packages_parallel(
-        parse: &mut ParseDb,
-        sources: &rg_source::SourceInventory,
-        package_slots: &[usize],
-        trees: &mut Self,
-    ) -> anyhow::Result<()> {
-        let mut selected = vec![false; parse.package_count()];
-        for &package_slot in package_slots {
-            selected[package_slot] = true;
+    fn lower_files(
+        &mut self,
+        database: &mut ajika::Database,
+        files: &[(PackageSlot, FileId)],
+    ) -> ajika::Result<()> {
+        if files.is_empty() {
+            return Ok(());
         }
-
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("rg-item-tree-{index}"))
-            .build()
-            .context("while attempting to create item-tree lowering thread pool")?;
-
-        // Each package owns its parse cache and output slot. Zipping mutable
-        // slices makes that independence visible to Rayon, while the selection bitmap preserves
-        // the sparse rebuild behavior where unrelated package slots stay absent.
-        thread_pool.install(|| {
-            parse
-                .packages_mut()
-                .par_iter_mut()
-                .zip(trees.packages.par_iter_mut())
-                .enumerate()
-                .try_for_each(
-                    |(package_slot, (parse_package, output))| -> anyhow::Result<()> {
-                        if !selected[package_slot] {
-                            return Ok(());
-                        }
-
-                        *output = Some(Self::lower_package(package_slot, parse_package, sources)?);
-                        Ok(())
-                    },
-                )
-        })
-    }
-
-    fn lower_package(
-        package_slot: usize,
-        package: &mut rg_parse::Package,
-        sources: &rg_source::SourceInventory,
-    ) -> anyhow::Result<Package> {
-        let package_name = package.package_name().to_owned();
-        // Parse syntax is only needed while this package is being lowered. Drop it at the package
-        // boundary so large workspaces do not keep every syntax tree alive until the whole
-        // item-tree phase finishes.
-        package.discover_modules(sources).with_context(|| {
-            format!("while attempting to discover modules for package {package_name}")
-        })?;
-        let item_tree = lower::build_package(PackageSlot(package_slot), package, sources)
-            .with_context(|| {
-                format!("while attempting to build item trees for package {package_name}")
+        let lowered = database.run(|db| {
+            db.parallel_map(files, |db, &(package, file)| {
+                file_declarations(db, package, file)
             })
-            .with_context(|| {
-                format!("while attempting to build item tree package {package_slot}")
-            })?;
-        package.evict_syntax_trees();
-        Ok(item_tree)
-    }
-
-    fn normalized_package_slots(
-        package_count: usize,
-        packages: &[usize],
-    ) -> anyhow::Result<Vec<usize>> {
-        let mut packages = packages.to_vec();
-        packages.sort_unstable();
-        packages.dedup();
-
-        if let Some(package_slot) = packages.iter().copied().find(|slot| *slot >= package_count) {
-            anyhow::bail!(
-                "package slot {package_slot} is out of bounds for {package_count} parsed packages"
-            );
+        })?;
+        for (&(slot, file), tree) in files.iter().zip(lowered) {
+            self.packages[slot.0]
+                .as_mut()
+                .expect("lowering selected package")
+                .files
+                .insert(file, tree);
         }
-
-        Ok(packages)
+        Ok(())
     }
 }

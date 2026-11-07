@@ -4,11 +4,7 @@
 //! includes retain the invocation's logical module context. Source capture, contextual ItemTree
 //! lowering, path coalescing, and syntax eviction remain together at this project boundary.
 
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-    sync::Arc,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use anyhow::Context as _;
 use rg_def_map::{MacroSourceFileRequest, MacroSourceFileResolution};
@@ -26,6 +22,7 @@ use crate::{
 /// every distinct logical module context, even when requests arrive in different batches.
 /// DefMap bounds each invocation's ancestry while allowing unrelated source batches to finish.
 pub(super) struct MacroSourceFileLoader<'a> {
+    database: &'a mut ajika::Database,
     source_packages: &'a PhasePackageSet,
     memory_hooks: &'a dyn ProjectMemoryHooks,
     captured_files_by_path: HashMap<(PackageSlot, PathBuf), FileId>,
@@ -33,10 +30,12 @@ pub(super) struct MacroSourceFileLoader<'a> {
 
 impl<'a> MacroSourceFileLoader<'a> {
     pub(super) fn new(
+        database: &'a mut ajika::Database,
         source_packages: &'a PhasePackageSet,
         memory_hooks: &'a dyn ProjectMemoryHooks,
     ) -> Self {
         Self {
+            database,
             source_packages,
             memory_hooks,
             captured_files_by_path: HashMap::new(),
@@ -56,8 +55,8 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
         metric::MACRO_SOURCE_FILE_REQUESTS.add(requests.len().try_into().unwrap_or(u64::MAX));
 
         let sources = parse.source_inventory_handle();
-        let mut touched_packages = HashSet::new();
-        let mut loaded_any_file = false;
+        let mut package_file_counts = HashMap::new();
+        let mut to_lower = Vec::new();
         let mut resolutions = Vec::with_capacity(requests.len());
 
         for request in requests {
@@ -119,13 +118,21 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                 continue;
             };
 
+            if matches!(file_kind, MacroSourceFileKind::Include) && !sources.probe_exists(&path)? {
+                resolutions.push(MacroSourceFileResolution::Missing);
+                metric::MACRO_SOURCE_FILE_MISSING_PATHS.inc();
+                continue;
+            }
+
             let package_slot = request.package();
             let requested_path_key = (package_slot, path.clone());
-            let previous_file_count = parse
-                .package(package_slot.0)
-                .expect("source package should exist while loading a macro source file")
-                .parsed_files()
-                .count();
+            package_file_counts.entry(package_slot).or_insert_with(|| {
+                parse
+                    .package(package_slot.0)
+                    .expect("requesting package")
+                    .parsed_files()
+                    .count()
+            });
             let file_id = if let Some(file_id) = self
                 .captured_files_by_path
                 .get(&requested_path_key)
@@ -141,10 +148,14 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                 {
                     Ok(file_id) => file_id,
                     // Build outputs are optional historical evidence and can disappear after a Cargo
-                    // clean. Treat that include as absent instead of making otherwise valid source
-                    // analysis fail. Generated module loading keeps its existing hard-error behavior
-                    // below once module resolution has selected a source path.
-                    Err(_) if matches!(&file_kind, MacroSourceFileKind::Include) => {
+                    // clean. An unreadable include is optional, but a source generation error
+                    // must still reject the build. Resolved module files must be readable.
+                    Err(error)
+                        if matches!(&file_kind, MacroSourceFileKind::Include)
+                            && error
+                                .downcast_ref::<rg_source::SourceError>()
+                                .is_some_and(rg_source::SourceError::is_unreadable) =>
+                    {
                         resolutions.push(MacroSourceFileResolution::Missing);
                         metric::MACRO_SOURCE_FILE_MISSING_PATHS.inc();
                         continue;
@@ -152,7 +163,7 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                     Err(error) => {
                         return Err(error).with_context(|| {
                             format!(
-                                "while attempting to capture generated module source {}",
+                                "while attempting to capture macro source file {}",
                                 path.display()
                             )
                         });
@@ -186,39 +197,7 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                     file_id
                 }
             };
-            touched_packages.insert(package_slot);
-
-            // A shared file can contribute modules from more than one logical context. Its FileTree is
-            // reused, but contextual source edges still need to be traversed for this request.
-            let lowering = item_tree
-                .lower_package_file(
-                    parse,
-                    package_slot.0,
-                    file_id,
-                    lowering_context.as_ref().clone(),
-                )
-                .with_context(|| {
-                    format!(
-                        "while attempting to lower macro source file {}",
-                        path.display()
-                    )
-                })?;
-            metric::MACRO_SOURCE_FILE_ITEM_TREE_FILES_LOWERED
-                .add(lowering.newly_lowered_files.try_into().unwrap_or(u64::MAX));
-            metric::MACRO_SOURCE_FILE_ITEM_TREE_FILES_REUSED
-                .add(lowering.reused_files.try_into().unwrap_or(u64::MAX));
-
-            let current_file_count = parse
-                .package(package_slot.0)
-                .expect("source package should exist after module lowering")
-                .parsed_files()
-                .count();
-            metric::MACRO_SOURCE_FILE_DISCOVERED_FILES.add(
-                current_file_count
-                    .saturating_sub(previous_file_count)
-                    .try_into()
-                    .unwrap_or(u64::MAX),
-            );
+            to_lower.push((package_slot, file_id, lowering_context));
             resolutions.push(match file_kind {
                 MacroSourceFileKind::Module { child_context } => {
                     MacroSourceFileResolution::Module {
@@ -228,20 +207,31 @@ impl rg_def_map::MacroSourceFileLoader for MacroSourceFileLoader<'_> {
                 }
                 MacroSourceFileKind::Include => MacroSourceFileResolution::Include { file_id },
             });
-            loaded_any_file = true;
         }
 
-        // A coalesced request may have rehydrated syntax after the first request already lowered and
-        // evicted the file. Keep the same package-level eviction boundary as ordinary ItemTree work.
-        for package_slot in touched_packages {
-            parse
-                .package_mut(package_slot.0)
-                .expect("touched source package should remain present")
-                .evict_syntax_trees();
-        }
+        if !to_lower.is_empty() {
+            let lowering = item_tree
+                .lower_package_files(self.database, parse, &to_lower)
+                .context("lower captured macro source files")?;
+            metric::MACRO_SOURCE_FILE_ITEM_TREE_FILES_LOWERED
+                .add(lowering.newly_lowered_files.try_into().unwrap_or(u64::MAX));
+            metric::MACRO_SOURCE_FILE_ITEM_TREE_FILES_REUSED
+                .add(lowering.reused_files.try_into().unwrap_or(u64::MAX));
 
-        if loaded_any_file {
-            // Lowering evicts syntax before the allocator cleanup boundary, once per found batch.
+            for (slot, previous_count) in package_file_counts {
+                let current_count = parse
+                    .package(slot.0)
+                    .expect("requesting package")
+                    .parsed_files()
+                    .count();
+                metric::MACRO_SOURCE_FILE_DISCOVERED_FILES.add(
+                    current_count
+                        .saturating_sub(previous_count)
+                        .try_into()
+                        .unwrap_or(u64::MAX),
+                );
+            }
+            // Lowering evicts syntax before the allocator cleanup boundary, once per wave.
             self.memory_hooks
                 .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
         }

@@ -1,13 +1,17 @@
 //! Parser for braced `cfg_select!` calls.
 //!
 //! Rust accepts `cfg_select!` in expression and item positions. The parser preserves every arm as
-//! token-tree payload and leaves target selection plus payload parsing to the caller.
+//! token-tree payload so each caller can choose how to interpret it.
 
 use rg_cfg_eval::CfgPredicate;
+use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_tt::{
-    TopSubtree,
+    Span, TopSubtree,
+    syntax_bridge::{ExpansionSpanMap, syntax_node_to_token_tree_with_span},
     tt::{self, Delimiter, DelimiterKind, Leaf, TopSubtreeBuilder, TtElement, TtIter},
 };
+
+use crate::{ExpansionParseKind, ExpansionSyntax};
 
 /// Parsed `cfg_select!` arms before a target cfg environment chooses one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +20,19 @@ pub struct CfgSelect {
 }
 
 impl CfgSelect {
+    /// Recognizes written calls before macro name resolution.
+    pub fn from_macro_call(
+        call: &ast::MacroCall,
+        span_for_range: &mut impl FnMut(TextRange) -> Span,
+    ) -> Option<Self> {
+        let name = call.path()?.segment()?.name_ref()?;
+        if name.text() != "cfg_select" {
+            return None;
+        }
+        let args = syntax_node_to_token_tree_with_span(&call.token_tree()?, span_for_range);
+        Self::parse(&args)
+    }
+
     /// Parses the supported `cfg_select! { predicate => { ... } }` form.
     pub fn parse(args: &TopSubtree) -> Option<Self> {
         let mut parser = CfgSelectParser::new(args.view().token_trees().iter());
@@ -33,6 +50,19 @@ impl CfgSelect {
 pub struct CfgSelectArm {
     pub predicate: CfgPredicate,
     pub payload: TopSubtree,
+}
+
+impl CfgSelectArm {
+    /// Parses the arm as items, keeping each token's original source span.
+    pub fn parse_items(&self) -> Option<(ast::MacroItems, ExpansionSpanMap)> {
+        let expansion =
+            ExpansionSyntax::from_token_tree(self.payload.clone(), ExpansionParseKind::Items);
+        if !expansion.parse.parse_errors().is_empty() {
+            return None;
+        }
+        let items = ast::MacroItems::cast(expansion.parse.syntax_node())?;
+        Some((items, expansion.span_map))
+    }
 }
 
 struct CfgSelectParser<'a> {

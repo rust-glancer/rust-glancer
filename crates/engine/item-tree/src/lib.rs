@@ -1,7 +1,9 @@
 mod db;
+mod discovery;
 mod item;
 mod lower;
 mod package;
+mod query;
 
 #[doc(hidden)]
 pub mod testonly;
@@ -33,4 +35,5 @@ pub use self::{
         VisibilityLevel, WherePredicate,
     },
     package::{FileTree, Package, TargetRoot},
+    query::file_declarations,
 };

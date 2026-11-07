@@ -118,17 +118,17 @@ impl Package {
         self.files.parsed_files()
     }
 
-    /// Returns the package-local id for a canonical source path already known to this package.
+    /// Returns the canonical ID if this package already knows the source path.
     pub(crate) fn file_id_for_path(&self, file_path: &Path) -> Option<FileId> {
         self.files.file_id_for_path(file_path)
     }
 
     /// Captures the package file table after all module discovery for cache-backed startup.
-    pub fn parse_snapshot(&self) -> anyhow::Result<PackageParseSnapshot> {
-        Ok(PackageParseSnapshot {
-            files: self.files.parse_snapshot()?,
+    pub fn parse_snapshot(&self) -> PackageParseSnapshot {
+        PackageParseSnapshot {
+            files: self.files.parse_snapshot(),
             target_root_files: self.targets.iter().map(|target| target.root_file).collect(),
-        })
+        }
     }
 
     /// Replaces root-only parse metadata with the file table saved in a package artifact.
@@ -136,32 +136,19 @@ impl Package {
     /// The artifact keeps the same package and target slots as the current workspace graph. Once
     /// that shape is checked, restoring the file table is enough for cached phase payloads to keep
     /// using their original file ids.
-    pub fn apply_parse_snapshot(
+    pub(crate) fn apply_parse_snapshot(
         &mut self,
         snapshot: PackageParseSnapshot,
-        files: Vec<(ParsedFileSnapshot, Arc<SourceEntry>)>,
+        sources: &SourceInventory,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            snapshot.target_root_files.len() == self.targets.len(),
-            "parse snapshot has {} target roots but package has {} targets",
-            snapshot.target_root_files.len(),
-            self.targets.len(),
+            self.targets
+                .iter()
+                .map(|target| target.root_file)
+                .eq(snapshot.target_root_files.iter().copied()),
+            "parse snapshot roots do not match the current targets",
         );
-        for root_file in &snapshot.target_root_files {
-            anyhow::ensure!(
-                root_file.0 < snapshot.files.len(),
-                "parse snapshot root file {:?} is outside {} files",
-                root_file,
-                snapshot.files.len(),
-            );
-        }
-
-        self.files = FileDb::from_parse_snapshot(self.edition, files);
-        for (target, root_file) in self.targets.iter_mut().zip(snapshot.target_root_files) {
-            target.root_file = root_file;
-        }
-
-        Ok(())
+        self.files.restore_snapshot(snapshot, sources)
     }
 
     /// Returns the path associated with a file id, if the id is valid.
@@ -222,8 +209,9 @@ impl Package {
     pub(super) fn build(
         package: &rg_workspace::Package,
         sources: &SourceInventory,
+        interner: ajika::Interner,
     ) -> anyhow::Result<Self> {
-        let mut files = FileDb::new(package.edition);
+        let mut files = FileDb::new(package.edition, interner);
         let mut parsed_targets = Arena::new();
 
         for target in Self::analyzed_targets(package) {
@@ -263,9 +251,8 @@ impl Package {
 
 /// Serializable parse metadata for one package artifact.
 ///
-/// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
-/// payloads can only be reused if those ids keep pointing at the same source revisions. Line
-/// indexes are derived lazily from those validated revisions instead of being persisted here.
+/// Cached item and semantic payloads can only be reused if the canonical IDs still name the
+/// same source revisions. Line indexes are derived lazily from the validated revisions.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageParseSnapshot {
     pub(crate) files: Vec<ParsedFileSnapshot>,

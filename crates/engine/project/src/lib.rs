@@ -28,6 +28,7 @@ mod indexing;
 mod memory;
 mod profile;
 mod project;
+mod project_queries;
 mod query;
 mod selection;
 mod state;

@@ -11,7 +11,10 @@ use crate::{
 };
 
 /// Invalidates disposable cache state, rebuilds from source, and reapplies residency.
-pub(crate) fn recover_from_cache_load_failure(project: &mut ProjectState) -> anyhow::Result<()> {
+pub(crate) fn recover_from_cache_load_failure(
+    project: &mut ProjectState,
+    database: &mut ajika::Database,
+) -> anyhow::Result<()> {
     project
         .cache_store
         .clear_package_artifacts()
@@ -20,6 +23,7 @@ pub(crate) fn recover_from_cache_load_failure(project: &mut ProjectState) -> any
     // Keep recovery in the original cache namespace. The environment that selected the target
     // directory may have changed since the project was opened.
     let rebuilt = super::initial::build_state(
+        database,
         project.workspace.clone(),
         project.workspace_lowering_config.clone(),
         project.cargo_metadata_config.clone(),
