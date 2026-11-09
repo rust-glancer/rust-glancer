@@ -8,7 +8,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
 use rg_semantic_ir::ItemStoreSource;
-use rg_std::UniqueVec;
+use rg_std::{OperationError, UniqueVec};
 
 use super::ImplQuery;
 use crate::{Substitution, Ty, solver::SolverScope, trait_selection::TraitSelection};
@@ -80,7 +80,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<ReceiverImplMatches, D::Error> {
+    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
         let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
         matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs)?);
         Ok(matches)
@@ -91,7 +91,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<ReceiverImplMatches, D::Error> {
+    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
         let mut matches = ReceiverImplMatches::default();
         matches
             .traits
@@ -103,21 +103,14 @@ where
     fn inherent_matches_for_receiver(
         &self,
         receiver_ty: &Ty,
-    ) -> Result<ReceiverImplMatches, D::Error> {
-        // Matching uses the solver's fail-soft exit when discovery is cancelled. Its operation
-        // owner rejects the result through the shared token before publishing body facts or UI.
+    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
         let mut inherent_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
-            let Ok(candidates) = self
+            rg_std::check_cancel!(self.context, "match receiver impls");
+            let candidates = self
                 .context
                 .item_lookup()
-                .inherent_impls_for_type(receiver.def)
-            else {
-                return Ok(ReceiverImplMatches::default());
-            };
+                .inherent_impls_for_type(receiver.def)?;
             inherent_impls.extend(candidates);
         }
 
@@ -143,9 +136,7 @@ where
                 | Ty::Dyn(_)
         );
         if has_structural_self_head {
-            let Ok(candidates) = self.context.item_lookup().structural_inherent_impls() else {
-                return Ok(matches);
-            };
+            let candidates = self.context.item_lookup().structural_inherent_impls()?;
             matches.extend(self.inherent_matches_for_receiver_from_impls(receiver_ty, candidates)?);
         }
 
@@ -157,19 +148,13 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<UniqueVec<TraitSelection>, D::Error> {
+    ) -> Result<UniqueVec<TraitSelection>, OperationError<D::Error>> {
         let mut selections = UniqueVec::new();
 
         for trait_ref in trait_refs {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
-            let Some(candidates) =
-                super::TraitImplFilter::from(receiver_ty).candidates(&self.context, trait_ref)
-            else {
-                // Cancellation leaves discovery incomplete; the request owner rejects it.
-                break;
-            };
+            rg_std::check_cancel!(self.context, "match receiver impls");
+            let candidates =
+                super::TraitImplFilter::from(receiver_ty).candidates(&self.context, trait_ref)?;
             selections
                 .extend(self.trait_selections_for_receiver_from_impls(receiver_ty, candidates)?);
         }
@@ -182,12 +167,10 @@ where
         &self,
         receiver_ty: &Ty,
         trait_impls: impl IntoIterator<Item = TraitImplRef>,
-    ) -> Result<UniqueVec<TraitSelection>, D::Error> {
+    ) -> Result<UniqueVec<TraitSelection>, OperationError<D::Error>> {
         let mut selections = UniqueVec::new();
         for trait_impl in trait_impls {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
+            rg_std::check_cancel!(self.context, "match receiver impls");
             let Some(selection) = self.trait_impl_selection_for_ty(trait_impl, receiver_ty)? else {
                 continue;
             };
@@ -206,7 +189,7 @@ where
         receiver_ty: &Ty,
         inherent_impls: UniqueVec<ImplRef>,
         trait_impls: UniqueVec<TraitImplRef>,
-    ) -> Result<ReceiverImplMatches, D::Error> {
+    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
         let mut matches =
             self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
         matches
@@ -220,15 +203,16 @@ where
         &self,
         receiver_ty: &Ty,
         inherent_impls: impl IntoIterator<Item = ImplRef>,
-    ) -> Result<ReceiverImplMatches, D::Error> {
+    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
         let item_query = self.context.item_paths().items();
         let mut matches = ReceiverImplMatches::default();
 
         for impl_ref in inherent_impls {
-            if self.context.cancellation().is_cancelled() {
-                return Ok(Default::default());
-            }
-            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+            rg_std::check_cancel!(self.context, "match receiver impls");
+            let Some(impl_data) = item_query
+                .impl_data(impl_ref)
+                .map_err(OperationError::Source)?
+            else {
                 continue;
             };
             if impl_data.trait_ref.is_some() {

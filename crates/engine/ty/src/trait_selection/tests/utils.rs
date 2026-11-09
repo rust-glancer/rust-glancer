@@ -834,7 +834,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         // before constructing the lookup index used by trait queries.
         let lookup_facts = ItemLookupFacts::build(
             &CrateItemQuery::new(&fixture, &fixture, fixture.target),
-            &rg_std::CancellationToken::new(),
+            || Ok(()),
         )
         .expect("fixture lookup facts should build");
         fixture.lookup_index =

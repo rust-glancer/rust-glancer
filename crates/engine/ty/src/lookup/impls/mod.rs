@@ -10,6 +10,7 @@ mod trait_impl;
 use rg_def_map::DefMapSource;
 use rg_ir_model::ImplRef;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::OperationError;
 
 pub(crate) use self::candidates::TraitImplFilter;
 pub use self::receiver::{InherentImplMatch, ReceiverImplMatches};
@@ -64,7 +65,7 @@ where
         &self,
         impl_ref: ImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<Substitution>, D::Error> {
+    ) -> Result<Option<Substitution>, OperationError<D::Error>> {
         TraitSelectionQuery::with_resolver(self.context.clone(), &self.resolver)
             .match_impl_header(impl_ref, receiver_ty)
     }

@@ -1,12 +1,13 @@
 //! Declaration access at the boundary between semantic storage and the compiler solver.
 //!
-//! The provider reuses Glancer's lowering and lookup. Solver callbacks are infallible, so the
-//! provider retains source errors for the enclosing operation to return to its caller.
+//! The provider reuses Glancer's lowering and lookup. A source failure exits through the
+//! enclosing operation because compiler callbacks have no error return.
 
 mod stored;
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
+    panic::{self, AssertUnwindSafe},
     sync::{Arc, Mutex},
 };
 
@@ -17,7 +18,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::ImplPolarity;
 use rg_semantic_ir::{ItemStoreSource, TypePathContext};
-use rg_std::Cancelable;
+use rg_std::{Cancelable, OperationError};
 use rustc_type_ir::{
     ClauseKind,
     inherent::IntoKind as _,
@@ -94,7 +95,7 @@ pub(crate) trait DeclarationProvider {
     fn field_tys<'s>(&self, cx: SolverInterner<'s>, id: TypeDefRef) -> Option<List<'s, Ty<'s>>>;
     fn impls(&self, trait_id: TraitDefRef, filter: TraitImplFilter) -> Option<Vec<ImplRef>>;
     fn lang_item(&self, item: LangItem) -> Option<DefId>;
-    fn is_cancelled(&self) -> bool;
+    fn check_cancelled(&self);
 }
 
 /// Supplies the lexical context needed by solver declarations and standalone editor queries.
@@ -158,10 +159,7 @@ pub struct DeclarationCache {
 ///
 /// Compiler callbacks ask for declarations as they explore a goal. This provider loads those
 /// declarations on demand, using the same path resolver as the body or editor query. If a read
-/// fails, it saves the error: the compiler's callback API cannot return our storage errors, but
-/// the enclosing `with_solver` call can.
-/// Callback availability tracking prevents accepting a solver answer based on that failed read.
-/// Keeping the underlying error here also lets the operation report the storage failure itself.
+/// fails, the provider keeps the source error while unwinding to its own solver boundary.
 pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
     paths: &'a ItemPathQuery<'query, D, I>,
     resolver: &'a dyn TypePathResolver<Error = I::Error>,
@@ -172,8 +170,7 @@ pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
         &'a dyn SolverScope<Error = I::Error>,
     )>,
     shared: Option<&'a DeclarationCache>,
-    error: RefCell<Option<I::Error>>,
-    cancelled: Cell<bool>,
+    error: RefCell<Option<OperationError<I::Error>>>,
     profile: RefCell<SolverProfile>,
 }
 
@@ -192,7 +189,6 @@ where
             solving: Some((context, resolver)),
             shared: resolver.declaration_cache(),
             error: RefCell::new(None),
-            cancelled: Cell::new(false),
             profile: RefCell::default(),
         }
     }
@@ -210,13 +206,8 @@ where
             solving: None,
             shared: None,
             error: RefCell::new(None),
-            cancelled: Cell::new(false),
             profile: RefCell::default(),
         }
-    }
-
-    pub fn take_error(&self) -> Option<I::Error> {
-        self.error.borrow_mut().take()
     }
 
     /// Run a body or query with temporary type storage, then release that storage together.
@@ -224,8 +215,11 @@ where
     /// Work inside the closure can keep `Vec<?T>` alive while more evidence arrives. Before
     /// returning, it must turn the answer into owned types or other owned facts. The closure's
     /// lifetime prevents a solver type from escaping into the saved body or an editor result.
-    /// Source errors collected by callbacks are returned after the temporary storage is dropped.
-    pub fn with_solver<R>(&self, run: impl for<'s> FnOnce(Solver<'s>) -> R) -> Result<R, I::Error> {
+    /// Source errors abort the operation and return after the temporary storage is dropped.
+    pub fn with_solver<R>(
+        &self,
+        run: impl for<'s> FnOnce(Solver<'s>) -> R,
+    ) -> Result<R, OperationError<I::Error>> {
         self.with_storage(|cx| run(Solver::new(cx)))
     }
 
@@ -234,7 +228,7 @@ where
     pub fn with_table<R>(
         &self,
         run: impl for<'s> FnOnce(InferenceTable<'s>, &'s [GenericParamRef]) -> R,
-    ) -> Result<R, I::Error> {
+    ) -> Result<R, OperationError<I::Error>> {
         self.with_solver(|solver| {
             let cx = solver.interner();
             let (params, env) = match self.solving.and_then(|(_, scope)| scope.generic_owner()) {
@@ -249,20 +243,31 @@ where
     }
 
     /// Source-only queries need working type storage without an inference context. Both kinds
-    /// of operation collect callback errors and release their entire working graph here.
+    /// of operation release their entire working graph here.
     pub(crate) fn with_storage<R>(
         &self,
         run: impl for<'s> FnOnce(SolverInterner<'s>) -> R,
-    ) -> Result<R, I::Error> {
-        let result = {
+    ) -> Result<R, OperationError<I::Error>> {
+        let result = panic::catch_unwind(AssertUnwindSafe(|| {
+            self.check_cancelled();
             let storage = SolverStorage::new(self);
             let result = run(storage.interner());
+            self.check_cancelled();
             storage.record_profile();
             result
-        };
-        match self.take_error() {
-            Some(error) => Err(error),
-            None => Ok(result),
+        }));
+        match result {
+            Ok(result) => Ok(result),
+            Err(payload) => {
+                // Only the provider holding the error can handle this abort. Other providers'
+                // aborts and ordinary panics keep unwinding.
+                if payload.is::<CallbackAbort>()
+                    && let Some(error) = self.error.borrow_mut().take()
+                {
+                    return Err(error);
+                }
+                panic::resume_unwind(payload)
+            }
         }
     }
 
@@ -409,21 +414,30 @@ where
         }
     }
 
-    /// Run a declaration read unless the operation was cancelled, retaining any storage error
-    /// for the enclosing operation to return. Solver callbacks receive `None` on failure because
-    /// their API cannot carry our storage errors.
+    /// Run a declaration read unless the operation was cancelled. A failed read must exit
+    /// immediately, since the solver can interpret an absent declaration as valid input.
     fn load<T>(&self, read: impl FnOnce() -> Result<Option<T>, I::Error>) -> Option<T> {
-        if self.is_cancelled() {
-            return None;
-        }
+        self.check_cancelled();
         self.profile.borrow_mut().declaration_loads += 1;
         match read() {
             Ok(value) => value,
-            Err(error) => {
-                *self.error.borrow_mut() = Some(error);
-                None
-            }
+            Err(error) => self.abort(OperationError::Source(error)),
         }
+    }
+
+    fn check_cancelled(&self) {
+        if let Some((context, _)) = self.solving
+            && let Err(cancelled) = context.check_cancelled("solver declarations")
+        {
+            self.abort(cancelled.into());
+        }
+    }
+
+    /// Solver callbacks have no error return. Unwind to `with_storage` so it can return the
+    /// typed error immediately. `resume_unwind` skips the panic hook for this controlled exit.
+    fn abort(&self, error: OperationError<I::Error>) -> ! {
+        *self.error.borrow_mut() = Some(error);
+        panic::resume_unwind(Box::new(CallbackAbort))
     }
 
     fn parent(origin: DefMapRef, owner: ItemOwner) -> Option<DefId> {
@@ -713,30 +727,22 @@ where
         // Reject unrelated outer shapes before lowering impl headers. For example, a reference
         // impl cannot apply to Vec<T>, so there is no need to read its referent or predicates.
         let (context, scope) = self.solving?;
-        let impls = filter.candidates(context, trait_id);
-        match impls {
-            Some(mut impls) => {
-                // Keep the index's ordered set while merging the local overlay. For this one
-                // trait, projecting to ImplRef preserves uniqueness and needs no second set.
-                match scope.local_trait_impls(trait_id) {
-                    Ok(local) => impls.extend(local),
-                    Err(error) => {
-                        *self.error.borrow_mut() = Some(error);
-                        return None;
-                    }
-                }
-                Some(
-                    impls
-                        .into_iter()
-                        .map(|candidate| candidate.impl_ref)
-                        .collect(),
-                )
-            }
-            None => {
-                self.cancelled.set(true);
-                None
-            }
+        let mut impls = match filter.candidates(context, trait_id) {
+            Ok(impls) => impls,
+            Err(cancelled) => self.abort(cancelled.into()),
+        };
+        // Keep the index's ordered set while merging the local overlay. For this one trait,
+        // projecting to ImplRef preserves uniqueness and needs no second set.
+        match scope.local_trait_impls(trait_id) {
+            Ok(local) => impls.extend(local),
+            Err(error) => self.abort(OperationError::Source(error)),
         }
+        Some(
+            impls
+                .into_iter()
+                .map(|candidate| candidate.impl_ref)
+                .collect(),
+        )
     }
 
     fn lang_item(&self, item: LangItem) -> Option<DefId> {
@@ -764,10 +770,10 @@ where
         context.item_lookup().lang_trait(source).map(DefId::Trait)
     }
 
-    fn is_cancelled(&self) -> bool {
-        self.cancelled.get()
-            || self.solving.is_some_and(|(context, _)| {
-                Cancelable::check_cancelled(context, "solver declarations").is_err()
-            })
+    fn check_cancelled(&self) {
+        SemanticDeclarations::check_cancelled(self);
     }
 }
+
+// Keep the error with the provider so the callback exit needs no bounds on the source error.
+struct CallbackAbort;

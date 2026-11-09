@@ -116,17 +116,13 @@ where
     pub fn candidates_for_ty(
         &self,
         receiver_ty: &Ty,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
-        // This layer shares the solver's source-error-only interface. A cancelled discovery
-        // supplies no candidates; the analysis or inference owner checks the same token before
-        // accepting any result. The lookup itself leaves no unfinished cache entry behind.
-        let Ok(traits) = self.context.item_lookup().traits_with_associated_items() else {
-            return Ok(Vec::new());
-        };
+    ) -> Result<Vec<AssociatedItemCandidateRef>, rg_std::OperationError<D::Error>> {
+        let traits = self.context.item_lookup().traits_with_associated_items()?;
         let matches = self
             .impls
             .matches_for_receiver_with_traits(receiver_ty, traits)?;
         self.candidates_for_matches(receiver_ty, &matches)
+            .map_err(rg_std::OperationError::Source)
     }
 
     /// Expand already-matched impls into stable associated-item declarations.

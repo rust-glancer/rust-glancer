@@ -7,6 +7,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::TraitImplRef;
 use rg_semantic_ir::ItemStoreSource;
+use rg_std::OperationError;
 
 use super::ImplQuery;
 use crate::{
@@ -30,9 +31,12 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &Ty,
-    ) -> Result<Option<TraitSelection>, D::Error> {
+    ) -> Result<Option<TraitSelection>, OperationError<D::Error>> {
         let item_query = self.context.item_paths().items();
-        let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
+        let Some(impl_data) = item_query
+            .impl_data(trait_impl.impl_ref)
+            .map_err(OperationError::Source)?
+        else {
             return Ok(None);
         };
         if !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref) {
