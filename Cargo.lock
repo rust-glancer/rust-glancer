@@ -138,16 +138,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
-name = "atomic-write-file"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84790c55b5704b0d35130bf16a4ce22a8e70eb0ea773522557524d9a4852663d"
-dependencies = [
- "nix 0.30.1",
- "rand 0.9.4",
-]
-
-[[package]]
 name = "auditable-serde"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -326,7 +316,7 @@ dependencies = [
  "getrandom 0.2.17",
  "glob",
  "libc",
- "nix 0.31.3",
+ "nix",
  "serde",
  "serde_json",
  "statrs",
@@ -1303,18 +1293,6 @@ checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
 name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
@@ -1907,24 +1885,25 @@ dependencies = [
 name = "rg_body_ir"
 version = "0.0.0"
 dependencies = [
+ "ajika",
  "anyhow",
  "derive_more",
  "expect-test",
- "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
  "rg_item_tree",
- "rg_package_store",
  "rg_parse",
  "rg_profile",
  "rg_semantic_ir",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_text",
  "rg_ty",
  "rg_wincode_utils",
+ "rg_workspace",
  "tracing",
  "wincode",
 ]
@@ -1960,15 +1939,14 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
- "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
  "rg_item_tree",
  "rg_macro_runtime",
- "rg_package_store",
  "rg_parse",
  "rg_profile",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_text",
@@ -2003,9 +1981,9 @@ dependencies = [
  "rg_def_map",
  "rg_ir_model",
  "rg_item_tree",
- "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_text",
@@ -2020,7 +1998,6 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
- "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
@@ -2041,6 +2018,7 @@ dependencies = [
 name = "rg_lsp_engine"
 version = "0.0.0"
 dependencies = [
+ "ajika",
  "anyhow",
  "cargo_metadata",
  "codspeed-divan-compat",
@@ -2132,21 +2110,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "rg_package_store"
-version = "0.0.0"
-dependencies = [
- "rg_ir_model",
- "rg_std",
- "thiserror",
-]
-
-[[package]]
 name = "rg_parse"
 version = "0.0.0"
 dependencies = [
  "ajika",
  "anyhow",
- "expect-test",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
@@ -2155,7 +2123,6 @@ dependencies = [
  "rg_syntax",
  "rg_text",
  "rg_workspace",
- "test_fixture",
  "wincode",
 ]
 
@@ -2183,22 +2150,16 @@ version = "0.0.0"
 dependencies = [
  "ajika",
  "anyhow",
- "atomic-write-file",
- "blake3",
  "cargo_metadata",
  "codspeed-divan-compat",
- "derive_more",
  "expect-test",
  "memchr",
- "rayon",
  "rg_analysis",
  "rg_body_ir",
- "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
  "rg_ir_view",
  "rg_item_tree",
- "rg_package_store",
  "rg_parse",
  "rg_profile",
  "rg_semantic_ir",
@@ -2207,16 +2168,15 @@ dependencies = [
  "rg_text",
  "rg_ty",
  "rg_workspace",
- "serde",
  "test_fixture",
  "tracing",
- "wincode",
 ]
 
 [[package]]
 name = "rg_semantic_ir"
 version = "0.0.0"
 dependencies = [
+ "ajika",
  "anyhow",
  "derive_more",
  "expect-test",
@@ -2224,8 +2184,8 @@ dependencies = [
  "rg_def_map",
  "rg_ir_model",
  "rg_item_tree",
- "rg_package_store",
  "rg_parse",
+ "rg_source",
  "rg_std",
  "rg_text",
  "rg_workspace",
@@ -2240,7 +2200,6 @@ dependencies = [
  "blake3",
  "rg_std",
  "tempfile",
- "wincode",
 ]
 
 [[package]]

@@ -23,7 +23,6 @@ members = [
   "crates/engine/body-ir",
   "crates/engine/analysis",
   "crates/engine/project",
-  "crates/engine/package-store",
   "crates/lib/text",
   "crates/lib/arena",
   "crates/lib/profile",
@@ -72,7 +71,6 @@ libraries = [
 [workspace.dependencies]
 ajika = "0.1.2"
 anyhow = "1.0.103"
-atomic-write-file = "0.3.0"
 blake3 = "1.8.5"
 bumpalo = "3.17.0"
 clap = "4.6.1"
@@ -158,7 +156,6 @@ rg_ty = { path = "crates/engine/ty" }
 rg_body_ir = { path = "crates/engine/body-ir" }
 rg_analysis = { path = "crates/engine/analysis" }
 rg_project = { path = "crates/engine/project" }
-rg_package_store = { path = "crates/engine/package-store" }
 rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
 rg_profile = { path = "crates/lib/profile" }
