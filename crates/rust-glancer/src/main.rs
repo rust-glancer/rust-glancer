@@ -2,7 +2,6 @@ use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use rg_project::StartupCacheLoad;
 
 mod analyze;
 mod compare_lsp;
@@ -12,7 +11,7 @@ mod report;
 mod start_engine;
 mod start_server;
 
-use self::{analyze::CliPackageResidencyPolicy, compare_lsp::CliFixture};
+use self::compare_lsp::CliFixture;
 
 /// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
@@ -41,20 +40,9 @@ enum Command {
         profile: Option<String>,
         #[clap(short, long)]
         memory: bool,
-        /// Load matching offloadable packages from existing cache artifacts during indexing.
+        /// Reuse validated results from the saved query cache.
         #[clap(short, long)]
         load: bool,
-        /// Select package storage for developer diagnostics.
-        ///
-        /// Defaults to `all-offloadable`, matching normal LSP storage. Use `all-resident` to preserve
-        /// phase counts and detailed macro-limit reports that offloading discards.
-        #[clap(
-            long = "package-residency",
-            value_enum,
-            default_value = "all-offloadable",
-            hide = true
-        )]
-        package_residency: CliPackageResidencyPolicy,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
@@ -102,24 +90,11 @@ fn main() -> anyhow::Result<()> {
             profile,
             memory,
             load,
-            package_residency,
             target,
             format,
         } => {
             logging::init_plain_tracing();
-            analyze::analyze(
-                path,
-                profile,
-                memory,
-                if load {
-                    StartupCacheLoad::Enabled
-                } else {
-                    StartupCacheLoad::Disabled
-                },
-                package_residency.into(),
-                target,
-                format,
-            )
+            analyze::analyze(path, profile, memory, load, target, format)
         }
         Command::CompareLsp {
             fixture,
