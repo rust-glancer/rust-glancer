@@ -17,10 +17,9 @@ use rg_ty::{
 };
 
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
-    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
-    testonly::BodyIrFixture,
+    BindingData, BodyOwner, BodySource, BodyView, ClosureCapture, ClosureKind, ClosureParamData,
+    ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind,
+    body::facts::BodyResolution, testonly::BodyIrFixture,
 };
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
@@ -47,17 +46,6 @@ pub(super) fn check_project_body_ir_with_fake_sysroot(fixture: &str, expect: Exp
 pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
     let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
-}
-
-pub(super) fn check_project_body_ir_with_policy(
-    fixture: &str,
-    policy: BodyIrBuildPolicy,
-    expect: Expect,
-) {
-    let db = BodyIrFixtureDb::build_with_policy(fixture, policy);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -161,18 +149,10 @@ struct CrateBodyIrSnapshot<'a> {
 impl CrateBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let body_ir = self.body_ir_txn();
-        let Some(crate_bodies) = body_ir
-            .crate_bodies(self.crate_ref)
-            .expect("crate body IR should load while rendering body IR")
-        else {
-            return dump;
-        };
-
-        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
+        let Some(crate_bodies) = self.project.bodies(self.crate_ref) else {
             dump.push_str("\nskipped");
             return dump;
-        }
+        };
 
         // Body IDs encode the order bodies were materialized. Rendering in that order keeps
         // multi-body snapshots readable once nested const/static initializer bodies appear.
@@ -190,18 +170,10 @@ impl CrateBodyIrSnapshot<'_> {
 
     fn render_patterns(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let body_ir = self.body_ir_txn();
-        let Some(crate_bodies) = body_ir
-            .crate_bodies(self.crate_ref)
-            .expect("crate body IR should load while rendering body IR patterns")
-        else {
-            return dump;
-        };
-
-        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
+        let Some(crate_bodies) = self.project.bodies(self.crate_ref) else {
             dump.push_str("\nskipped");
             return dump;
-        }
+        };
 
         for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
             if idx == 0 {
@@ -1112,7 +1084,7 @@ impl CrateBodyIrSnapshot<'_> {
                 for binding in &object.associated_types {
                     let name = self
                         .project
-                        .resident_item_store(binding.associated_ty.origin)
+                        .item_store(binding.associated_ty.origin)
                         .and_then(|items| items.type_alias_data(binding.associated_ty.id))
                         .map(|data| data.name.to_string())
                         .unwrap_or_else(|| "<missing>".to_string());
@@ -1200,7 +1172,7 @@ impl CrateBodyIrSnapshot<'_> {
         for binding in &bound.associated_types {
             let name = self
                 .project
-                .resident_item_store(binding.projection.associated_ty.origin)
+                .item_store(binding.projection.associated_ty.origin)
                 .and_then(|items| items.type_alias_data(binding.projection.associated_ty.id))
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());
@@ -1250,21 +1222,15 @@ impl CrateBodyIrSnapshot<'_> {
             DefId::Local(local_def) => self.render_local_def(local_def),
             DefId::EnumVariant(variant_def) => {
                 let variant_data = match variant_def.origin {
-                    DefMapRef::Crate(target) => {
-                        self.project.resident_def_map(target).and_then(|def_map| {
-                            def_map.local_enum_variant(variant_def.local_enum_variant)
-                        })
-                    }
-                    DefMapRef::Body(body) => {
-                        self.project
-                            .resident_body_def_map(body)
-                            .and_then(|def_map| {
-                                def_map.local_enum_variant(variant_def.local_enum_variant)
-                            })
-                    }
+                    DefMapRef::Crate(target) => self.project.def_map(target).and_then(|def_map| {
+                        def_map.local_enum_variant(variant_def.local_enum_variant)
+                    }),
+                    DefMapRef::Body(body) => self.project.body_def_map(body).and_then(|def_map| {
+                        def_map.local_enum_variant(variant_def.local_enum_variant)
+                    }),
                 };
                 if let Some(variant_data) = variant_data
-                    && let Some(items) = self.project.resident_item_store(variant_def.origin)
+                    && let Some(items) = self.project.item_store(variant_def.origin)
                     && let Some(ItemId::Enum(enum_id)) =
                         items.item_for_local_def(variant_data.enum_def)
                 {
@@ -1308,7 +1274,7 @@ impl CrateBodyIrSnapshot<'_> {
             SemanticItemRef::TypeAlias(type_alias_ref) => {
                 let items = self
                     .project
-                    .resident_item_store(type_alias_ref.origin)
+                    .item_store(type_alias_ref.origin)
                     .expect("item store should exist while rendering type alias");
                 let data = items
                     .type_alias_data(type_alias_ref.id)
@@ -1322,7 +1288,7 @@ impl CrateBodyIrSnapshot<'_> {
             SemanticItemRef::Const(const_ref) => {
                 let items = self
                     .project
-                    .resident_item_store(const_ref.origin)
+                    .item_store(const_ref.origin)
                     .expect("item store should exist while rendering const");
                 let data = items
                     .const_data(const_ref.id)
@@ -1336,7 +1302,7 @@ impl CrateBodyIrSnapshot<'_> {
             SemanticItemRef::Static(static_ref) => {
                 let items = self
                     .project
-                    .resident_item_store(static_ref.origin)
+                    .item_store(static_ref.origin)
                     .expect("item store should exist while rendering static");
                 let data = items
                     .static_data(static_ref.id)
@@ -1351,7 +1317,7 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(items) = self.project.resident_item_store(local_def.origin) else {
+        let Some(items) = self.project.item_store(local_def.origin) else {
             return "<missing>".to_string();
         };
         let Some(item_id) = items.item_for_local_def(local_def.local_def) else {
@@ -1435,7 +1401,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .project
-            .resident_item_store(ty.origin)
+            .item_store(ty.origin)
             .expect("item store should exist while rendering body type");
 
         match ty.id {
@@ -1479,7 +1445,7 @@ impl CrateBodyIrSnapshot<'_> {
         let DefMapRef::Body(body_ref) = local_def.origin else {
             return String::new();
         };
-        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
+        let Some(def_map) = self.project.body_def_map(body_ref) else {
             return String::new();
         };
         let Some(data) = def_map.local_def(local_def.local_def) else {
@@ -1507,7 +1473,7 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn field_data(&self, field_ref: FieldRef) -> Option<&FieldItem> {
-        let items = self.project.resident_item_store(field_ref.owner.origin)?;
+        let items = self.project.item_store(field_ref.owner.origin)?;
         match field_ref.owner.id {
             TypeDefId::Struct(id) => items.struct_data(id)?.fields.fields().get(field_ref.index),
             TypeDefId::Union(id) => items.union_data(id)?.fields.get(field_ref.index),
@@ -1518,7 +1484,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_enum_variant_ref(&self, variant_ref: EnumVariantRef) -> String {
         let items = self
             .project
-            .resident_item_store(variant_ref.origin)
+            .item_store(variant_ref.origin)
             .expect("item store should exist while rendering enum variant");
         let data = items
             .enum_data(variant_ref.enum_id)
@@ -1541,7 +1507,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let items = self
             .project
-            .resident_item_store(function_ref.origin)
+            .item_store(function_ref.origin)
             .expect("item store should exist while rendering function");
         let data = items
             .function_data(function_ref.id)
@@ -1568,7 +1534,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
             .project
-            .resident_item_store(trait_ref.origin)
+            .item_store(trait_ref.origin)
             .expect("item store should exist while rendering trait");
         let data = items
             .trait_data(trait_ref.id)
@@ -1584,7 +1550,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_impl_ref(&self, impl_ref: ImplRef) -> String {
         let items = self
             .project
-            .resident_item_store(impl_ref.origin)
+            .item_store(impl_ref.origin)
             .expect("item store should exist while rendering impl");
         let data = items
             .impl_data(impl_ref.id)
@@ -1594,12 +1560,6 @@ impl CrateBodyIrSnapshot<'_> {
             Some(trait_ref) => format!("impl {trait_ref} for {}", data.self_ty),
             None => format!("impl {}", data.self_ty),
         }
-    }
-
-    fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
-        self.project
-            .body_ir_db()
-            .read_txn(BodyIrLoader::resident_only("resident body IR fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
@@ -1618,7 +1578,7 @@ impl CrateBodyIrSnapshot<'_> {
         let cargo_target = self
             .project
             .def_map_db()
-            .resident_package(crate_ref.package)
+            .package(crate_ref.package)
             .and_then(|package| package.crate_data(crate_ref.crate_id))
             .expect("semantic crate should exist while rendering body IR module")
             .cargo_target();
@@ -1635,10 +1595,10 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_body_module_ref(&self, body_ref: BodyRef, module: ModuleId) -> String {
-        let Some(body) = self.project.resident_body(body_ref) else {
+        let Some(body) = self.project.body(body_ref) else {
             return "<missing>".to_string();
         };
-        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
+        let Some(def_map) = self.project.body_def_map(body_ref) else {
             return self.render_body_owner(body.owner());
         };
         let Some(module_data) = def_map.module(module) else {
@@ -1662,7 +1622,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.origin.origin_crate())
+            .def_map(module_ref.origin.origin_crate())
             .expect("crate def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");

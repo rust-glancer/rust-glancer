@@ -14,12 +14,12 @@
 //! module::it$0;          not handled here: candidates come from `module`
 //! ```
 
-use rg_body_ir::{BodyIrReadTxn, BodyPath, BodyView, ExprKind, PatKind, StmtKind};
+use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatKind, StmtKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{BindingId, BodyRef, CrateRef, FileId, GenericDefRef, ScopeId, Span};
 use rg_item_tree::TypePath;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStore;
+use rg_source::ReadError;
 
 use super::{
     BodyUnqualifiedNameContext, PatternCompletionKind, UnqualifiedCompletionSite,
@@ -35,7 +35,7 @@ use crate::source::scan::{
 /// The site retains the lexical scope and source-order binding cutoff. Lowering has already built
 /// the complete binding arena, but names declared after the cursor must not appear as candidates.
 pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -43,7 +43,7 @@ pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -57,9 +57,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Returns the smallest type or value name prefix that accepts completions.
-    pub(crate) fn site_at_name(
-        &self,
-    ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
+    pub(crate) fn site_at_name(&self) -> Result<Option<UnqualifiedCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
@@ -91,7 +89,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         member_prefix_span: Span,
         member_prefix: String,
         body_owner_start: Option<u32>,
-    ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
+    ) -> Result<Option<UnqualifiedCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
@@ -185,7 +183,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-    ) -> Result<Option<GenericDefRef>, PackageStoreError> {
+    ) -> Result<Option<GenericDefRef>, ReadError> {
         let Some(item_store) = self.body_ir.body_item_store(body_ref)? else {
             return Ok(None);
         };

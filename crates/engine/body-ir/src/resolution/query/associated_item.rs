@@ -6,8 +6,8 @@ use rg_ir_model::{
     ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     AdtTy, ExpectedTyExt, Substitution, TraitApplication, Ty,
@@ -32,8 +32,8 @@ pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
 
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -55,7 +55,7 @@ where
         &self,
         scope: ScopeId,
         prefix: &BodyAssociatedPathPrefix,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         let env = TypeLoweringEnv::new(
@@ -118,7 +118,7 @@ where
         &self,
         scope: ScopeId,
         trait_ref: &TypeRef,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         let env = TypeLoweringEnv::new(
@@ -142,7 +142,7 @@ where
         &self,
         scope: ScopeId,
         ty: &Ty,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let query = AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context);
         let receiver = self
             .context
@@ -180,7 +180,7 @@ where
     fn candidates_for_trait_applications(
         &self,
         applications: impl IntoIterator<Item = TraitApplication>,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         AssociatedItemQuery::with_resolver(self.context.ty_context(), &self.context)
             .candidates_for_trait_applications(applications, TraitApplicability::Yes)
     }
@@ -191,7 +191,7 @@ where
         scope: ScopeId,
         prefix: &Path,
         last_segment: &str,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty)>, ReadError> {
         // Associated item paths are resolved as "type prefix + value member". This keeps
         // `Action::Start` distinct from a module path while also handling `Widget::new` through
         // the same type-substitution rules used by method calls.
@@ -215,7 +215,7 @@ where
         &self,
         scope: ScopeId,
         path: &BodyPath,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty)>, ReadError> {
         let Some((prefix, last_segment)) = path.split_associated_item_prefix_name() else {
             return Ok(None);
         };
@@ -259,7 +259,7 @@ where
         scope: ScopeId,
         prefix_ty: &Ty,
         last_segment: &str,
-    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty)>, ReadError> {
         let const_receiver = self.context.impls().matches_for_receiver_with_const_name(
             scope,
             prefix_ty,
@@ -368,7 +368,7 @@ where
         &self,
         ty: &AdtTy,
         name: &str,
-    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
         if !matches!(ty.def.id, TypeDefId::Enum(_)) {
             return Ok(None);
         }
@@ -395,7 +395,7 @@ where
         &self,
         receiver: &BodyReceiverImplMatches,
         name: &str,
-    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
         let item_query = self.context.item_query();
         for impl_match in receiver.matches().inherent() {
             let Some(impl_data) = item_query.impl_data(impl_match.impl_ref())? else {
@@ -423,7 +423,7 @@ where
         receiver_ty: &Ty,
         name: &str,
         extra_subst: Option<&Substitution>,
-    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, ReadError> {
         let mut items = Vec::new();
         self.push_trait_associated_const_candidates(
             &mut items,
@@ -444,7 +444,7 @@ where
         receiver: &Ty,
         qualification: Option<&TraitApplication>,
         name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, ReadError> {
         if matches!(receiver, Ty::Unknown) && qualification.is_none() {
             return Ok(UniqueVec::new());
         }
@@ -479,7 +479,7 @@ where
         &self,
         selection: &BodyQualifiedTraitSelection,
         name: &str,
-    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, ReadError> {
         let mut consts = Vec::new();
         let impl_query = self.context.impl_query();
         for receiver in selection.receivers() {
@@ -507,7 +507,7 @@ where
         receiver_ty: &Ty,
         name: &str,
         extra_subst: Option<&Substitution>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let item_query = self.context.item_query();
         for selection in selections {
             let trait_impl = selection.trait_impl;
@@ -571,7 +571,7 @@ where
         impl_subst: Option<&Substitution>,
         trait_selection: Option<&TraitSelection>,
         extra_subst: Option<&Substitution>,
-    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedItemCandidate>, ReadError> {
         let item_query = self.context.item_query();
         for item in assoc_items {
             let AssocItemId::Const(id) = item else {
@@ -608,7 +608,7 @@ where
         impl_subst: Option<&Substitution>,
         trait_selection: Option<&TraitSelection>,
         extra_subst: Option<&Substitution>,
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty, ReadError> {
         let mut subst = self.context.generics().subst_for_selected_item_owner(
             const_ref.origin,
             owner,
@@ -640,6 +640,7 @@ where
             &self.context,
         )
         .normalize_ty(&ty)
+        .map_err(Into::into)
     }
 }
 

@@ -4,9 +4,9 @@
 //! "jump targets visible at this offset" index. This scanner rebuilds that small view only for the
 //! active request by looking at the written expressions that enclose the cursor.
 
-use rg_body_ir::{BodyIrReadTxn, ExprKind};
+use rg_body_ir::{BodyReader, ExprKind};
 use rg_ir_model::{CrateRef, FileId};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 
 /// Finds the jump targets visible from one `break` or `continue` position.
@@ -22,7 +22,7 @@ use rg_std::UniqueVec;
 /// The result is `["'inner", "'outer"]`: narrower source spans come first, and a shadowed label
 /// spelling appears only once.
 pub(crate) struct LabelScopeScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -30,7 +30,7 @@ pub(crate) struct LabelScopeScanner<'txn, 'db> {
 
 impl<'txn, 'db> LabelScopeScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -44,7 +44,7 @@ impl<'txn, 'db> LabelScopeScanner<'txn, 'db> {
     }
 
     /// Return enclosing labels from the nearest target outward.
-    pub(crate) fn labels(&self) -> Result<Vec<String>, PackageStoreError> {
+    pub(crate) fn labels(&self) -> Result<Vec<String>, ReadError> {
         let mut labels = Vec::new();
         for (_, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
             if !body.source().span.touches(self.offset) {

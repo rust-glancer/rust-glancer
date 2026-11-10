@@ -35,11 +35,7 @@ impl usize {
 "#,
     );
     let stores = (0..fixture.semantic_ir_db().package_count())
-        .filter_map(|index| {
-            fixture
-                .semantic_ir_db()
-                .resident_package(PackageSlot(index))
-        })
+        .filter_map(|index| fixture.semantic_ir_db().package(PackageSlot(index)))
         .flat_map(|package| package.crates())
         .map(|krate| krate.items())
         .collect::<Vec<_>>();

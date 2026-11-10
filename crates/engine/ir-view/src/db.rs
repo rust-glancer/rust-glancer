@@ -1,14 +1,15 @@
 //! Shared read handle for indexed-data views.
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyIrReadTxn, CurrentSourceBuilder, CurrentSourceStore};
-use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, Span};
-use rg_package_store::PackageStoreError;
+use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore};
+use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
+use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, PackageSlot, Span};
+use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    ItemLookupQuery, ItemLookupQueryCache, ItemStore, ItemStoreQuery, ItemStoreSource,
-    SemanticIrReadTxn, TypePathContext, TypePathResolution,
+    ItemLookupQuery, ItemLookupQueryCache, ItemReader, ItemStore, ItemStoreSource, TypePathContext,
+    TypePathResolution,
 };
+use rg_source::ReadError;
 use rg_std::{CancellationToken, UniqueVec};
 use rg_text::RustEdition;
 use rg_ty::{
@@ -22,9 +23,10 @@ use rg_ty::{
 /// lookup caches never changes which declarations or bodies are visible through this handle.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
-    pub(crate) def_map: DefMapReadTxn<'db>,
-    pub(crate) semantic_ir: SemanticIrReadTxn<'db>,
-    pub(crate) body_ir: BodyIrReadTxn<'db>,
+    pub(crate) def_map: DefinitionReader<'db>,
+    pub(crate) semantic_ir: ItemReader<'db>,
+    pub(crate) body_ir: BodyReader<'db>,
+    parse: &'db ParseDb,
     item_lookup_cache: ItemLookupQueryCache,
     cancellation: CancellationToken,
 }
@@ -37,15 +39,17 @@ impl rg_std::Cancelable for IndexedViewDb<'_> {
 
 impl<'db> IndexedViewDb<'db> {
     pub fn new(
-        def_map: DefMapReadTxn<'db>,
-        semantic_ir: SemanticIrReadTxn<'db>,
-        body_ir: BodyIrReadTxn<'db>,
+        def_map: DefinitionReader<'db>,
+        semantic_ir: ItemReader<'db>,
+        body_ir: BodyReader<'db>,
+        parse: &'db ParseDb,
         cancellation: CancellationToken,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
             body_ir,
+            parse,
             item_lookup_cache: ItemLookupQueryCache::new(),
             cancellation,
         }
@@ -89,7 +93,7 @@ impl<'db> IndexedViewDb<'db> {
     pub(crate) fn current_signature_context(
         &self,
         mut context: TypePathContext,
-    ) -> Result<TypePathContext, PackageStoreError> {
+    ) -> Result<TypePathContext, ReadError> {
         context.module = self.body_ir.signature_lookup_module(context.module)?;
         Ok(context)
     }
@@ -106,14 +110,14 @@ impl<'db> IndexedViewDb<'db> {
     pub(crate) fn item_store_for_origin(
         &self,
         origin: DefMapRef,
-    ) -> Result<Option<&ItemStore>, PackageStoreError> {
+    ) -> Result<Option<&ItemStore>, ReadError> {
         ItemStoreSource::item_store_for_origin(&self, origin)
     }
 
     pub(crate) fn def_map_for_origin(
         &self,
         origin: DefMapRef,
-    ) -> Result<Option<&DefMap>, PackageStoreError> {
+    ) -> Result<Option<&DefMap>, ReadError> {
         match origin {
             DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
@@ -139,7 +143,7 @@ impl<'db> IndexedViewDb<'db> {
         use_site: CrateRef,
     ) -> anyhow::Result<ItemLookupQuery<'_>> {
         ItemLookupQuery::build_with_cache(
-            &ItemStoreQuery::new(&self.semantic_ir),
+            self.semantic_ir,
             use_site,
             &self.item_lookup_cache,
             &self.cancellation,
@@ -148,12 +152,22 @@ impl<'db> IndexedViewDb<'db> {
     }
 
     /// Returns the edition whose syntax rules apply at a crate_ref use site.
-    pub fn crate_edition(&self, crate_ref: CrateRef) -> Result<RustEdition, PackageStoreError> {
-        self.def_map.package_edition(crate_ref.package)
+    pub fn crate_edition(&self, crate_ref: CrateRef) -> anyhow::Result<RustEdition> {
+        Ok(self
+            .parse
+            .package(crate_ref.package.0)
+            .context("crate has no parsed package")?
+            .edition())
+    }
+
+    pub(crate) fn package_name(&self, package: PackageSlot) -> Option<&str> {
+        self.parse
+            .package(package.0)
+            .map(rg_parse::Package::package_name)
     }
 
     /// Returns the edition whose syntax rules apply to declarations owned by this origin.
-    pub fn origin_edition(&self, origin: DefMapRef) -> Result<RustEdition, PackageStoreError> {
+    pub fn origin_edition(&self, origin: DefMapRef) -> anyhow::Result<RustEdition> {
         self.crate_edition(origin.origin_crate())
     }
 }
@@ -164,7 +178,7 @@ impl<'db> IndexedViewDb<'db> {
 /// lookup starting point is replaced; after that, the ordinary indexed path query owns all name
 /// resolution rules.
 impl TypePathResolver for IndexedViewDb<'_> {
-    type Error = PackageStoreError;
+    type Error = ReadError;
 
     fn resolve_type_path(
         &self,
@@ -180,68 +194,54 @@ impl TypePathResolver for IndexedViewDb<'_> {
 }
 
 impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
-    type Error = PackageStoreError;
+    type Error = ReadError;
 
-    fn item_store_for_origin(
-        &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
+    fn item_store_for_origin(&self, origin: DefMapRef) -> Result<Option<&'a ItemStore>, ReadError> {
         match origin {
             DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
         }
     }
-
-    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, PackageStoreError> {
-        self.semantic_ir.included_stores()
-    }
 }
 
 impl DefMapSource for &IndexedViewDb<'_> {
-    type Error = PackageStoreError;
+    type Error = ReadError;
 
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         match origin {
             DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),
             DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
         }
     }
 
-    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, PackageStoreError> {
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, ReadError> {
         self.def_map.crate_is_proc_macro(crate_ref)
     }
 
-    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, PackageStoreError> {
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         self.def_map.target_pointer_width(crate_ref)
     }
 
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         self.def_map.extern_root(crate_ref, name)
     }
 
-    fn extern_roots(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError> {
         self.def_map.extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.def_map.prelude_module(crate_ref)
     }
 
     fn item_lookup_dependencies(
         &self,
         crate_ref: CrateRef,
-    ) -> Result<UniqueVec<CrateRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<CrateRef>, ReadError> {
         self.def_map.item_lookup_dependencies(crate_ref)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.def_map.root_module(crate_ref)
     }
 }

@@ -3,8 +3,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ScopeId};
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_ty::{
     TraitRefLowering, Ty,
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
@@ -20,14 +20,14 @@ pub(crate) struct TypeRefResolutionQuery<'query, D, I> {
 
 impl<'query, D, I> TypeRefResolutionQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>, scope: ScopeId) -> Self {
         Self { context, scope }
     }
 
-    pub(crate) fn resolve(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
+    pub(crate) fn resolve(&self, ty: &TypeRef) -> Result<Ty, ReadError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         lowering.lower(ty, TypeLoweringEnv::new(self.body_owner(), self.anchor()))
@@ -37,7 +37,7 @@ where
         &self,
         bound: &TypeRef,
         self_ty: Ty,
-    ) -> Result<Option<TraitRefLowering>, PackageStoreError> {
+    ) -> Result<Option<TraitRefLowering>, ReadError> {
         let item_paths = self.context.item_paths();
         let lowering = TypeLoweringQuery::new(&item_paths, &self.context);
         lowering.with_storage(|cx| {

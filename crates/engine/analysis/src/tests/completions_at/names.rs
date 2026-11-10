@@ -110,7 +110,7 @@ pub fn use_it() {
             // unqualified type proximity
             struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(0) }), id: Struct(StructId(0)) }) })
+              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: TypeDef(TypeDefRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Local, body: BodyId(0) }), id: Struct(StructId(0)) }) })
               replace: 112..113
             struct AModule
               detail: struct AModule

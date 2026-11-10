@@ -17,8 +17,8 @@ use rg_ir_model::{
     TraitDefRef, TraitImplRef,
 };
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_std::{OperationError, UniqueVec};
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
@@ -31,8 +31,8 @@ pub(crate) struct BodyTraitQuery<'query, D, I> {
 
 impl<'query, D, I> BodyTraitQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -48,11 +48,11 @@ where
         &self,
         scope: ScopeId,
         surface: BodyTraitSurface<'_>,
-    ) -> Result<Arc<UniqueVec<TraitDefRef>>, PackageStoreError> {
+    ) -> Result<Arc<UniqueVec<TraitDefRef>>, ReadError> {
         let result = self.context.trait_cache().surface_or_try_init(
             scope,
             surface,
-            || -> Result<_, OperationError<PackageStoreError>> {
+            || -> Result<_, OperationError<ReadError>> {
                 let body_items = self.context.body_local_items();
                 let item_lookup = self.context.item_lookup_query();
                 let (body_traits, saved_traits) = match surface {
@@ -123,16 +123,13 @@ where
     pub(crate) fn traits_in_scope(
         &self,
         scope: ScopeId,
-    ) -> Result<Arc<HashSet<TraitDefRef>>, PackageStoreError> {
+    ) -> Result<Arc<HashSet<TraitDefRef>>, ReadError> {
         self.context
             .trait_cache()
             .scope_or_try_init(scope, || self.collect_traits_in_scope(scope))
     }
 
-    fn collect_traits_in_scope(
-        &self,
-        scope: ScopeId,
-    ) -> Result<HashSet<TraitDefRef>, PackageStoreError> {
+    fn collect_traits_in_scope(&self, scope: ScopeId) -> Result<HashSet<TraitDefRef>, ReadError> {
         let def_maps = self.context.def_map_query();
         let body_scope = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
@@ -166,7 +163,7 @@ where
         &self,
         traits: &mut HashSet<TraitDefRef>,
         local_defs: impl IntoIterator<Item = LocalDefRef>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for local_def in local_defs {
             self.push_local_trait(traits, local_def)?;
         }
@@ -177,7 +174,7 @@ where
         &self,
         traits: &mut HashSet<TraitDefRef>,
         local_def: LocalDefRef,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         if let Some(SemanticItemRef::Trait(trait_ref)) = self
             .context
             .item_query()
@@ -194,7 +191,7 @@ where
         scope: ScopeId,
         self_ty_ref: &TypeRef,
         trait_ty_ref: &TypeRef,
-    ) -> Result<Option<BodyQualifiedTraitSelection>, PackageStoreError> {
+    ) -> Result<Option<BodyQualifiedTraitSelection>, ReadError> {
         let self_ty = self.resolve_type_ref(scope, self_ty_ref)?;
         let Some(trait_prefix) = self.resolve_trait_prefix(scope, trait_ty_ref, self_ty.clone())?
         else {
@@ -224,7 +221,7 @@ where
     }
 
     /// Resolve a type syntax where the qualified path is written.
-    fn resolve_type_ref(&self, scope: ScopeId, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
+    fn resolve_type_ref(&self, scope: ScopeId, ty: &TypeRef) -> Result<Ty, ReadError> {
         self.context.type_refs(scope).resolve(ty)
     }
 
@@ -234,7 +231,7 @@ where
         scope: ScopeId,
         trait_ty_ref: &TypeRef,
         self_ty: Ty,
-    ) -> Result<Option<ResolvedTraitPrefix>, PackageStoreError> {
+    ) -> Result<Option<ResolvedTraitPrefix>, ReadError> {
         let Some(lowering) = self
             .context
             .type_refs(scope)
@@ -258,7 +255,7 @@ where
         &self,
         ty: &AdtTy,
         application: &TraitApplication,
-    ) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<TraitImplRef>, ReadError> {
         let mut impls = UniqueVec::new();
         self.push_matching_qualified_trait_impls(
             &mut impls,
@@ -293,7 +290,7 @@ where
         candidates: impl IntoIterator<Item = TraitImplRef>,
         ty: &AdtTy,
         application: &TraitApplication,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for candidate in candidates {
             if candidate.trait_ref != application.def {
                 continue;
@@ -314,7 +311,7 @@ where
         trait_impl: TraitImplRef,
         receiver_ty: &AdtTy,
         written: &TraitApplication,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, ReadError> {
         let impl_query = self.context.impl_query();
         let Some(header) = impl_query.impl_header(trait_impl.impl_ref)? else {
             return Ok(false);

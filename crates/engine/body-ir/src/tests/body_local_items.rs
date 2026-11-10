@@ -42,9 +42,7 @@ pub fn outer() {
         crate_id: CrateId(target.id.0),
     };
     let crate_bodies = db
-        .body_ir_db()
-        .resident_package(crate_ref.package)
-        .and_then(|package| package.crate_bodies(crate_ref.crate_id))
+        .bodies(crate_ref)
         .expect("fixture crate bodies should exist");
     assert_eq!(
         crate_bodies.bodies().len(),
@@ -53,11 +51,12 @@ pub fn outer() {
     );
 
     let body_ref = BodyRef {
+        root: rg_ir_model::BodyRoot::Local,
         crate_ref,
         body: BodyId(0),
     };
     let def_map = db
-        .resident_body_def_map(body_ref)
+        .body_def_map(body_ref)
         .expect("outer body should contain a finalized local def map");
     let mut names = def_map
         .local_defs()
@@ -1427,6 +1426,7 @@ pub fn use_it() {
         .first()
         .expect("fixture package should contain one target");
     let body_ref = BodyRef {
+        root: rg_ir_model::BodyRoot::Local,
         crate_ref: CrateRef {
             package: PackageSlot(0),
             crate_id: CrateId(target.id.0),
@@ -1434,7 +1434,7 @@ pub fn use_it() {
         body: BodyId(0),
     };
     let def_map = db
-        .resident_body_def_map(body_ref)
+        .body_def_map(body_ref)
         .expect("lowered body should contain a finalized body-local defmap");
 
     let unresolved_imports = def_map
@@ -1581,7 +1581,8 @@ fn use_it() {
         .expect("fixture package exists");
     let target = package.targets().first().expect("fixture target exists");
     let map = db
-        .resident_body_def_map(BodyRef {
+        .body_def_map(BodyRef {
+            root: rg_ir_model::BodyRoot::Local,
             crate_ref: CrateRef {
                 package: PackageSlot(0),
                 crate_id: CrateId(target.id.0),

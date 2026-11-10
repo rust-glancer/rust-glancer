@@ -8,8 +8,8 @@ mod member;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_source::ReadError;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{
@@ -30,8 +30,8 @@ pub(crate) struct LiveBodyQuery<'query, D, I> {
 
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -42,7 +42,7 @@ where
         scope: ScopeId,
         ty: &TypeRef,
         table: &InferenceTable<'s>,
-    ) -> Result<Ty<'s>, PackageStoreError> {
+    ) -> Result<Ty<'s>, ReadError> {
         let paths = self.context.item_paths();
         let query = TypeLoweringQuery::new(&paths, &self.context);
         let owner = self.context.body().owner().generic_def();
@@ -59,7 +59,7 @@ where
         generics: &Generics<'_>,
         args: &[ItemGenericArg],
         table: &InferenceTable<'s>,
-    ) -> Result<GenericArgs<'s>, PackageStoreError> {
+    ) -> Result<GenericArgs<'s>, ReadError> {
         let paths = self.context.item_paths();
         let query = TypeLoweringQuery::new(&paths, &self.context);
         let owner = self.context.body().owner().generic_def();
@@ -79,7 +79,7 @@ where
         application: TraitApplication<'s>,
         name: &str,
         table: &InferenceTable<'s>,
-    ) -> Result<Option<Ty<'s>>, PackageStoreError> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(associated_ty) = self
             .context
             .item_query()
@@ -104,7 +104,7 @@ where
         ty: Ty<'s>,
         field: &FieldKey,
         table: &InferenceTable<'s>,
-    ) -> Result<Option<(BodyResolution, Ty<'s>)>, PackageStoreError> {
+    ) -> Result<Option<(BodyResolution, Ty<'s>)>, ReadError> {
         for receiver in table.autoderef(ty) {
             if let (TyShape::Tuple(fields), FieldKey::Tuple(index)) = (receiver.shape(), field)
                 && let Some(ty) = fields.get(*index)
@@ -148,7 +148,7 @@ where
         variant: EnumVariantRef,
         field: &FieldKey,
         table: &InferenceTable<'s>,
-    ) -> Result<Option<Ty<'s>>, PackageStoreError> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         if adt.def.id != TypeDefId::Enum(variant.enum_id) || adt.def.origin != variant.origin {
             return Ok(None);
         }
@@ -177,7 +177,7 @@ where
         mut ty: Ty<'s>,
         field: &FieldKey,
         table: &InferenceTable<'s>,
-    ) -> Result<Option<Ty<'s>>, PackageStoreError> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         while let TyShape::Reference { inner, .. } = table.resolve_root_var(ty).shape() {
             ty = inner;
         }

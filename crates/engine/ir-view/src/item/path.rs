@@ -72,7 +72,6 @@ impl<'a, 'db> PathView<'a, 'db> {
             Some(crate_data) => crate_data.name(),
             None => self
                 .db
-                .def_map
                 .package_name(crate_ref.package)
                 .context("load package name for module path")?,
         };

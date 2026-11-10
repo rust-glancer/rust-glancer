@@ -40,6 +40,7 @@ fn closure_ty(index: usize) -> Ty {
 
 fn body_ref() -> BodyRef {
     BodyRef {
+        root: rg_ir_model::BodyRoot::Local,
         crate_ref: CrateRef {
             package: PackageSlot(0),
             crate_id: CrateId(0),
@@ -63,21 +64,11 @@ pub struct Vec<T>(T);
 "#,
     );
     let target = body_ref().crate_ref;
-    let def_map = fixture
-        .def_map_db()
-        .read_txn(rg_def_map::DefMapLoader::resident_only("inference fixture"));
-    let semantic_ir =
-        fixture
-            .semantic_ir_db()
-            .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
-                "inference fixture",
-            ));
-    let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
-        &rg_semantic_ir::ItemStoreQuery::new(&semantic_ir),
-        target,
-        &CancellationToken::new(),
-    )
-    .expect("fixture lookup");
+    let def_map = fixture.def_map_db().reader();
+    let semantic_ir = fixture.semantic_ir_db().reader();
+    let lookup =
+        rg_semantic_ir::ItemLookupQuery::build_from(semantic_ir, target, &CancellationToken::new())
+            .expect("fixture lookup");
     let context = rg_ty::TyContext::new(
         &def_map,
         &semantic_ir,
@@ -354,28 +345,13 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
         package: PackageSlot(0),
         crate_id: CrateId(0),
     };
-    let bodies = fixture
-        .body_ir_db()
-        .resident_package(target.package)
-        .expect("fixture package exists")
-        .crate_bodies(target.crate_id)
-        .expect("fixture crate exists");
+    let bodies = fixture.bodies(target).expect("fixture crate exists");
     let body = &bodies.bodies()[0];
-    let def_map = fixture
-        .def_map_db()
-        .read_txn(rg_def_map::DefMapLoader::resident_only("inference fixture"));
-    let semantic_ir =
-        fixture
-            .semantic_ir_db()
-            .read_txn(rg_semantic_ir::SemanticIrLoader::resident_only(
-                "inference fixture",
-            ));
-    let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
-        &rg_semantic_ir::ItemStoreQuery::new(&semantic_ir),
-        target,
-        &CancellationToken::new(),
-    )
-    .expect("fixture lookup builds");
+    let def_map = fixture.def_map_db().reader();
+    let semantic_ir = fixture.semantic_ir_db().reader();
+    let lookup =
+        rg_semantic_ir::ItemLookupQuery::build_from(semantic_ir, target, &CancellationToken::new())
+            .expect("fixture lookup builds");
     for cancel in [true, false] {
         let cancellation = CancellationToken::new();
         CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
@@ -384,6 +360,7 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
             &semantic_ir,
             &lookup,
             BodyRef {
+                root: rg_ir_model::BodyRoot::Local,
                 crate_ref: target,
                 body: BodyId(0),
             },
@@ -393,11 +370,10 @@ pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 
         .infer_body();
         if cancel {
             let error = result.expect_err("unfinished inference must have no facts");
-            let cancelled = error
-                .chain()
-                .find_map(|cause| cause.downcast_ref::<rg_std::Cancelled>())
-                .expect("inference preserves the cancellation cause");
-            assert_eq!(cancelled.checkpoint(), "expression resolution");
+            assert!(
+                error.chain().any(|cause| cause.is::<rg_std::Cancelled>()),
+                "inference preserves the cancellation cause",
+            );
         } else {
             let facts = result.expect("fresh inference can finish");
             assert_eq!(facts.exprs.len(), body.exprs().len());

@@ -2,7 +2,7 @@
 //!
 //! `build` lowers syntax and prepares local declarations before `resolution` derives semantic
 //! facts. `body` owns the frozen structure, its facts, and the views that read them together.
-//! `store` retains saved body packages and the current bodies prepared for an editor request.
+//! `store` reads saved owner results and the current bodies prepared for an editor request.
 
 mod body;
 mod build;
@@ -17,8 +17,8 @@ pub use rg_ir_model::FieldKey;
 pub(crate) use self::store::CurrentBody;
 pub use self::{
     build::{
-        BodyIrBuildPolicy, BodyIrBuilder, CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary,
-        CurrentSourceBuilder, CurrentSourceSelection, CurrentSourceUnavailable,
+        CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceBuilder,
+        CurrentSourceSelection, CurrentSourceUnavailable, SavedBody, saved_body,
     },
     profile::profile_descriptors,
 };
@@ -41,10 +41,5 @@ pub use self::{
         BodyFieldQuery, BodyMethodQuery, BodyResolutionContext, BodyTypePathQuery,
         BodyValuePathQuery,
     },
-    store::{
-        BodyFileEntry, BodyFileShard, BodyIrDb, BodyIrLoader, BodyIrReadTxn, BodyIrStats,
-        BodyLocalItems, CrateBodies, CrateBodiesCoverage, CrateBodiesManifest, CrateBodiesStatus,
-        CurrentSourceStore, LoadBodyIr, PackageBodies, PackageBodiesCoverage,
-        PackageBodiesManifest,
-    },
+    store::{BodyLocalItems, BodyReader, BodyStore, CurrentSourceStore},
 };

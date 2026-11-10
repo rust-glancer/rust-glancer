@@ -17,8 +17,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{AssocItemId, DefMapRef, ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 
 use crate::resolution::{
@@ -36,18 +36,15 @@ pub(crate) struct BodyLocalItemQuery<'context, 'query, D, I> {
 
 impl<'context, 'query, D, I> BodyLocalItemQuery<'context, 'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: &'context BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
     /// Return body-local inherent impls whose `Self` resolves to this type.
-    pub(super) fn inherent_impls_for_type(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<&[ImplRef], PackageStoreError> {
+    pub(super) fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<&[ImplRef], ReadError> {
         Ok(self
             .index()?
             .inherent_impls_by_type
@@ -64,7 +61,7 @@ where
     pub(super) fn inherent_item_names_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Option<&BodyLocalInherentItemNames>, PackageStoreError> {
+    ) -> Result<Option<&BodyLocalInherentItemNames>, ReadError> {
         Ok(self.index()?.inherent_item_names_by_type.get(&ty))
     }
 
@@ -72,7 +69,7 @@ where
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<&[TraitImplRef], PackageStoreError> {
+    ) -> Result<&[TraitImplRef], ReadError> {
         Ok(self
             .index()?
             .trait_impls_by_type
@@ -85,7 +82,7 @@ where
     pub(crate) fn trait_impls_for_traits<'a>(
         &'a self,
         trait_refs: &'a [TraitDefRef],
-    ) -> Result<impl Iterator<Item = TraitImplRef> + 'a, PackageStoreError> {
+    ) -> Result<impl Iterator<Item = TraitImplRef> + 'a, ReadError> {
         // Solver queries usually ask for one trait and encounter no local impls. Borrow the
         // requested names; an empty index performs no membership work or allocation.
         Ok(self
@@ -100,7 +97,7 @@ where
     pub(super) fn traits_with_function_name(
         &self,
         name: &str,
-    ) -> Result<&[TraitDefRef], PackageStoreError> {
+    ) -> Result<&[TraitDefRef], ReadError> {
         Ok(self
             .index()?
             .traits_by_function_name
@@ -110,10 +107,7 @@ where
     }
 
     /// Return body-local traits declaring an associated const with this name.
-    pub(super) fn traits_with_const_name(
-        &self,
-        name: &str,
-    ) -> Result<&[TraitDefRef], PackageStoreError> {
+    pub(super) fn traits_with_const_name(&self, name: &str) -> Result<&[TraitDefRef], ReadError> {
         Ok(self
             .index()?
             .traits_by_const_name
@@ -123,17 +117,17 @@ where
     }
 
     /// Return body-local traits that declare at least one function.
-    pub(super) fn traits_with_functions(&self) -> Result<&[TraitDefRef], PackageStoreError> {
+    pub(super) fn traits_with_functions(&self) -> Result<&[TraitDefRef], ReadError> {
         Ok(self.index()?.traits_with_functions.as_slice())
     }
 
     /// Return body-local traits that declare at least one associated item.
-    pub(super) fn traits_with_associated_items(&self) -> Result<&[TraitDefRef], PackageStoreError> {
+    pub(super) fn traits_with_associated_items(&self) -> Result<&[TraitDefRef], ReadError> {
         Ok(self.index()?.traits_with_associated_items.as_slice())
     }
 
     /// Build the request-local overlay once for queries throughout body inference.
-    fn build_index(&self) -> Result<BodyLocalItemIndex, PackageStoreError> {
+    fn build_index(&self) -> Result<BodyLocalItemIndex, ReadError> {
         let mut index = BodyLocalItemIndex::default();
         for store in self.body_lookup_stores()? {
             // Impl declarations provide receiver candidates. Inherent impls additionally retain
@@ -232,14 +226,14 @@ where
         Ok(index)
     }
 
-    fn index(&self) -> Result<&BodyLocalItemIndex, PackageStoreError> {
+    fn index(&self) -> Result<&BodyLocalItemIndex, ReadError> {
         self.context
             .body_local_item_cache()
             .index_or_try_init(|| self.build_index())
     }
 
     /// Gather body item stores that can affect the current body lookup.
-    fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
+    fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, ReadError> {
         let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and

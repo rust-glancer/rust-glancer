@@ -45,11 +45,11 @@ pub(crate) struct SelectedImpl {
     pub(crate) impl_ref: ImplRef,
 }
 
-/// Current bodies and declarations layered over a saved read transaction.
+/// Current bodies and declarations layered over a saved query operation.
 ///
 /// Different source text masks other saved bodies in that file because their ranges no longer
 /// describe this document. Exact source retains unselected saved bodies. None of these objects
-/// enters saved crate indexes or package artifacts.
+/// enters saved outputs.
 #[derive(Debug, Default)]
 pub struct CurrentSourceStore {
     pub(crate) masked_file: Option<(CrateRef, FileId)>,
@@ -87,17 +87,6 @@ impl CurrentSourceStore {
 
     pub(crate) fn masks_file(&self, crate_ref: CrateRef, file: FileId) -> bool {
         self.masked_file == Some((crate_ref, file))
-    }
-
-    /// A whole-crate saved body value cannot include rebuilt bodies or file masks.
-    /// Adding only header declarations does not change that body inventory.
-    pub(crate) fn affects_crate(&self, crate_ref: CrateRef) -> bool {
-        self.masked_file
-            .is_some_and(|(owner, _)| owner == crate_ref)
-            || self
-                .bodies
-                .iter()
-                .any(|body| body.body_ref().crate_ref == crate_ref)
     }
 
     pub(crate) fn bodies(&self) -> &[CurrentBody] {

@@ -6,8 +6,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::ScopeId;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_ty::{
     Ty,
     lookup::{MemberMethodCandidateRef, MemberMethodOrigin},
@@ -24,8 +24,8 @@ pub struct BodyMethodQuery<'query, D, I> {
 
 impl<'query, D, I> BodyMethodQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -36,7 +36,7 @@ where
         &self,
         scope: ScopeId,
         ty: &Ty,
-    ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
+    ) -> Result<Vec<MemberMethodCandidateRef>, ReadError> {
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
         declarations.with_table(|table, params| {

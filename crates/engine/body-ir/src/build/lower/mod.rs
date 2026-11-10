@@ -3,8 +3,6 @@
 //! This pass does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
-use std::time::{Duration, Instant};
-
 mod body;
 mod builder;
 mod builtin_macro;
@@ -18,52 +16,23 @@ mod syntax;
 mod syntax_kind;
 mod task;
 
-use anyhow::Context as _;
-use rayon::prelude::*;
 use rg_arena::Arena;
-use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, ConstRef, CrateId, CrateRef, PackageSlot, StaticRef};
-use rg_parse::ParseDb;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ir_model::BodyId;
 
-use self::crate_lowering::CrateLowering;
 pub(super) use self::{
     builder::{LoweredBodyData, PendingBindingResolution},
+    crate_lowering::CrateLowering,
     declaration::{CurrentDeclarationBuilder, CurrentRootItems},
     macro_expansion::BodyMacroExpansion,
     task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
 };
-use super::{local_thread_pool, materialization::BodyIrMaterialization};
-use crate::CrateBodiesCoverage;
-
-// These thresholds are diagnostic filters, not build budgets. Debug logging should identify
-// unusually expensive units without producing one record for every ordinary package or crate.
-const SLOW_CRATE_LOWERING: Duration = Duration::from_secs(1);
-const SLOW_PACKAGE_LOWERING: Duration = Duration::from_secs(2);
-
-/// Package-local structural lowering output, before semantic facts are resolved.
-/// Exact selections omit sibling targets, so each entry keeps its original crate id.
-pub(super) type LoweredPackageBodies = Vec<(CrateId, LoweredCrateBodies)>;
-
 /// Crate-local bodies that still retain source-ambiguous pattern binding candidates.
+#[derive(Default)]
 pub(super) struct LoweredCrateBodies {
-    coverage: CrateBodiesCoverage,
     bodies: Arena<BodyId, LoweredBodyData>,
 }
 
 impl LoweredCrateBodies {
-    pub(super) fn with_coverage(coverage: CrateBodiesCoverage) -> Self {
-        Self {
-            coverage,
-            bodies: Arena::new(),
-        }
-    }
-
-    pub(super) fn coverage(&self) -> CrateBodiesCoverage {
-        self.coverage.clone()
-    }
-
     pub(super) fn bodies(&self) -> &Arena<BodyId, LoweredBodyData> {
         &self.bodies
     }
@@ -79,266 +48,4 @@ impl LoweredCrateBodies {
     pub(super) fn into_bodies(self) -> Arena<BodyId, LoweredBodyData> {
         self.bodies
     }
-}
-
-pub(super) fn build_selected_packages(
-    parse: &ParseDb,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrMaterialization<'_>,
-    package_slots: &[PackageSlot],
-    cancellation: &rg_std::CancellationToken,
-) -> anyhow::Result<Vec<(PackageSlot, LoweredPackageBodies)>> {
-    validate_selected_packages(parse.package_count(), package_slots)?;
-    validate_selected_crates(parse.package_count(), &scope)?;
-
-    let mut selected = vec![false; parse.package_count()];
-    for package_slot in package_slots {
-        selected[package_slot.0] = true;
-    }
-
-    let mut packages = Vec::new();
-    packages.resize_with(parse.package_count(), || None);
-    build_package_outputs(
-        parse,
-        def_map,
-        semantic_ir,
-        scope,
-        &selected,
-        &mut packages,
-        cancellation,
-    )?;
-
-    Ok(packages
-        .into_iter()
-        .enumerate()
-        .filter_map(|(package_idx, bodies)| bodies.map(|bodies| (PackageSlot(package_idx), bodies)))
-        .collect())
-}
-
-fn build_package_outputs(
-    parse: &ParseDb,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrMaterialization<'_>,
-    selected: &[bool],
-    packages: &mut [Option<LoweredPackageBodies>],
-    cancellation: &rg_std::CancellationToken,
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        selected.len() == parse.package_count(),
-        "body IR package selection count {} does not match parse package count {}",
-        selected.len(),
-        parse.package_count(),
-    );
-
-    let thread_pool = local_thread_pool("rg-body-lower")?;
-
-    // Each worker reads one parse package and owns its output slot. Non-selected rebuild
-    // slots stay absent from this temporary output.
-    thread_pool.install(|| {
-        parse
-            .packages()
-            .par_iter()
-            .zip(selected.par_iter())
-            .zip(packages.par_iter_mut())
-            .enumerate()
-            .try_for_each(
-                |(package_idx, ((parse_package, selected), output))| -> anyhow::Result<()> {
-                    if !*selected {
-                        return Ok(());
-                    }
-
-                    let package = PackageSlot(package_idx);
-                    *output = Some(build_package(
-                        parse_package,
-                        def_map,
-                        semantic_ir,
-                        scope,
-                        package,
-                        cancellation,
-                    )?);
-                    Ok(())
-                },
-            )
-    })
-}
-
-fn build_package(
-    parse_package: &rg_parse::Package,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrMaterialization<'_>,
-    package: PackageSlot,
-    cancellation: &rg_std::CancellationToken,
-) -> anyhow::Result<LoweredPackageBodies> {
-    let span = tracing::debug_span!(
-        "body_ir_package_lowering",
-        rg.package = parse_package.package_name(),
-        rg.package_slot = package.0,
-    );
-    let _entered = span.enter();
-    rg_std::check_cancel!(cancellation, "lower body package");
-    let started = Instant::now();
-    let crate_count = parse_package.targets().len();
-    let mut crates = Vec::with_capacity(crate_count);
-
-    // An exact build emits only selected crates. Package directories and sibling preservation
-    // belong to the publisher, which may have newer results than this build's saved inputs.
-    for crate_idx in 0..crate_count {
-        rg_std::check_cancel!(cancellation, "lower body crate");
-        let crate_id = CrateId(crate_idx);
-        let crate_ref = CrateRef { package, crate_id };
-        if !scope.selects_crate(crate_ref) {
-            continue;
-        }
-
-        // A semantic crate retains the Cargo target that provides its source and cfg context. Keep
-        // the conversion at this boundary instead of relying on matching indexes after this point.
-        let cargo_target = def_map
-            .crate_data(crate_ref)
-            .with_context(|| {
-                format!("while attempting to fetch DefMap data for crate {crate_idx}")
-            })?
-            .context("semantic crate should have definition data")?
-            .cargo_target();
-
-        // Build cfg evaluator to support `#[cfg]` in bodies
-        let parse_target = parse_package.target(cargo_target).with_context(|| {
-            format!("while attempting to fetch parsed target for crate {crate_idx}")
-        })?;
-        let cfg = CfgEvaluator::new(parse_package.cfg_options(), parse_target.enables_test_cfg());
-
-        // Collect known semantic items.
-        let store = semantic_ir
-            .items(crate_ref)
-            .with_context(|| {
-                format!("while attempting to fetch semantic IR items for crate {crate_idx}")
-            })?
-            .context("store must be present")?;
-        let functions = store
-            .functions_with_refs()
-            .filter(|_| !matches!(scope, BodyIrMaterialization::DeclarationInitializers))
-            .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
-            .collect::<Vec<_>>();
-        let consts = store
-            .consts()
-            .iter_with_ids()
-            .map(|(id, data)| {
-                (
-                    ConstRef {
-                        origin: store.origin(),
-                        id,
-                    },
-                    data.source.file_id,
-                    data.span,
-                )
-            })
-            .collect::<Vec<_>>();
-        let statics = store
-            .statics()
-            .iter_with_ids()
-            .map(|(id, data)| {
-                (
-                    StaticRef {
-                        origin: store.origin(),
-                        id,
-                    },
-                    data.source.file_id,
-                    data.span,
-                )
-            })
-            .collect::<Vec<_>>();
-
-        let coverage = scope.crate_coverage(parse_package, parse_target);
-        if !coverage.is_materialized() {
-            crates.push((crate_id, LoweredCrateBodies::with_coverage(coverage)));
-            continue;
-        }
-
-        // Lower. Keep the crate identity in the active span so a slow macro/body event emitted by
-        // a nested lowering helper can identify its source without adding diagnostic parameters.
-        let crate_span = tracing::debug_span!("body_ir_crate_lowering", rg.crate_id = crate_idx,);
-        let _crate_entered = crate_span.enter();
-        let crate_started = Instant::now();
-        let crate_bodies = CrateLowering {
-            parse_package,
-            def_map,
-            semantic_ir,
-            functions,
-            consts,
-            statics,
-            crate_bodies: LoweredCrateBodies::with_coverage(coverage),
-            cfg,
-            cancellation,
-        }
-        .lower()
-        .with_context(|| format!("while attempting to lower body IR for crate {crate_idx}"))?;
-        let crate_elapsed = crate_started.elapsed();
-        if crate_elapsed >= SLOW_CRATE_LOWERING {
-            tracing::debug!(
-                elapsed_ms = crate_elapsed.as_millis(),
-                body_count = crate_bodies.bodies().len(),
-                "slow Body IR crate lowering"
-            );
-        }
-        crates.push((crate_id, crate_bodies));
-    }
-
-    let elapsed = started.elapsed();
-    if elapsed >= SLOW_PACKAGE_LOWERING {
-        tracing::debug!(
-            elapsed_ms = elapsed.as_millis(),
-            crate_count,
-            body_count = crates
-                .iter()
-                .map(|(_, crate_bodies)| crate_bodies.bodies().len())
-                .sum::<usize>(),
-            "slow Body IR package lowering"
-        );
-    }
-
-    Ok(crates)
-}
-
-fn validate_selected_packages(
-    package_count: usize,
-    package_slots: &[PackageSlot],
-) -> anyhow::Result<()> {
-    if let Some(package) = package_slots
-        .iter()
-        .copied()
-        .find(|package| package.0 >= package_count)
-    {
-        anyhow::bail!(
-            "body IR package slot {} is out of bounds for {package_count} parsed packages",
-            package.0,
-        );
-    }
-
-    Ok(())
-}
-
-fn validate_selected_crates(
-    package_count: usize,
-    scope: &BodyIrMaterialization<'_>,
-) -> anyhow::Result<()> {
-    match scope {
-        BodyIrMaterialization::SelectedCrates(crates) => {
-            if let Some(crate_ref) = crates
-                .iter()
-                .copied()
-                .find(|crate_ref| crate_ref.package.0 >= package_count)
-            {
-                anyhow::bail!(
-                    "Body IR crate package slot {} is out of bounds for {package_count} parsed packages",
-                    crate_ref.package.0,
-                );
-            }
-        }
-        BodyIrMaterialization::ConfiguredBodies(_)
-        | BodyIrMaterialization::DeclarationInitializers => {}
-    }
-
-    Ok(())
 }

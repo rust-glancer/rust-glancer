@@ -5,11 +5,11 @@
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefMap, DefMapReadTxn};
+use rg_def_map::{DefMap, DefinitionReader};
 use rg_ir_model::{
     BodyId, BodyRef, BodySource, ConstRef, DefMapRef, FileId, ItemOwner, ModuleRef, Span, StaticRef,
 };
-use rg_semantic_ir::{ItemStore, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemReader, ItemStore};
 
 use super::CrateBodyBuildState;
 use crate::{
@@ -30,33 +30,24 @@ impl CrateBodyBuildState<'_> {
     // fn/const/static bodies, and the loop visits those appended bodies before resolution starts.
     pub(crate) fn materialize_body_local_items(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         task_source: BodyTaskSource<'_>,
+        cfg: CfgEvaluator<'_>,
         mut body_ref_for_nested: impl FnMut(LoweredBodyTask) -> anyhow::Result<BodyRef>,
     ) -> anyhow::Result<()> {
         self.body_local_items.clear();
         // `body_local_items` is the cursor into `crate_bodies`: each collected slot means that
         // body has its local DefMap/item store ready. Nested lowering may extend `crate_bodies`,
         // so the loop stops only once every appended body has been collected too.
-        let cargo_target = def_map
-            .package(self.crate_ref.package)?
-            .crate_data(self.crate_ref.crate_id)
-            .context("semantic crate should have definition data")?
-            .cargo_target();
-        let parse_target = self.parse_package.target(cargo_target).with_context(|| {
-            format!(
-                "while attempting to fetch parsed target {:?} for nested body lowering",
-                self.crate_ref.crate_id,
-            )
-        })?;
-        let cfg = CfgEvaluator::new(
-            self.parse_package.cfg_options(),
-            parse_target.enables_test_cfg(),
+        let mut macro_expansion = BodyMacroExpansion::new(
+            task_source.edition(),
+            def_map,
+            cfg,
+            self.cancellation.clone(),
         );
-        let mut macro_expansion =
-            BodyMacroExpansion::new(self.parse_package, def_map, cfg, self.cancellation.clone());
         while self.body_local_items.len() < self.crate_bodies.bodies().len() {
+            task_source.check_cancelled()?;
             let body = self.body_local_items.next_id();
             let body_ref = self.body_ref(body);
             let items = self
@@ -214,8 +205,8 @@ impl CrateBodyBuildState<'_> {
     fn collect_body_local_items(
         &self,
         body: BodyId,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
     ) -> anyhow::Result<BodyLocalItems> {
         let body_ref = self.body_ref(body);
         let body = self.crate_bodies.bodies()[body].body();

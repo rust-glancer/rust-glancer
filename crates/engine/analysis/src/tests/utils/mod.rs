@@ -1625,7 +1625,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
             .db
             .fixture
             .def_map_db()
-            .resident_package(crate_ref.package)
+            .package(crate_ref.package)
             .and_then(|package| package.crate_data(crate_ref.crate_id))
             .expect("semantic crate should exist while rendering workspace symbol")
             .cargo_target();

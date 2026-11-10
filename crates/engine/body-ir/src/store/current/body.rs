@@ -1,6 +1,6 @@
 //! Request-local Body IR built from the text currently shown in the editor.
 //!
-//! These values sit on top of a saved Body IR read transaction for one request. They let local
+//! These values sit on top of a saved body reader for one request. They let local
 //! analysis see newly typed expressions and bindings without creating another project generation.
 
 use rg_ir_model::{BodyRef, Span};

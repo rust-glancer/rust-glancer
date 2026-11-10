@@ -83,7 +83,7 @@ pub(super) struct SavedNestedBodyIndex {
 
 impl SavedNestedBodyIndex {
     pub(super) fn new(
-        saved_body_ir: &crate::BodyIrReadTxn<'_>,
+        saved_body_ir: &crate::BodyReader<'_>,
         crate_ref: CrateRef,
         file: FileId,
         saved_bodies: &[(BodyRef, crate::BodyView<'_>)],

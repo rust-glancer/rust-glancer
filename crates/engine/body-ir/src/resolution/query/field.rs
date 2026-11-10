@@ -3,8 +3,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId};
 use rg_item_tree::FieldList;
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
 
@@ -19,8 +19,8 @@ pub struct BodyFieldQuery<'query, D, I> {
 
 impl<'query, D, I> BodyFieldQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -28,7 +28,7 @@ where
 
     /// Collect fields along the same receiver chain used by live field inference. The body's
     /// bounds and lexical declarations stay available while generic Deref targets are resolved.
-    pub fn field_candidates_for_ty(&self, ty: &Ty) -> Result<Vec<FieldRef>, PackageStoreError> {
+    pub fn field_candidates_for_ty(&self, ty: &Ty) -> Result<Vec<FieldRef>, ReadError> {
         let context = self.context.ty_context();
         let declarations = SemanticDeclarations::new(&context, &self.context);
         declarations.with_table(|table, params| {
@@ -53,7 +53,7 @@ where
         path: Option<&BodyPath>,
         expected_ty: &Ty,
         field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
+    ) -> Result<Option<Ty>, ReadError> {
         let variant_path = path.and_then(BodyPath::as_def_map_path);
         let variant_name = variant_path
             .as_ref()
@@ -95,7 +95,7 @@ where
         &self,
         owner_ty: &AdtTy,
         field: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
+    ) -> Result<Option<Ty>, ReadError> {
         let item_query = self.context.item_query();
         let Some(field_ref) = item_query.field_for_type(owner_ty.def, field)? else {
             return Ok(None);
@@ -123,7 +123,7 @@ where
         enum_ty: &AdtTy,
         variant_ref: EnumVariantRef,
         field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
+    ) -> Result<Option<Ty>, ReadError> {
         let TypeDefId::Enum(enum_id) = enum_ty.def.id else {
             return Ok(None);
         };

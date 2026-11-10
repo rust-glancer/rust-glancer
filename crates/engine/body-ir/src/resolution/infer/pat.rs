@@ -7,8 +7,8 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldKey, Mutability, PatId};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_ty::solver::{Ty, TyShape};
 
 use super::{BodyInference, deferred::DeferredKind};
@@ -16,8 +16,8 @@ use crate::body::{BodyPath, PatKind, RecordPatField};
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     /// Pass each signature type through its parameter pattern before the body reads its bindings.
     /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.
@@ -109,7 +109,7 @@ where
         pat: PatId,
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         if !self.try_infer_pat(pat, expected_ty, default_ref)? {
             self.defer(
                 DeferredKind::Pattern {
@@ -133,7 +133,7 @@ where
         pat: PatId,
         expected_ty: &Ty<'s>,
         mut default_ref: Option<Mutability>,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, ReadError> {
         crate::profile::metric::PATTERN_VISITS.inc();
         let mut expected_ty = self.inference.root_resolved_ty(expected_ty);
         let body = self.body;
@@ -241,7 +241,7 @@ where
         fields: &[PatId],
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let TyShape::Tuple(field_tys) = expected_ty.shape() else {
             return Ok(());
         };
@@ -261,7 +261,7 @@ where
         fields: &[PatId],
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let element_ty = match expected_ty.shape() {
             TyShape::Array { inner, .. } | TyShape::Slice(inner) => inner,
             _ => return Ok(()),
@@ -286,7 +286,7 @@ where
         pat: PatId,
         pat_mutability: Mutability,
         expected_ty: &Ty<'s>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let Some((inner_ty, mutability)) = expected_ty.reference_inner() else {
             return Ok(());
         };
@@ -304,7 +304,7 @@ where
         fields: &[PatId],
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
             if let Some(field_ty) = self.context.live().pattern_field(
@@ -326,7 +326,7 @@ where
         fields: &[RecordPatField],
         expected_ty: &Ty<'s>,
         default_ref: Option<Mutability>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for field in fields {
             if let Some(field_ty) = self.context.live().pattern_field(
                 path,

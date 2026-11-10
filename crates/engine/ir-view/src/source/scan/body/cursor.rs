@@ -15,13 +15,13 @@
 //! second lane because one lowered expression can contain several independently navigable path
 //! segments.
 
-use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
+use rg_body_ir::{BodyOwner, BodyReader, BodyView, ExprData, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
     SemanticItemRef, Span, TypeDefId,
 };
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -37,7 +37,7 @@ use crate::source::scan::NarrowestSourceSite;
 /// that touch the same offset. If a macro copied the selected token into several nodes, keep each
 /// expanded use. Analysis can then interpret all uses without Body IR choosing a navigation target.
 pub(crate) struct BodyCursorScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -45,7 +45,7 @@ pub(crate) struct BodyCursorScanner<'txn, 'db> {
 
 impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -59,7 +59,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Returns body-local candidates that can answer an editor query at this exact offset.
-    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
+    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, ReadError> {
         let Some(body_ref) = self.body_at()? else {
             return Ok(Vec::new());
         };
@@ -78,7 +78,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Finds the innermost enclosing body at the cursor offset.
-    fn body_at(&self) -> Result<Option<BodyRef>, PackageStoreError> {
+    fn body_at(&self) -> Result<Option<BodyRef>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
@@ -99,7 +99,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-    ) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodySourceCandidate>, ReadError> {
         let mut best = BestCursorCandidate::new(BodySourceCandidate::Body {
             body: body_ref,
             span: body.source().span,
@@ -279,7 +279,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         body: BodyView<'_>,
         best: &mut BestCursorCandidate,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let Some((item, declaration_span)) = self.body_owner_declaration(body)? else {
             return Ok(());
         };
@@ -343,7 +343,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn body_owner_declaration(
         &self,
         body: BodyView<'_>,
-    ) -> Result<Option<(SemanticItemRef, Span)>, PackageStoreError> {
+    ) -> Result<Option<(SemanticItemRef, Span)>, ReadError> {
         match body.owner() {
             BodyOwner::Function(function) => {
                 if let DefMapRef::Body(parent_body_ref) = function.origin

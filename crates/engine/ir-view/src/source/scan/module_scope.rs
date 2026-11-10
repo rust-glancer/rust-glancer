@@ -4,9 +4,9 @@
 //! semantic module from which names resolve. This scanner joins those two facts without making
 //! analysis reconstruct module ancestry from source text.
 
-use rg_def_map::{DefMap, DefMapReadTxn, ModuleFileSelection, ModuleOrigin};
+use rg_def_map::{DefMap, DefinitionReader, ModuleFileSelection, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleId, ModuleRef};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
 
@@ -37,7 +37,7 @@ pub(crate) enum ModuleFileBase {
 /// file as its source. The scanner normalizes both forms and then derives filesystem descent from
 /// the selected module's ancestry.
 pub(crate) struct ModuleSourceSiteScanner<'txn, 'db> {
-    def_map: &'txn DefMapReadTxn<'db>,
+    def_map: &'txn DefinitionReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -45,7 +45,7 @@ pub(crate) struct ModuleSourceSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        def_map: &'txn DefMapReadTxn<'db>,
+        def_map: &'txn DefinitionReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -59,7 +59,7 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
     }
 
     /// Return source ownership and already-declared child names for the selected module.
-    pub(crate) fn site(&self) -> Result<Option<ModuleSourceSite>, PackageStoreError> {
+    pub(crate) fn site(&self) -> Result<Option<ModuleSourceSite>, ReadError> {
         let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
@@ -135,22 +135,22 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
     /// This still works when edits moved the module away from its saved byte range. Return `None`
     /// if the file has more than one possible root or any path component is missing or ambiguous.
     pub(crate) fn module_for_inline_path(
-        def_map_txn: &DefMapReadTxn<'_>,
+        def_map_txn: &DefinitionReader<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
         inline_module_path: &[String],
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+    ) -> Result<Option<ModuleRef>, ReadError> {
         def_map_txn.module_for_inline_path(crate_ref, file_id, inline_module_path)
     }
 
     /// Return module ownership from a path recovered from current syntax rather than a saved
     /// source offset.
     pub(crate) fn site_for_inline_path(
-        def_map_txn: &DefMapReadTxn<'_>,
+        def_map_txn: &DefinitionReader<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
         inline_module_path: &[String],
-    ) -> Result<Option<ModuleSourceSite>, PackageStoreError> {
+    ) -> Result<Option<ModuleSourceSite>, ReadError> {
         let Some(module) =
             Self::module_for_inline_path(def_map_txn, crate_ref, file_id, inline_module_path)?
         else {

@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource as _;
 use rg_ir_model::{CrateRef, FileId, ImplRef, TraitDefRef};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
 use crate::IndexedViewDb;
@@ -48,7 +48,7 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
     }
 
     /// Search both crate-level and body-local semantic item stores.
-    pub(crate) fn site(&self) -> Result<Option<TraitImplSourceSite>, PackageStoreError> {
+    pub(crate) fn site(&self) -> Result<Option<TraitImplSourceSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
         if let Some(items) = self.db.semantic_ir.items(self.crate_ref)? {
             self.scan_store(items, &mut best)?;
@@ -68,7 +68,7 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
         &self,
         items: &rg_semantic_ir::ItemStore,
         best: &mut NarrowestSourceSite<TraitImplSourceSite>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for (impl_ref, data) in items.impls_with_refs() {
             let Some(trait_ref) = data.resolved_trait_ref.as_option().copied() else {
                 continue;

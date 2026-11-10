@@ -3,9 +3,9 @@
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
-use rg_def_map::DefMapReadTxn;
+use rg_def_map::DefinitionReader;
 use rg_ir_model::{ConstOrStaticRef, DefMapRef};
-use rg_semantic_ir::{ItemLookupQuery, SemanticIrReadTxn, TypePathResolution};
+use rg_semantic_ir::{ItemLookupQuery, ItemReader, TypePathResolution};
 use rg_std::ExpectedUnique;
 
 use super::{
@@ -30,8 +30,8 @@ impl CrateBodyBuildState<'_> {
     /// values next, ambiguous pattern bindings next, then expression facts.
     pub(crate) fn resolve_semantics(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
         mut checkpoint: impl FnMut(BodySemanticStage) -> anyhow::Result<()>,
     ) -> anyhow::Result<BodySemanticTimings> {
@@ -89,11 +89,12 @@ impl CrateBodyBuildState<'_> {
     // item store. Both inherent and trait lookups depend on these precomputed header facts.
     fn resolve_body_local_impl_headers(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
         for (body_id, lowered_body) in self.crate_bodies.bodies().iter_with_ids() {
+            self.source.check_cancelled()?;
             rg_std::check_cancel!(self.cancellation, "body impl headers");
             let body_ref = self.body_ref(body_id);
             let body = lowered_body.body();
@@ -180,8 +181,8 @@ impl CrateBodyBuildState<'_> {
 
     fn materialize_pattern_bindings(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
         let source = BodyBuildQuerySource::new(
@@ -221,8 +222,8 @@ impl CrateBodyBuildState<'_> {
     /// store receives the result. Current root declarations use the same routing.
     fn evaluate_initializers(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
         let source = BodyBuildQuerySource::new(
@@ -280,8 +281,8 @@ impl CrateBodyBuildState<'_> {
     // pending semantic operations, and finalize the types and selected declarations.
     fn resolve_bodies(
         &mut self,
-        def_map: &DefMapReadTxn<'_>,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        def_map: &DefinitionReader<'_>,
+        semantic_ir: &ItemReader<'_>,
         item_lookup_query: &ItemLookupQuery<'_>,
     ) -> anyhow::Result<()> {
         // Make body inference aware of body-local items.
@@ -295,6 +296,7 @@ impl CrateBodyBuildState<'_> {
         debug_assert!(self.body_facts.is_empty());
 
         for (body_id, body) in self.crate_bodies.bodies().iter_with_ids() {
+            self.source.check_cancelled()?;
             rg_std::check_cancel!(self.cancellation, "body inference");
             let body_ref = self.body_refs[body_id];
             let body = body.body();
@@ -315,7 +317,7 @@ impl CrateBodyBuildState<'_> {
                     body_id = body_id.0,
                     owner = ?body.owner(),
                     file_id = body_source.file_id.as_raw(),
-                    path = ?self.parse_package.file_path(body_source.file_id),
+                    path = ?self.source.file_path(body_source.file_id),
                     span = ?body_source.span,
                     elapsed_ms = elapsed.as_millis(),
                     expression_count = body.exprs().len(),

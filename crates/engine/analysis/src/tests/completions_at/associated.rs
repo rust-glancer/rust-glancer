@@ -224,11 +224,11 @@ pub fn body() {
             // body associated binding
             type_alias LocalItem
               detail: type LocalItem
-              sort: LocalItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }), id: TypeAliasId(1) }) })
+              sort: LocalItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Local, body: BodyId(1) }), id: TypeAliasId(1) }) })
               replace: 474..477
             type_alias LocalParentItem
               detail: type LocalParentItem
-              sort: LocalParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, body: BodyId(1) }), id: TypeAliasId(0) }) })
+              sort: LocalParentItem|04|00|Declaration(DeclarationRef { kind: "item", item: TypeAlias(TypeAliasRef { origin: Body(BodyRef { crate_ref: CrateRef { package: PackageSlot(0), crate_id: CrateId(0) }, root: Local, body: BodyId(1) }), id: TypeAliasId(0) }) })
               replace: 474..477
         "#]],
     );

@@ -11,8 +11,8 @@ use rg_ir_model::{
     ExprId, FunctionRef, ItemOwner, Mutability, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, ParamKind, SelfParamKind};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{InferenceSubstitution, InferenceTable, Outcome, Ty},
@@ -42,8 +42,8 @@ pub(crate) struct LiveCallTarget<'s> {
 
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     /// Find the function candidates whose signatures can be used to understand this call.
     ///
@@ -58,7 +58,7 @@ where
         resolution: Option<&BodyResolution>,
         receiver: Option<Ty<'s>>,
         table: &InferenceTable<'s>,
-    ) -> Result<Vec<LiveCallTarget<'s>>, PackageStoreError> {
+    ) -> Result<Vec<LiveCallTarget<'s>>, ReadError> {
         let data = self.context.body().expr_unchecked(call);
         match &data.kind {
             ExprKind::MethodCall {
@@ -254,7 +254,7 @@ where
         lookup: FunctionLookup<'_, 's>,
         explicit: &[ItemGenericArg],
         table: &InferenceTable<'s>,
-    ) -> Result<Vec<LiveCallTarget<'s>>, PackageStoreError> {
+    ) -> Result<Vec<LiveCallTarget<'s>>, ReadError> {
         Ok(self
             .function_candidates(scope, receiver, lookup, table)?
             .into_iter()
@@ -277,7 +277,7 @@ where
     fn declaration_function(
         &self,
         declaration: DeclarationRef,
-    ) -> Result<Option<FunctionRef>, PackageStoreError> {
+    ) -> Result<Option<FunctionRef>, ReadError> {
         match declaration {
             DeclarationRef::LocalDef(local_def) => Ok(
                 match self

@@ -1,13 +1,13 @@
-use rg_body_ir::{BodyIrLoader, BodyOwner, BodyView, ExprData, testonly::BodyIrFixture};
-use rg_def_map::{DefMap, DefMapDb};
+use rg_body_ir::{BodyOwner, BodyView, ExprData, testonly::BodyIrFixture};
+use rg_def_map::{DefMap, testonly::DefMapDb};
 use rg_ir_model::{
     BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId, FunctionRef, GenericParamRef,
     ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
 };
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery, SemanticIrDb,
-    testonly::SemanticIrFixture,
+    GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery,
+    testonly::{SemanticIrDb, SemanticIrFixture},
 };
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
@@ -39,17 +39,10 @@ impl ViewFixture {
 
     pub fn view_db(&self) -> IndexedViewDb<'_> {
         IndexedViewDb::new(
-            self.body_ir
-                .def_map_db()
-                .read_txn(rg_def_map::DefMapLoader::resident_only(
-                    "resident view fixture",
-                )),
-            self.body_ir.semantic_ir_db().read_txn(
-                rg_semantic_ir::SemanticIrLoader::resident_only("resident view fixture"),
-            ),
-            self.body_ir
-                .body_ir_db()
-                .read_txn(BodyIrLoader::resident_only("resident view fixture")),
+            self.body_ir.def_map_db().reader(),
+            self.body_ir.semantic_ir_db().reader(),
+            self.body_ir.body_reader(),
+            self.body_ir.parse_db(),
             rg_std::CancellationToken::new(),
         )
     }
@@ -66,32 +59,32 @@ impl ViewFixture {
         self.body_ir.semantic_ir_db()
     }
 
-    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.body_ir.resident_def_map(crate_ref)
+    pub fn def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.body_ir.def_map(crate_ref)
     }
 
-    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
-        self.body_ir.resident_crate_ir(crate_ref)
+    pub fn crate_items(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
+        self.body_ir.crate_items(crate_ref)
     }
 
-    pub fn resident_body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
-        self.body_ir.resident_body(body_ref)
+    pub fn body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
+        self.body_ir.body(body_ref)
     }
 
     pub fn resident_body_source(&self, body_ref: BodyRef) -> Option<BodySource> {
-        self.resident_body(body_ref).map(|body| body.source())
+        self.body(body_ref).map(|body| body.source())
     }
 
     pub fn resident_expr(&self, body_ref: BodyRef, expr: ExprId) -> Option<&ExprData> {
-        self.resident_body(body_ref)?.expr(expr)
+        self.body(body_ref)?.expr(expr)
     }
 
     pub fn resident_body_owner(&self, body_ref: BodyRef) -> Option<BodyOwner> {
-        self.resident_body(body_ref).map(BodyView::owner)
+        self.body(body_ref).map(BodyView::owner)
     }
 
-    pub fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
-        self.body_ir.resident_body_item_store(body_ref)
+    pub fn body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
+        self.body_ir.body_item_store(body_ref)
     }
 
     pub fn first_body_ref(&self, crate_ref: CrateRef) -> Option<BodyRef> {
@@ -99,25 +92,18 @@ impl ViewFixture {
     }
 
     pub fn body_refs_for_crate(&self, crate_ref: CrateRef) -> Vec<BodyRef> {
-        let Some(package) = self
-            .body_ir
-            .body_ir_db()
-            .resident_package(crate_ref.package)
-        else {
-            return Vec::new();
-        };
-        let Some(crate_bodies) = package.crate_bodies(crate_ref.crate_id) else {
+        let Some(crate_bodies) = self.body_ir.bodies(crate_ref) else {
             return Vec::new();
         };
 
         crate_bodies
             .body_views()
-            .map(|(body, _)| BodyRef { crate_ref, body })
+            .map(|(body, _)| BodyRef::local(crate_ref, body))
             .collect()
     }
 
     pub fn crate_owns_file(&self, crate_ref: CrateRef, file_id: FileId) -> bool {
-        self.resident_def_map(crate_ref).is_some_and(|def_map| {
+        self.def_map(crate_ref).is_some_and(|def_map| {
             def_map
                 .modules()
                 .iter()
@@ -128,7 +114,7 @@ impl ViewFixture {
     pub fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .body_ir
-            .resident_item_store(ty.origin)
+            .item_store(ty.origin)
             .expect("type item store should exist while rendering view fixture type");
 
         match ty.id {
@@ -164,7 +150,7 @@ impl ViewFixture {
     pub fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
             .body_ir
-            .resident_item_store(trait_ref.origin)
+            .item_store(trait_ref.origin)
             .expect("trait item store should exist while rendering view fixture type");
         let data = items
             .trait_data(trait_ref.id)
@@ -409,7 +395,7 @@ impl ViewFixture {
             .expect("package slot should exist while rendering view fixture module");
         let cargo_target = self
             .def_map_db()
-            .resident_package(crate_ref.package)
+            .package(crate_ref.package)
             .and_then(|package| package.crate_data(crate_ref.crate_id))
             .expect("semantic crate should exist while rendering view fixture module")
             .cargo_target();
@@ -428,7 +414,7 @@ impl ViewFixture {
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let items = self
             .body_ir
-            .resident_item_store(function_ref.origin)
+            .item_store(function_ref.origin)
             .expect("function item store should exist while rendering view fixture body item");
         let data = items
             .function_data(function_ref.id)
@@ -444,7 +430,7 @@ impl ViewFixture {
             BodyOwner::Const(const_ref) => {
                 let items = self
                     .body_ir
-                    .resident_item_store(const_ref.origin)
+                    .item_store(const_ref.origin)
                     .expect("const item store should exist while rendering view fixture body item");
                 let data = items
                     .const_data(const_ref.id)
@@ -453,7 +439,7 @@ impl ViewFixture {
                 format!("const {owner}::{}", data.name)
             }
             BodyOwner::Static(static_ref) => {
-                let items = self.body_ir.resident_item_store(static_ref.origin).expect(
+                let items = self.body_ir.item_store(static_ref.origin).expect(
                     "static item store should exist while rendering view fixture body item",
                 );
                 let data = items
@@ -474,7 +460,7 @@ impl ViewFixture {
             ItemOwner::Trait(trait_id) => {
                 let items = self
                     .body_ir
-                    .resident_item_store(origin)
+                    .item_store(origin)
                     .expect("trait item store should exist while rendering view fixture body item");
                 let trait_data = items
                     .trait_data(trait_id)
@@ -493,7 +479,7 @@ impl ViewFixture {
 
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
-            .resident_def_map(module_ref.origin.origin_crate())
+            .def_map(module_ref.origin.origin_crate())
             .expect("target def map should exist while rendering view fixture module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering view fixture module path");

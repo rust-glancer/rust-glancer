@@ -7,8 +7,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::ItemStoreSource;
+use rg_source::ReadError;
 use rg_std::{OperationError, UniqueVec};
 use rg_ty::{
     lookup::MemberMethodCandidateRef,
@@ -62,8 +62,8 @@ impl MemberCandidate<'_> {
 
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: ItemStoreSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn function_candidates<'s>(
         &self,
@@ -71,7 +71,7 @@ where
         receiver: Ty<'s>,
         request: FunctionLookup<'_, 's>,
         table: &InferenceTable<'s>,
-    ) -> Result<Vec<MemberCandidate<'s>>, PackageStoreError> {
+    ) -> Result<Vec<MemberCandidate<'s>>, ReadError> {
         let (name, qualification) = match request {
             FunctionLookup::Method(name) => (Some(name), None),
             FunctionLookup::Associated {

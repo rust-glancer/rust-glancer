@@ -19,8 +19,8 @@ use rg_ir_model::{
     SemanticItemRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{FieldList, TypeRef};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
+use rg_source::ReadError;
 use rg_ty::{Ty, signature::CallableSignature};
 
 use super::lower::{LoweredBodyData, PendingBindingResolution};
@@ -40,8 +40,8 @@ pub(crate) struct PatternBindingQuery<'query, D, I> {
 
 impl<'query, D, I> PatternBindingQuery<'query, D, I>
 where
-    for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
-    for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
+    for<'source> &'source D: DefMapSource<Error = ReadError>,
+    for<'source> &'source I: ItemStoreSource<'source, Error = ReadError>,
 {
     pub(crate) fn new(
         def_maps: &'query D,
@@ -66,7 +66,7 @@ where
     }
 
     /// Compute the final binding membership, then release the borrowed view before compaction.
-    pub(crate) fn active_bindings(self) -> Result<Vec<bool>, PackageStoreError> {
+    pub(crate) fn active_bindings(self) -> Result<Vec<bool>, ReadError> {
         // `active` is indexed by the original pending binding ids. We keep this temporary view
         // while lookup still needs source-order visibility against the lowered scope lists.
         let pending_count = self.body.body().bindings().len();
@@ -90,7 +90,7 @@ where
     }
 
     /// Returns binding types in the pending-id space used during materialization.
-    fn pending_binding_tys(&self, active: &[bool]) -> Result<Vec<Ty>, PackageStoreError> {
+    fn pending_binding_tys(&self, active: &[bool]) -> Result<Vec<Ty>, ReadError> {
         let mut tys = Vec::with_capacity(self.body.body().bindings().len());
         for binding_idx in 0..self.body.body().bindings().len() {
             let binding = BindingId(binding_idx);
@@ -107,7 +107,7 @@ where
         &self,
         active: &mut [bool],
         pending_tys: &[Ty],
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         // A bare `None` cannot be recognized from value lookup alone unless it is written as a
         // full path. The input type of `match value` or `let pat: Ty = ...` gives enough context to
         // interpret single-segment unit variants without returning to capitalization heuristics.
@@ -180,7 +180,7 @@ where
         initializer: Option<ExprId>,
         active: &[bool],
         pending_tys: &[Ty],
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty, ReadError> {
         if let Some(annotation) = annotation {
             let ty = self.context.type_refs(scope).resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
@@ -199,7 +199,7 @@ where
         expr: ExprId,
         active: &[bool],
         pending_tys: &[Ty],
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty, ReadError> {
         match &self.body.body().expr_unchecked(expr).kind {
             ExprKind::Path { path } => {
                 let Some(path) = path.as_def_map_path() else {
@@ -267,7 +267,7 @@ where
         pat: rg_ir_model::PatId,
         expected_ty: &Ty,
         active: &mut [bool],
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         if matches!(expected_ty, Ty::Unknown) {
             return Ok(());
         }
@@ -344,7 +344,7 @@ where
         fields: &[rg_ir_model::PatId],
         expected_ty: &Ty,
         active: &mut [bool],
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for (index, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(index);
             let Some(field_ty) =
@@ -365,7 +365,7 @@ where
         fields: &[RecordPatField],
         expected_ty: &Ty,
         active: &mut [bool],
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         for field in fields {
             let Some(field_ty) =
                 self.context
@@ -383,7 +383,7 @@ where
         &self,
         path: &BodyPath,
         expected_ty: &Ty,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, ReadError> {
         let Some(path) = path.as_def_map_path() else {
             return Ok(false);
         };
@@ -423,7 +423,7 @@ where
         &self,
         binding: BindingId,
         active: &[bool],
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, ReadError> {
         let Some(binding_data) = self.body.body().binding(binding) else {
             return Ok(false);
         };
@@ -458,7 +458,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, ReadError> {
         // Check the body-local lexical module first, then the owner/fallback modules used by
         // ordinary body lookup. This keeps body-local consts visible without losing crate items.
         let from = ModuleRef {
@@ -495,10 +495,7 @@ where
         self.semantic_items_include_const_like(fallback_defs)
     }
 
-    fn semantic_items_include_const_like(
-        &self,
-        defs: Vec<DefId>,
-    ) -> Result<bool, PackageStoreError> {
+    fn semantic_items_include_const_like(&self, defs: Vec<DefId>) -> Result<bool, ReadError> {
         let item_query = self.context.item_query();
         for def in defs {
             let DefId::Local(local_def) = def else {
@@ -562,7 +559,7 @@ where
         )
     }
 
-    fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
+    fn binding_ty(&self, binding: BindingId) -> Result<Ty, ReadError> {
         let binding_data = self.body.body().binding_unchecked(binding);
         if matches!(
             binding_data.kind,

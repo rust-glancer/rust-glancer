@@ -20,10 +20,7 @@ pub fn use_it(value: &[u8; 3]) {
         crate_id: CrateId(0),
     };
     let crate_bodies = fixture
-        .body_ir_db()
-        .resident_package(crate_ref.package)
-        .expect("fixture package should be resident")
-        .crate_bodies(crate_ref.crate_id)
+        .bodies(crate_ref)
         .expect("fixture crate should have Body IR");
 
     let mut selected_calls = Vec::new();
