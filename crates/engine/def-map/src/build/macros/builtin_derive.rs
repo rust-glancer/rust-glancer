@@ -11,9 +11,9 @@ use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, Span};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
-    GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef,
-    Package as ItemTreePackage, TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath,
-    TypePathAnchor, TypePathSegment, TypeRef, VisibilityLevel, WherePredicate,
+    GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef, ItemTrees,
+    TraitBoundModifier, TypeBound, TypeOrConstParamData, TypePath, TypePathAnchor, TypePathSegment,
+    TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_std::UniqueVec;
 use rg_text::Name;
@@ -37,10 +37,11 @@ impl BuiltinDeriveExpansion {
     pub(crate) fn collect<E>(
         env: &E,
         state: &CrateBuilder,
-        package: &ItemTreePackage,
+        package: &ItemTrees,
     ) -> anyhow::Result<Vec<Self>>
     where
-        E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+        E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
+            + MacroDefinitionEnv,
     {
         let mut expansions = Vec::new();
         let cfg = state.cfg_evaluator();
@@ -123,7 +124,7 @@ impl BuiltinDeriveExpansion {
     /// item-tree source alongside the item so the generated impl retains its source provenance.
     fn source_item<'a>(
         state: &'a CrateBuilder,
-        package: &'a ItemTreePackage,
+        package: &'a ItemTrees,
         source: ItemSource,
     ) -> anyhow::Result<Option<(&'a ItemNode, ItemTreeRef)>> {
         let (item, origin_source) = match source.kind {
@@ -148,7 +149,8 @@ impl BuiltinDeriveExpansion {
         path: &Path,
     ) -> anyhow::Result<Option<(BuiltinDeriveKind, CrateRef)>>
     where
-        E: CrateResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+        E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
+            + MacroDefinitionEnv,
     {
         let resolver = NameResolver::new(env);
         let binding = if let Some(name) = path.relative_single_name() {

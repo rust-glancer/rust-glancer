@@ -25,7 +25,7 @@ make_user!();
     assert!(
         project
             .def_map_db()
-            .resident_package(PackageSlot(0))
+            .package(PackageSlot(0))
             .expect("macro fixture package should remain resident")
             .macro_expansion_limits()
             .is_empty(),
