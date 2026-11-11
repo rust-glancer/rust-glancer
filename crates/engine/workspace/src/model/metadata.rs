@@ -4,8 +4,8 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
-use rg_ir_model::PackageSlot;
-use rg_std::MemorySize;
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_std::{MemorySize, NativeOsString};
 use rg_text::RustEdition;
 
 use super::{
@@ -14,7 +14,8 @@ use super::{
     target::{CargoTarget, TargetKind},
 };
 use crate::{
-    CargoBuildOutputScanStats, PackageInput, SysrootCrate, SysrootSources, WorkspaceInput,
+    CargoBuildOutputScanStats, PackageInput, SysrootCrate, SysrootSources, TargetInput,
+    WorkspaceInput,
 };
 
 /// Normalized workspace metadata used by the analysis pipeline.
@@ -67,15 +68,36 @@ impl WorkspaceMetadata {
         }
     }
 
-    /// Captures the settings used to interpret source. Later target providers will also need
-    /// the Cargo graph and generated-source configuration.
+    /// Captures the settings used to interpret source and find target entrypoints.
     pub fn write_inputs(&self, update: &mut ajika::InputUpdate) -> ajika::Result<()> {
         update.forget_all(PackageInput::EDITION);
         update.forget_all(PackageInput::CFG);
+        update.forget_all(PackageInput::NAME);
+        update.forget_all(PackageInput::ORIGIN);
+        update.forget_all(PackageInput::GENERATED_SOURCES);
+        update.forget_all(TargetInput::ROOT_PATH);
+        update.forget_all(TargetInput::NAME);
+        update.forget_all(TargetInput::KIND);
         for (slot, package) in self.packages().iter().enumerate() {
-            let input = PackageInput::at(PackageSlot(slot));
+            let slot = PackageSlot(slot);
+            let input = PackageInput::at(slot);
             input.set_edition(update, package.edition)?;
             input.set_cfg(update, package.cfg_options.clone())?;
+            input.set_name(update, package.name.clone())?;
+            input.set_origin(update, package.origin.clone())?;
+            input.set_generated_sources(update, package.cargo_generated_sources.clone())?;
+            for (index, target) in package.analyzed_targets().enumerate() {
+                let input = TargetInput::at(CrateRef {
+                    package: slot,
+                    crate_id: CrateId(index),
+                });
+                input.set_root_path(
+                    update,
+                    NativeOsString::from_os_str(target.src_path.as_os_str()),
+                )?;
+                input.set_name(update, target.name.clone())?;
+                input.set_kind(update, target.kind.clone())?;
+            }
         }
         WorkspaceInput::at(()).set_target_cfg(update, self.target_cfg_options.clone())
     }
