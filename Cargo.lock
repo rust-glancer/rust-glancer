@@ -19,9 +19,9 @@ dependencies = [
 
 [[package]]
 name = "ajika"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a2883c46e5d61d67d319795f72cc9989a80eb81b38962f6ddefba1c18566f1ad"
+checksum = "13f3e12eafe51962219c94acf34de12de000bfd60c6ffe7af83b931c58a6abea"
 dependencies = [
  "ajika_macros",
  "ajika_storage",
@@ -35,9 +35,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_macros"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c44be23c2e5a9bd6d5dc87f0abc466323f271c1c4b766b0bd3a47356f6d85f17"
+checksum = "64ac80ca9ed9093910db3fb39b4447b32aab65305c2d22adab242ee3d8055758"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -46,9 +46,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_storage"
-version = "0.1.2"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97e309ddd385bd073c97c8340a264a2032c091429a8b4cd350c039c02a225f86"
+checksum = "13550bfe171d7540a21dfdd48858ace8a673e7f13b354499bee2697f0b0def40"
 dependencies = [
  "blake3",
  "getrandom 0.4.3",
@@ -1864,8 +1864,10 @@ dependencies = [
  "rg_def_map",
  "rg_ir_model",
  "rg_ir_view",
+ "rg_item_tree",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_source",
  "rg_std",
  "rg_syntax",
  "rg_workspace",
@@ -2198,6 +2200,7 @@ version = "0.0.0"
 dependencies = [
  "ajika",
  "blake3",
+ "rg_ir_model",
  "rg_std",
  "tempfile",
 ]

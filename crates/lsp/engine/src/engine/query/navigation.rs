@@ -65,79 +65,83 @@ impl QueryRunner<'_> {
             .context("target document is absent from navigation input")?;
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let Some(current) = self
-            .document_analysis(
-                query.name(),
-                document,
-                DocumentSelection::Position(position),
-                cancellation,
-            )
-            .context("prepare navigation analysis")?
-        else {
-            return Ok(Vec::new());
-        };
-        // Different declarations can project to the same physical location.
-        let mut locations = UniqueVec::new();
-        let mut omitted_unsafe_target = false;
-        let mut destinations =
-            CapturedNavigationDocuments::new(current.snapshot, &documents, cancellation.token());
-        let offset = current.offset();
+        self.with_document_analysis(
+            query.name(),
+            document,
+            DocumentSelection::Position(position),
+            cancellation,
+            |current| {
+                let Some(current) = current else {
+                    return Ok(Vec::new());
+                };
+                // Different declarations can project to the same physical location.
+                let mut locations = UniqueVec::new();
+                let mut omitted_unsafe_target = false;
+                let mut destinations = CapturedNavigationDocuments::new(
+                    current.snapshot,
+                    &documents,
+                    cancellation.token(),
+                );
+                let offset = current.offset();
 
-        let source = current.target;
-        let targets = match query {
-            CurrentNavigationQuery::Definition => current
-                .analysis
-                .goto_definition(source.crate_ref, source.file, offset)
-                .context("resolve definition targets")?,
-            CurrentNavigationQuery::TypeDefinition => current
-                .analysis
-                .goto_type_definition(source.crate_ref, source.file, offset)
-                .context("resolve type-definition targets")?,
-        };
+                let source = current.target;
+                let targets = match query {
+                    CurrentNavigationQuery::Definition => current
+                        .analysis
+                        .goto_definition(source.crate_ref, source.file, offset)
+                        .context("resolve definition targets")?,
+                    CurrentNavigationQuery::TypeDefinition => current
+                        .analysis
+                        .goto_type_definition(source.crate_ref, source.file, offset)
+                        .context("resolve type-definition targets")?,
+                };
 
-        for target in targets {
-            let location = match destinations
-                .location_for_target(
-                    &target,
-                    (source.crate_ref.package, source.file),
-                    document,
-                    current.source.line_index(),
-                    current.analysis.current_source_view(),
-                )
-                .context("convert navigation target for captured documents")?
-            {
-                CapturedTargetLocation::Ready(location) => Some(location),
-                CapturedTargetLocation::Unsafe => {
-                    omitted_unsafe_target = true;
-                    None
+                for target in targets {
+                    let location = match destinations
+                        .location_for_target(
+                            &target,
+                            (source.crate_ref.package, source.file),
+                            document,
+                            current.source.line_index(),
+                            current.analysis.current_source_view(),
+                        )
+                        .context("convert navigation target for captured documents")?
+                    {
+                        CapturedTargetLocation::Ready(location) => Some(location),
+                        CapturedTargetLocation::Unsafe => {
+                            omitted_unsafe_target = true;
+                            None
+                        }
+                        CapturedTargetLocation::Unavailable => None,
+                    };
+                    if let Some(location) = location {
+                        locations.push(location);
+                    }
                 }
-                CapturedTargetLocation::Unavailable => None,
-            };
-            if let Some(location) = location {
-                locations.push(location);
-            }
-        }
 
-        let locations = locations.into_vec();
+                let locations = locations.into_vec();
 
-        tracing::trace!(
-            query = query.name(),
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            result_count = locations.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "navigation query finished"
-        );
+                tracing::trace!(
+                    query = query.name(),
+                    path = %path.display(),
+                    line = position.line,
+                    character = position.character,
+                    result_count = locations.len(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "navigation query finished"
+                );
 
-        if omitted_unsafe_target {
-            tracing::debug!(
-                query = query.name(),
-                path = %path.display(),
-                "omitted navigation target without a safe current-source location"
-            );
-        }
-        Ok(locations)
+                if omitted_unsafe_target {
+                    tracing::debug!(
+                        query = query.name(),
+                        path = %path.display(),
+                        "omitted navigation target without a safe current-source location"
+                    );
+                }
+                Ok(locations)
+            },
+        )
+        .context("prepare navigation analysis")
     }
 
     /// Resolve implementations after checking that saved ranges still match all open documents.
@@ -146,57 +150,47 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        if let Some(path) = self
-            .save_required_for_global_operation(&input, cancellation)
-            .context("check implementation source safety")?
-        {
-            return Err(QueryRunError::SaveRequired(path));
-        }
-        let document = Self::global_operation_target(&input)?;
-        let path = document.source_path().to_path_buf();
-        let position = input.position();
-        let started = Instant::now();
-        self.ensure_path("implementation", &path, cancellation)
-            .context("prepare implementation path")?;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for implementation navigation")?;
-        let Some((context, offset)) = Self::file_offset(snapshot, &path, position)
-            .context("resolve implementation position")?
-        else {
-            return Ok(Vec::new());
-        };
-        let analysis = snapshot
-            .analysis_for_crates(&[context.crate_ref], cancellation.token())
-            .context("load implementation analysis")?;
-        // Different declarations can project to the same physical location.
-        let mut locations = UniqueVec::new();
-
-        for target in analysis
-            .goto_implementation(context.crate_ref, context.file, offset)
-            .context("resolve implementation targets")?
-        {
-            rg_std::check_cancel!(cancellation, "implementation locations");
-            let Some(location) = navigation_proto::location_for_target(snapshot, &target)
-                .context("convert implementation target")?
+        self.with_saved_snapshot(cancellation, |snapshot| {
+            Self::require_saved_documents(snapshot, &input, cancellation)?;
+            let document = Self::global_operation_target(&input)?;
+            let path = document.source_path().to_path_buf();
+            let position = input.position();
+            let started = Instant::now();
+            let Some((context, offset)) = Self::file_offset(snapshot, &path, position)
+                .context("resolve implementation position")?
             else {
-                continue;
+                return Ok(Vec::new());
             };
-            locations.push(location);
-        }
+            let analysis = snapshot.analysis();
+            // Different declarations can project to the same physical location.
+            let mut locations = UniqueVec::new();
 
-        let locations = locations.into_vec();
+            for target in analysis
+                .goto_implementation(context.crate_ref, context.file, offset)
+                .context("resolve implementation targets")?
+            {
+                rg_std::check_cancel!(cancellation, "implementation locations");
+                let Some(location) = navigation_proto::location_for_target(snapshot, &target)
+                    .context("convert implementation target")?
+                else {
+                    continue;
+                };
+                locations.push(location);
+            }
 
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            result_count = locations.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "implementation query finished"
-        );
-        Ok(locations)
+            let locations = locations.into_vec();
+
+            tracing::trace!(
+                path = %path.display(),
+                line = position.line,
+                character = position.character,
+                result_count = locations.len(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "implementation query finished"
+            );
+            Ok(locations)
+        })
+        .map_err(Into::into)
     }
 }
 

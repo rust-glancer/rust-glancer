@@ -686,8 +686,12 @@ impl LspEngineFixture {
                     .references(context::current(), input, *include_declaration)
                     .await
                     .expect("references query should succeed");
-                let locations = outcome.into_value();
+                let mut locations = outcome.into_value();
 
+                // Parallel source discovery can assign different file IDs to the same locations.
+                locations.sort_unstable_by(|left, right| {
+                    (left.uri.as_str(), left.range).cmp(&(right.uri.as_str(), right.range))
+                });
                 self.render_locations(rendered, &locations);
             }
             LspQuery::Hover { marker, .. } => {
