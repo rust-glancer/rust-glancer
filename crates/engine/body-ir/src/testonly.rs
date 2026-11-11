@@ -88,7 +88,7 @@ impl BodyIrFixture {
         Self::build_from_semantic_ir(SemanticIrFixture::build_with_fake_sysroot(fixture))
     }
 
-    pub fn build_from_semantic_ir(mut semantic_ir: SemanticIrFixture) -> Self {
+    fn build_from_semantic_ir(mut semantic_ir: SemanticIrFixture) -> Self {
         let bodies =
             fixture::build_bodies(&mut semantic_ir).expect("fixture body kernels should complete");
         Self {

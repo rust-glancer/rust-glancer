@@ -1,12 +1,12 @@
 use rg_ir_model::{CrateRef, PackageSlot, Span, identity::DeclarationRef};
 
 use crate::{
+    IndexedViewDb,
     source::{IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView},
-    testonly::ViewFixture,
 };
 
 pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
-    let fixture = ViewFixture::build(fixture);
+    let fixture = rg_body_ir::testonly::BodyIrFixture::build(fixture);
     let package = fixture
         .parse_db()
         .packages()
@@ -28,7 +28,13 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
         package: PackageSlot(0),
         crate_id: rg_ir_model::CrateId(target.id.0),
     };
-    let view_db = fixture.view_db();
+    let view_db = IndexedViewDb::new(
+        fixture.def_map_db().reader(),
+        fixture.semantic_ir_db().reader(),
+        fixture.body_reader(),
+        fixture.parse_db(),
+        rg_std::CancellationToken::new(),
+    );
 
     let mut occurrences = Vec::new();
     for occurrence in SourceOccurrenceView::new(&view_db)

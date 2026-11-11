@@ -1,17 +1,16 @@
 mod inline;
 
-use std::{
-    fmt::Write as _,
-    path::{Path, PathBuf},
-};
+use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
-use rg_body_ir::{ExprData, ExprKind};
-use rg_def_map::testonly::DefMapFixture;
+use rg_body_ir::{BodyReader, ExprData, ExprKind};
+use rg_def_map::{CrateDefMapReader, CrateDependencies};
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
-use rg_ir_view::testonly::ViewFixture;
-use rg_parse::ParseDb;
-use rg_semantic_ir::testonly::SemanticIrFixture;
+use rg_ir_view::IndexedViewDb;
+use rg_item_tree::testonly::fixture_database;
+use rg_parse::{CargoTargetId, ParseDb};
+use rg_semantic_ir::{ItemReader, TargetDeclarationReader, target_declarations};
+use rg_source::{QueryContext, QueryDatabase};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
@@ -22,31 +21,28 @@ use crate::{
     Analysis, CodeAction, CodeActionKind, CodeActionQuery, CodeActionTrigger,
     CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
     CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
-    RenameResult, RenameTarget, SavedSourceView, SymbolAt, WorkspaceSymbol,
+    NavigationTargetKind, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
+    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SavedSourceView, SymbolAt,
+    SymbolKind, WorkspaceSymbol,
 };
 
 /// Queries written beside their markers are removed before the fixture reaches analysis.
 pub(super) fn check_analysis(fixture: &str, expect: Expect) {
     let fixture = inline::InlineAnalysisFixture::parse(fixture);
     let db = AnalysisFixtureDb::build_from_crate(CrateFixture::from_files(fixture.files));
-    let renderer = AnalysisQuerySnapshot::new(&db, fixture.markers, &fixture.queries);
-    expect.assert_eq(&renderer.render());
+    AnalysisQuerySnapshot::check(db, &fixture.markers, &fixture.queries, expect);
 }
 
 pub(super) fn check_analysis_with_fake_sysroot(fixture: &str, expect: Expect) {
     let fixture = inline::InlineAnalysisFixture::parse(fixture);
     let db = AnalysisFixtureDb::build_with_fake_sysroot(CrateFixture::from_files(fixture.files));
-    let renderer = AnalysisQuerySnapshot::new(&db, fixture.markers, &fixture.queries);
-    expect.assert_eq(&renderer.render());
+    AnalysisQuerySnapshot::check(db, &fixture.markers, &fixture.queries, expect);
 }
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
-    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
-    let actual = renderer.render();
-    expect.assert_eq(&actual);
+    AnalysisQuerySnapshot::check(db, &markers, queries, expect);
 }
 
 pub(super) fn check_analysis_queries_with_fake_sysroot(
@@ -56,9 +52,7 @@ pub(super) fn check_analysis_queries_with_fake_sysroot(
 ) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture);
-    let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
-    let actual = renderer.render();
-    expect.assert_eq(&actual);
+    AnalysisQuerySnapshot::check(db, &markers, queries, expect);
 }
 
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
@@ -70,33 +64,32 @@ pub(super) fn check_document_symbol_queries(
     queries: &[DocumentSymbolsQuery],
     expect: Expect,
 ) {
-    let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build_from_crate(fixture);
-    let renderer = AnalysisSymbolSnapshot::new(&db);
-    let actual = test_fixture::testonly::render_responses(
-        queries
-            .iter()
-            .map(|query| (query.title, renderer.render_document_symbols(query))),
-    );
-    expect.assert_eq(&actual);
+    AnalysisFixtureDb::build_from_crate(fixture_crate(fixture)).inspect(|db| {
+        let renderer = AnalysisSymbolSnapshot { db };
+        let actual = test_fixture::testonly::render_responses(
+            queries
+                .iter()
+                .map(|query| (query.title, renderer.render_document_symbols(query))),
+        );
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build_from_crate(fixture);
-    let renderer = AnalysisSymbolSnapshot::new(&db);
-    let title = format!("workspace symbols `{query}`");
-    let actual = test_fixture::testonly::render_responses([(
-        title.as_str(),
-        renderer.render_workspace_symbols(query),
-    )]);
-    expect.assert_eq(&actual);
+    AnalysisFixtureDb::build_from_crate(fixture_crate(fixture)).inspect(|db| {
+        let renderer = AnalysisSymbolSnapshot { db };
+        let title = format!("workspace symbols `{query}`");
+        let actual = test_fixture::testonly::render_responses([(
+            title.as_str(),
+            renderer.render_workspace_symbols(query),
+        )]);
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_inlay_hints(fixture: &str, query: InlayHintsQuery, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build_from_crate(fixture);
-    assert_inlay_hints(&db, &query, expect);
+    let db = AnalysisFixtureDb::build_from_crate(fixture_crate(fixture));
+    assert_inlay_hints(db, &query, expect);
 }
 
 pub(super) fn check_inlay_hints_with_fake_sysroot(
@@ -105,16 +98,18 @@ pub(super) fn check_inlay_hints_with_fake_sysroot(
     expect: Expect,
 ) {
     let db = AnalysisFixtureDb::build_with_fake_sysroot(fixture_crate(fixture));
-    assert_inlay_hints(&db, &query, expect);
+    assert_inlay_hints(db, &query, expect);
 }
 
-fn assert_inlay_hints(db: &AnalysisFixtureDb, query: &InlayHintsQuery, expect: Expect) {
-    let renderer = AnalysisSymbolSnapshot::new(db);
-    let actual = test_fixture::testonly::render_responses([(
-        query.title,
-        renderer.render_inlay_hints(query),
-    )]);
-    expect.assert_eq(&actual);
+fn assert_inlay_hints(mut fixture: AnalysisFixtureDb, query: &InlayHintsQuery, expect: Expect) {
+    fixture.inspect(|db| {
+        let renderer = AnalysisSymbolSnapshot { db };
+        let actual = test_fixture::testonly::render_responses([(
+            query.title,
+            renderer.render_inlay_hints(query),
+        )]);
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) struct AnalysisQuery {
@@ -419,14 +414,17 @@ enum ReferenceQueryScope {
 }
 
 struct AnalysisFixtureDb {
-    fixture: ViewFixture,
-    package_roots: Vec<PathBuf>,
+    database: QueryDatabase,
+    workspace: WorkspaceMetadata,
+    parse: ParseDb,
+    targets: Vec<CrateRef>,
+    _fixture: CrateFixture,
 }
 
 impl AnalysisFixtureDb {
     fn build_from_crate(fixture: CrateFixture) -> Self {
         let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-        Self::build_from_crate_with_workspace(fixture, workspace)
+        Self::build(fixture, workspace)
     }
 
     fn build_with_fake_sysroot(fixture: CrateFixture) -> Self {
@@ -435,35 +433,90 @@ impl AnalysisFixtureDb {
             .expect("fake sysroot should be complete");
         let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
             .with_sysroot_sources(Some(sysroot));
-        Self::build_from_crate_with_workspace(fixture, workspace)
+        Self::build(fixture, workspace)
     }
 
-    fn build_from_crate_with_workspace(
-        fixture: CrateFixture,
-        workspace: WorkspaceMetadata,
-    ) -> Self {
-        let package_roots = workspace
-            .packages()
-            .iter()
-            .map(|package| package.root_dir().to_path_buf())
-            .collect();
-        let def_map = DefMapFixture::build_from_crate(fixture, workspace);
-        let semantic_ir = SemanticIrFixture::build_from_def_map(def_map);
+    fn build(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
+        let mut database = fixture_database(&workspace);
+        let targets = database
+            .update_inputs(|update| CrateDependencies::write_inputs(&workspace, update))
+            .expect("fixture target inputs should install");
+        let inputs = database.inputs().clone();
+
+        // File routing comes from the declarations that feature queries will read. Bodies stay
+        // lazy, so looking up a body also exercises its production owner identity and initializer.
+        let parse = database
+            .run(|db| {
+                let metadata = targets
+                    .iter()
+                    .map(|&target| target_declarations(db, target)?.metadata.value_ref(db))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ParseDb::from_target_manifests(
+                    &workspace,
+                    &inputs,
+                    targets
+                        .iter()
+                        .copied()
+                        .zip(metadata.iter().map(|metadata| &metadata.sources)),
+                )
+            })
+            .expect("fixture source routing should build");
         Self {
-            fixture: ViewFixture::build_from_semantic_ir(semantic_ir),
-            package_roots,
+            database,
+            workspace,
+            parse,
+            targets,
+            _fixture: fixture,
         }
     }
 
-    fn analysis(&self) -> Analysis<'_> {
-        Analysis::new(
-            self.fixture.view_db(),
-            SavedSourceView::new(self.fixture.parse_db()),
+    fn inspect<R>(&mut self, observe: impl FnOnce(AnalysisFixture<'_>) -> R) -> R {
+        // Readers borrow query results inside this operation, just as they do for editor requests.
+        self.database
+            .run(|db| {
+                let declarations =
+                    TargetDeclarationReader::for_project(db, self.targets.iter().copied());
+                Ok(observe(AnalysisFixture {
+                    db,
+                    declarations: &declarations,
+                    parse: &self.parse,
+                    workspace: &self.workspace,
+                    targets: &self.targets,
+                }))
+            })
+            .expect("fixture query operation should succeed")
+    }
+}
+
+struct AnalysisFixture<'db> {
+    db: &'db QueryContext<'db>,
+    declarations: &'db TargetDeclarationReader<'db>,
+    parse: &'db ParseDb,
+    workspace: &'db WorkspaceMetadata,
+    targets: &'db [CrateRef],
+}
+
+impl<'db> AnalysisFixture<'db> {
+    fn analysis(&self) -> Analysis<'db> {
+        Analysis::new(self.view_db(), SavedSourceView::new(self.parse))
+    }
+
+    fn view_db(&self) -> IndexedViewDb<'db> {
+        IndexedViewDb::new(
+            CrateDefMapReader(self.declarations),
+            ItemReader(self.declarations),
+            self.bodies(),
+            self.parse,
+            self.db.services().cancellation.clone(),
         )
     }
 
-    fn parse_db(&self) -> &ParseDb {
-        self.fixture.parse_db()
+    fn parse_db(&self) -> &'db ParseDb {
+        self.parse
+    }
+
+    fn bodies(&self) -> BodyReader<'db> {
+        BodyReader::new(self.db, self.declarations)
     }
 
     /// Renders source locations relative to their Cargo package instead of exposing temporary
@@ -477,10 +530,7 @@ impl AnalysisFixtureDb {
         let path = parsed_package
             .file_path(file_id)
             .expect("snapshot file should exist while rendering a file path");
-        let package_root = self
-            .package_roots
-            .get(package.0)
-            .expect("snapshot package root should exist while rendering a file path");
+        let package_root = self.workspace.packages()[package.0].root_dir();
 
         // Cargo-generated sources may sit outside their package root. Their build directory is
         // temporary and does not help a query snapshot, so preserve the old filename-only shape.
@@ -500,31 +550,39 @@ impl AnalysisFixtureDb {
     ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
+        let reader = CrateDefMapReader(self.declarations);
 
         for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
                 continue;
             }
 
+            let Some(file) = package
+                .parsed_files()
+                .find(|file| file.path().ends_with(normalized_path))
+            else {
+                continue;
+            };
+            let file_id = file.file_id();
             for target in package
                 .targets()
                 .iter()
                 .filter(|target| target.kind == selected.kind)
             {
-                let Some(file_id) = package
-                    .parsed_files()
-                    .find(|file| file.path().ends_with(normalized_path))
-                    .map(|file| file.file_id())
-                else {
-                    continue;
-                };
-
-                let crate_ref = CrateRef {
+                let owner = CrateRef {
                     package: PackageSlot(package_slot),
                     crate_id: rg_ir_model::CrateId(target.id.0),
                 };
-                if self.crate_owns_file(crate_ref, file_id) {
-                    matches.push((crate_ref, file_id));
+                let definitions = reader
+                    .def_map(owner)
+                    .expect("fixture target definitions should load")
+                    .expect("fixture target should exist");
+                if definitions
+                    .modules()
+                    .iter()
+                    .any(|module| module.origin.contains_file(file_id))
+                {
+                    matches.push((owner, file_id));
                 }
             }
         }
@@ -567,42 +625,32 @@ impl AnalysisFixtureDb {
         matches.pop().expect("one match should be present")
     }
 
-    fn all_targets(&self) -> Vec<CrateRef> {
-        self.parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .flat_map(|(package_slot, package)| {
-                package.targets().iter().map(move |target| CrateRef {
-                    package: PackageSlot(package_slot),
-                    crate_id: rg_ir_model::CrateId(target.id.0),
-                })
-            })
-            .collect()
-    }
-
-    fn crate_owns_file(&self, target: CrateRef, file_id: FileId) -> bool {
-        self.fixture.crate_owns_file(target, file_id)
+    fn all_targets(&self) -> &[CrateRef] {
+        self.targets
     }
 }
 
-struct AnalysisQuerySnapshot<'a> {
-    db: &'a AnalysisFixtureDb,
-    markers: FixtureMarkers,
+struct AnalysisQuerySnapshot<'a, 'db> {
+    db: AnalysisFixture<'db>,
+    markers: &'a FixtureMarkers,
     queries: &'a [AnalysisQuery],
 }
 
-impl<'a> AnalysisQuerySnapshot<'a> {
-    fn new(
-        db: &'a AnalysisFixtureDb,
-        markers: FixtureMarkers,
-        queries: &'a [AnalysisQuery],
-    ) -> Self {
-        Self {
-            db,
-            markers,
-            queries,
-        }
+impl AnalysisQuerySnapshot<'_, '_> {
+    fn check(
+        mut fixture: AnalysisFixtureDb,
+        markers: &FixtureMarkers,
+        queries: &[AnalysisQuery],
+        expect: Expect,
+    ) {
+        fixture.inspect(|db| {
+            let renderer = AnalysisQuerySnapshot {
+                db,
+                markers,
+                queries,
+            };
+            expect.assert_eq(&renderer.render());
+        });
     }
 
     fn render(&self) -> String {
@@ -678,7 +726,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     ReferenceQueryScope::AllIncludedTargets => {
                         let use_site_targets = self.db.all_targets();
                         let reference_query = AnalysisReferenceQuery::find_references(
-                            &use_site_targets,
+                            use_site_targets,
                             reference_options.include_declaration,
                         );
                         self.db
@@ -760,7 +808,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             AnalysisQueryKind::Rename(new_name) => {
                 let use_site_targets = self.db.all_targets();
                 let reference_query =
-                    AnalysisReferenceQuery::find_references(&use_site_targets, true);
+                    AnalysisReferenceQuery::find_references(use_site_targets, true);
                 let rename_result = self
                     .db
                     .analysis()
@@ -778,7 +826,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     dump,
                     "{}",
                     ty.as_ref()
-                        .map(|ty| self.db.fixture.render_indexed_type(ty))
+                        .map(|ty| rg_ir_view::testonly::render_indexed_type(
+                            &self.db.view_db(),
+                            self.db.parse_db(),
+                            ty,
+                        ))
                         .unwrap_or_else(|| "<none>".to_string())
                 )
                 .expect("string writes should not fail");
@@ -926,9 +978,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let body = body.body_ir();
                 let source = self
                     .db
-                    .fixture
-                    .resident_body_source(body)
-                    .expect("body source should exist while rendering analysis symbol");
+                    .bodies()
+                    .body(body)
+                    .expect("saved body query should succeed")
+                    .expect("body should exist while rendering analysis symbol")
+                    .source();
                 writeln!(
                     dump,
                     "body @ {}",
@@ -955,10 +1009,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Expr { expr } => {
                 let body = expr.body_ir();
-                let expr_data = self
-                    .db
-                    .fixture
-                    .resident_expr(body, expr.expr_id())
+                let bodies = self.db.bodies();
+                let body_view = bodies
+                    .body(body)
+                    .expect("saved body query should succeed")
+                    .expect("body should exist while rendering analysis symbol");
+                let expr_data = body_view
+                    .expr(expr.expr_id())
                     .expect("expr id should exist while rendering analysis symbol");
                 writeln!(
                     dump,
@@ -1123,7 +1180,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
 
         for target in targets {
-            let label = if target.kind == crate::NavigationTargetKind::Impl {
+            let label = if target.kind == NavigationTargetKind::Impl {
                 target.name
             } else {
                 format!("{} {}", target.kind, target.name)
@@ -1134,6 +1191,34 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 self.render_optional_span(target.crate_ref.package, target.file_id, target.span)
             )
             .expect("string writes should not fail");
+        }
+    }
+
+    fn completion_kind_tag(kind: CompletionKind) -> &'static str {
+        match kind {
+            CompletionKind::Attribute => "at",
+            CompletionKind::Const => "ct",
+            CompletionKind::Enum => "en",
+            CompletionKind::EnumVariant => "ev",
+            CompletionKind::Field => "fd",
+            CompletionKind::Function => "fn",
+            CompletionKind::InherentMethod => "im",
+            CompletionKind::Keyword => "kw",
+            CompletionKind::Label => "lb",
+            CompletionKind::Lifetime => "lt",
+            CompletionKind::Macro => "ma",
+            CompletionKind::Module => "md",
+            CompletionKind::PrimitiveType => "pt",
+            CompletionKind::Postfix => "po",
+            CompletionKind::Static => "sc",
+            CompletionKind::Struct => "st",
+            CompletionKind::Trait => "tt",
+            CompletionKind::TraitMethod => "tm",
+            CompletionKind::TypeParameter => "tp",
+            CompletionKind::TypeAlias => "ta",
+            CompletionKind::Union => "un",
+            CompletionKind::Variable => "vr",
+            CompletionKind::Value => "vl",
         }
     }
 
@@ -1153,13 +1238,18 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         for completion in completions {
             if completion.applicability == CompletionApplicability::Known {
-                writeln!(dump, "{} {}", completion.kind.tag(), completion.label)
-                    .expect("string writes should not fail");
+                writeln!(
+                    dump,
+                    "{} {}",
+                    Self::completion_kind_tag(completion.kind),
+                    completion.label
+                )
+                .expect("string writes should not fail");
             } else {
                 writeln!(
                     dump,
                     "{} {} ({})",
-                    completion.kind.tag(),
+                    Self::completion_kind_tag(completion.kind),
                     completion.label,
                     completion.applicability
                 )
@@ -1466,15 +1556,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 }
 
-struct AnalysisSymbolSnapshot<'a> {
-    db: &'a AnalysisFixtureDb,
+struct AnalysisSymbolSnapshot<'db> {
+    db: AnalysisFixture<'db>,
 }
 
-impl<'a> AnalysisSymbolSnapshot<'a> {
-    fn new(db: &'a AnalysisFixtureDb) -> Self {
-        Self { db }
-    }
-
+impl AnalysisSymbolSnapshot<'_> {
     fn render_document_symbols(&self, query: &DocumentSymbolsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
         let outline = self
@@ -1568,7 +1654,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
                 self.render_source_span(package, file_id, symbol.selection_span)
             )
         };
-        let label = if symbol.kind == crate::SymbolKind::Impl {
+        let label = if symbol.kind == SymbolKind::Impl {
             symbol.name.clone()
         } else {
             format!("{} {}", symbol.kind, symbol.name)
@@ -1621,16 +1707,8 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
             .packages()
             .get(crate_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
-        let cargo_target = self
-            .db
-            .fixture
-            .def_map_db()
-            .package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .expect("semantic crate should exist while rendering workspace symbol")
-            .cargo_target();
         let target = package
-            .target(cargo_target)
+            .target(CargoTargetId(crate_ref.crate_id.0))
             .expect("target should exist while rendering workspace symbol");
 
         format!("{}[{}]", package.package_name(), target.kind)

@@ -1,14 +1,10 @@
-use rg_body_ir::{BodyOwner, BodyView, ExprData, testonly::BodyIrFixture};
-use rg_def_map::{DefMap, testonly::DefMapDb};
+use rg_body_ir::BodyOwner;
 use rg_ir_model::{
-    BodyRef, BodySource, CrateRef, DefMapRef, ExprId, FileId, FunctionRef, GenericParamRef,
-    ItemOwner, ModuleRef, TraitDefRef, TypeDefId, TypeDefRef,
+    DefMapRef, FunctionRef, GenericParamRef, ItemOwner, ModuleRef, TraitDefRef, TypeDefId,
+    TypeDefRef,
 };
 use rg_parse::ParseDb;
-use rg_semantic_ir::{
-    GenericParamSource, GenericsQuery, ItemStore, ItemStoreQuery,
-    testonly::{SemanticIrDb, SemanticIrFixture},
-};
+use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
     signature::SemanticSignatureQuery,
@@ -16,105 +12,22 @@ use rg_ty::{
 
 use crate::{IndexedViewDb, ty::IndexedType};
 
-/// End-to-end fixture for tests that exercise view-level projections.
-///
-/// The lower IR fixtures still own construction of the indexed stores. This facade keeps tests
-/// above `ir-view` from also knowing how to assemble read transactions for those stores.
-pub struct ViewFixture {
-    body_ir: BodyIrFixture,
+/// Show the compiler type details needed by inference snapshots using the same readers as the query.
+pub fn render_indexed_type(db: &IndexedViewDb<'_>, parse: &ParseDb, ty: &IndexedType) -> String {
+    TypeRenderer { db, parse }.render_ty(ty.raw())
 }
 
-impl ViewFixture {
-    pub fn build(fixture: &str) -> Self {
-        Self {
-            body_ir: BodyIrFixture::build(fixture),
-        }
-    }
+struct TypeRenderer<'a, 'db> {
+    db: &'a IndexedViewDb<'db>,
+    parse: &'a ParseDb,
+}
 
-    pub fn build_from_semantic_ir(semantic_ir: SemanticIrFixture) -> Self {
-        Self {
-            body_ir: BodyIrFixture::build_from_semantic_ir(semantic_ir),
-        }
-    }
-
-    pub fn view_db(&self) -> IndexedViewDb<'_> {
-        IndexedViewDb::new(
-            self.body_ir.def_map_db().reader(),
-            self.body_ir.semantic_ir_db().reader(),
-            self.body_ir.body_reader(),
-            self.body_ir.parse_db(),
-            rg_std::CancellationToken::new(),
-        )
-    }
-
-    pub fn parse_db(&self) -> &ParseDb {
-        self.body_ir.parse_db()
-    }
-
-    pub fn def_map_db(&self) -> &DefMapDb {
-        self.body_ir.def_map_db()
-    }
-
-    pub fn semantic_ir_db(&self) -> &SemanticIrDb {
-        self.body_ir.semantic_ir_db()
-    }
-
-    pub fn def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.body_ir.def_map(crate_ref)
-    }
-
-    pub fn crate_items(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
-        self.body_ir.crate_items(crate_ref)
-    }
-
-    pub fn body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
-        self.body_ir.body(body_ref)
-    }
-
-    pub fn resident_body_source(&self, body_ref: BodyRef) -> Option<BodySource> {
-        self.body(body_ref).map(|body| body.source())
-    }
-
-    pub fn resident_expr(&self, body_ref: BodyRef, expr: ExprId) -> Option<&ExprData> {
-        self.body(body_ref)?.expr(expr)
-    }
-
-    pub fn resident_body_owner(&self, body_ref: BodyRef) -> Option<BodyOwner> {
-        self.body(body_ref).map(BodyView::owner)
-    }
-
-    pub fn body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
-        self.body_ir.body_item_store(body_ref)
-    }
-
-    pub fn first_body_ref(&self, crate_ref: CrateRef) -> Option<BodyRef> {
-        self.body_refs_for_crate(crate_ref).into_iter().next()
-    }
-
-    pub fn body_refs_for_crate(&self, crate_ref: CrateRef) -> Vec<BodyRef> {
-        let Some(crate_bodies) = self.body_ir.bodies(crate_ref) else {
-            return Vec::new();
-        };
-
-        crate_bodies
-            .body_views()
-            .map(|(body, _)| BodyRef::local(crate_ref, body))
-            .collect()
-    }
-
-    pub fn crate_owns_file(&self, crate_ref: CrateRef, file_id: FileId) -> bool {
-        self.def_map(crate_ref).is_some_and(|def_map| {
-            def_map
-                .modules()
-                .iter()
-                .any(|module| module.origin.contains_file(file_id))
-        })
-    }
-
-    pub fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
+impl TypeRenderer<'_, '_> {
+    fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
-            .body_ir
-            .item_store(ty.origin)
+            .db
+            .item_store_for_origin(ty.origin)
+            .expect("fixture item store should load")
             .expect("type item store should exist while rendering view fixture type");
 
         match ty.id {
@@ -147,10 +60,11 @@ impl ViewFixture {
         }
     }
 
-    pub fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
+    fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
         let items = self
-            .body_ir
-            .item_store(trait_ref.origin)
+            .db
+            .item_store_for_origin(trait_ref.origin)
+            .expect("fixture item store should load")
             .expect("trait item store should exist while rendering view fixture type");
         let data = items
             .trait_data(trait_ref.id)
@@ -160,15 +74,6 @@ impl ViewFixture {
             self.render_module_ref(data.owner),
             data.name
         )
-    }
-
-    /// Render the detailed compiler type vocabulary used by view and analysis snapshots.
-    ///
-    /// Product code sees `IndexedType` as an opaque projection. Snapshot tests deliberately need
-    /// more detail to distinguish inference regressions, so that privileged rendering stays in the
-    /// facade's test support instead of reopening the compiler representation in `rg_analysis`.
-    pub fn render_indexed_type(&self, ty: &IndexedType) -> String {
-        self.render_ty(ty.raw())
     }
 
     fn render_ty(&self, ty: &Ty) -> String {
@@ -264,8 +169,7 @@ impl ViewFixture {
     }
 
     fn render_type_param(&self, param: rg_ir_model::TypeParamRef) -> String {
-        let db = self.view_db();
-        let generics = GenericsQuery::new(&db)
+        let generics = GenericsQuery::new(self.db)
             .generics(param.owner)
             .expect("fixture generic declarations should be available while rendering a type");
         let Some(data) = generics
@@ -278,11 +182,11 @@ impl ViewFixture {
             GenericParamSource::Type(source) => format!("param {}", source.name),
             GenericParamSource::TraitSelf => "param Self".to_string(),
             GenericParamSource::ArgumentImplTrait(_) => {
-                let mut bounds = SemanticSignatureQuery::new(&db, &db)
+                let mut bounds = SemanticSignatureQuery::new(self.db, self.db)
                     .function_type_param_bounds(param)
                     .expect("fixture APIT predicates should lower while rendering a type")
                     .iter()
-                    .map(|bound| self.render_opaque_bound(&db, bound))
+                    .map(|bound| self.render_opaque_bound(bound))
                     .collect::<Vec<_>>();
                 bounds.sort();
                 if bounds.is_empty() {
@@ -298,13 +202,12 @@ impl ViewFixture {
     }
 
     fn render_opaque(&self, opaque: &OpaqueTy) -> String {
-        let db = self.view_db();
-        let mut bounds = SemanticSignatureQuery::new(&db, &db)
+        let mut bounds = SemanticSignatureQuery::new(self.db, self.db)
             .opaque_bounds(opaque)
             .expect("fixture opaque predicates should lower while rendering a type")
             .unwrap_or_default()
             .iter()
-            .map(|bound| self.render_opaque_bound(&db, bound))
+            .map(|bound| self.render_opaque_bound(bound))
             .collect::<Vec<_>>();
         bounds.sort();
         if bounds.is_empty() {
@@ -314,7 +217,7 @@ impl ViewFixture {
         }
     }
 
-    fn render_opaque_bound(&self, db: &IndexedViewDb<'_>, bound: &TraitRefLowering) -> String {
+    fn render_opaque_bound(&self, bound: &TraitRefLowering) -> String {
         let mut args = bound
             .application
             .args
@@ -323,7 +226,7 @@ impl ViewFixture {
             .map(|arg| self.render_generic_arg(arg))
             .collect::<Vec<_>>();
         for binding in &bound.associated_types {
-            let name = ItemStoreQuery::new(db)
+            let name = ItemStoreQuery::new(self.db)
                 .type_alias_data(binding.projection.associated_ty)
                 .expect("fixture associated type should load while rendering an opaque bound")
                 .map(|data| data.name.to_string())
@@ -339,8 +242,7 @@ impl ViewFixture {
     }
 
     fn render_associated_ty_name(&self, associated_ty: rg_ir_model::TypeAliasRef) -> String {
-        let db = self.view_db();
-        ItemStoreQuery::new(&db)
+        ItemStoreQuery::new(self.db)
             .type_alias_data(associated_ty)
             .expect("fixture associated type should load while rendering a projection")
             .map(|data| data.name.to_string())
@@ -377,26 +279,31 @@ impl ViewFixture {
         }
     }
 
-    pub fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+    fn render_module_ref(&self, module_ref: ModuleRef) -> String {
         if let DefMapRef::Body(body_ref) = module_ref.origin {
             // TODO: Preserve body-local module identity in fixture output. Distinct inline modules
             // owned by the same body currently render as the same owner label.
             let owner = self
-                .resident_body_owner(body_ref)
-                .expect("body module owner should exist while rendering view fixture module");
+                .db
+                .body_ir
+                .body(body_ref)
+                .expect("fixture body should load")
+                .expect("body module owner should exist while rendering view fixture module")
+                .owner();
             return self.render_body_owner(owner);
         }
 
         let crate_ref = module_ref.origin.origin_crate();
         let package = self
-            .parse_db()
+            .parse
             .packages()
             .get(crate_ref.package.0)
             .expect("package slot should exist while rendering view fixture module");
         let cargo_target = self
-            .def_map_db()
-            .package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .db
+            .def_map
+            .crate_data(crate_ref)
+            .expect("fixture declarations should load")
             .expect("semantic crate should exist while rendering view fixture module")
             .cargo_target();
         let target = package
@@ -413,8 +320,9 @@ impl ViewFixture {
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let items = self
-            .body_ir
-            .item_store(function_ref.origin)
+            .db
+            .item_store_for_origin(function_ref.origin)
+            .expect("fixture item store should load")
             .expect("function item store should exist while rendering view fixture body item");
         let data = items
             .function_data(function_ref.id)
@@ -429,8 +337,9 @@ impl ViewFixture {
             BodyOwner::Function(function_ref) => self.render_function_ref(function_ref),
             BodyOwner::Const(const_ref) => {
                 let items = self
-                    .body_ir
-                    .item_store(const_ref.origin)
+                    .db
+                    .item_store_for_origin(const_ref.origin)
+                    .expect("fixture item store should load")
                     .expect("const item store should exist while rendering view fixture body item");
                 let data = items
                     .const_data(const_ref.id)
@@ -439,9 +348,13 @@ impl ViewFixture {
                 format!("const {owner}::{}", data.name)
             }
             BodyOwner::Static(static_ref) => {
-                let items = self.body_ir.item_store(static_ref.origin).expect(
-                    "static item store should exist while rendering view fixture body item",
-                );
+                let items = self
+                    .db
+                    .item_store_for_origin(static_ref.origin)
+                    .expect("fixture item store should load")
+                    .expect(
+                        "static item store should exist while rendering view fixture body item",
+                    );
                 let data = items
                     .static_data(static_ref.id)
                     .expect("static ref should exist while rendering view fixture body item");
@@ -459,8 +372,9 @@ impl ViewFixture {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
                 let items = self
-                    .body_ir
-                    .item_store(origin)
+                    .db
+                    .item_store_for_origin(origin)
+                    .expect("fixture item store should load")
                     .expect("trait item store should exist while rendering view fixture body item");
                 let trait_data = items
                     .trait_data(trait_id)
@@ -479,7 +393,9 @@ impl ViewFixture {
 
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
-            .def_map(module_ref.origin.origin_crate())
+            .db
+            .def_map_for_origin(module_ref.origin)
+            .expect("fixture def map should load")
             .expect("target def map should exist while rendering view fixture module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering view fixture module path");
