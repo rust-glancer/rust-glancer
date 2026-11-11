@@ -40,11 +40,14 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefRef,
 };
 use rg_item_tree::LangItem;
+use rg_source::ReadError;
 use rg_std::{CancellationToken, Cancelled, OperationError, UniqueVec};
 use rg_text::Name;
 
-use super::{ItemLookupIndexSource, ItemStoreQuery, ItemStoreSource};
-use crate::{ItemLookupFacts, ItemLookupIndex, TraitImplSelfHead, item::TraitItemTraitRefs};
+use super::{ItemStoreQuery, ItemStoreSource};
+use crate::{
+    ItemLookupFacts, ItemLookupIndex, ItemReader, TraitImplSelfHead, item::TraitItemTraitRefs,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TraitItemKind {
@@ -88,27 +91,21 @@ impl<'item> ItemLookupQuery<'item> {
     ///
     /// This creates a private operation cache. Use [`Self::build_with_cache`] when several sibling
     /// queries should reuse dependency results.
-    pub fn build_from<I>(
-        items: &ItemStoreQuery<'item, I>,
+    pub fn build_from(
+        items: ItemReader<'item>,
         use_site: CrateRef,
-        cancellation: &rg_std::CancellationToken,
-    ) -> Result<Self, rg_std::OperationError<I::Error>>
-    where
-        I: ItemLookupIndexSource<'item>,
-    {
+        cancellation: &CancellationToken,
+    ) -> Result<Self, OperationError<ReadError>> {
         Self::build_with_cache(items, use_site, &ItemLookupQueryCache::new(), cancellation)
     }
 
     /// Build one use-site query using an operation cache shared with sibling queries.
-    pub fn build_with_cache<I>(
-        items: &ItemStoreQuery<'item, I>,
+    pub fn build_with_cache(
+        items: ItemReader<'item>,
         use_site: CrateRef,
         cache: &ItemLookupQueryCache,
-        cancellation: &rg_std::CancellationToken,
-    ) -> Result<Self, rg_std::OperationError<I::Error>>
-    where
-        I: ItemLookupIndexSource<'item>,
-    {
+        cancellation: &CancellationToken,
+    ) -> Result<Self, OperationError<ReadError>> {
         // 1. Read the crate's saved visibility order and language-item choices. The local index
         // gives us both without walking DefMap or opening dependency declaration stores.
         rg_std::check_cancel!(cancellation, "load use-site lookup index");
@@ -120,15 +117,20 @@ impl<'item> ItemLookupQuery<'item> {
 
         // 2. Keep the use-site index separate from the dependencies. Two integration tests may
         // share their dependencies, but neither test's own declarations should reach the other.
-        let dependency_crates = lookup_facts
+        let visible_dependencies = lookup_facts
             .visible_crates()
             .iter()
             .copied()
             .filter(|crate_ref| *crate_ref != use_site);
-        let (dependency_crates, dependency_indexes) = items
-            .indexes_for_crates(dependency_crates, cancellation)?
-            .into_iter()
-            .unzip();
+        let mut dependency_crates = Vec::new();
+        let mut dependency_indexes = Vec::new();
+        for krate in visible_dependencies {
+            rg_std::check_cancel!(cancellation, "load visible lookup index");
+            if let Some(index) = items.lookup_index(krate).map_err(OperationError::Source)? {
+                dependency_crates.push(krate);
+                dependency_indexes.push(index);
+            }
+        }
 
         // 3. The ordered dependency crate list identifies reusable results. The indexes stay
         // borrowed by this query; only compact candidate identities enter the operation cache.

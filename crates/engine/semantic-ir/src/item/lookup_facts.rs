@@ -7,7 +7,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{CrateRef, DefMapRef, SemanticItemRef};
 use rg_item_tree::LangItem;
-use rg_std::{CancellationToken, MemorySize, OperationError, Shrink, UniqueVec};
+use rg_std::{MemorySize, OperationError, Shrink, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{lang_item::VisibleLangItems, query::ItemStoreSource};
@@ -30,7 +30,7 @@ impl ItemLookupFacts {
     /// Record DefMap's item-lookup order and select language items from those crates' declarations.
     pub fn build<'item, D, I>(
         crate_items: &CrateItemQuery<'item, D, I>,
-        cancellation: &CancellationToken,
+        mut check_cancelled: impl FnMut() -> Result<(), OperationError<I::Error>>,
     ) -> Result<Self, OperationError<I::Error>>
     where
         D: DefMapSource<Error = I::Error>,
@@ -46,7 +46,7 @@ impl ItemLookupFacts {
         // crate has duplicate declarations, keep the ambiguity instead of falling through to
         // a dependency and silently selecting a different trait.
         for store in &stores {
-            rg_std::check_cancel!(cancellation, "visible language items");
+            check_cancelled()?;
             let origin = DefMapRef::Crate(store.crate_ref());
             for lang_item in LangItem::ALL {
                 lang_items

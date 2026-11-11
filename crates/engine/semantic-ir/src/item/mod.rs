@@ -28,9 +28,8 @@ pub use self::{
     lookup_facts::ItemLookupFacts,
     lookup_index::{ItemLookupIndex, TraitImplSelfHead},
     query::{
-        CrateItemQuery, GenericsQuery, ItemLookupIndexSource, ItemLookupQuery,
-        ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStoreQuery,
-        ItemStoreSource,
+        CrateItemQuery, GenericsQuery, ItemLookupQuery, ItemLookupQueryCache,
+        ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStoreQuery, ItemStoreSource,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},

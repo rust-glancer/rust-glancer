@@ -1,4 +1,4 @@
-//! Borrowed semantic item views shared by read transactions and downstream queries.
+//! Borrowed semantic item views shared by readers and downstream queries.
 
 use rg_def_map::ItemSource;
 use rg_ir_model::{

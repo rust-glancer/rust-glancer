@@ -38,11 +38,7 @@ fn main() {}
         ("app", rg_workspace::TargetKind::Bin),
     ]
     .map(|(package, kind)| fixture.def_map_fixture().crate_ref(package, kind));
-    let items = fixture
-        .semantic_ir_db()
-        .read_txn(crate::SemanticIrLoader::resident_only(
-            "language-item fixture",
-        ));
+    let items = fixture.semantic_ir_db().reader();
     let cache = crate::ItemLookupQueryCache::new();
     let cancellation = rg_std::CancellationToken::new();
 
@@ -50,19 +46,15 @@ fn main() {}
     // also checks that sharing the query cache does not mix library and binary choices.
     for use_site in [library, dependency, binary, binary, dependency, library] {
         let expected = fixture
-            .resident_crate_ir(use_site)
+            .crate_items(use_site)
             .expect("target store exists")
             .traits_with_refs()
             .next()
             .expect("target declares its language item")
             .0;
-        let query = crate::ItemLookupQuery::build_with_cache(
-            &crate::ItemStoreQuery::new(&items),
-            use_site,
-            &cache,
-            &cancellation,
-        )
-        .expect("target lookup succeeds");
+        let query =
+            crate::ItemLookupQuery::build_with_cache(items, use_site, &cache, &cancellation)
+                .expect("target lookup succeeds");
         assert_eq!(
             query.lang_trait(rg_item_tree::LangItem::Deref),
             Some(expected),
@@ -117,14 +109,14 @@ pub struct Library;
             .def_map_fixture()
             .crate_ref("dep", rg_workspace::TargetKind::Lib);
         let shared_trait = fixture
-            .resident_crate_ir(dep)
+            .crate_items(dep)
             .expect("dependency semantic store should exist")
             .traits_with_refs()
             .next()
             .expect("dependency should declare one trait")
             .0;
         let shared_type = fixture
-            .resident_crate_ir(dep)
+            .crate_items(dep)
             .expect("dependency semantic store should exist")
             .semantic_items()
             .find_map(|item| {
@@ -150,16 +142,8 @@ pub struct Library;
             })
             .collect::<Vec<_>>();
 
-        let def_maps = fixture
-            .def_map_db()
-            .read_txn(rg_def_map::DefMapLoader::resident_only(
-                "resident fanout fixture",
-            ));
-        let items = fixture
-            .semantic_ir_db()
-            .read_txn(crate::SemanticIrLoader::resident_only(
-                "resident fanout fixture",
-            ));
+        let def_maps = fixture.def_map_db().reader();
+        let items = fixture.semantic_ir_db().reader();
         let cache = crate::ItemLookupQueryCache::new();
         let dependency_sets = test_crates
             .iter()
@@ -195,7 +179,7 @@ pub struct Library;
             .iter()
             .map(|&use_site| {
                 crate::ItemLookupQuery::build_with_cache(
-                    &crate::ItemStoreQuery::new(&items),
+                    items,
                     use_site,
                     &cache,
                     &rg_std::CancellationToken::new(),
@@ -264,9 +248,22 @@ pub struct Library;
             );
         }
 
-        let semantic_stats = fixture.semantic_ir_db().stats();
-        assert_eq!(semantic_stats.lookup_index_count, target_count + 2);
-        retained_entries.push(semantic_stats.lookup_index_entry_count);
+        let index_source = fixture.semantic_ir_db();
+        use crate::CrateItemSource as _;
+        let crates = index_source.crates();
+        assert_eq!(crates.len(), target_count + 2);
+        retained_entries.push(
+            crates
+                .into_iter()
+                .map(|krate| {
+                    index_source
+                        .lookup_index(krate)
+                        .expect("fixture lookup index reads")
+                        .expect("fixture target has a lookup index")
+                        .entry_count()
+                })
+                .sum::<usize>(),
+        );
     }
 
     assert_eq!(
@@ -306,10 +303,10 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         .def_map_fixture()
         .crate_ref("semantic_proc_macros", rg_workspace::TargetKind::ProcMacro);
     let def_map = fixture
-        .resident_def_map(crate_ref)
+        .def_map(crate_ref)
         .expect("proc-macro def map should exist");
     let items = fixture
-        .resident_crate_ir(crate_ref)
+        .crate_items(crate_ref)
         .expect("proc-macro semantic items should exist");
 
     let mut function_names = items
@@ -398,16 +395,8 @@ pub struct Parser;
     let runtime = crate_ref("runtime", rg_workspace::TargetKind::Lib);
     let derive_macro = crate_ref("derive_macro", rg_workspace::TargetKind::ProcMacro);
     let parser = crate_ref("parser", rg_workspace::TargetKind::Lib);
-    let def_maps = fixture
-        .def_map_db()
-        .read_txn(rg_def_map::DefMapLoader::resident_only(
-            "resident item visibility fixture",
-        ));
-    let items = fixture
-        .semantic_ir_db()
-        .read_txn(crate::SemanticIrLoader::resident_only(
-            "resident item visibility fixture",
-        ));
+    let def_maps = fixture.def_map_db().reader();
+    let items = fixture.semantic_ir_db().reader();
     let visible_from = |use_site| {
         let mut crates = crate::CrateItemQuery::new(&def_maps, &items, use_site)
             .visible_stores()

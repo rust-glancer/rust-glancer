@@ -43,7 +43,7 @@ impl<T> Marker for T {}
         .def_map_fixture()
         .crate_ref("trait_head_fixture", rg_workspace::TargetKind::Lib);
     let store = fixture
-        .resident_crate_ir(crate_ref)
+        .crate_items(crate_ref)
         .expect("fixture semantic store should exist");
     let marker = store
         .traits_with_refs()
@@ -67,17 +67,10 @@ impl<T> Marker for T {}
         })
         .expect("fixture should contain the type named like a primitive");
 
-    let items = fixture
-        .semantic_ir_db()
-        .read_txn(crate::SemanticIrLoader::resident_only(
-            "resident trait-head fixture",
-        ));
-    let lookup = crate::ItemLookupQuery::build_from(
-        &crate::ItemStoreQuery::new(&items),
-        crate_ref,
-        &rg_std::CancellationToken::new(),
-    )
-    .expect("trait-head lookup query should build");
+    let items = fixture.semantic_ir_db().reader();
+    let lookup =
+        crate::ItemLookupQuery::build_from(items, crate_ref, &rg_std::CancellationToken::new())
+            .expect("trait-head lookup query should build");
 
     let self_types = |head| {
         lookup

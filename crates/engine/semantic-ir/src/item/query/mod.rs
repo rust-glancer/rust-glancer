@@ -9,7 +9,7 @@ mod item_store;
 mod lookup;
 mod resolution;
 
-use rg_ir_model::{CrateRef, DefMapRef};
+use rg_ir_model::DefMapRef;
 
 pub use self::{
     crate_item::CrateItemQuery,
@@ -18,7 +18,7 @@ pub use self::{
     lookup::{ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats},
     resolution::ItemResolutionQuery,
 };
-use crate::{ItemLookupIndex, ItemStore};
+use crate::ItemStore;
 
 /// Provides the stores that semantic-shaped item refs can point into.
 ///
@@ -34,23 +34,4 @@ pub trait ItemStoreSource<'a>: Clone {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error>;
-
-    /// Enumerates all stores materialized by the source.
-    ///
-    /// This is a storage boundary, not a language visibility boundary. Impl and method lookup use
-    /// `CrateItemQuery`, which derives visibility from a concrete use-site crate through DefMap
-    /// data.
-    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error>;
-}
-
-/// Provides declaration-local lookup indexes for crate-level semantic item stores.
-///
-/// `ItemStoreSource` also routes body-local stores, but those stores intentionally do not own a
-/// crate-global lookup index. Keeping this as a separate capability lets visibility-scoped lookup
-/// require the stronger source without burdening ordinary item reads.
-pub trait ItemLookupIndexSource<'a>: ItemStoreSource<'a> {
-    fn item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&'a ItemLookupIndex>, Self::Error>;
 }

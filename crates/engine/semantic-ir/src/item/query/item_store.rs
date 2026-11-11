@@ -11,11 +11,10 @@ use rg_ir_model::{
 };
 use rg_item_tree::{FieldList, GenericParams};
 
-use super::{ItemLookupIndexSource, ItemStoreSource};
+use super::ItemStoreSource;
 use crate::{
-    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemLookupIndex,
-    ItemStore, SelfTypeOwner, SemanticItemView, StaticData, TraitData, TypeAliasData,
-    TypePathContext,
+    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,
+    SelfTypeOwner, SemanticItemView, StaticData, TraitData, TypeAliasData, TypePathContext,
 };
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
@@ -48,20 +47,6 @@ where
         self.source.item_store_for_origin(origin)
     }
 
-    /// Returns the stores that are materialized by this query source.
-    pub fn included_stores(&self) -> Result<Vec<&'a ItemStore>, S::Error> {
-        self.source.included_stores()
-    }
-
-    /// Returns crate refs for all stores materialized by this query source.
-    pub fn included_crate_refs(&self) -> Result<Vec<CrateRef>, S::Error> {
-        Ok(self
-            .included_stores()?
-            .into_iter()
-            .map(|store| store.crate_ref())
-            .collect())
-    }
-
     /// Returns stores for the exact crates selected by a language-visibility query.
     pub fn stores_for_crates(&self, crates: &[CrateRef]) -> Result<Vec<&'a ItemStore>, S::Error> {
         let mut stores = Vec::new();
@@ -71,42 +56,6 @@ where
             }
         }
         Ok(stores)
-    }
-
-    /// Returns declaration-local lookup indexes for exact crates in the requested visibility order.
-    ///
-    /// Missing indexes are skipped without forcing an item-store read. Keeping each crate ref
-    /// beside its index gives the query cache the exact dependency set that was loaded.
-    pub(super) fn indexes_for_crates(
-        &self,
-        crates: impl IntoIterator<Item = CrateRef>,
-        cancellation: &rg_std::CancellationToken,
-    ) -> Result<Vec<(CrateRef, &'a ItemLookupIndex)>, rg_std::OperationError<S::Error>>
-    where
-        S: ItemLookupIndexSource<'a>,
-    {
-        let mut indexes = Vec::new();
-        for crate_ref in crates {
-            rg_std::check_cancel!(cancellation, "load visible lookup index");
-            let Some(index) = self
-                .lookup_index(crate_ref)
-                .map_err(rg_std::OperationError::Source)?
-            else {
-                continue;
-            };
-            indexes.push((crate_ref, index));
-        }
-        Ok(indexes)
-    }
-
-    pub(super) fn lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&'a ItemLookupIndex>, S::Error>
-    where
-        S: ItemLookupIndexSource<'a>,
-    {
-        self.source.item_lookup_index(crate_ref)
     }
 
     /// Enumerates item views from one routed origin without exposing store iteration to callers.

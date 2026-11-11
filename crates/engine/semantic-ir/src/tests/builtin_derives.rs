@@ -45,7 +45,7 @@ pub struct Alias<T = ()>(T);
         .def_map_fixture()
         .crate_ref("derive_headers", rg_workspace::TargetKind::Lib);
     let store = fixture
-        .resident_crate_ir(crate_ref)
+        .crate_items(crate_ref)
         .expect("fixture item store exists");
     let mut headers = Vec::new();
     for (_, data) in store.impls_with_refs() {

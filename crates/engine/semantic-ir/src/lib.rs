@@ -11,26 +11,28 @@
 mod build;
 mod item;
 mod package;
-mod stats;
-mod store;
+mod reader;
 #[doc(hidden)]
 pub mod testonly;
 
 #[cfg(test)]
 mod tests;
 
+pub use rg_source::ReadError;
+
 pub use self::{
-    build::{ItemStoreLowerer, ItemStoreSourceReader},
+    build::{
+        BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader, TargetDeclarationMetadata,
+        TargetDeclarationReader, TargetDeclarations, target_declarations,
+    },
     item::{
         ConstData, ConstSignature, CrateItemQuery, EnumData, EnumVariantData, FieldData,
         FunctionData, FunctionSignature, GenericParamSource, GenericParamView, Generics,
-        GenericsQuery, ImplData, ItemLookupFacts, ItemLookupIndex, ItemLookupIndexSource,
-        ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery,
-        ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource, SelfTypeOwner,
-        SemanticItemView, StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData,
-        TypeAliasSignature, TypePathContext, TypePathResolution, UnionData,
+        GenericsQuery, ImplData, ItemLookupFacts, ItemLookupIndex, ItemLookupQuery,
+        ItemLookupQueryCache, ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore,
+        ItemStoreBuilder, ItemStoreQuery, ItemStoreSource, SelfTypeOwner, SemanticItemView,
+        StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
+        TypePathContext, TypePathResolution, UnionData,
     },
-    package::{SemanticCrate, SemanticPackage, SemanticPackageManifest},
-    stats::SemanticIrStats,
-    store::{LoadSemanticIr, SemanticIrDb, SemanticIrLoader, SemanticIrReadTxn},
+    reader::{CrateItemSource, ItemReader},
 };
