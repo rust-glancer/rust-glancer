@@ -106,7 +106,7 @@ impl IncludePathExpression {
     /// unique dep-info match; it does not guess from files that merely happen to exist.
     pub fn resolve(
         &self,
-        current_file: &rg_parse::ParsedFile<'_>,
+        current_file: &Path,
         generated_sources: Option<&rg_workspace::CargoGeneratedSources>,
     ) -> Option<PathBuf> {
         // Source-relative includes do not need Cargo-generated source metadata at all.
@@ -116,7 +116,7 @@ impl IncludePathExpression {
             .all(|component| matches!(component, IncludePathComponent::Literal(_)))
         {
             let path = self.render_with(|_| None)?;
-            return current_file.resolve_path(&path);
+            return rg_parse::resolve_path_literal(current_file.parent()?, &path);
         }
 
         let generated_sources = generated_sources?;
@@ -129,7 +129,7 @@ impl IncludePathExpression {
             let path = if path.is_absolute() {
                 path
             } else {
-                current_file.resolve_path(path.to_str()?)?
+                rg_parse::resolve_path_literal(current_file.parent()?, path.to_str()?)?
             };
             if generated_sources
                 .generated_files()
