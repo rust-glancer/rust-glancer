@@ -27,7 +27,7 @@ pub mod inner {
             package body_expr_macro_fixture
 
             body_expr_macro_fixture [lib]
-            body b0 fn body_expr_macro_fixture[lib]::crate::inner::use_it @ 8:5-11:6
+            fn body_expr_macro_fixture[lib]::crate::inner::use_it @ 8:5-11:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
@@ -68,7 +68,7 @@ pub fn use_it() {
             package body_expr_recursive_macro_fixture
 
             body_expr_recursive_macro_fixture [lib]
-            body b0 fn body_expr_recursive_macro_fixture[lib]::crate::use_it @ 7:1-9:2
+            fn body_expr_recursive_macro_fixture[lib]::crate::use_it @ 7:1-9:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -139,7 +139,7 @@ pub fn local_use() {
             package body_stmt_macro_fixture
 
             body_stmt_macro_fixture [lib]
-            body b0 fn body_stmt_macro_fixture[lib]::crate::steps @ 26:1-29:2
+            fn body_stmt_macro_fixture[lib]::crate::steps @ 26:1-29:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -167,7 +167,7 @@ pub fn local_use() {
                 expr e6 path tripled -> local v2 => i32 @ 28:5-28:12
 
 
-            body b1 fn body_stmt_macro_fixture[lib]::crate::empty @ 31:1-34:2
+            fn body_stmt_macro_fixture[lib]::crate::empty @ 31:1-34:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -179,7 +179,7 @@ pub fn local_use() {
                 expr e0 path input -> local v0 => i32 @ 33:5-33:10
 
 
-            body b2 fn body_stmt_macro_fixture[lib]::crate::local_struct @ 36:1-40:2
+            fn body_stmt_macro_fixture[lib]::crate::local_struct @ 36:1-40:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
@@ -197,7 +197,7 @@ pub fn local_use() {
                 expr e1 path user -> local v0 => nominal struct fn body_stmt_macro_fixture[lib]::crate::local_struct::User @ 37:5-37:17 @ 39:5-39:9
 
 
-            body b3 fn body_stmt_macro_fixture[lib]::crate::local_use @ 42:1-46:2
+            fn body_stmt_macro_fixture[lib]::crate::local_use @ 42:1-46:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
@@ -256,7 +256,7 @@ pub fn use_if_let(input: Maybe) -> i32 {
             package body_macro_pattern_fixture
 
             body_macro_pattern_fixture [lib]
-            body b0 fn body_macro_pattern_fixture[lib]::crate::use_let @ 18:1-21:2
+            fn body_macro_pattern_fixture[lib]::crate::use_let @ 18:1-21:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -277,7 +277,7 @@ pub fn use_if_let(input: Maybe) -> i32 {
                     expr e2 path right -> local v2 => i32 @ 20:12-20:17
 
 
-            body b1 fn body_macro_pattern_fixture[lib]::crate::use_if_let @ 23:1-29:2
+            fn body_macro_pattern_fixture[lib]::crate::use_if_let @ 23:1-29:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -336,7 +336,7 @@ pub fn use_it(input: User, flag: u8) -> User {
             package body_macro_type_fixture
 
             body_macro_type_fixture [lib]
-            body b0 fn body_macro_type_fixture[lib]::crate::use_it @ 15:1-19:2
+            fn body_macro_type_fixture[lib]::crate::use_it @ 15:1-19:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3
@@ -386,7 +386,7 @@ pub fn use_it(input: i32) -> i32 {
             package body_imported_macro_fixture
 
             body_imported_macro_fixture [lib]
-            body b0 fn body_imported_macro_fixture[lib]::crate::use_it @ 13:1-15:2
+            fn body_imported_macro_fixture[lib]::crate::use_it @ 13:1-15:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -463,7 +463,7 @@ pub fn via_cfg_select() -> i32 {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::direct @ 10:1-12:2
+            fn app[lib]::crate::direct @ 10:1-12:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -476,7 +476,7 @@ pub fn via_cfg_select() -> i32 {
                     expr e0 path $crate::dep_value -> fn dep[lib]::crate::dep_value => function item fn dep[lib]::crate::dep_value @ 11:5-11:19
 
 
-            body b1 fn app[lib]::crate::via_cfg_select @ 14:1-16:2
+            fn app[lib]::crate::via_cfg_select @ 14:1-16:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -497,7 +497,7 @@ pub fn via_cfg_select() -> i32 {
             package dep
 
             dep [lib]
-            body b0 fn dep[lib]::crate::dep_value @ 1:1-3:2
+            fn dep[lib]::crate::dep_value @ 1:1-3:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -581,7 +581,7 @@ pub mod local {
             package body_cfg_select_fixture
 
             body_cfg_select_fixture [lib]
-            body b0 fn body_cfg_select_fixture[lib]::crate::expr @ 1:1-14:2
+            fn body_cfg_select_fixture[lib]::crate::expr @ 1:1-14:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -609,7 +609,7 @@ pub mod local {
                     expr e5 path fallback -> local v2 => i32 @ 13:16-13:24
 
 
-            body b1 fn body_cfg_select_fixture[lib]::crate::stmt @ 16:1-31:2
+            fn body_cfg_select_fixture[lib]::crate::stmt @ 16:1-31:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -637,7 +637,7 @@ pub mod local {
                 expr e6 path tripled -> local v2 => i32 @ 30:5-30:12
 
 
-            body b2 fn body_cfg_select_fixture[lib]::crate::local::shadow @ 40:5-44:6
+            fn body_cfg_select_fixture[lib]::crate::local::shadow @ 40:5-44:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -728,7 +728,7 @@ pub mod shadow {
             package body_format_family_fixture
 
             body_format_family_fixture [lib]
-            body b0 fn body_format_family_fixture[lib]::crate::direct @ 3:1-7:2
+            fn body_format_family_fixture[lib]::crate::direct @ 3:1-7:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -751,7 +751,7 @@ pub mod shadow {
                 expr e4 path args_nl -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 6:5-6:12
 
 
-            body b1 fn body_format_family_fixture[lib]::crate::qualified @ 9:1-12:2
+            fn body_format_family_fixture[lib]::crate::qualified @ 9:1-12:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -768,7 +768,7 @@ pub mod shadow {
                 expr e2 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 11:5-11:9
 
 
-            body b2 fn body_format_family_fixture[lib]::crate::aliased @ 14:1-18:2
+            fn body_format_family_fixture[lib]::crate::aliased @ 14:1-18:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -791,7 +791,7 @@ pub mod shadow {
                 expr e4 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 17:5-17:12
 
 
-            body b3 fn body_format_family_fixture[lib]::crate::library @ 20:1-23:2
+            fn body_format_family_fixture[lib]::crate::library @ 20:1-23:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -810,7 +810,7 @@ pub mod shadow {
                 expr e3 path args -> local v0 => nominal struct core[lib]::crate::fmt::Arguments @ 22:5-22:9
 
 
-            body b4 fn body_format_family_fixture[lib]::crate::shadow::local_format @ 38:5-41:6
+            fn body_format_family_fixture[lib]::crate::shadow::local_format @ 38:5-41:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -825,7 +825,7 @@ pub mod shadow {
                 expr e1 path value -> local v0 => i32 @ 40:9-40:14
 
 
-            body b5 fn body_format_family_fixture[lib]::crate::shadow::local_format_args @ 43:5-46:6
+            fn body_format_family_fixture[lib]::crate::shadow::local_format_args @ 43:5-46:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -910,7 +910,7 @@ pub struct TokenStream;
             package body_first_prelude_macro_fixture
 
             body_first_prelude_macro_fixture [lib]
-            body b0 fn body_first_prelude_macro_fixture[lib]::crate::use_it @ 1:1-4:2
+            fn body_first_prelude_macro_fixture[lib]::crate::use_it @ 1:1-4:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0
@@ -972,7 +972,7 @@ pub fn use_it() {
             package body_builtin_macro_types_fixture
 
             body_builtin_macro_types_fixture [lib]
-            body b0 fn body_builtin_macro_types_fixture[lib]::crate::use_it @ 1:1-14:2
+            fn body_builtin_macro_types_fixture[lib]::crate::use_it @ 1:1-14:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10

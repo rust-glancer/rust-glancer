@@ -23,7 +23,7 @@ fn main() {
             package body_bin_fixture
 
             body_bin_fixture [lib]
-            body b0 fn body_bin_fixture[lib]::crate::make @ 3:1-5:2
+            fn body_bin_fixture[lib]::crate::make @ 3:1-5:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -35,7 +35,7 @@ fn main() {
 
 
             body-bin-fixture [bin]
-            body b0 fn body_bin_fixture[bin]::crate::main @ 1:1-4:2
+            fn body_bin_fixture[bin]::crate::main @ 1:1-4:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1

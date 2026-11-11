@@ -21,10 +21,10 @@ rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_source.workspace = true
 rg_text.workspace = true
+rg_workspace.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true
-rg_workspace.workspace = true
 
 [lints]
 workspace = true

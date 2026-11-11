@@ -22,7 +22,7 @@ pub fn choose(id: UserId) -> UserId {
             package body_scope_fixture
 
             body_scope_fixture [lib]
-            body b0 fn body_scope_fixture[lib]::crate::choose @ 3:1-10:2
+            fn body_scope_fixture[lib]::crate::choose @ 3:1-10:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v3

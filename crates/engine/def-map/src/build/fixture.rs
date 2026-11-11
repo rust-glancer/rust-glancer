@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_item_tree::{ItemTrees, testonly::fixture_database};
+use rg_item_tree::testonly::fixture_database;
 use rg_parse::ParseDb;
 use rg_source::ReadError;
 use rg_workspace::WorkspaceMetadata;
@@ -9,36 +9,26 @@ use rg_workspace::WorkspaceMetadata;
 use super::target::CrateDependencies;
 use crate::{
     CrateData, CrateDataSource, CrateDefMapReader, DefMapQuery, MacroExpansionLimitReport,
-    testonly::{DefMapDb, GeneratedItemStores, PackageDefMaps},
+    testonly::{DefMapDb, PackageDefMaps},
 };
 
 pub(crate) fn build_fixture_definitions(
     workspace: &WorkspaceMetadata,
-) -> anyhow::Result<(
-    ParseDb,
-    DefMapDb,
-    HashMap<CrateRef, ItemTrees>,
-    GeneratedItemStores,
-)> {
+) -> anyhow::Result<(ParseDb, DefMapDb)> {
     let mut database = fixture_database(workspace);
     let targets =
         database.update_inputs(|update| CrateDependencies::write_inputs(workspace, update))?;
 
     let inputs = database.inputs().clone();
-    let (parse, mut completed, trees, generated, reports) = database.run(|db| {
+    let (parse, mut completed, reports) = database.run(|db| {
         let mut completed = FixtureDefinitions::default();
-        let mut trees = HashMap::new();
-        let mut generated = GeneratedItemStores::new();
         let mut manifests = Vec::new();
         let mut reports = HashMap::<PackageSlot, Vec<MacroExpansionLimitReport>>::new();
-        // The production target builder can read dependencies from local arenas here, so
-        // downstream kernel fixtures can borrow their definitions without a runtime operation.
+        // Definition tests inspect local arenas while exercising the production target builder.
         for krate in targets {
             let dependencies = DefMapQuery::new(CrateDefMapReader(&completed));
-            let (built, item_trees, manifest) = CrateData::build_target(db, krate, &dependencies)?;
+            let (built, _, manifest) = CrateData::build_target(db, krate, &dependencies)?;
             completed.0.insert(krate, built.data);
-            trees.insert(krate, item_trees);
-            generated.insert(krate, built.generated_items);
             manifests.push((krate, manifest));
             reports
                 .entry(krate.package)
@@ -50,7 +40,7 @@ pub(crate) fn build_fixture_definitions(
             &inputs,
             manifests.iter().map(|(krate, manifest)| (*krate, manifest)),
         )?;
-        Ok((parse, completed, trees, generated, reports))
+        Ok((parse, completed, reports))
     })?;
 
     let mut reports = reports;
@@ -76,7 +66,7 @@ pub(crate) fn build_fixture_definitions(
             PackageDefMaps::new(crates, reports.remove(&slot).unwrap_or_default())
         })
         .collect();
-    Ok((parse, DefMapDb { packages }, trees, generated))
+    Ok((parse, DefMapDb { packages }))
 }
 
 #[derive(Default)]

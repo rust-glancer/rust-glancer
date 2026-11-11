@@ -10,7 +10,6 @@
 
 mod build;
 mod item;
-mod package;
 mod reader;
 #[doc(hidden)]
 pub mod testonly;

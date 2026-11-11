@@ -1,10 +1,11 @@
-use rg_ir_model::{EvaluatedConstValue, PackageSlot, UnsignedIntTy};
+use rg_ir_model::{EvaluatedConstValue, UnsignedIntTy};
+use rg_workspace::TargetKind;
 
-use crate::testonly::BodyIrFixture;
+use crate::{saved_body, testonly::BodyIrFixture};
 
 #[test]
-fn evaluates_initializers_with_semantic_types_independently_of_body_policy() {
-    let fixture = BodyIrFixture::build(
+fn evaluates_const_and_static_initializers_with_semantic_types() {
+    let mut fixture = BodyIrFixture::build(
         r#"
 //- /sizes/src/lib.rs crate:sizes root:sizes origin:dependency
 pub type Size = usize;
@@ -34,50 +35,32 @@ impl usize {
 }
 "#,
     );
-    let stores = (0..fixture.semantic_ir_db().package_count())
-        .filter_map(|index| fixture.semantic_ir_db().package(PackageSlot(index)))
-        .flat_map(|package| package.crates())
-        .map(|krate| krate.items())
-        .collect::<Vec<_>>();
-    for (name, value) in [
-        ("DEPENDENCY", 16),
-        ("CAPACITY", 16),
-        ("DEFAULT", 16),
-        ("PROJECTED", 16),
-        ("ZERO", 0),
-    ] {
-        let konst = stores
-            .iter()
-            .flat_map(|items| items.consts().iter())
-            .find(|data| data.name.as_str() == name)
-            .expect("fixture should contain the const declaration");
-        assert_eq!(
-            konst.value.as_deref(),
-            Some(&EvaluatedConstValue::UnsignedInt {
-                value,
-                ty: UnsignedIntTy::Usize
-            }),
-            "{name} uses shared type lowering and evaluation",
-        );
-    }
-    for (name, value) in [
-        ("DEPENDENCY_STATIC", 437),
-        ("STATIC_CAPACITY", 1024),
-        ("COUNTER", 4),
-        ("STATIC_PROJECTED", 16),
-    ] {
-        let static_ = stores
-            .iter()
-            .flat_map(|items| items.statics().iter())
-            .find(|data| data.name.as_str() == name)
-            .expect("fixture should contain the static declaration");
-        assert_eq!(
-            static_.value.as_deref(),
-            Some(&EvaluatedConstValue::UnsignedInt {
-                value,
-                ty: UnsignedIntTy::Usize
-            }),
-            "{name} uses shared type lowering and evaluation",
-        );
-    }
+    fixture.inspect(|view| {
+        let semantic = view.semantic();
+        let app = semantic.crate_ref("app", TargetKind::Lib);
+        let dependency = semantic.crate_ref("sizes", TargetKind::Lib);
+        for (target, name, value) in [
+            (dependency, "DEPENDENCY", 16),
+            (dependency, "DEPENDENCY_STATIC", 437),
+            (app, "CAPACITY", 16),
+            (app, "DEFAULT", 16),
+            (app, "PROJECTED", 16),
+            (app, "ZERO", 0),
+            (app, "STATIC_CAPACITY", 1024),
+            (app, "COUNTER", 4),
+            (app, "STATIC_PROJECTED", 16),
+        ] {
+            let key = view.body_key(target, name);
+            let saved = saved_body(semantic.db(), key).expect("fixture initializer query");
+            let body = saved.as_ref().expect("fixture initializer should exist");
+            assert_eq!(
+                body.initializer.as_ref(),
+                Some(&EvaluatedConstValue::UnsignedInt {
+                    value,
+                    ty: UnsignedIntTy::Usize,
+                }),
+                "{name} uses shared type lowering and evaluation",
+            );
+        }
+    });
 }

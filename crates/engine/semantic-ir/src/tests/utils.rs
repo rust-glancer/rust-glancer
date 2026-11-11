@@ -13,14 +13,16 @@ use rg_workspace::TargetKind;
 
 use crate::{
     ItemLookupQuery, ItemReader, ItemResolutionQuery, ItemStore, ItemStoreQuery,
-    testonly::SemanticIrFixture,
+    testonly::{SemanticIrFixture, SemanticIrView},
 };
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
-    let db = SemanticIrFixtureDb::build(fixture);
-    let actual = ProjectSemanticIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = SemanticIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectSemanticIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_semantic_queries(
@@ -28,10 +30,12 @@ pub(super) fn check_project_semantic_queries(
     queries: &[SemanticQuery],
     expect: Expect,
 ) {
-    let db = SemanticIrFixtureDb::build(fixture);
-    let actual = ProjectSemanticQuerySnapshot::new(&db, queries).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = SemanticIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectSemanticQuerySnapshot::new(&view, queries).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_semantic_queries_with_sysroot(
@@ -39,10 +43,12 @@ pub(super) fn check_project_semantic_queries_with_sysroot(
     queries: &[SemanticQuery],
     expect: Expect,
 ) {
-    let db = SemanticIrFixtureDb::build_with_sysroot(fixture);
-    let actual = ProjectSemanticQuerySnapshot::new(&db, queries).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = SemanticIrFixture::build_with_sysroot(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectSemanticQuerySnapshot::new(&view, queries).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) struct SemanticQuery {
@@ -88,14 +94,12 @@ impl SemanticQuery {
     }
 }
 
-type SemanticIrFixtureDb = SemanticIrFixture;
-
 struct ProjectSemanticIrSnapshot<'a> {
-    project: &'a SemanticIrFixtureDb,
+    project: &'a SemanticIrView<'a>,
 }
 
 impl<'a> ProjectSemanticIrSnapshot<'a> {
-    fn new(project: &'a SemanticIrFixtureDb) -> Self {
+    fn new(project: &'a SemanticIrView<'a>) -> Self {
         Self { project }
     }
 
@@ -151,12 +155,12 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
 }
 
 struct ProjectSemanticQuerySnapshot<'a> {
-    project: &'a SemanticIrFixtureDb,
+    project: &'a SemanticIrView<'a>,
     queries: &'a [SemanticQuery],
 }
 
 impl<'a> ProjectSemanticQuerySnapshot<'a> {
-    fn new(project: &'a SemanticIrFixtureDb, queries: &'a [SemanticQuery]) -> Self {
+    fn new(project: &'a SemanticIrView<'a>, queries: &'a [SemanticQuery]) -> Self {
         Self { project, queries }
     }
 
@@ -169,19 +173,22 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_query(&self, query: &SemanticQuery) -> String {
-        let (crate_ref, target) = self.crate_ref(query);
+        let (package, target) = self
+            .project
+            .target(query.package_name, query.target_kind.clone());
+        let crate_ref = CrateRef {
+            package,
+            crate_id: CrateId(target.id.0),
+        };
         let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
-        let def_map_txn = self.project.def_map_db().reader();
-        let semantic_ir_txn = self.project.semantic_ir_db().reader();
-        let items = ItemStoreQuery::new(&semantic_ir_txn);
-        let lookup_query = ItemLookupQuery::build_from(
-            semantic_ir_txn,
-            crate_ref,
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("fixture semantic lookup query should build");
-        let type_defs = ItemResolutionQuery::new(&def_map_txn, &semantic_ir_txn)
+        let definitions = self.project.definitions();
+        let reader = self.project.items();
+        let items = ItemStoreQuery::new(&reader);
+        let lookup_query =
+            ItemLookupQuery::build_from(reader, crate_ref, &rg_std::CancellationToken::new())
+                .expect("fixture semantic lookup query should build");
+        let type_defs = ItemResolutionQuery::new(&definitions, &reader)
             .type_defs_for_path(
                 ModuleRef {
                     origin: DefMapRef::Crate(crate_ref),
@@ -191,7 +198,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             )
             .expect("fixture semantic query should resolve type path");
         let mut type_defs = type_defs.into_vec();
-        type_defs.sort_by_key(|ty| self.render_type_def_ref(&semantic_ir_txn, *ty));
+        type_defs.sort_by_key(|ty| self.render_type_def_ref(&reader, *ty));
 
         if type_defs.is_empty() {
             return format!(
@@ -231,14 +238,14 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     target.kind,
                     query.module_path,
                     path,
-                    self.render_type_def_ref(&semantic_ir_txn, ty),
+                    self.render_type_def_ref(&reader, ty),
                 );
                 self.render_query_section(
                     &mut dump,
                     "impls",
                     lookup_query
                         .impls_for_type(ty)
-                        .map(|impl_ref| self.render_impl_ref(&semantic_ir_txn, impl_ref))
+                        .map(|impl_ref| self.render_impl_ref(&reader, impl_ref))
                         .collect(),
                 );
                 self.render_query_section(
@@ -249,8 +256,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                         .map(|trait_impl| {
                             format!(
                                 "{} => {}",
-                                self.render_impl_ref(&semantic_ir_txn, trait_impl.impl_ref),
-                                self.render_trait_ref(&semantic_ir_txn, trait_impl.trait_ref),
+                                self.render_impl_ref(&reader, trait_impl.impl_ref),
+                                self.render_trait_ref(&reader, trait_impl.trait_ref),
                             )
                         })
                         .collect(),
@@ -260,7 +267,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "traits",
                     traits
                         .into_iter()
-                        .map(|trait_ref| self.render_trait_ref(&semantic_ir_txn, trait_ref))
+                        .map(|trait_ref| self.render_trait_ref(&reader, trait_ref))
                         .collect(),
                 );
                 self.render_query_section(
@@ -270,9 +277,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                         .inherent_functions_for_type(&items, ty)
                         .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
-                        .map(|function_ref| {
-                            self.render_function_ref(&semantic_ir_txn, function_ref)
-                        })
+                        .map(|function_ref| self.render_function_ref(&reader, function_ref))
                         .collect(),
                 );
                 self.render_query_section(
@@ -280,9 +285,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "trait functions",
                     trait_functions
                         .into_iter()
-                        .map(|function_ref| {
-                            self.render_function_ref(&semantic_ir_txn, function_ref)
-                        })
+                        .map(|function_ref| self.render_function_ref(&reader, function_ref))
                         .collect(),
                 );
                 self.render_query_section(
@@ -290,9 +293,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     "trait impl functions",
                     trait_impl_functions
                         .into_iter()
-                        .map(|function_ref| {
-                            self.render_function_ref(&semantic_ir_txn, function_ref)
-                        })
+                        .map(|function_ref| self.render_function_ref(&reader, function_ref))
                         .collect(),
                 );
                 dump
@@ -316,35 +317,6 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         for line in lines {
             writeln!(dump, "- {line}").expect("string writes should not fail");
         }
-    }
-
-    fn crate_ref(&self, query: &SemanticQuery) -> (CrateRef, &'a rg_parse::CargoTarget) {
-        let (package_slot, package) = self
-            .project
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .find(|(_, package)| package.package_name() == query.package_name)
-            .unwrap_or_else(|| panic!("fixture package `{}` should exist", query.package_name));
-        let target = package
-            .targets()
-            .iter()
-            .find(|target| target.kind == query.target_kind)
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture package `{}` should have a {} target",
-                    query.package_name, query.target_kind
-                )
-            });
-
-        (
-            CrateRef {
-                package: PackageSlot(package_slot),
-                crate_id: CrateId(target.id.0),
-            },
-            target,
-        )
     }
 
     fn module_id(&self, crate_ref: CrateRef, module_path: &str) -> ModuleId {
@@ -478,9 +450,9 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let target = package
             .target(
                 self.project
-                    .def_map_db()
-                    .package(crate_ref.package)
-                    .and_then(|package| package.crate_data(crate_ref.crate_id))
+                    .definitions()
+                    .crate_data(crate_ref)
+                    .expect("fixture declarations should load")
                     .expect("semantic crate should exist while rendering")
                     .cargo_target(),
             )
@@ -520,7 +492,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 }
 
 struct CrateSemanticIrSnapshot<'a> {
-    project: &'a SemanticIrFixtureDb,
+    project: &'a SemanticIrView<'a>,
     crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,

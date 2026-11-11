@@ -54,7 +54,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             package body_trait_applicability_fixture
 
             body_trait_applicability_fixture [lib]
-            body b0 fn body_trait_applicability_fixture[lib]::crate::use_it @ 38:1-42:2
+            fn body_trait_applicability_fixture[lib]::crate::use_it @ 38:1-42:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4
@@ -83,7 +83,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
                       expr e4 path wrapper -> local v1 => nominal struct body_trait_applicability_fixture[lib]::crate::Wrapper<nominal struct body_trait_applicability_fixture[lib]::crate::Error> @ 41:19-41:26
 
 
-            body b1 fn impl DirectTrait for User::direct @ 13:5-15:6
+            fn impl DirectTrait for User::direct @ 13:5-15:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -95,7 +95,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
                 expr e0 path User -> struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 14:9-14:13
 
 
-            body b2 fn impl GenericTrait for Wrapper<T>::generic @ 23:5-25:6
+            fn impl GenericTrait for Wrapper<T>::generic @ 23:5-25:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -107,7 +107,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
                 expr e0 path User -> struct body_trait_applicability_fixture[lib]::crate::User => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 24:9-24:13
 
 
-            body b3 fn impl UserOnlyTrait for Wrapper<User>::user_only @ 33:5-35:6
+            fn impl UserOnlyTrait for Wrapper<User>::user_only @ 33:5-35:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -153,7 +153,7 @@ pub fn use_it(source: Source, primitive: u8) {
             package body_trait_method_arguments_fixture
 
             body_trait_method_arguments_fixture [lib]
-            body b0 fn body_trait_method_arguments_fixture[lib]::crate::use_it @ 19:1-22:2
+            fn body_trait_method_arguments_fixture[lib]::crate::use_it @ 19:1-22:2
             scopes
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3
@@ -176,7 +176,7 @@ pub fn use_it(source: Source, primitive: u8) {
                       expr e2 path primitive -> local v1 => u8 @ 21:19-21:28
 
 
-            body b1 fn impl Convert<u32> for Source::convert @ 8:5-10:6
+            fn impl Convert<u32> for Source::convert @ 8:5-10:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -188,7 +188,7 @@ pub fn use_it(source: Source, primitive: u8) {
                 expr e0 literal int `0` => u32 @ 9:9-9:10
 
 
-            body b2 fn impl Convert<u16> for u8::convert @ 14:5-16:6
+            fn impl Convert<u16> for u8::convert @ 14:5-16:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -229,7 +229,7 @@ pub fn use_it() {
             package body_unkeyed_trait_associated_path_fixture
 
             body_unkeyed_trait_associated_path_fixture [lib]
-            body b0 fn body_unkeyed_trait_associated_path_fixture[lib]::crate::use_it @ 14:1-17:2
+            fn body_unkeyed_trait_associated_path_fixture[lib]::crate::use_it @ 14:1-17:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -248,7 +248,7 @@ pub fn use_it() {
                       expr e1 path u32::make -> fn trait body_unkeyed_trait_associated_path_fixture[lib]::crate::PrimitiveFactory::make => <unknown> @ 16:16-16:25
 
 
-            body b1 fn impl PrimitiveFactory<u16> for u32::make @ 9:5-11:6
+            fn impl PrimitiveFactory<u16> for u32::make @ 9:5-11:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -259,7 +259,7 @@ pub fn use_it() {
                 expr e0 literal int `0` => u16 @ 10:9-10:10
 
 
-            body b2 const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28
+            const impl PrimitiveFactory<u16> for u32::DEFAULT @ 7:5-7:28
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -307,7 +307,7 @@ impl OtherExt for Maybe {
             package app
 
             app [lib]
-            body b0 fn app[lib]::crate::use_it @ 3:1-6:2
+            fn app[lib]::crate::use_it @ 3:1-6:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2
@@ -332,7 +332,7 @@ impl OtherExt for Maybe {
             package other
 
             other [lib]
-            body b0 fn impl OtherExt for Maybe::and_then @ 8:5-10:6
+            fn impl OtherExt for Maybe::and_then @ 8:5-10:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -347,7 +347,7 @@ impl OtherExt for Maybe {
             package shared
 
             shared [lib]
-            body b0 fn impl Maybe::is_some @ 4:5-6:6
+            fn impl Maybe::is_some @ 4:5-6:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -393,7 +393,7 @@ pub fn use_it() {
             package body_trait_assoc_const_fixture
 
             body_trait_assoc_const_fixture [lib]
-            body b0 fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-22:2
+            fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-22:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
@@ -410,7 +410,7 @@ pub fn use_it() {
                   expr e1 path <StmtKind as HasAttrs>::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 21:21-21:72
 
 
-            body b1 const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS @ 12:5-12:52
+            const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS @ 12:5-12:52
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -418,7 +418,7 @@ pub fn use_it() {
             expr e0 literal bool `true` => bool @ 12:47-12:51
 
 
-            body b2 const impl HasAttrs for Stmt::SUPPORTS_CUSTOM_INNER_ATTRS @ 16:5-16:85
+            const impl HasAttrs for Stmt::SUPPORTS_CUSTOM_INNER_ATTRS @ 16:5-16:85
             scopes
             - s0 parent <none>: <none>
             bindings

@@ -1,8 +1,10 @@
 use expect_test::expect;
 
+use crate::testonly::SemanticIrFixture;
+
 #[test]
 fn builtin_derives_preserve_generics_and_projection_requirements() {
-    let fixture = crate::testonly::SemanticIrFixture::build_with_fake_sysroot(
+    let mut fixture = SemanticIrFixture::build_with_fake_sysroot(
         r#"
 //- /src/lib.rs crate:derive_headers
 pub trait Family { type Item; type Other; }
@@ -41,30 +43,29 @@ use std::clone::Clone as Duplicate;
 pub struct Alias<T = ()>(T);
 "#,
     );
-    let crate_ref = fixture
-        .def_map_fixture()
-        .crate_ref("derive_headers", rg_workspace::TargetKind::Lib);
-    let store = fixture
-        .crate_items(crate_ref)
-        .expect("fixture item store exists");
-    let mut headers = Vec::new();
-    for (_, data) in store.impls_with_refs() {
-        assert!(
-            data.resolved_trait_ref.as_option().is_some(),
-            "derived trait should resolve through core"
-        );
-        headers.push(
-            format!(
-                "{}: {}\n  generics: {}",
-                data.self_ty,
-                data.trait_ref.as_ref().expect("derived impl has a trait"),
-                data.generics,
-            )
-            .trim_end()
-            .to_owned(),
-        );
-    }
-    expect![[r#"
+    fixture.inspect(|view| {
+        let crate_ref = view.crate_ref("derive_headers", rg_workspace::TargetKind::Lib);
+        let store = view
+            .crate_items(crate_ref)
+            .expect("fixture item store exists");
+        let mut headers = Vec::new();
+        for (_, data) in store.impls_with_refs() {
+            assert!(
+                data.resolved_trait_ref.as_option().is_some(),
+                "derived trait should resolve through core"
+            );
+            headers.push(
+                format!(
+                    "{}: {}\n  generics: {}",
+                    data.self_ty,
+                    data.trait_ref.as_ref().expect("derived impl has a trait"),
+                    data.generics,
+                )
+                .trim_end()
+                .to_owned(),
+            );
+        }
+        expect![[r#"
         Projected<T>: ::core::clone::Clone
           generics: <T: Family + ::core::clone::Clone> where T::Item: ::core::clone::Clone
         Borrowed<'a, T, N>: ::core::clone::Clone
@@ -76,5 +77,6 @@ pub struct Alias<T = ()>(T);
         Alias<T>: ::core::clone::Clone
           generics: <T: ::core::clone::Clone>
     "#]]
-    .assert_eq(&format!("{}\n", headers.join("\n")));
+        .assert_eq(&format!("{}\n", headers.join("\n")));
+    });
 }

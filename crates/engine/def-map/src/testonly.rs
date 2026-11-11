@@ -1,19 +1,16 @@
-use std::collections::HashMap;
-
 use rg_arena::Arena;
 use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_item_tree::ItemTrees;
 use rg_parse::{CargoTarget, CargoTargetId, Package, ParseDb};
 use rg_source::ReadError;
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
+use rg_workspace::{
+    TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, testonly::WorkspaceFixture,
+};
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
-    CrateData, CrateDataSource, CrateDefMapReader, DefMap, DefinitionReader, GeneratedItemStore,
+    CrateData, CrateDataSource, CrateDefMapReader, DefMap, DefinitionReader,
     MacroExpansionLimitReport, build::build_fixture_definitions,
 };
-
-pub type GeneratedItemStores = HashMap<CrateRef, GeneratedItemStore>;
 
 /// Definitions collected for one package in kernel fixtures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,19 +93,14 @@ impl CrateDataSource for DefMapDb {
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
-    _fixture: CrateFixture,
+    _workspace: WorkspaceFixture,
     parse: ParseDb,
-    trees: HashMap<CrateRef, ItemTrees>,
     def_map: DefMapDb,
-    generated_items: GeneratedItemStores,
-    workspace: WorkspaceMetadata,
 }
 
 impl DefMapFixture {
     pub fn build(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let workspace = Self::workspace_metadata(&fixture);
-        Self::build_from_crate(fixture, workspace)
+        Self::build_workspace(WorkspaceFixture::build(fixture))
     }
 
     /// Loads Cargo metadata to exercise workspace lowering options. For declaration fixtures,
@@ -121,43 +113,24 @@ impl DefMapFixture {
     }
 
     pub fn build_with_sysroot(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-            .expect("fixture sysroot should be complete");
-        let workspace = Self::workspace_metadata(&fixture).with_sysroot_sources(Some(sysroot));
-        Self::build_from_crate(fixture, workspace)
+        Self::build_workspace(WorkspaceFixture::build(fixture).with_sysroot())
     }
 
     pub fn build_with_fake_sysroot(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture).with_fake_sysroot();
-        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-            .expect("fake sysroot should be complete");
-        let workspace = Self::workspace_metadata(&fixture).with_sysroot_sources(Some(sysroot));
-        Self::build_from_crate(fixture, workspace)
-    }
-
-    fn workspace_metadata(fixture: &CrateFixture) -> WorkspaceMetadata {
-        // Semantic fixtures declare the graph they need. A manifest-based fixture still runs
-        // Cargo so tests of discovery and lowering can exercise that boundary explicitly.
-        if fixture.headers().next().is_some() {
-            WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
-        } else {
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build")
-        }
+        Self::build_workspace(WorkspaceFixture::build(fixture).with_fake_sysroot())
     }
 
     pub(crate) fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
-        let (parse, def_map, trees, generated_items) =
-            build_fixture_definitions(&workspace).expect("fixture definitions should build");
+        Self::build_workspace(WorkspaceFixture::from_metadata(fixture, workspace))
+    }
 
+    fn build_workspace(workspace: WorkspaceFixture) -> Self {
+        let (parse, def_map) = build_fixture_definitions(workspace.metadata())
+            .expect("fixture definitions should build");
         Self {
-            _fixture: fixture,
+            _workspace: workspace,
             parse,
-            trees,
             def_map,
-            generated_items,
-            workspace,
         }
     }
 
@@ -165,20 +138,8 @@ impl DefMapFixture {
         &self.parse
     }
 
-    pub fn item_trees(&self, krate: CrateRef) -> &ItemTrees {
-        &self.trees[&krate]
-    }
-
     pub fn def_map_db(&self) -> &DefMapDb {
         &self.def_map
-    }
-
-    pub fn take_generated_items(&mut self) -> GeneratedItemStores {
-        std::mem::take(&mut self.generated_items)
-    }
-
-    pub fn workspace(&self) -> &WorkspaceMetadata {
-        &self.workspace
     }
 
     pub fn def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {

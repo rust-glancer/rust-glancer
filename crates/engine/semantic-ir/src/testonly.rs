@@ -1,206 +1,163 @@
-use std::collections::HashMap;
-
 use rg_def_map::{
-    DefMap, DefMapQuery,
-    testonly::{DefMapDb, DefMapFixture},
+    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMap, DefinitionReader,
 };
-use rg_ir_model::{ConstOrStaticRef, CrateId, CrateRef, EvaluatedConstValue, PackageSlot};
-use rg_parse::ParseDb;
-use rg_source::ReadError;
+use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_parse::{CargoTarget, ParseDb};
+use rg_source::{QueryContext, QueryDatabase};
+use rg_workspace::{TargetKind, WorkspaceMetadata, testonly::WorkspaceFixture};
 
-pub use crate::package::{SemanticCrate, SemanticPackage};
-use crate::{
-    CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader, ItemResolutionQuery, ItemStore,
-    LangItemIndex, build::impl_headers::impl_header_resolutions,
-};
+use crate::{CrateItemSource, ItemReader, ItemStore, TargetDeclarationReader, target_declarations};
 
-/// Completed semantic arenas for type and feature kernels exercised directly by fixtures.
-#[derive(Debug)]
-pub struct SemanticIrDb {
-    packages: Vec<SemanticPackage>,
-}
-
-impl SemanticIrDb {
-    pub fn package(&self, package: PackageSlot) -> Option<&SemanticPackage> {
-        self.packages.get(package.0)
-    }
-
-    pub fn package_count(&self) -> usize {
-        self.packages.len()
-    }
-
-    pub fn reader(&self) -> ItemReader<'_> {
-        ItemReader(self)
-    }
-
-    pub fn apply_initializer_values(
-        &mut self,
-        values: impl IntoIterator<Item = (ConstOrStaticRef, EvaluatedConstValue)>,
-    ) {
-        for (item, value) in values {
-            let krate = item.origin().origin_crate();
-            self.packages[krate.package.0]
-                .crate_items_mut(krate.crate_id)
-                .expect("fixture initializer has a declaration")
-                .set_initializer_value(item, value);
-        }
-    }
-}
-
-impl CrateItemSource for SemanticIrDb {
-    fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
-        Ok(self
-            .package(krate.package)
-            .and_then(|package| package.crate_items(krate.crate_id)))
-    }
-
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self.items(krate)?.map(ItemStore::lang_items))
-    }
-
-    fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
-        Ok(self
-            .package(krate.package)
-            .and_then(|package| package.crate_lookup_index(krate.crate_id)))
-    }
-
-    fn crates(&self) -> Vec<CrateRef> {
-        self.packages
-            .iter()
-            .enumerate()
-            .flat_map(|(slot, package)| {
-                (0..package.crates().len()).map(move |id| CrateRef {
-                    package: PackageSlot(slot),
-                    crate_id: CrateId(id),
-                })
-            })
-            .collect()
-    }
-}
-
-/// End-to-end fixture for tests that need semantic item data.
+/// In-memory queries over fixture sources. The providers own declaration construction.
 pub struct SemanticIrFixture {
-    def_map: DefMapFixture,
-    semantic_ir: SemanticIrDb,
+    database: QueryDatabase,
+    parse: ParseDb,
+    targets: Vec<CrateRef>,
+    workspace: WorkspaceFixture,
 }
 
 impl SemanticIrFixture {
-    pub fn build(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build(fixture))
+    pub fn build(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec))
     }
 
-    pub fn build_with_sysroot(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build_with_sysroot(fixture))
+    pub fn build_with_sysroot(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec).with_sysroot())
     }
 
-    pub fn build_with_fake_sysroot(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build_with_fake_sysroot(fixture))
+    pub fn build_with_fake_sysroot(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec).with_fake_sysroot())
     }
 
-    fn build_from_def_map(mut def_map: DefMapFixture) -> Self {
-        let generated_items = def_map.take_generated_items();
-        let packages = (0..def_map.parse_db().package_count())
-            .map(|slot| {
-                let defs = def_map
-                    .def_map_db()
-                    .package(PackageSlot(slot))
-                    .expect("fixture package has definitions");
-                let items = defs
-                    .crates()
+    pub fn from_workspace(workspace: WorkspaceFixture) -> Self {
+        let mut database = rg_item_tree::testonly::fixture_database(workspace.metadata());
+        let targets = database
+            .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
+            .expect("fixture target inputs should install");
+        let inputs = database.inputs().clone();
+        // Source routing comes from the same declarations used by later fixture queries.
+        let parse = database
+            .run(|db| {
+                let metadata = targets
                     .iter()
-                    .enumerate()
-                    .map(|(id, defs)| {
-                        let krate = CrateRef {
-                            package: PackageSlot(slot),
-                            crate_id: CrateId(id),
-                        };
-                        ItemStore::lower_crate(
-                            defs.def_map(),
-                            def_map.item_trees(krate),
-                            &generated_items[&krate],
-                        )
-                        .expect("fixture items lower")
-                    })
-                    .collect();
-                SemanticPackage::new(items)
+                    .map(|&target| target_declarations(db, target)?.metadata.value_ref(db))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ParseDb::from_target_manifests(
+                    workspace.metadata(),
+                    &inputs,
+                    targets
+                        .iter()
+                        .copied()
+                        .zip(metadata.iter().map(|metadata| &metadata.sources)),
+                )
             })
-            .collect();
-        drop(generated_items);
-        let mut semantic_ir = SemanticIrDb { packages };
-        let definitions = def_map.def_map_db().reader();
-        let items = semantic_ir.reader();
-        let query = ItemResolutionQuery::new(&definitions, &items);
-        let mut headers = Vec::new();
-        let mut facts = HashMap::new();
-        for krate in semantic_ir.crates() {
-            let store = items
-                .items(krate)
-                .expect("fixture items read")
-                .expect("known target has items");
-            headers.extend(
-                impl_header_resolutions(store, &query).expect("fixture impl headers resolve"),
-            );
-            let visible_crates = DefMapQuery::new(definitions)
-                .item_lookup_crates_from(krate)
-                .expect("fixture crate visibility resolves");
-            facts.insert(
-                krate,
-                ItemLookupFacts::build(visible_crates, store, items, || Ok(()))
-                    .expect("fixture lookup facts resolve"),
-            );
-        }
-        let mut heads = HashMap::new();
-        for header in headers {
-            let krate = header.impl_ref.origin.origin_crate();
-            semantic_ir.packages[krate.package.0]
-                .crate_items_mut(krate.crate_id)
-                .expect("fixture impl has an item store")
-                .set_impl_header_facts(
-                    header.impl_ref.id,
-                    header.resolved_self_ty,
-                    header.resolved_trait_ref,
-                );
-            if let Some(head) = header.self_head {
-                heads.insert(header.impl_ref, head);
-            }
-        }
-        for package in &mut semantic_ir.packages {
-            package.rebuild_lookup_indexes(&heads, &facts);
-        }
-
+            .expect("fixture source routing should build");
         Self {
-            def_map,
-            semantic_ir,
+            database,
+            parse,
+            targets,
+            workspace,
         }
     }
 
-    pub fn parse_db(&self) -> &ParseDb {
-        self.def_map.parse_db()
+    pub fn inspect<R>(&mut self, observe: impl FnOnce(SemanticIrView<'_>) -> R) -> R {
+        // Borrowed results stay inside the operation, as they do for application queries.
+        self.database
+            .run(|db| {
+                let declarations =
+                    TargetDeclarationReader::for_project(db, self.targets.iter().copied());
+                Ok(observe(SemanticIrView {
+                    db,
+                    declarations: &declarations,
+                    parse: &self.parse,
+                    workspace: self.workspace.metadata(),
+                    targets: &self.targets,
+                }))
+            })
+            .expect("fixture query operation should succeed")
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SemanticIrView<'db> {
+    db: &'db QueryContext<'db>,
+    declarations: &'db TargetDeclarationReader<'db>,
+    parse: &'db ParseDb,
+    workspace: &'db WorkspaceMetadata,
+    targets: &'db [CrateRef],
+}
+
+impl<'db> SemanticIrView<'db> {
+    pub fn db(&self) -> &'db QueryContext<'db> {
+        self.db
     }
 
-    pub fn def_map_fixture(&self) -> &DefMapFixture {
-        &self.def_map
+    pub fn declarations(&self) -> &'db TargetDeclarationReader<'db> {
+        self.declarations
     }
 
-    pub fn def_map_db(&self) -> &DefMapDb {
-        self.def_map.def_map_db()
+    pub fn definitions(&self) -> DefinitionReader<'db> {
+        CrateDefMapReader(self.declarations)
     }
 
-    pub fn semantic_ir_db(&self) -> &SemanticIrDb {
-        &self.semantic_ir
+    pub fn items(&self) -> ItemReader<'db> {
+        ItemReader(self.declarations)
     }
 
-    pub fn semantic_ir_db_mut(&mut self) -> &mut SemanticIrDb {
-        &mut self.semantic_ir
+    pub fn parse_db(&self) -> &'db ParseDb {
+        self.parse
     }
 
-    pub fn def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.def_map.def_map(crate_ref)
+    pub fn workspace(&self) -> &'db WorkspaceMetadata {
+        self.workspace
     }
 
-    pub fn crate_items(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
-        self.semantic_ir
-            .package(crate_ref.package)?
-            .crate_items(crate_ref.crate_id)
+    pub fn targets(&self) -> &'db [CrateRef] {
+        self.targets
+    }
+
+    pub fn def_map(&self, target: CrateRef) -> Option<&'db DefMap> {
+        self.declarations
+            .crate_data(target)
+            .expect("fixture definitions should load")
+            .map(CrateData::def_map)
+    }
+
+    pub fn crate_items(&self, target: CrateRef) -> Option<&'db ItemStore> {
+        self.declarations
+            .items(target)
+            .expect("fixture items should load")
+    }
+
+    pub fn package_slot_by_name(&self, name: &str) -> PackageSlot {
+        PackageSlot(
+            self.parse
+                .packages()
+                .iter()
+                .position(|package| package.package_name() == name)
+                .unwrap_or_else(|| panic!("fixture package {name} should exist")),
+        )
+    }
+
+    pub fn target(&self, name: &str, kind: TargetKind) -> (PackageSlot, &'db CargoTarget) {
+        let slot = self.package_slot_by_name(name);
+        let mut targets = self.parse.packages()[slot.0]
+            .targets()
+            .iter()
+            .filter(|target| target.kind == kind);
+        let target = targets.next().expect("fixture target should exist");
+        assert!(
+            targets.next().is_none(),
+            "fixture target selection should be unique"
+        );
+        (slot, target)
+    }
+
+    pub fn crate_ref(&self, name: &str, kind: TargetKind) -> CrateRef {
+        let (package, target) = self.target(name, kind);
+        CrateRef {
+            package,
+            crate_id: CrateId(target.id.0),
+        }
     }
 }

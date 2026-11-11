@@ -2,7 +2,6 @@
 
 mod const_eval;
 mod current;
-pub(crate) mod fixture;
 mod local_items;
 mod lower;
 mod pattern_binding;

@@ -4,14 +4,11 @@ use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 use rg_body_ir::{BodyReader, ExprData, ExprKind};
-use rg_def_map::{CrateDefMapReader, CrateDependencies};
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::IndexedViewDb;
-use rg_item_tree::testonly::fixture_database;
 use rg_parse::{CargoTargetId, ParseDb};
-use rg_semantic_ir::{ItemReader, TargetDeclarationReader, target_declarations};
-use rg_source::{QueryContext, QueryDatabase};
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
+use rg_semantic_ir::testonly::{SemanticIrFixture, SemanticIrView};
+use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
     fixture_path_for_snapshot,
@@ -413,110 +410,52 @@ enum ReferenceQueryScope {
     LibTargets(Vec<String>),
 }
 
-struct AnalysisFixtureDb {
-    database: QueryDatabase,
-    workspace: WorkspaceMetadata,
-    parse: ParseDb,
-    targets: Vec<CrateRef>,
-    _fixture: CrateFixture,
-}
+struct AnalysisFixtureDb(SemanticIrFixture);
 
 impl AnalysisFixtureDb {
     fn build_from_crate(fixture: CrateFixture) -> Self {
-        let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers());
-        Self::build(fixture, workspace)
+        Self(SemanticIrFixture::from_workspace(
+            WorkspaceFixture::from_crate(fixture),
+        ))
     }
 
     fn build_with_fake_sysroot(fixture: CrateFixture) -> Self {
-        let fixture = fixture.with_fake_sysroot();
-        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-            .expect("fake sysroot should be complete");
-        let workspace = WorkspaceMetadata::from_fixture(&fixture.path(""), fixture.headers())
-            .with_sysroot_sources(Some(sysroot));
-        Self::build(fixture, workspace)
-    }
-
-    fn build(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
-        let mut database = fixture_database(&workspace);
-        let targets = database
-            .update_inputs(|update| CrateDependencies::write_inputs(&workspace, update))
-            .expect("fixture target inputs should install");
-        let inputs = database.inputs().clone();
-
-        // File routing comes from the declarations that feature queries will read. Bodies stay
-        // lazy, so looking up a body also exercises its production owner identity and initializer.
-        let parse = database
-            .run(|db| {
-                let metadata = targets
-                    .iter()
-                    .map(|&target| target_declarations(db, target)?.metadata.value_ref(db))
-                    .collect::<Result<Vec<_>, _>>()?;
-                ParseDb::from_target_manifests(
-                    &workspace,
-                    &inputs,
-                    targets
-                        .iter()
-                        .copied()
-                        .zip(metadata.iter().map(|metadata| &metadata.sources)),
-                )
-            })
-            .expect("fixture source routing should build");
-        Self {
-            database,
-            workspace,
-            parse,
-            targets,
-            _fixture: fixture,
-        }
+        Self(SemanticIrFixture::from_workspace(
+            WorkspaceFixture::from_crate(fixture).with_fake_sysroot(),
+        ))
     }
 
     fn inspect<R>(&mut self, observe: impl FnOnce(AnalysisFixture<'_>) -> R) -> R {
-        // Readers borrow query results inside this operation, just as they do for editor requests.
-        self.database
-            .run(|db| {
-                let declarations =
-                    TargetDeclarationReader::for_project(db, self.targets.iter().copied());
-                Ok(observe(AnalysisFixture {
-                    db,
-                    declarations: &declarations,
-                    parse: &self.parse,
-                    workspace: &self.workspace,
-                    targets: &self.targets,
-                }))
-            })
-            .expect("fixture query operation should succeed")
+        self.0
+            .inspect(|semantic| observe(AnalysisFixture { semantic }))
     }
 }
 
 struct AnalysisFixture<'db> {
-    db: &'db QueryContext<'db>,
-    declarations: &'db TargetDeclarationReader<'db>,
-    parse: &'db ParseDb,
-    workspace: &'db WorkspaceMetadata,
-    targets: &'db [CrateRef],
+    semantic: SemanticIrView<'db>,
 }
 
 impl<'db> AnalysisFixture<'db> {
     fn analysis(&self) -> Analysis<'db> {
-        Analysis::new(self.view_db(), SavedSourceView::new(self.parse))
+        Analysis::new(self.view_db(), SavedSourceView::new(self.parse_db()))
     }
 
     fn view_db(&self) -> IndexedViewDb<'db> {
         IndexedViewDb::new(
-            CrateDefMapReader(self.declarations),
-            ItemReader(self.declarations),
+            self.semantic.definitions(),
+            self.semantic.items(),
             self.bodies(),
-            self.parse,
-            self.db.services().cancellation.clone(),
+            self.parse_db(),
+            self.semantic.db().services().cancellation.clone(),
         )
     }
 
     fn parse_db(&self) -> &'db ParseDb {
-        self.parse
+        self.semantic.parse_db()
     }
 
     fn bodies(&self) -> BodyReader<'db> {
-        BodyReader::new(self.db, self.declarations)
+        BodyReader::new(self.semantic.db(), self.semantic.declarations())
     }
 
     /// Renders source locations relative to their Cargo package instead of exposing temporary
@@ -530,7 +469,7 @@ impl<'db> AnalysisFixture<'db> {
         let path = parsed_package
             .file_path(file_id)
             .expect("snapshot file should exist while rendering a file path");
-        let package_root = self.workspace.packages()[package.0].root_dir();
+        let package_root = self.semantic.workspace().packages()[package.0].root_dir();
 
         // Cargo-generated sources may sit outside their package root. Their build directory is
         // temporary and does not help a query snapshot, so preserve the old filename-only shape.
@@ -550,7 +489,7 @@ impl<'db> AnalysisFixture<'db> {
     ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
-        let reader = CrateDefMapReader(self.declarations);
+        let reader = self.semantic.definitions();
 
         for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
@@ -626,7 +565,7 @@ impl<'db> AnalysisFixture<'db> {
     }
 
     fn all_targets(&self) -> &[CrateRef] {
-        self.targets
+        self.semantic.targets()
     }
 }
 

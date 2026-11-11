@@ -56,6 +56,7 @@ impl BodyKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub enum BodyRoot {
+    /// Unowned identities used by standalone inference kernels.
     Local,
     Current,
     Function(u32),
@@ -92,16 +93,6 @@ pub struct BodyRef {
     pub crate_ref: CrateRef,
     pub root: BodyRoot,
     pub body: BodyId,
-}
-
-impl BodyRef {
-    pub fn local(crate_ref: CrateRef, body: BodyId) -> Self {
-        Self {
-            crate_ref,
-            root: BodyRoot::Local,
-            body,
-        }
-    }
 }
 
 /// Stable reference to one local binding inside a body.

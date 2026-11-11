@@ -56,30 +56,36 @@ fn default_int_ty() -> Ty {
 // These state tests use real declaration identities, including generic ADT metadata used by
 // compiler type relations. The scoped closure also verifies that no live fact escapes its arena.
 fn with_state(exprs: usize, bindings: usize, run: impl for<'s> FnOnce(InferenceState<'s>)) {
-    let fixture = crate::testonly::BodyIrFixture::build(
+    let mut fixture = rg_semantic_ir::testonly::SemanticIrFixture::build(
         r#"
 //- /src/lib.rs crate:inference_state
 pub struct User;
 pub struct Vec<T>(T);
 "#,
     );
-    let target = body_ref().crate_ref;
-    let def_map = fixture.def_map_db().reader();
-    let semantic_ir = fixture.semantic_ir_db().reader();
-    let lookup =
-        rg_semantic_ir::ItemLookupQuery::build_from(semantic_ir, target, &CancellationToken::new())
-            .expect("fixture lookup");
-    let context = rg_ty::TyContext::new(&def_map, &semantic_ir, lookup, CancellationToken::new());
-    let declarations = rg_ty::solver::SemanticDeclarations::new(&context, context.item_paths());
-    declarations
-        .with_solver(|solver| {
-            run(InferenceState::new(
-                exprs,
-                bindings,
-                rg_ty::solver::InferenceTable::new(solver, Default::default()),
-            ))
-        })
-        .expect("fixture declarations");
+    fixture.inspect(|view| {
+        let target = body_ref().crate_ref;
+        let def_map = view.definitions();
+        let semantic_ir = view.items();
+        let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
+            semantic_ir,
+            target,
+            &CancellationToken::new(),
+        )
+        .expect("fixture lookup");
+        let context =
+            rg_ty::TyContext::new(&def_map, &semantic_ir, lookup, CancellationToken::new());
+        let declarations = rg_ty::solver::SemanticDeclarations::new(&context, context.item_paths());
+        declarations
+            .with_solver(|solver| {
+                run(InferenceState::new(
+                    exprs,
+                    bindings,
+                    rg_ty::solver::InferenceTable::new(solver, Default::default()),
+                ))
+            })
+            .expect("fixture declarations");
+    });
 }
 
 #[test]
@@ -329,49 +335,50 @@ pub(super) fn before_expression(cancellation: &CancellationToken) {
 
 #[test]
 fn cancelling_recursive_inference_never_finalizes_partial_body_facts() {
-    let fixture = crate::testonly::BodyIrFixture::build(
+    let mut fixture = crate::testonly::BodyIrFixture::build(
         r#"
 //- /src/lib.rs crate:cancelled_inference
 pub fn compute() -> u32 { let first = 1_u32; let second = first + 2; second + 3 }
 "#,
     );
-    let target = CrateRef {
-        package: PackageSlot(0),
-        crate_id: CrateId(0),
-    };
-    let bodies = fixture.bodies(target).expect("fixture crate exists");
-    let body = &bodies.bodies()[0];
-    let def_map = fixture.def_map_db().reader();
-    let semantic_ir = fixture.semantic_ir_db().reader();
-    let lookup =
-        rg_semantic_ir::ItemLookupQuery::build_from(semantic_ir, target, &CancellationToken::new())
-            .expect("fixture lookup builds");
-    for cancel in [true, false] {
-        let cancellation = CancellationToken::new();
-        CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
-        let result = super::InferenceContext::new(
-            &def_map,
-            &semantic_ir,
-            &lookup,
-            BodyRef {
-                root: rg_ir_model::BodyRoot::Local,
-                crate_ref: target,
-                body: BodyId(0),
-            },
-            body,
-            &cancellation,
+    fixture.inspect(|view| {
+        let target = view
+            .semantic()
+            .crate_ref("cancelled_inference", rg_workspace::TargetKind::Lib);
+        let key = view.body_key(target, "compute");
+        let saved = crate::saved_body(view.semantic().db(), key).expect("fixture body query");
+        let body = &saved.as_ref().expect("fixture body exists").bodies.bodies()[0];
+        let def_map = view.semantic().definitions();
+        let semantic_ir = view.semantic().items();
+        let lookup = rg_semantic_ir::ItemLookupQuery::build_from(
+            semantic_ir,
+            target,
+            &CancellationToken::new(),
         )
-        .infer_body();
-        if cancel {
-            let error = result.expect_err("unfinished inference must have no facts");
-            assert!(
-                error.chain().any(|cause| cause.is::<rg_std::Cancelled>()),
-                "inference preserves the cancellation cause",
-            );
-        } else {
-            let facts = result.expect("fresh inference can finish");
-            assert_eq!(facts.exprs.len(), body.exprs().len());
+        .expect("fixture lookup builds");
+        for cancel in [true, false] {
+            let cancellation = CancellationToken::new();
+            CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.set(cancel.then_some(2)));
+            let result = super::InferenceContext::new(
+                &def_map,
+                &semantic_ir,
+                &lookup,
+                key.body(BodyId(0)),
+                body,
+                &cancellation,
+            )
+            .infer_body();
+            if cancel {
+                let error = result.expect_err("unfinished inference must have no facts");
+                assert!(
+                    error.chain().any(|cause| cause.is::<rg_std::Cancelled>()),
+                    "inference preserves the cancellation cause",
+                );
+            } else {
+                let facts = result.expect("fresh inference can finish");
+                assert_eq!(facts.exprs.len(), body.exprs().len());
+            }
+            assert!(CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.get().is_none()));
         }
-        assert!(CANCEL_AFTER_EXPRESSIONS.with(|remaining| remaining.get().is_none()));
-    }
+    });
 }

@@ -6,7 +6,6 @@
 mod body;
 mod builder;
 mod builtin_macro;
-mod crate_lowering;
 mod declaration;
 mod expr;
 mod macro_expansion;
@@ -21,7 +20,6 @@ use rg_ir_model::BodyId;
 
 pub(super) use self::{
     builder::{LoweredBodyData, PendingBindingResolution},
-    crate_lowering::CrateLowering,
     declaration::{CurrentDeclarationBuilder, CurrentRootItems},
     macro_expansion::BodyMacroExpansion,
     task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},

@@ -14,11 +14,55 @@ use std::{collections::BTreeMap, path::Path};
 
 use rg_cfg_eval::CfgOptions;
 use rg_text::RustEdition;
+use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
     CargoBuildOutputScanStats, CargoTarget, Package, PackageDependency, PackageId, PackageOrigin,
-    TargetKind, WorkspaceMetadata,
+    SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata,
 };
+
+/// Source files and their workspace graph, before any semantic queries have run.
+pub struct WorkspaceFixture {
+    source: CrateFixture,
+    metadata: WorkspaceMetadata,
+}
+
+impl WorkspaceFixture {
+    pub fn build(spec: &str) -> Self {
+        Self::from_crate(fixture_crate(spec))
+    }
+
+    pub fn from_crate(source: CrateFixture) -> Self {
+        // Header fixtures describe their graph directly. Manifest fixtures exercise Cargo discovery.
+        let metadata = if source.headers().next().is_some() {
+            WorkspaceMetadata::from_fixture(&source.path(""), source.headers())
+        } else {
+            WorkspaceMetadata::for_tests(source.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build")
+        };
+        Self::from_metadata(source, metadata)
+    }
+
+    pub fn from_metadata(source: CrateFixture, metadata: WorkspaceMetadata) -> Self {
+        Self { source, metadata }
+    }
+
+    pub fn with_sysroot(mut self) -> Self {
+        let sysroot = SysrootSources::from_library_root(self.source.path("sysroot/library"))
+            .expect("fixture sysroot should be complete");
+        self.metadata = self.metadata.with_sysroot_sources(Some(sysroot));
+        self
+    }
+
+    pub fn with_fake_sysroot(mut self) -> Self {
+        self.source = self.source.with_fake_sysroot();
+        self.with_sysroot()
+    }
+
+    pub fn metadata(&self) -> &WorkspaceMetadata {
+        &self.metadata
+    }
+}
 
 impl WorkspaceMetadata {
     /// Keep the ordinary filesystem-backed parsing pipeline, but supply its workspace graph

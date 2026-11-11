@@ -3,10 +3,9 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
-    FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
-    PackageSlot, PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef,
-    identity::DeclarationRef,
+    BindingId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
+    GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PackageSlot,
+    PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -19,45 +18,52 @@ use rg_ty::{
 use crate::{
     BindingData, BodyOwner, BodySource, BodyView, ClosureCapture, ClosureKind, ClosureParamData,
     ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind,
-    body::facts::BodyResolution, testonly::BodyIrFixture,
+    body::facts::BodyResolution,
+    testonly::{BodyIrFixture, BodyIrView},
 };
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_with_sysroot(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build_with_sysroot(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build_with_sysroot(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_with_fake_sysroot(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build_with_fake_sysroot(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build_with_fake_sysroot(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render_patterns();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
-type BodyIrFixtureDb = BodyIrFixture;
-
 struct ProjectBodyIrSnapshot<'a> {
-    project: &'a BodyIrFixtureDb,
+    project: &'a BodyIrView<'a>,
 }
 
 impl<'a> ProjectBodyIrSnapshot<'a> {
-    fn new(project: &'a BodyIrFixtureDb) -> Self {
+    fn new(project: &'a BodyIrView<'a>) -> Self {
         Self { project }
     }
 
@@ -140,7 +146,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
 }
 
 struct CrateBodyIrSnapshot<'a> {
-    project: &'a BodyIrFixtureDb,
+    project: &'a BodyIrView<'a>,
     crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,
@@ -149,20 +155,22 @@ struct CrateBodyIrSnapshot<'a> {
 impl CrateBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let Some(crate_bodies) = self.project.bodies(self.crate_ref) else {
+        // Whole-project snapshots focus on workspace targets. Dependency owners remain available
+        // through the fixture for tests that explicitly select them.
+        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
             dump.push_str("\nskipped");
             return dump;
-        };
+        }
+        let bodies = self.project.bodies(self.crate_ref);
 
-        // Body IDs encode the order bodies were materialized. Rendering in that order keeps
-        // multi-body snapshots readable once nested const/static initializer bodies appear.
-        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
+        // Each outer owner has an independent arena. Keep its nested bodies beside that owner.
+        for (idx, (_, body)) in bodies.into_iter().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-            self.render_body(body, body_id, &mut dump);
+            self.render_body(body, &mut dump);
         }
 
         dump
@@ -170,28 +178,30 @@ impl CrateBodyIrSnapshot<'_> {
 
     fn render_patterns(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let Some(crate_bodies) = self.project.bodies(self.crate_ref) else {
+        // Whole-project snapshots focus on workspace targets. Dependency owners remain available
+        // through the fixture for tests that explicitly select them.
+        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
             dump.push_str("\nskipped");
             return dump;
-        };
+        }
+        let bodies = self.project.bodies(self.crate_ref);
 
-        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
+        for (idx, (_, body)) in bodies.into_iter().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-            self.render_body_patterns(body, body_id, &mut dump);
+            self.render_body_patterns(body, &mut dump);
         }
 
         dump
     }
 
-    fn render_body(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
+    fn render_body(&self, body: BodyView<'_>, dump: &mut String) {
         writeln!(
             dump,
-            "body b{} {} @ {}",
-            body_id.0,
+            "{} @ {}",
             self.render_body_owner(body.owner()),
             self.render_source(body.source()),
         )
@@ -246,11 +256,10 @@ impl CrateBodyIrSnapshot<'_> {
         self.render_expr(body, body.root_expr(), 0, dump);
     }
 
-    fn render_body_patterns(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
+    fn render_body_patterns(&self, body: BodyView<'_>, dump: &mut String) {
         writeln!(
             dump,
-            "body b{} {} @ {}",
-            body_id.0,
+            "{} @ {}",
             self.render_body_owner(body.owner()),
             self.render_source(body.source()),
         )
@@ -1577,9 +1586,10 @@ impl CrateBodyIrSnapshot<'_> {
             .expect("package slot should exist while rendering body IR module");
         let cargo_target = self
             .project
-            .def_map_db()
-            .package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .semantic()
+            .definitions()
+            .crate_data(crate_ref)
+            .expect("fixture declarations should load")
             .expect("semantic crate should exist while rendering body IR module")
             .cargo_target();
         let target = package
