@@ -1,175 +1,110 @@
-//! Owns one saved analysis project and replaces it only after a successful rebuild.
-//!
-//! A saved change is first applied to a private candidate. The candidate becomes the new `Project`
-//! only after it has been fully built and its source has been checked. Queries may load package
-//! data that was left on disk, but loading that data does not create another source generation.
+//! Owns the accepted source generation and serializes access to its query runtime.
 
-use std::path::{Path, PathBuf};
-
-use anyhow::Context as _;
-use rg_std::MemorySize;
-use rg_workspace::WorkspaceMetadata;
-
-use crate::{
-    PackageResidencyPolicy, ProjectBuilder, ProjectGenerationId, ProjectSnapshot, ProjectStats,
-    indexing, project_queries::ProjectQueries, state::ProjectState,
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
-/// Mutable owner for the current analysis state.
-///
-/// `Project` is the host-facing state container: it accepts saved file changes, refreshes the
-/// derived phase databases, and hands out immutable snapshots for queries.
-#[derive(Debug, MemorySize)]
+use rg_semantic_ir::TargetDeclarationReader;
+use rg_source::{QueryDatabase, QueryServices, ReadError, SourceError, SourceInput};
+use rg_std::{CancellationToken, MemorySize};
+use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
+
+use crate::{
+    MacroExpansionLimitBuildSummary, ProjectBuilder, ProjectGenerationId, ProjectMemoryHooks,
+    ProjectSnapshot, ProjectStats, state::ProjectState,
+};
+
+#[derive(MemorySize)]
 pub struct Project {
     #[memsize(skip)]
-    pub(crate) queries: ProjectQueries,
+    pub(crate) database: Mutex<QueryDatabase>,
     pub(crate) state: ProjectState,
+    #[memsize(skip)]
+    pub(crate) workspace_lowering_config: WorkspaceLoweringConfig,
+    pub(crate) cargo_metadata_config: CargoMetadataConfig,
+    #[memsize(skip)]
+    pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
 impl Project {
-    /// Starts configuring a fresh analysis project build.
     pub fn builder(workspace: WorkspaceMetadata) -> ProjectBuilder {
         ProjectBuilder::new(workspace)
     }
 
-    /// Returns an immutable query view of the current project state.
-    pub fn snapshot(&self) -> ProjectSnapshot<'_> {
-        ProjectSnapshot { state: &self.state }
+    /// Lend the accepted source view and one working set to a request. The callback can return
+    /// owned answers, while borrows of decoded declarations and bodies stay inside the operation.
+    pub fn with_snapshot<R>(
+        &self,
+        cancellation: CancellationToken,
+        work: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<R>,
+    ) -> anyhow::Result<R> {
+        let mut database = self.database.lock().expect("project query runtime");
+        database.set_services(QueryServices { cancellation });
+        let result = database.run(|db| {
+            let declarations =
+                TargetDeclarationReader::for_project(db, self.state.targets.iter().copied());
+            let snapshot = ProjectSnapshot::new(&self.state, db, &declarations);
+            work(snapshot).map_err(|error| {
+                ReadError::query_cause(error.as_ref()).unwrap_or_else(|| {
+                    ajika::Error::application(
+                        error.reallocate_into_boxed_dyn_error_without_backtrace(),
+                    )
+                })
+            })
+        });
+        database.set_services(QueryServices::default());
+        Ok(result?)
     }
 
-    /// Returns the identity of the successfully published saved-source generation.
     pub fn generation_id(&self) -> ProjectGenerationId {
-        self.state.generation_id()
+        self.state.generation_id
     }
 
-    /// Returns the normalized workspace metadata this project was built from.
     pub fn workspace(&self) -> &WorkspaceMetadata {
         self.state.workspace()
     }
 
-    /// Returns the internal package storage choice.
-    pub fn package_residency_policy(&self) -> PackageResidencyPolicy {
-        self.state.package_residency_policy
-    }
-
-    /// Returns coarse status counters without exposing raw phase databases.
     pub fn stats(&self) -> ProjectStats {
         self.state.stats()
     }
 
-    /// Copy retained metadata into fresh allocations while the originals are still alive.
-    /// The intent behind this method is to lower the OS memory occupied by the process after
-    /// indexing. Dropping the originals afterward may let the allocator release pages fragmented
-    /// during indexing. How much this helps depends on the allocator, but we have measured lower
-    /// idle memory with `mimalloc`.
-    ///
-    /// Only do this once all analysis payloads have been offloaded; otherwise return `false`
-    /// without copying anything. Call this before going idle, then run the allocator cleanup hook
-    /// after the old state has been dropped.
-    pub fn reallocate_if_fully_offloaded(&mut self) -> bool {
-        Self::reallocate_offloaded_state(&mut self.state, &mut self.queries.database)
-    }
-
-    pub(crate) fn reallocate_offloaded_state(
-        state: &mut ProjectState,
-        database: &mut ajika::Database,
-    ) -> bool {
-        let Some(reallocated) = state.reallocated_if_fully_offloaded() else {
-            return false;
-        };
-
-        // Both the state and Ajika inputs hold source entries. Rebind the inputs to the
-        // relocated entries before dropping the old state so its allocations can be freed.
-        if let Err(error) = database.update_inputs(|update| {
-            reallocated
-                .parse_db()
-                .source_inventory()
-                .write_entry_inputs(update)
-        }) {
-            tracing::warn!(%error, "could not rebind relocated source inputs");
-            return false;
-        }
-        *state = reallocated;
-        true
-    }
-
-    /// Iterates bounded macro-expansion-limit diagnostics from resident packages.
     pub fn macro_expansion_limit_reports(
         &self,
     ) -> impl Iterator<Item = &rg_def_map::MacroExpansionLimitReport> {
-        self.state.def_map.macro_expansion_limit_reports()
+        self.state.reports.iter()
     }
 
-    /// Returns whether an analysis error came from disposable package-cache storage.
-    pub fn is_recoverable_cache_load_failure(error: &anyhow::Error) -> bool {
-        ProjectState::is_recoverable_cache_load_failure(error)
+    pub fn macro_expansion_limit_summary(&self) -> &MacroExpansionLimitBuildSummary {
+        &self.state.macro_expansion_limit_summary
     }
 
-    /// Returns the saved path whose current disk bytes no longer match a frozen source revision.
+    pub fn query_recovery_pending(&self) -> bool {
+        self.database
+            .lock()
+            .expect("project query runtime")
+            .recovery_pending()
+    }
+
     pub fn stale_source_path(error: &anyhow::Error) -> Option<&Path> {
         error.chain().find_map(|cause| {
             cause
-                .downcast_ref::<rg_source::SourceError>()
-                .and_then(rg_source::SourceError::stale_path)
+                .downcast_ref::<SourceError>()
+                .and_then(SourceError::stale_path)
         })
     }
 
-    /// Finds all known saved sources that no longer match this published generation.
-    ///
-    /// Incremental rebuild recovery uses this only after one candidate has already reported a
-    /// source race. Scanning then turns a settled multi-file edit into one retry without adding a
-    /// full source-tree scan to ordinary saves.
-    pub fn stale_saved_source_paths(&self) -> Result<Vec<PathBuf>, rg_source::SourceError> {
-        self.state.parse_db().source_inventory().stale_saved_paths()
+    /// After a source race, find other captured files in the same disk write burst.
+    pub fn stale_saved_source_paths(&self) -> ajika::Result<Vec<PathBuf>> {
+        let database = self.database.lock().expect("project query runtime");
+        SourceInput::stale_saved_paths(database.inputs(), &database.interner())
     }
+}
 
-    /// Builds a private candidate and publishes it as a new generation only after success.
-    ///
-    /// Candidate internals remain unreachable while `build` runs. Assigning the public generation
-    /// id immediately before the state swap makes that swap the single publication point: failed
-    /// work cannot advance live generation identity or leave partially rebuilt phase databases in
-    /// the project.
-    pub(crate) fn try_publish_generation<T>(
-        &mut self,
-        build: impl FnOnce(&mut ProjectState, &mut ajika::Database) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        self.try_publish_generation_when(build, |_| true)
-    }
-
-    /// Builds a candidate but publishes it only when its output describes a real state change.
-    pub(crate) fn try_publish_generation_when<T>(
-        &mut self,
-        build: impl FnOnce(&mut ProjectState, &mut ajika::Database) -> anyhow::Result<T>,
-        should_publish: impl FnOnce(&T) -> bool,
-    ) -> anyhow::Result<T> {
-        let database = &mut self.queries.database;
-        let accepted_inputs = database.inputs().clone();
-        let mut candidate = self.state.clone();
-        let result = build(&mut candidate, database)
-            .context("while attempting to build project generation candidate");
-        match result {
-            Ok(output) if should_publish(&output) => {
-                candidate.generation_id = ProjectGenerationId::fresh();
-                self.state = candidate;
-                self.state.cleanup_cache();
-                Ok(output)
-            }
-            result => {
-                // A file batch can checkpoint before the whole project is ready. Restoring
-                // accepted inputs advances Ajika's revision if necessary, so those records
-                // must validate again before they can answer in the accepted source world.
-                database.replace_inputs(accepted_inputs);
-                result
-            }
-        }
-    }
-
-    /// Rebuilds the project from source and rewrites offloadable package cache artifacts.
-    pub fn recover_after_cache_load_failure(&mut self) -> anyhow::Result<()> {
-        self.try_publish_generation(|candidate, database| {
-            indexing::recover_from_cache_load_failure(candidate, database).context(
-                "while attempting to recover analysis project after package cache load failed",
-            )
-        })
+impl std::fmt::Debug for Project {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Project")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
     }
 }

@@ -1,9 +1,9 @@
 use rg_ir_model::{PrimitiveTy, UnsignedIntTy};
 
-use crate::{PackageResidencyPolicy, Project, testonly::ProjectSourceFixture};
+use crate::testonly::ProjectSourceFixture;
 
 #[test]
-fn queries_complete_policy_excluded_targets_in_both_storage_modes() {
+fn prefills_primary_targets_and_demands_secondary_bodies() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -21,43 +21,31 @@ fn secondary() { let value = 1u16; let _ = val$secondary$ue; }
 "#,
     );
 
-    for policy in [
-        PackageResidencyPolicy::AllResident,
-        PackageResidencyPolicy::AllOffloadable,
+    let project = fixture.build_project();
+    let generation = project.generation_id();
+    assert_eq!(project.stats().prefilled_body_count, 1);
+
+    for (marker, expected) in [
+        ("secondary", UnsignedIntTy::U16),
+        ("primary", UnsignedIntTy::U8),
     ] {
-        let mut project = Project::builder(fixture.workspace_metadata())
-            .package_residency_policy(policy)
-            .build()
-            .expect("eager fixture builds");
-        let generation = project.generation_id();
-        // Completing the secondary target must preserve the already-built primary target.
-        for (marker, expected) in [
-            ("secondary", UnsignedIntTy::U16),
-            ("primary", UnsignedIntTy::U8),
-        ] {
-            let position = fixture.markers().position(marker);
-            let context = project
-                .snapshot()
+        let position = fixture.markers().position(marker);
+        project.inspect(|snapshot| {
+            let context = snapshot
                 .file_context_for_path(fixture.path(&position.path))
                 .expect("fixture context resolves")
                 .expect("fixture target is indexed");
-            project
-                .ensure_body_analysis(&[context.crate_ref], &rg_std::CancellationToken::new())
-                .expect("requested target completes");
-            let analysis = project
-                .snapshot()
-                .analysis_for_crates(&[context.crate_ref], rg_std::CancellationToken::new())
-                .expect("target analysis loads");
-            let ty = analysis
+            let ty = snapshot
+                .analysis()
                 .type_at(context.crate_ref, context.file, position.offset)
                 .expect("binding type resolves")
                 .expect("binding has a type");
             assert_eq!(
                 ty.primitive(),
                 Some(PrimitiveTy::UnsignedInt(expected)),
-                "{policy:?}: {marker}"
+                "{marker}"
             );
-        }
-        assert_eq!(project.generation_id(), generation);
+        });
     }
+    assert_eq!(project.generation_id(), generation);
 }

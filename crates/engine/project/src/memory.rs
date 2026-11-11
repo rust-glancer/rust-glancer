@@ -1,31 +1,20 @@
-/// Project lifecycle point where recently dropped transient data may still be resident in the
-/// process allocator.
+/// Project lifecycle point where recently dropped query data may still be resident in the allocator.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectMemoryPurgePoint {
-    AfterItemTreeSyntaxEviction,
-    AfterDefMapBuild,
-    AfterBodyIrBuild,
     AfterProjectBuild,
-    AfterPackageRebuild,
+    AfterProjectChange,
 }
 
 impl ProjectMemoryPurgePoint {
     pub fn label(self) -> &'static str {
         match self {
-            Self::AfterItemTreeSyntaxEviction => "after item-tree syntax eviction",
-            Self::AfterDefMapBuild => "after def-map build",
-            Self::AfterBodyIrBuild => "after body-ir build",
             Self::AfterProjectBuild => "after project build",
-            Self::AfterPackageRebuild => "after package rebuild",
+            Self::AfterProjectChange => "after project change",
         }
     }
 }
 
-/// Allocator cleanup hook called by project-owned build and rebuild boundaries.
-///
-/// The project knows when large transient phase data has died, but it deliberately does not know
-/// which allocator the executable selected. Callers can provide an allocator-specific hook while
-/// tests and library users keep the default no-op behavior.
+/// Let the executable release allocator pages after a project operation.
 pub trait ProjectMemoryHooks: std::fmt::Debug + Send + Sync {
     fn purge(&self, point: ProjectMemoryPurgePoint);
 }

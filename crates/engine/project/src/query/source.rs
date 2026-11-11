@@ -3,7 +3,6 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
-use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 use rg_parse::LineIndex;
 #[cfg(test)]
@@ -12,12 +11,11 @@ use rg_std::MemorySize;
 use rg_text::RustEdition;
 
 use super::ProjectSnapshot;
-use crate::selection::subset;
 
 /// Analysis-ready context for one filesystem path.
 ///
 /// A shared module can belong to several crates. Editor queries use the first owner in saved
-/// package/target order, even when another owner is already materialized or could answer differently.
+/// package/target order, which keeps file routing stable when other targets share the path.
 /// Unreachable parsed files have no semantic context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
@@ -26,12 +24,6 @@ pub struct FileContext {
 }
 
 impl<'a> ProjectSnapshot<'a> {
-    /// Returns a def-map view over exactly the listed packages, without dependency expansion.
-    fn shallow_def_map(&self, packages: &[PackageSlot]) -> DefMapReadTxn<'a> {
-        let subset = subset::packages_only(self.state.workspace(), packages);
-        self.state.def_map_read_txn_for_subset(&subset)
-    }
-
     #[cfg(test)]
     pub(crate) fn parse_db(&self) -> &'a ParseDb {
         self.state.parse_db()
@@ -135,27 +127,13 @@ impl<'a> ProjectSnapshot<'a> {
         &self,
         source_path: &Path,
     ) -> anyhow::Result<Option<FileContext>> {
-        let candidates = self.state.file_refs_for_path(source_path);
-
-        let package_slots = candidates
-            .iter()
-            .map(|file| file.package)
-            .collect::<Vec<_>>();
-        let def_map = self.shallow_def_map(&package_slots);
-
-        for file in candidates {
-            let Some(crate_ref) = def_map
-                .crates_for_file(file.package, file.file)
-                .context("find crate ownership for source file")?
-                .into_iter()
-                .next()
-            else {
-                continue;
-            };
-            return Ok(Some(FileContext {
-                crate_ref,
-                file: file.file,
-            }));
+        for file in self.state.parse_db().file_refs_for_path(source_path) {
+            if let Some(crate_ref) = self.state.crates_for_file(file.package, file.file).next() {
+                return Ok(Some(FileContext {
+                    crate_ref,
+                    file: file.file,
+                }));
+            }
         }
 
         Ok(None)
@@ -167,9 +145,6 @@ impl<'a> ProjectSnapshot<'a> {
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<CrateRef>> {
-        let def_map = self.shallow_def_map(&[package]);
-        def_map
-            .crates_for_file(package, file)
-            .context("while attempting to find crate ownership for source file")
+        Ok(self.state.crates_for_file(package, file).collect())
     }
 }

@@ -1,31 +1,24 @@
-//! Configures and constructs a fresh saved project.
+//! Configure and construct a saved project.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
-use rg_body_ir::BodyIrBuildPolicy;
+use rg_def_map::CrateDependencies;
+use rg_std::MemorySize as _;
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
-use super::initial::build_state;
+use super::build_state;
 use crate::{
-    BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, StartupCacheLoad,
-    memory::NoopProjectMemoryHooks,
-    profile::{BuildMemorySampler, record_build_checkpoint},
-    project_queries::ProjectQueries,
-    state::ProjectState,
-    storage::{cache::PackageCacheInstance, residency::ResidencyApplication},
+    BuildProcessMemory, ProcessMemorySampler, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    memory::NoopProjectMemoryHooks, profile::record_build_checkpoint, project_queries,
 };
 
-/// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
     workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
-    body_ir_policy: BodyIrBuildPolicy,
-    package_residency_policy: PackageResidencyPolicy,
-    startup_cache_load: StartupCacheLoad,
-    memory_sampler: BuildMemorySampler,
+    reuse_cache: bool,
+    process_memory_sampler: Option<ProcessMemorySampler>,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
@@ -35,17 +28,10 @@ impl ProjectBuilder {
             workspace,
             workspace_lowering_config: WorkspaceLoweringConfig::default(),
             cargo_metadata_config: CargoMetadataConfig::default(),
-            body_ir_policy: BodyIrBuildPolicy::default(),
-            package_residency_policy: PackageResidencyPolicy::default(),
-            startup_cache_load: StartupCacheLoad::default(),
-            memory_sampler: BuildMemorySampler::disabled(),
+            reuse_cache: true,
+            process_memory_sampler: None,
             memory_hooks: Arc::new(NoopProjectMemoryHooks),
         }
-    }
-
-    pub fn body_ir_policy(mut self, policy: BodyIrBuildPolicy) -> Self {
-        self.body_ir_policy = policy;
-        self
     }
 
     pub fn cargo_metadata_config(mut self, config: CargoMetadataConfig) -> Self {
@@ -58,28 +44,17 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn package_residency_policy(mut self, policy: PackageResidencyPolicy) -> Self {
-        self.package_residency_policy = policy;
+    /// Analyze from source while keeping the cache available for subsequent starts.
+    pub fn reuse_cache(mut self, enabled: bool) -> Self {
+        self.reuse_cache = enabled;
         self
     }
 
-    pub fn startup_cache_load(mut self, load: StartupCacheLoad) -> Self {
-        self.startup_cache_load = load;
-        self
-    }
-
-    /// Enables measuring retained memory for stages (via internal memory profiler).
-    pub fn measure_retained_memory(mut self, enabled: bool) -> Self {
-        self.memory_sampler = self.memory_sampler.with_retained_memory(enabled);
-        self
-    }
-
-    /// Enables measuring BOTH retained and process memory.
     pub fn process_memory_sampler(
         mut self,
         sampler: impl FnMut() -> Option<BuildProcessMemory> + 'static,
     ) -> Self {
-        self.memory_sampler = self.memory_sampler.with_process_memory(Box::new(sampler));
+        self.process_memory_sampler = Some(Box::new(sampler));
         self
     }
 
@@ -88,53 +63,36 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn build(self) -> anyhow::Result<Project> {
-        let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
-            .context("while attempting to claim package cache instance")?;
-        let mut queries =
-            ProjectQueries::open(cache_instance.clone(), self.package_residency_policy)
-                .context("open Ajika database")?;
-        let state = self.build_in(&mut queries.database, cache_instance)?;
-        state.cleanup_cache();
-        Ok(Project { queries, state })
-    }
-
-    pub(crate) fn build_in(
-        self,
-        database: &mut ajika::Database,
-        cache_instance: PackageCacheInstance,
-    ) -> anyhow::Result<ProjectState> {
-        let mut memory_sampler = self.memory_sampler;
-        let mut state = build_state(
-            database,
-            self.workspace,
-            self.workspace_lowering_config,
-            self.cargo_metadata_config,
-            cache_instance,
-            self.body_ir_policy,
-            self.package_residency_policy,
-            self.startup_cache_load,
-            Arc::clone(&self.memory_hooks),
-            &mut memory_sampler,
-        )
-        .context("while attempting to build analysis project")?;
-        ResidencyApplication::fresh(&mut state)
-            .apply_profiled(&mut memory_sampler)
-            .context("while attempting to apply package cache residency")?;
-        // Once offloading separates the small saved state from transient indexing data, move that
-        // retained state out of the allocator pages fragmented during the build.
-        Project::reallocate_offloaded_state(&mut state, database);
+    pub fn build(mut self) -> anyhow::Result<Project> {
+        let mut database =
+            project_queries::open(&self.workspace).context("open saved query cache")?;
+        if !self.reuse_cache {
+            database.invalidate().context("reset saved query cache")?;
+        }
+        let targets = database.update_inputs(|update| {
+            self.workspace.write_inputs(update)?;
+            CrateDependencies::write_inputs(&self.workspace, update)
+        })?;
+        let state =
+            build_state(&mut database, self.workspace, targets).context("index saved project")?;
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
-        let process_memory = memory_sampler.sample_process_memory();
-        let project_bytes = memory_sampler.measure_retained(&state);
-        record_build_checkpoint(
-            "after project",
-            project_bytes,
-            project_bytes,
-            process_memory,
-        );
-        Ok(state)
+        let bytes = self
+            .process_memory_sampler
+            .as_ref()
+            .map(|_| state.memory_size());
+        let process_memory = self
+            .process_memory_sampler
+            .as_mut()
+            .and_then(|sampler| sampler());
+        record_build_checkpoint("after project", bytes, process_memory);
+        Ok(Project {
+            database: Mutex::new(database),
+            state,
+            workspace_lowering_config: self.workspace_lowering_config,
+            cargo_metadata_config: self.cargo_metadata_config,
+            memory_hooks: self.memory_hooks,
+        })
     }
 }

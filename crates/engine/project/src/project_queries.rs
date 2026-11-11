@@ -1,44 +1,43 @@
-//! The project owns the mutable query runtime. Saved snapshots borrow only its accepted routing.
+//! Opens the workspace's saved query cache. Ajika owns the filesystem lock.
 
-use std::{fmt, time::Duration};
+use std::{ffi::OsStr, path::PathBuf, time::Duration};
 
-use crate::{PackageResidencyPolicy, storage::cache::PackageCacheInstance};
+use rg_source::{QueryDatabase, QueryServices};
+use rg_workspace::WorkspaceMetadata;
 
-// Change the epoch whenever file query semantics or their persisted schemas become incompatible.
-const EPOCH: &str = "rust-glancer-file-declarations-1";
+// Change this epoch when persisted results or their producing semantics change.
+const EPOCH: &str = "rust-glancer-target-analysis-4";
 const RETENTION: ajika::Retention = ajika::Retention {
-    max_entries: 100_000,
+    max_entries: 1_000_000,
     max_bytes: 512 * 1024 * 1024,
     max_idle: Duration::from_secs(30 * 24 * 60 * 60),
 };
 
-pub(crate) struct ProjectQueries {
-    pub(crate) database: ajika::Database,
-    // A Cargo graph rebuild can replace the legacy artifact instance. Keep the original lock
-    // while this database still uses that instance's directory. Phase 08 removes the split.
-    _instance: PackageCacheInstance,
-}
-
-impl ProjectQueries {
-    pub(crate) fn open(
-        instance: PackageCacheInstance,
-        residency: PackageResidencyPolicy,
-    ) -> ajika::Result<Self> {
-        let inputs = ajika::Inputs::default();
-        let database = if residency.is_offloadable() {
-            ajika::Database::open(instance.root().join("ajika"), EPOCH, inputs, (), RETENTION)?
-        } else {
-            ajika::Database::memory(inputs, (), RETENTION)
-        };
-        Ok(Self {
-            database,
-            _instance: instance,
-        })
+pub(crate) fn open(workspace: &WorkspaceMetadata) -> anyhow::Result<QueryDatabase> {
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace.cargo_target_dir().to_path_buf());
+    let name = workspace
+        .workspace_root()
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("workspace"));
+    let root = target_dir.join("rust_glancer").join(name).join("queries");
+    // Separate cache slots let multiple editor engines analyze one workspace concurrently.
+    for slot in 1..=1024 {
+        match QueryDatabase::open(
+            root.join(slot.to_string()),
+            EPOCH,
+            ajika::Inputs::default(),
+            QueryServices::default(),
+            RETENTION,
+        ) {
+            Ok(database) => return Ok(database),
+            Err(error) => match error.kind() {
+                ajika::ErrorKind::Persistence(error)
+                    if error.kind() == ajika::PersistenceErrorKind::InUse => {}
+                _ => return Err(error.into()),
+            },
+        }
     }
-}
-
-impl fmt::Debug for ProjectQueries {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProjectQueries").finish_non_exhaustive()
-    }
+    anyhow::bail!("no free query cache slots under {}", root.display())
 }

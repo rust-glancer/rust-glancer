@@ -1,202 +1,309 @@
-use rg_ir_model::PackageSlot;
-use rg_item_tree::file_declarations;
-use rg_source::{CapturedSource, SourcePresence};
-use rg_std::NativeOsString;
+use std::sync::Arc;
 
-use crate::{
-    PackageResidencyPolicy, Project, SavedFileChange, StartupCacheLoad,
-    testonly::{ProjectFixture, ProjectSourceFixture},
-};
+use rg_analysis::{ReferenceLocation, ReferenceQuery, RenameEdit};
+use rg_body_ir::saved_body;
+use rg_ir_model::{BodyKey, Span};
+use rg_semantic_ir::target_declarations;
+use rg_std::CancellationToken;
+
+use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
-fn file_declarations_reuse_across_restart_and_discover_a_new_child() {
-    let fixture = ProjectSourceFixture::build(
+fn warm_project_restores_generated_sources_and_releases_query_payloads() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
-//- /src/lib.rs crate:file_queries
-pub struct Before;
-mod child;
+//- /Cargo.toml
+[package]
+name = "targets"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_module {
+    () => { mod generated; };
+}
+make_module!();
+pub use generated::{Imported, LIMIT};
+
+//- /src/generated.rs
+include!("included.rs");
+
+//- /src/included.rs
+pub struct Imported;
+pub const LIMIT: usize = 2 + 3;
+
+//- /src/main.rs
+use targets::{Imported, LIMIT};
+fn main() {
+    fn nested() -> u8 { 42u8 }
+    let value = nested();
+}
 "#,
     );
-    let build = || {
-        // Bypass the legacy package artifact so startup has to demand the file query.
-        Project::builder(fixture.workspace_metadata())
-            .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-            .startup_cache_load(StartupCacheLoad::Disabled)
-            .build()
-            .expect("file query fixture should build")
-    };
-    let path = fixture.path("src/lib.rs");
-    let child = fixture.path("src/child.rs");
-    let child_probe = path
+    let cold = fixture.build_project();
+    let included = fixture
+        .path("src/included.rs")
         .canonicalize()
-        .expect("root file should canonicalize")
-        .with_file_name("child.rs");
-    let child_key = NativeOsString::from_os_str(child_probe.as_os_str());
-    let mut cold = build();
-    let file = ProjectFixture::file_id_for_path_in(cold.state.parse_db(), &path);
-    assert!(cold.queries.database.statistics().bytes_written > 0);
-    let initial = cold
-        .queries
-        .database
-        .run(|db| file_declarations(db, PackageSlot(0), file))
-        .expect("same-process file query should reuse declarations");
-    assert_eq!(cold.queries.database.statistics().executed, 0);
+        .expect("generated include exists");
+    assert!(cold.state.parse_db().contains_file_path(&included));
+    let file = cold.inspect(|snapshot| {
+        snapshot
+            .file_context_for_path(fixture.path("src/main.rs"))
+            .expect("find binary file")
+    });
     drop(cold);
 
-    let mut warm = build();
+    let warm = fixture.build_project();
     assert_eq!(
-        ProjectFixture::file_id_for_path_in(warm.state.parse_db(), &path),
-        file
+        warm.database
+            .lock()
+            .expect("query runtime")
+            .statistics()
+            .executed,
+        0
     );
-    assert_eq!(warm.queries.database.statistics().executed, 0);
-    assert!(warm.queries.database.statistics().hits > 0);
-    let presence = warm
-        .queries
-        .database
-        .run(|db| SourcePresence::at(child_key.clone()).exists(db))
-        .expect("missing child should have a captured presence value");
-    assert!(!presence);
+    assert!(warm.state.parse_db().contains_file_path(&included));
+    let path = fixture.path("src/main.rs");
+    let text = std::fs::read_to_string(&path).expect("read binary source");
+    let (definitions, body) = warm.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(&path)
+            .expect("find binary file");
+        assert_eq!(context, file);
+        let context = context.expect("binary belongs to a target");
+        let analysis = snapshot.analysis();
+        let offset = |needle| {
+            u32::try_from(text.find(needle).expect("fixture marker")).expect("fixture offset fits")
+        };
+        for (name, expected) in [("value", "let value: u8"), ("LIMIT", "2 + 3; // 5")] {
+            let hover = analysis
+                .hover(context.crate_ref, context.file, offset(name))
+                .expect("hover query")
+                .expect("hover result");
+            assert!(
+                hover.blocks.iter().any(|block| block
+                    .signature
+                    .as_deref()
+                    .is_some_and(|signature| signature.ends_with(expected))),
+                "{hover:?}"
+            );
+        }
+        let targets = analysis
+            .goto_definition(context.crate_ref, context.file, offset("Imported"))
+            .expect("imported type definition");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(
+            snapshot.file_path(targets[0].crate_ref.package, targets[0].file_id),
+            Some(included.as_path())
+        );
 
-    std::fs::write(&child, "pub struct Appeared;\n").expect("fixture child should be written");
-    let changes = warm
-        .apply_change(SavedFileChange::fs_path(&child))
-        .expect("adding a previously missing module should publish");
-    assert_eq!(changes.changed_files.len(), 1);
-    assert!(
-        warm.queries.database.statistics().hits > 0,
-        "the unchanged parent tree should be reused"
-    );
-    let symbols = warm
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("saved analysis should load")
-        .workspace_symbols("Appeared")
-        .expect("module declarations should be searchable");
-    assert_eq!(symbols.len(), 1);
-    assert!(
-        warm.queries
-            .database
-            .run(|db| SourcePresence::at(child_key).exists(db))
-            .expect("new child presence should be captured")
-    );
+        let spans = text
+            .match_indices("nested")
+            .map(|(start, name)| {
+                let start = u32::try_from(start).expect("fixture offset fits");
+                Span {
+                    start,
+                    end: start + u32::try_from(name.len()).expect("name length fits"),
+                }
+            })
+            .collect::<Vec<_>>();
+        let expected = spans
+            .into_iter()
+            .map(|span| ReferenceLocation {
+                crate_ref: context.crate_ref,
+                file_id: context.file,
+                span,
+            })
+            .collect::<Vec<_>>();
+        let query = ReferenceQuery::file_scoped(context.crate_ref, context.file);
+        let call = expected[1].span.start;
+        assert_eq!(
+            analysis
+                .references(context.crate_ref, context.file, call, query)
+                .expect("nested function references"),
+            expected
+        );
+        let rename = analysis
+            .rename(context.crate_ref, context.file, call, "renamed", query)
+            .expect("rename query")
+            .expect("nested function can be renamed");
+        assert_eq!(
+            rename.edits,
+            expected
+                .into_iter()
+                .map(|location| RenameEdit {
+                    crate_ref: location.crate_ref,
+                    file_id: location.file_id,
+                    span: location.span,
+                    old_text: "nested".to_owned(),
+                    new_text: "renamed".to_owned(),
+                })
+                .collect::<Vec<_>>()
+        );
 
-    std::fs::write(&path, "pub struct After;\nmod child;\n").expect("fixture root should change");
-    warm.apply_change(SavedFileChange::fs_path(&path))
-        .expect("edited root should publish");
-    assert!(warm.queries.database.statistics().executed > 0);
-    let changed = warm
-        .queries
-        .database
-        .run(|db| file_declarations(db, PackageSlot(0), file))
-        .expect("edited file declarations should be available");
-    assert_ne!(changed, initial);
+        let db = snapshot.query_context();
+        let declarations = target_declarations(db, context.crate_ref).expect("binary declarations");
+        let owners = declarations
+            .body_owners
+            .value(db)
+            .expect("binary body owners");
+        let body = db
+            .query::<saved_body>(BodyKey {
+                krate: context.crate_ref,
+                owner: owners[0].owner,
+            })
+            .expect("main body");
+        let definitions = declarations
+            .definitions
+            .value(db)
+            .expect("binary definitions");
+        (Arc::downgrade(&definitions), Arc::downgrade(&body))
+    });
+    assert!(definitions.upgrade().is_none());
+    assert!(body.upgrade().is_none());
 }
 
 #[test]
-fn declined_candidate_restores_the_accepted_file_query_inputs() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /src/lib.rs crate:file_query_rejection
-pub struct Published;
-"#,
-    );
-    let path = fixture.path("src/lib.rs");
-    let mut project = fixture.build_project();
-    let generation = project.generation_id();
-    let file = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
-    let published = project
-        .queries
-        .database
-        .run(|db| file_declarations(db, PackageSlot(0), file))
-        .expect("published declarations should be available");
-    let source =
-        CapturedSource::new(&path, "pub struct Declined;\n").expect("capture candidate source");
-
-    let declined = project
-        .try_publish_generation_when(
-            |candidate, database| {
-                candidate
-                    .parse_db_mut()
-                    .refresh_captured_saved_file(&source)?;
-                database.update_inputs(|update| {
-                    candidate.parse_db().source_inventory().write_inputs(update)
-                })?;
-                Ok(database.run(|db| file_declarations(db, PackageSlot(0), file))?)
-            },
-            |_| false,
-        )
-        .expect("building the candidate should succeed");
-    assert_ne!(declined, published);
-    assert_eq!(project.generation_id(), generation);
-    let current = project
-        .queries
-        .database
-        .run(|db| file_declarations(db, PackageSlot(0), file))
-        .expect("next operation should use the accepted source");
-    assert_eq!(current, published);
-}
-
-#[test]
-fn one_canonical_file_keeps_distinct_package_editions() {
+fn saves_update_one_targets_membership_without_displacing_the_sibling() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
-[workspace]
-members = ["older", "newer"]
-resolver = "3"
-
-//- /older/Cargo.toml
 [package]
-name = "older"
-version = "0.1.0"
-edition = "2021"
-[lib]
-path = "../shared.rs"
-
-//- /newer/Cargo.toml
-[package]
-name = "newer"
+name = "targets"
 version = "0.1.0"
 edition = "2024"
-[lib]
-path = "../shared.rs"
 
-//- /shared.rs
-pub fn gen() {}
+//- /src/lib.rs
+mod shared;
+mod new_child;
+
+//- /src/main.rs
+mod shared;
+fn main() {}
+
+//- /src/shared.rs
+pub struct Shared;
 "#,
     );
     let mut project = fixture.build_project();
-    let older = ProjectFixture::package_slot_by_name_in(project.state.parse_db(), "older");
-    let newer = ProjectFixture::package_slot_by_name_in(project.state.parse_db(), "newer");
-    let root = |slot: PackageSlot| {
-        project
-            .state
-            .parse_db()
-            .package(slot.0)
-            .expect("fixture package should exist")
-            .targets()[0]
-            .root_file
+    let shared = Project::inspect(&project, |snapshot| {
+        snapshot
+            .file_context_for_path(fixture.path("src/shared.rs"))
+            .expect("route shared source")
+            .expect("shared source belongs to both targets")
+    });
+    let owners = |project: &Project| {
+        project.inspect(|snapshot| {
+            snapshot
+                .crates_for_file(shared.crate_ref.package, shared.file)
+                .expect("find target owners")
+        })
     };
-    let file = root(older);
-    assert_eq!(file, root(newer));
+    let before = owners(&project);
+    assert_eq!(before.len(), 2);
 
-    let declares_gen = |tree: &rg_item_tree::FileTree| {
-        tree.items.iter().any(|item| {
-            item.name
-                .as_ref()
-                .is_some_and(|name| name.as_str() == "gen")
+    let root = fixture.path("src/lib.rs");
+    let child = fixture.path("src/new_child.rs");
+    std::fs::write(&root, "mod new_child;\n").expect("update library root");
+    std::fs::write(&child, "pub struct NewChild;\n").expect("create new module");
+    project
+        .apply_changes([
+            SavedFileChange::fs_path(&root),
+            SavedFileChange::fs_path(&child),
+        ])
+        .expect("publish changed membership");
+
+    let after = owners(&project);
+    assert_eq!(after.len(), 1);
+    assert!(before.contains(&after[0]));
+    project.inspect(|snapshot| {
+        let new_child = snapshot
+            .file_context_for_path(&child)
+            .expect("route new module")
+            .expect("new module should be indexed");
+        assert_ne!(after[0], new_child.crate_ref);
+        assert_eq!(
+            snapshot
+                .file_context_for_path(fixture.path("src/main.rs"))
+                .expect("route binary root")
+                .expect("binary root")
+                .crate_ref,
+            after[0]
+        );
+    });
+}
+
+#[test]
+fn deleting_a_cargo_target_keeps_the_remaining_workspace_queryable() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "deleted_target"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Library;
+
+//- /src/bin/tool.rs
+pub struct Tool;
+fn main() {}
+"#,
+    );
+    let mut project = fixture.build_project();
+    let tool = fixture.path("src/bin/tool.rs");
+    std::fs::remove_file(&tool).expect("remove autodiscovered target");
+    project
+        .apply_change(SavedFileChange::fs_path(tool))
+        .expect("reload Cargo metadata after deleting a target");
+    project.inspect(|snapshot| {
+        let analysis = snapshot.analysis();
+        assert!(
+            analysis
+                .workspace_symbols("Tool")
+                .expect("query tool")
+                .is_empty()
+        );
+        assert_eq!(
+            analysis
+                .workspace_symbols("Library")
+                .expect("query library")
+                .len(),
+            1
+        );
+    });
+}
+
+#[test]
+fn cancelled_snapshot_does_not_publish_an_answer_and_can_be_retried() {
+    let fixture = ProjectSourceFixture::build(
+        "//- /src/lib.rs crate:cancelled_snapshot\npub struct Visible;\n",
+    );
+    let project = fixture.build_project();
+    let generation = project.generation_id();
+    let token = CancellationToken::new();
+    let error = project
+        .with_snapshot(token.clone(), |snapshot| {
+            let symbols = snapshot.analysis().workspace_symbols("Visible")?;
+            token.cancel();
+            Ok(symbols)
         })
-    };
-    let (old_tree, new_tree) = project
-        .queries
-        .database
-        .run(|db| {
-            Ok((
-                file_declarations(db, older, file)?,
-                file_declarations(db, newer, file)?,
-            ))
-        })
-        .expect("both package interpretations should be available");
-    assert!(declares_gen(&old_tree));
-    assert!(!declares_gen(&new_tree));
+        .expect_err("cancelled answer must not escape the operation");
+    assert!(error.chain().any(|cause| {
+        cause
+            .downcast_ref::<ajika::Error>()
+            .is_some_and(ajika::Error::is_cancelled)
+    }));
+    project.inspect(|snapshot| {
+        assert_eq!(
+            snapshot
+                .analysis()
+                .workspace_symbols("Visible")
+                .expect("retry query")
+                .len(),
+            1
+        )
+    });
+    assert_eq!(project.generation_id(), generation);
 }
