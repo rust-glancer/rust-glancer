@@ -8,7 +8,9 @@ use rg_def_map::{CrateData, CrateDataSource, CrateDefMapReader, CrateDependencie
 use rg_ir_model::{BodyKey, CrateRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
-use rg_semantic_ir::{CrateItemSource, ItemLookupIndex, ItemStore, target_declarations};
+use rg_semantic_ir::{
+    CrateItemSource, ItemLookupIndex, ItemStore, LangItemIndex, target_declarations,
+};
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
 };
@@ -186,6 +188,10 @@ impl CrateDataSource for Declarations {
 impl CrateItemSource for Declarations {
     fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
         Ok(self.items.get(&krate).map(|(items, _)| items))
+    }
+
+    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
+        Ok(self.items(krate)?.map(ItemStore::lang_items))
     }
 
     fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {

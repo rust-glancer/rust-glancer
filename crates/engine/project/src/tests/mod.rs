@@ -1,6 +1,5 @@
 mod cargo_build_outputs;
 mod current_source;
-mod eager_indexing;
 mod file_queries;
 mod generated_modules;
 mod utils;

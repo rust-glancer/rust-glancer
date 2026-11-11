@@ -142,17 +142,19 @@ pub struct Library;
             })
             .collect::<Vec<_>>();
 
-        let def_maps = fixture.def_map_db().reader();
         let items = fixture.semantic_ir_db().reader();
         let cache = crate::ItemLookupQueryCache::new();
         let dependency_sets = test_crates
             .iter()
             .map(|&use_site| {
-                crate::CrateItemQuery::new(&def_maps, &items, use_site)
-                    .visible_stores()
-                    .expect("test target visible stores should load")
-                    .into_iter()
-                    .map(crate::ItemStore::crate_ref)
+                items
+                    .lookup_index(use_site)
+                    .expect("test target lookup index should load")
+                    .expect("test target lookup index should exist")
+                    .lookup_facts()
+                    .visible_crates()
+                    .iter()
+                    .copied()
                     .filter(|&crate_ref| crate_ref != use_site)
                     .collect::<Vec<_>>()
             })
@@ -395,15 +397,16 @@ pub struct Parser;
     let runtime = crate_ref("runtime", rg_workspace::TargetKind::Lib);
     let derive_macro = crate_ref("derive_macro", rg_workspace::TargetKind::ProcMacro);
     let parser = crate_ref("parser", rg_workspace::TargetKind::Lib);
-    let def_maps = fixture.def_map_db().reader();
     let items = fixture.semantic_ir_db().reader();
     let visible_from = |use_site| {
-        let mut crates = crate::CrateItemQuery::new(&def_maps, &items, use_site)
-            .visible_stores()
-            .expect("visible semantic stores should load")
-            .into_iter()
-            .map(crate::ItemStore::crate_ref)
-            .collect::<Vec<_>>();
+        let mut crates = items
+            .lookup_index(use_site)
+            .expect("target lookup index should load")
+            .expect("target lookup index should exist")
+            .lookup_facts()
+            .visible_crates()
+            .as_slice()
+            .to_vec();
         crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
         crates
     };

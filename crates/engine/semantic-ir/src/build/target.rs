@@ -18,8 +18,8 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use super::impl_headers::impl_header_resolutions;
 use crate::{
-    BodyOwnerData, CrateItemQuery, CrateItemSource, ItemLookupFacts, ItemLookupIndex,
-    ItemResolutionQuery, ItemStore, ItemStoreSource,
+    BodyOwnerData, CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader,
+    ItemResolutionQuery, ItemStore, ItemStoreSource, LangItemIndex,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -36,6 +36,7 @@ pub struct TargetDeclarations {
     metadata: TargetDeclarationMetadata,
     definitions: CrateData,
     items: ItemStore,
+    lang_items: LangItemIndex,
     lookup: ItemLookupIndex,
     body_owners: Vec<BodyOwnerData>,
 }
@@ -71,7 +72,8 @@ pub fn target_declarations(
         module_files,
         macro_expansion_limit: built.macro_expansion_limit,
     };
-    TargetDeclarations::new(db, metadata, data, items, lookup, body_owners)
+    let lang_items = items.lang_items().clone();
+    TargetDeclarations::new(db, metadata, data, items, lang_items, lookup, body_owners)
 }
 
 impl ItemStore {
@@ -98,12 +100,14 @@ impl ItemStore {
         let definitions = CrateDefMapReader(local);
         let headers =
             impl_header_resolutions(&items, &ItemResolutionQuery::new(definitions, local))?;
-        let crate_items = CrateItemQuery::new(definitions, local, items.crate_ref());
-        let facts = ItemLookupFacts::build(&crate_items, || {
-            db.check_cancelled()
-                .map_err(|error| OperationError::Source(ReadError::Query(error)))
-        })
-        .map_err(ReadError::from)?;
+        let visible_crates =
+            DefMapQuery::new(definitions).item_lookup_crates_from(items.crate_ref())?;
+        let facts =
+            ItemLookupFacts::build(visible_crates, &items, ItemReader(dependencies), || {
+                db.check_cancelled()
+                    .map_err(|error| OperationError::Source(ReadError::Query(error)))
+            })
+            .map_err(ReadError::from)?;
 
         let mut self_heads = HashMap::new();
         for header in headers {
@@ -214,6 +218,11 @@ impl CrateDataSource for TargetDeclarationReader<'_> {
 impl CrateItemSource for TargetDeclarationReader<'_> {
     fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
         self.acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)
+    }
+
+    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
+        self.acquire(krate, |result| &result.lang_items)
             .map_err(ReadError::Query)
     }
 

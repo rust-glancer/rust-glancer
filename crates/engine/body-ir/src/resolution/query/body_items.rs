@@ -237,7 +237,7 @@ where
         let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and
-        // its fallback. Target modules are still handled by CrateItemQuery.
+        // its fallback. Target declarations are handled by the saved lookup index.
         origins.push(DefMapRef::Body(self.context.body_ref()));
         for module in [
             self.context.body().owner_module(),

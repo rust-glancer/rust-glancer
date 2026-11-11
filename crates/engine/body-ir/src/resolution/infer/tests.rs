@@ -69,13 +69,7 @@ pub struct Vec<T>(T);
     let lookup =
         rg_semantic_ir::ItemLookupQuery::build_from(semantic_ir, target, &CancellationToken::new())
             .expect("fixture lookup");
-    let context = rg_ty::TyContext::new(
-        &def_map,
-        &semantic_ir,
-        lookup,
-        target,
-        CancellationToken::new(),
-    );
+    let context = rg_ty::TyContext::new(&def_map, &semantic_ir, lookup, CancellationToken::new());
     let declarations = rg_ty::solver::SemanticDeclarations::new(&context, context.item_paths());
     declarations
         .with_solver(|solver| {

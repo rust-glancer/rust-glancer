@@ -5,9 +5,9 @@
 
 use rg_def_map::LocalEnumVariantData;
 use rg_ir_model::{
-    AssocItemId, ConstRef, CrateRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey,
-    FieldRef, FunctionRef, GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef,
-    ModuleRef, SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantFieldRef, EnumVariantRef, FieldKey, FieldRef,
+    FunctionRef, GenericDefRef, ImplRef, ItemOwner, LocalDefRef, LocalEnumVariantRef, ModuleRef,
+    SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldList, GenericParams};
 
@@ -45,17 +45,6 @@ where
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, S::Error> {
         self.source.item_store_for_origin(origin)
-    }
-
-    /// Returns stores for the exact crates selected by a language-visibility query.
-    pub fn stores_for_crates(&self, crates: &[CrateRef]) -> Result<Vec<&'a ItemStore>, S::Error> {
-        let mut stores = Vec::new();
-        for crate_ref in crates {
-            if let Some(store) = self.item_store_for_origin(DefMapRef::Crate(*crate_ref))? {
-                stores.push(store);
-            }
-        }
-        Ok(stores)
     }
 
     /// Enumerates item views from one routed origin without exposing store iteration to callers.

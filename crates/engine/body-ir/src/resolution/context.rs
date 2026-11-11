@@ -69,7 +69,6 @@ where
             def_maps.clone(),
             item_stores.clone(),
             item_lookup_query.clone(),
-            body_ref.crate_ref,
             cancellation,
         );
         Self {

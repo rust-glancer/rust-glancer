@@ -4,11 +4,12 @@ use rg_ir_model::{CrateRef, DefMapRef};
 use rg_source::ReadError;
 use rg_std::{CancellationToken, OperationError};
 
-use crate::{ItemLookupIndex, ItemStore, ItemStoreSource};
+use crate::{ItemLookupIndex, ItemStore, ItemStoreSource, LangItemIndex};
 
-/// Acquire the item or lookup payload independently, or enumerate their target addresses.
+/// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
 pub trait CrateItemSource: Sync {
     fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError>;
+    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
     fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError>;
     fn crates(&self) -> Vec<CrateRef>;
 }
@@ -25,6 +26,10 @@ impl std::fmt::Debug for ItemReader<'_> {
 impl<'a> ItemReader<'a> {
     pub fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
         self.0.items(krate)
+    }
+
+    pub(crate) fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
+        self.0.lang_items(krate)
     }
 
     pub fn included_crates(

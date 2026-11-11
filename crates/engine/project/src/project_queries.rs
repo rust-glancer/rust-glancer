@@ -6,7 +6,7 @@ use rg_source::{QueryDatabase, QueryServices};
 use rg_workspace::WorkspaceMetadata;
 
 // Change this epoch when persisted results or their producing semantics change.
-const EPOCH: &str = "rust-glancer-target-analysis-4";
+const EPOCH: &str = "rust-glancer-target-analysis-5";
 const RETENTION: ajika::Retention = ajika::Retention {
     max_entries: 1_000_000,
     max_bytes: 512 * 1024 * 1024,

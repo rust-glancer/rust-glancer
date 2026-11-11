@@ -3,7 +3,6 @@
 //! Crate and body IR store item data in the same `ItemStore` shape. This module separates raw
 //! store routing from queries that need a concrete Rust visibility universe.
 
-mod crate_item;
 mod generics;
 mod item_store;
 mod lookup;
@@ -12,7 +11,6 @@ mod resolution;
 use rg_ir_model::DefMapRef;
 
 pub use self::{
-    crate_item::CrateItemQuery,
     generics::GenericsQuery,
     item_store::ItemStoreQuery,
     lookup::{ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats},

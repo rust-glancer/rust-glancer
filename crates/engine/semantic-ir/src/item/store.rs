@@ -184,7 +184,7 @@ impl ItemStore {
         self.local_items.get(local_def).copied().flatten()
     }
 
-    pub(super) fn lang_items(&self) -> &LangItemIndex {
+    pub fn lang_items(&self) -> &LangItemIndex {
         &self.lang_items
     }
 

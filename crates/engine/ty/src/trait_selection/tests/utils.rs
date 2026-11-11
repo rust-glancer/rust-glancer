@@ -2,9 +2,9 @@ use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
-    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, NameBinding,
-    NameBindingProvenance, Namespace, NamespaceSet, Visibility,
+    DefMap, DefMapBuilder, DefMapQuery, DefMapSource, GeneratedItemRef, GeneratedSourceId,
+    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin,
+    NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
@@ -19,9 +19,9 @@ use rg_item_tree::{
     WherePredicate,
 };
 use rg_semantic_ir::{
-    CrateItemQuery, CrateItemSource, FunctionData, FunctionSignature, GenericParamSource,
-    GenericsQuery, ImplData, ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemReader,
-    ItemStore, ItemStoreBuilder, ItemStoreSource, ReadError, StructData, TraitData, TypeAliasData,
+    CrateItemSource, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
+    ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder,
+    ItemStoreSource, LangItemIndex, ReadError, StructData, TraitData, TypeAliasData,
     TypeAliasSignature,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -173,6 +173,10 @@ impl DefMapSource for TraitSelectionFixture {
 impl CrateItemSource for TraitSelectionFixture {
     fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
         Ok(self.crate_items(krate))
+    }
+
+    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
+        Ok(self.crate_items(krate).map(ItemStore::lang_items))
     }
 
     fn lookup_index(&self, crate_ref: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
@@ -837,7 +841,11 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         // The fixture skips semantic package indexing, so build the saved visibility facts here
         // before constructing the lookup index used by trait queries.
         let lookup_facts = ItemLookupFacts::build(
-            &CrateItemQuery::new(&fixture, &fixture, fixture.target),
+            DefMapQuery::new(&fixture)
+                .item_lookup_crates_from(fixture.target)
+                .expect("fixture crate visibility should resolve"),
+            &fixture.store,
+            ItemReader(&fixture),
             || Ok(()),
         )
         .expect("fixture lookup facts should build");
@@ -1237,7 +1245,6 @@ impl TraitSelectionSnapshot {
             &self.fixture,
             &self.fixture,
             self.fixture.lookup_query(),
-            self.fixture.target,
             rg_std::CancellationToken::new(),
         );
         solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -1296,7 +1303,6 @@ impl TraitSelectionSnapshot {
             &self.fixture,
             &self.fixture,
             self.fixture.lookup_query(),
-            self.fixture.target,
             rg_std::CancellationToken::new(),
         );
         solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -1960,7 +1966,6 @@ pub(super) fn prove_fixture_goal(fixture: &TraitSelectionFixture, goal: &str) ->
         fixture,
         fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rg_def_map::{
-    DefMap,
+    DefMap, DefMapQuery,
     testonly::{DefMapDb, DefMapFixture},
 };
 use rg_ir_model::{ConstOrStaticRef, CrateId, CrateRef, EvaluatedConstValue, PackageSlot};
@@ -10,8 +10,8 @@ use rg_source::ReadError;
 
 pub use crate::package::{SemanticCrate, SemanticPackage};
 use crate::{
-    CrateItemQuery, CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader,
-    ItemResolutionQuery, ItemStore, build::impl_headers::impl_header_resolutions,
+    CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader, ItemResolutionQuery, ItemStore,
+    LangItemIndex, build::impl_headers::impl_header_resolutions,
 };
 
 /// Completed semantic arenas for type and feature kernels exercised directly by fixtures.
@@ -52,6 +52,10 @@ impl CrateItemSource for SemanticIrDb {
         Ok(self
             .package(krate.package)
             .and_then(|package| package.crate_items(krate.crate_id)))
+    }
+
+    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
+        Ok(self.items(krate)?.map(ItemStore::lang_items))
     }
 
     fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
@@ -136,10 +140,12 @@ impl SemanticIrFixture {
             headers.extend(
                 impl_header_resolutions(store, &query).expect("fixture impl headers resolve"),
             );
-            let crate_items = CrateItemQuery::new(&definitions, &items, krate);
+            let visible_crates = DefMapQuery::new(definitions)
+                .item_lookup_crates_from(krate)
+                .expect("fixture crate visibility resolves");
             facts.insert(
                 krate,
-                ItemLookupFacts::build(&crate_items, || Ok(()))
+                ItemLookupFacts::build(visible_crates, store, items, || Ok(()))
                     .expect("fixture lookup facts resolve"),
             );
         }

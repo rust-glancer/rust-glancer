@@ -58,13 +58,7 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
             None => {
                 let lookup = self.db.item_lookup_query(use_site)?;
                 self.iterator_context.get_or_init(|| {
-                    TyContext::new(
-                        self.db,
-                        self.db,
-                        lookup,
-                        use_site,
-                        self.db.cancellation().clone(),
-                    )
+                    TyContext::new(self.db, self.db, lookup, self.db.cancellation().clone())
                 })
             }
         };
