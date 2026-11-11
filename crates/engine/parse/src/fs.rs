@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 /// Resolves a string literal path against `base_dir` without observing filesystem state.
-pub(crate) fn resolve_path_literal(base_dir: &Path, path_literal: &str) -> Option<PathBuf> {
+pub fn resolve_path_literal(base_dir: &Path, path_literal: &str) -> Option<PathBuf> {
     let path = Path::new(path_literal);
     if path.as_os_str().is_empty() {
         return None;
