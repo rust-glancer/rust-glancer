@@ -94,6 +94,9 @@ impl Project {
             self.workspace().clone()
         };
         let database = self.database.get_mut().expect("project query runtime");
+        // Lazy captures made during refresh may also become visible in the accepted inputs. Ajika
+        // requires queries to work regardless of whether an initializer has already run.
+        // Input changes advance the revision, so later queries will observe the updated state anyway.
         let accepted = database.inputs().clone();
         let interner = database.interner();
         let (targets, presence_changed) = database.update_inputs(|update| {
