@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use rg_ir_model::{Mutability, PrimitiveTy, UnsignedIntTy};
+use rg_ir_model::{DefMapRef, Mutability, PrimitiveTy, SemanticItemRef, UnsignedIntTy};
 
 use crate::{TraitImplSelfHead, testonly::SemanticIrFixture};
 
@@ -41,16 +41,19 @@ impl<T> Marker for T {}
     );
     fixture.inspect(|view| {
         let crate_ref = view.crate_ref("trait_head_fixture", rg_workspace::TargetKind::Lib);
-        let store = view
-            .crate_items(crate_ref)
-            .expect("fixture semantic store should exist");
+        let store = view.all_items(DefMapRef::Crate(crate_ref));
         let marker = store
-            .traits_with_refs()
-            .find(|(_, data)| data.name.as_str() == "Marker")
-            .expect("fixture should contain Marker")
-            .0;
+            .iter()
+            .find_map(|item| match item.item() {
+                SemanticItemRef::Trait(trait_ref) if item.name()?.as_str() == "Marker" => {
+                    Some(trait_ref)
+                }
+                _ => None,
+            })
+            .expect("fixture should contain Marker");
         let user = store
-            .semantic_items()
+            .iter()
+            .copied()
             .find_map(|item| {
                 (item.name()?.as_str() == "User")
                     .then(|| item.type_def())
@@ -58,7 +61,8 @@ impl<T> Marker for T {}
             })
             .expect("fixture should contain User");
         let shadowed_u8 = store
-            .semantic_items()
+            .iter()
+            .copied()
             .find_map(|item| {
                 (item.name()?.as_str() == "u8")
                     .then(|| item.type_def())
@@ -78,8 +82,9 @@ impl<T> Marker for T {}
                 .expect("Marker should be visible")
                 .iter()
                 .map(|candidate| {
-                    let data = store
-                        .impl_data(candidate.impl_ref.id)
+                    let data = crate::ItemStoreQuery::new(&items)
+                        .impl_data(candidate.impl_ref)
+                        .expect("candidate should load")
                         .expect("candidate impl should exist");
                     // The primitive and shadowing struct have the same source spelling. Qualify the
                     // struct so routing to the wrong impl cannot produce an identical snapshot row.

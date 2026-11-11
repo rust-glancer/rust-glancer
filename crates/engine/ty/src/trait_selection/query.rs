@@ -5,7 +5,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, ImplRef, TraitApplicability, TraitImplRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_std::{ExpectedUnique, OperationError};
 use rg_text::Name;
 
@@ -84,7 +84,7 @@ pub struct TraitSelectionQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> TraitSelectionQuery<'query, D, I>
 where
     D: DefMapSource<Error = I::Error> + Clone,
-    I: ItemStoreSource<'query> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let resolver = context.item_paths().clone();
@@ -95,7 +95,7 @@ where
 impl<'query, D, I, R> TraitSelectionQuery<'query, D, I, R>
 where
     D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
+    I: SemanticItemSource<'query>,
     R: SolverScope<Error = I::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {

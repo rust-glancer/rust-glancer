@@ -19,7 +19,7 @@ use rg_item_tree::TypeRef;
 use rg_std::ExpectedUnique;
 
 use crate::{
-    ItemResolutionQuery, ItemStore, ItemStoreSource, SelfTypeOwner, TraitImplSelfHead,
+    ItemResolutionQuery, ItemStore, SelfTypeOwner, SemanticItemSource, TraitImplSelfHead,
     TypePathContext,
 };
 
@@ -43,7 +43,7 @@ pub(crate) fn impl_header_resolutions<'a, D, I>(
 ) -> Result<Vec<ImplHeaderResolution>, D::Error>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     let mut resolutions = Vec::new();
     for (impl_ref, data) in items.impls_with_refs() {
@@ -94,7 +94,7 @@ fn trait_impl_self_head<'a, D, I>(
 ) -> Result<Option<TraitImplSelfHead>, D::Error>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     let head = match &data.self_ty {
         TypeRef::Unit => Some(TraitImplSelfHead::Unit),
@@ -146,7 +146,7 @@ fn resolve_type_defs_from_ref<'a, D, I>(
 ) -> Result<ExpectedUnique<TypeDefRef>, D::Error>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
@@ -166,7 +166,7 @@ fn resolve_traits_from_ref<'a, D, I>(
 ) -> Result<ExpectedUnique<TraitDefRef>, D::Error>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'a, Error = D::Error>,
+    I: SemanticItemSource<'a, Error = D::Error>,
 {
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());

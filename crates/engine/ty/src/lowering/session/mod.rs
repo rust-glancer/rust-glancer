@@ -12,7 +12,7 @@ mod type_ref;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeAliasRef, TypeParamRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_text::Name;
 use rustc_type_ir::TyKind;
 
@@ -58,7 +58,7 @@ pub struct TypeLoweringSession<'s, 'lower, 'query, D, I, R> {
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     pub(crate) fn new(

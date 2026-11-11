@@ -12,7 +12,7 @@ mod types;
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
-use rg_ir_model::{BodyId, BodyRef, CrateRef, FileId, Span};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_module_path};
 use rg_semantic_ir::{ItemLookupQueryCache, ItemReader};
 use rg_std::ExpectedUnique;
@@ -193,17 +193,23 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                 let mut saved_impl = ExpectedUnique::Empty;
                 if let ExpectedUnique::One(saved_span) =
                     associations.saved_declaration_for_current(impl_.syntax())
-                    && let Some(items) = self
-                        .semantic_ir
-                        .items(crate_ref)
-                        .context("load saved impl items")?
                 {
                     let def_map = self
                         .def_map
                         .def_map(crate_ref)
                         .context("load saved impl definitions")?
                         .context("saved impl has no definition map")?;
-                    for (impl_ref, data) in items.impls_with_refs() {
+                    for item in self
+                        .semantic_ir
+                        .all_items(DefMapRef::Crate(crate_ref))
+                        .context("load saved impl items")?
+                    {
+                        let rg_ir_model::SemanticItemRef::Impl(impl_ref) = item.item() else {
+                            continue;
+                        };
+                        let Some(data) = item.impl_data() else {
+                            continue;
+                        };
                         rg_std::check_cancel!(self.cancellation, "saved impl identity");
                         let Some(local) = def_map.local_impl(data.local_impl.local_impl) else {
                             continue;

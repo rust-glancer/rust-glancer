@@ -1,7 +1,7 @@
 //! Coherent inputs for crate-scoped type queries.
 
 use rg_def_map::DefMapSource;
-use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, SemanticItemSource};
 use rg_std::CancellationToken;
 
 use crate::lookup::ItemPathQuery;
@@ -30,7 +30,7 @@ impl<D, I> rg_std::Cancelable for TyContext<'_, D, I> {
 impl<'query, D, I> TyContext<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     pub fn new(
         def_maps: D,

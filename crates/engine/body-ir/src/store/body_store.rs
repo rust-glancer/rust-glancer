@@ -1,7 +1,6 @@
 use rg_arena::Arena;
 use rg_def_map::DefMap;
 use rg_ir_model::BodyId;
-use rg_semantic_ir::ItemStore;
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -50,10 +49,6 @@ impl BodyStore {
 
     pub fn body_def_map(&self, body: BodyId) -> Option<&DefMap> {
         self.body_local_items(body).map(BodyLocalItems::def_map)
-    }
-
-    pub fn body_item_store(&self, body: BodyId) -> Option<&ItemStore> {
-        self.body_local_items(body).map(BodyLocalItems::item_store)
     }
 
     pub fn bodies(&self) -> &[BodyData] {

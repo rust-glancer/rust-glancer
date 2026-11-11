@@ -9,7 +9,7 @@ use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
     GeneratedItemStore, MacroExpansionLimitReport,
 };
-use rg_ir_model::{CrateRef, DefMapRef, FileId};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
 use rg_parse::TargetFileManifest;
 use rg_source::ReadError;
@@ -19,7 +19,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use super::impl_headers::impl_header_resolutions;
 use crate::{
     BodyOwnerData, CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemReader,
-    ItemResolutionQuery, ItemStore, ItemStoreSource, LangItemIndex,
+    ItemResolutionQuery, ItemStore, LangItemIndex, SemanticItemSource, SemanticItemView,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -216,9 +216,48 @@ impl CrateDataSource for TargetDeclarationReader<'_> {
 }
 
 impl CrateItemSource for TargetDeclarationReader<'_> {
-    fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
-        self.acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
+        let Some(krate) = item.origin().as_crate_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+        else {
+            return Ok(None);
+        };
+        Ok(items.semantic_item_view(item))
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        let Some(krate) = definition.origin.as_crate_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+        else {
+            return Ok(None);
+        };
+        Ok(items
+            .item_for_local_def(definition.local_def)
+            .map(|item| item.semantic_ref(definition.origin)))
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let Some(krate) = origin.as_crate_ref() else {
+            return Ok(Vec::new());
+        };
+        let Some(items) = self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(items.semantic_items().collect())
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
@@ -256,16 +295,33 @@ impl<D: CrateDataSource<Error = ReadError>> CrateDataSource for LocalDeclaration
     }
 }
 
-impl<'a, D: CrateItemSource> ItemStoreSource<'a> for LocalDeclarations<'a, &'a D> {
+impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'a D> {
     type Error = ReadError;
 
-    fn item_store_for_origin(&self, origin: DefMapRef) -> Result<Option<&'a ItemStore>, ReadError> {
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        if item.origin() == self.items.origin() {
+            return Ok(self.items.semantic_item_view(item));
+        }
+        self.dependencies.item(item)
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        if definition.origin == self.items.origin() {
+            return Ok(self
+                .items
+                .item_for_local_def(definition.local_def)
+                .map(|item| item.semantic_ref(definition.origin)));
+        }
+        self.dependencies.item_for_local_def(definition)
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         if origin == self.items.origin() {
-            return Ok(Some(self.items));
+            return Ok(self.items.semantic_items().collect());
         }
-        match origin.as_crate_ref() {
-            Some(krate) => self.dependencies.items(krate),
-            None => Ok(None),
-        }
+        self.dependencies.all_items(origin)
     }
 }

@@ -5,11 +5,12 @@ use std::{
 };
 
 use rg_def_map::{CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery};
-use rg_ir_model::{BodyKey, CrateRef};
+use rg_ir_model::{BodyKey, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
-    CrateItemSource, ItemLookupIndex, ItemStore, LangItemIndex, target_declarations,
+    CrateItemSource, ItemLookupIndex, ItemStore, LangItemIndex, SemanticItemView,
+    target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -186,12 +187,39 @@ impl CrateDataSource for Declarations {
 }
 
 impl CrateItemSource for Declarations {
-    fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
-        Ok(self.items.get(&krate).map(|(items, _)| items))
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
+        Ok(item
+            .origin()
+            .as_crate_ref()
+            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .and_then(|items| items.semantic_item_view(item)))
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        Ok(definition
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .and_then(|items| {
+                items
+                    .item_for_local_def(definition.local_def)
+                    .map(|item| item.semantic_ref(definition.origin))
+            }))
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        Ok(origin
+            .as_crate_ref()
+            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .map(|items| items.semantic_items().collect())
+            .unwrap_or_default())
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self.items(krate)?.map(ItemStore::lang_items))
+        Ok(self.items.get(&krate).map(|(items, _)| items.lang_items()))
     }
 
     fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {

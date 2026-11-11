@@ -11,12 +11,13 @@
 //! ```
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyLocalItems, BodyView, ExprKind, PatKind};
+use rg_body_ir::{BodyView, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    BindingId, BodyRef, CrateRef, EnumVariantRef, ExprId, FieldRef, FileId, SemanticItemRef,
-    TypeDefId,
+    BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
+    SemanticItemRef, TypeDefId,
 };
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -70,9 +71,8 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 .context("load body scan file")?
             {
                 rg_std::check_cancel!(self.db, "body scan");
-                let body_local_items = self.db.body_ir.body_local_items(body_ref)?;
 
-                self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates)
+                self.push_declaration_candidates(body_ref, body, &mut candidates)
                     .context("collect body occurrences")?;
                 self.push_macro_call_candidates(body_ref, body, &mut candidates)
                     .context("collect body occurrences")?;
@@ -118,7 +118,6 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        body_local_items: Option<&BodyLocalItems>,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         let record_shorthand_bindings =
@@ -151,10 +150,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             });
         }
 
-        let Some(item_store) = body_local_items.map(BodyLocalItems::item_store) else {
-            return Ok(());
-        };
-        for item in item_store.semantic_items() {
+        for item in
+            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Body(body_ref))?
+        {
             rg_std::check_cancel!(self.db, "body occurrence candidates");
             if let ItemSourceKind::Body(source) = item.source().kind
                 && source.body == body_ref
@@ -183,9 +181,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                         item: item.item(),
                         span: declaration_span,
                     });
-                    self.push_field_candidates(item_store, ty, candidates)
+                    self.push_field_candidates(item, ty, candidates)
                         .context("collect body occurrences")?;
-                    self.push_variant_candidates(item_store, ty, candidates)
+                    self.push_variant_candidates(item, ty, candidates)
                         .context("collect body occurrences")?;
                 }
                 SemanticItemRef::Trait(_) | SemanticItemRef::TypeAlias(_) => {
@@ -214,13 +212,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_field_candidates(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         match ty.id {
-            TypeDefId::Struct(id) => {
-                let Some(data) = item_store.struct_data(id) else {
+            TypeDefId::Struct(_) => {
+                let Some(data) = item.struct_data() else {
                     return Ok(());
                 };
                 if !self.file_matches(data.source.file_id) {
@@ -234,8 +232,8 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     });
                 }
             }
-            TypeDefId::Union(id) => {
-                let Some(data) = item_store.union_data(id) else {
+            TypeDefId::Union(_) => {
+                let Some(data) = item.union_data() else {
                     return Ok(());
                 };
                 if !self.file_matches(data.source.file_id) {
@@ -256,14 +254,14 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_variant_candidates(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(());
         };
-        let Some(data) = item_store.enum_data(enum_id) else {
+        let Some(data) = item.enum_data() else {
             return Ok(());
         };
         for (index, variant) in data.variants.iter().enumerate() {

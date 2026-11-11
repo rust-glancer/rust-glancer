@@ -37,7 +37,7 @@ use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FunctionRef, TraitApplicability, TraitDefRef,
     TypeAliasRef, TypeDefId,
 };
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 
 use crate::{
     AdtTy, Clause, TraitApplication, Ty, TyContext,
@@ -89,7 +89,7 @@ pub struct AssociatedItemQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> AssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let impls = ImplQuery::new(context.clone());
@@ -100,7 +100,7 @@ where
 impl<'query, D, I, R> AssociatedItemQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
     R: SolverScope<Error = D::Error>,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {

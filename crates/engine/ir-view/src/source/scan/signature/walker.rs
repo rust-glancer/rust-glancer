@@ -7,11 +7,14 @@
 use anyhow::Context as _;
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
-    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, ItemOwner,
-    Span, StaticRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, DefMapRef, EnumVariantRef, FieldRef, FileId, FunctionRef, GenericDefRef, ImplRef,
+    ItemOwner, SemanticItemRef, Span, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldList, GenericParams, TypeBound, TypeRef, WherePredicate};
-use rg_semantic_ir::{ItemStore, ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{
+    ConstData, EnumData, FunctionData, ImplData, ItemStoreQuery, SemanticItemView, StaticData,
+    StructData, TraitData, TypeAliasData, TypePathContext, UnionData,
+};
 
 use super::{SignatureSourceCandidate, SignatureTypePathScope, collector::SignatureScanCollector};
 use crate::{
@@ -19,14 +22,14 @@ use crate::{
     source::scan::{TypeNamePosition, type_path::walk_type_ref_paths},
 };
 
-/// Walks every signature-bearing item in one semantic store and sends source facts to `C`.
+/// Walks the enumerated signature-bearing declarations and sends source facts to `C`.
 ///
 /// Each item first establishes the module and generic owner for its written paths. The walk then
 /// descends through fields, parameters, bounds, defaults, and return types. It deliberately knows
 /// nothing about cursor selection or occurrence filtering; those policies belong to the collector.
 pub(super) struct SignatureItemWalker<'view, 'db, C> {
     db: &'view IndexedViewDb<'db>,
-    items: &'view ItemStore,
+    items: &'view [SemanticItemView<'view>],
     origin: DefMapRef,
     collector: C,
 }
@@ -37,7 +40,7 @@ where
 {
     pub(super) fn new(
         db: &'view IndexedViewDb<'db>,
-        items: &'view ItemStore,
+        items: &'view [SemanticItemView<'view>],
         origin: DefMapRef,
         collector: C,
     ) -> Self {
@@ -56,64 +59,109 @@ where
     }
 
     fn scan_items(&mut self) -> anyhow::Result<()> {
-        self.scan_structs()?;
-        self.scan_unions()?;
-        self.scan_enums()?;
-        self.scan_traits()?;
-        self.scan_impls()?;
-        self.scan_functions()?;
-        self.scan_type_aliases()?;
-        self.scan_consts()?;
-        self.scan_statics()?;
+        for item in self.items {
+            rg_std::check_cancel!(self.db, "signature item scan");
+            if !self.file_matches(item.source().file_id) {
+                continue;
+            }
+            match item.item() {
+                SemanticItemRef::TypeDef(ty) => {
+                    if let Some(data) = item.struct_data() {
+                        self.scan_struct(ty, data)?;
+                    } else if let Some(data) = item.union_data() {
+                        self.scan_union(ty, data)?;
+                    } else if let Some(data) = item.enum_data() {
+                        self.scan_enum(ty, data)?;
+                    }
+                }
+                SemanticItemRef::Trait(trait_ref) => self.scan_trait(
+                    trait_ref,
+                    item.trait_data().expect("item kind matches its data"),
+                )?,
+                SemanticItemRef::Impl(impl_ref) => self.scan_impl(
+                    impl_ref,
+                    item.impl_data().expect("item kind matches its data"),
+                )?,
+                SemanticItemRef::Function(function) => self.scan_function(
+                    function,
+                    item.function_data().expect("item kind matches its data"),
+                )?,
+                SemanticItemRef::TypeAlias(alias) => self.scan_type_alias(
+                    alias,
+                    item.type_alias_data().expect("item kind matches its data"),
+                )?,
+                SemanticItemRef::Const(konst) => self.scan_const(
+                    konst,
+                    item.const_data().expect("item kind matches its data"),
+                )?,
+                SemanticItemRef::Static(statik) => self.scan_static(
+                    statik,
+                    item.static_data().expect("item kind matches its data"),
+                )?,
+            }
+        }
         Ok(())
     }
 
-    fn scan_structs(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.structs().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let ty = TypeDefRef {
-                origin,
-                id: TypeDefId::Struct(id),
-            };
-            let scope = SignatureTypePathScope {
-                context: self.current_context(TypePathContext::module(data.owner))?,
-                generic_owner: GenericDefRef::TypeDef(ty),
-            };
-            self.scan_generic_params(scope, &data.generics, data.source.file_id);
-            self.scan_field_list(ty, scope, &data.fields, data.source.file_id);
+    fn scan_struct(&mut self, ty: TypeDefRef, data: &StructData) -> anyhow::Result<()> {
+        let scope = SignatureTypePathScope {
+            context: self.current_context(TypePathContext::module(data.owner))?,
+            generic_owner: GenericDefRef::TypeDef(ty),
+        };
+        self.scan_generic_params(scope, &data.generics, data.source.file_id);
+        self.scan_field_list(ty, scope, &data.fields, data.source.file_id);
+
+        Ok(())
+    }
+
+    fn scan_union(&mut self, ty: TypeDefRef, data: &UnionData) -> anyhow::Result<()> {
+        let scope = SignatureTypePathScope {
+            context: self.current_context(TypePathContext::module(data.owner))?,
+            generic_owner: GenericDefRef::TypeDef(ty),
+        };
+        self.scan_generic_params(scope, &data.generics, data.source.file_id);
+        for (field_idx, field) in data.fields.iter().enumerate() {
+            self.push_field(
+                FieldRef {
+                    owner: ty,
+                    index: field_idx,
+                },
+                field.span,
+            );
+            self.push_type_ref(
+                scope,
+                &field.ty,
+                data.source.file_id,
+                TypeNamePosition::Type,
+            );
         }
 
         Ok(())
     }
 
-    fn scan_unions(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.unions().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let ty = TypeDefRef {
-                origin,
-                id: TypeDefId::Union(id),
-            };
-            let scope = SignatureTypePathScope {
-                context: self.current_context(TypePathContext::module(data.owner))?,
-                generic_owner: GenericDefRef::TypeDef(ty),
-            };
-            self.scan_generic_params(scope, &data.generics, data.source.file_id);
-            for (field_idx, field) in data.fields.iter().enumerate() {
-                self.push_field(
-                    FieldRef {
-                        owner: ty,
-                        index: field_idx,
-                    },
-                    field.span,
-                );
+    fn scan_enum(&mut self, ty: TypeDefRef, data: &EnumData) -> anyhow::Result<()> {
+        let origin = ty.origin;
+        let scope = SignatureTypePathScope {
+            context: self.current_context(TypePathContext::module(data.owner))?,
+            generic_owner: GenericDefRef::TypeDef(ty),
+        };
+        self.scan_generic_params(scope, &data.generics, data.source.file_id);
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(());
+        };
+        for (variant_idx, variant) in data.variants.iter().enumerate() {
+            self.push_enum_variant(
+                EnumVariantRef {
+                    origin,
+                    enum_id,
+                    index: variant_idx,
+                },
+                variant.name_span,
+            );
+
+            // Variant fields have no type-owned `FieldRef`, but paths in their annotations
+            // still belong to the enum's signature and need to remain navigable.
+            for field in variant.fields.fields() {
                 self.push_type_ref(
                     scope,
                     &field.ty,
@@ -126,215 +174,135 @@ where
         Ok(())
     }
 
-    fn scan_enums(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.enums().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let ty = TypeDefRef {
-                origin,
-                id: TypeDefId::Enum(id),
-            };
-            let scope = SignatureTypePathScope {
-                context: self.current_context(TypePathContext::module(data.owner))?,
-                generic_owner: GenericDefRef::TypeDef(ty),
-            };
-            self.scan_generic_params(scope, &data.generics, data.source.file_id);
-            let TypeDefId::Enum(enum_id) = ty.id else {
-                continue;
-            };
-            for (variant_idx, variant) in data.variants.iter().enumerate() {
-                self.push_enum_variant(
-                    EnumVariantRef {
-                        origin,
-                        enum_id,
-                        index: variant_idx,
-                    },
-                    variant.name_span,
-                );
-
-                // Variant fields have no type-owned `FieldRef`, but paths in their annotations
-                // still belong to the enum's signature and need to remain navigable.
-                for field in variant.fields.fields() {
-                    self.push_type_ref(
-                        scope,
-                        &field.ty,
-                        data.source.file_id,
-                        TypeNamePosition::Type,
-                    );
-                }
-            }
-        }
+    fn scan_trait(&mut self, trait_ref: TraitDefRef, data: &TraitData) -> anyhow::Result<()> {
+        let scope = SignatureTypePathScope {
+            context: self.current_context(TypePathContext::module(data.owner))?,
+            generic_owner: GenericDefRef::Trait(trait_ref),
+        };
+        self.scan_generic_params(scope, &data.generics, data.source.file_id);
+        self.scan_type_bounds(scope, &data.super_traits, data.source.file_id);
 
         Ok(())
     }
 
-    fn scan_traits(&mut self) -> anyhow::Result<()> {
-        for (trait_ref, data) in self.items.traits_with_refs() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let scope = SignatureTypePathScope {
-                context: self.current_context(TypePathContext::module(data.owner))?,
-                generic_owner: GenericDefRef::Trait(trait_ref),
-            };
-            self.scan_generic_params(scope, &data.generics, data.source.file_id);
-            self.scan_type_bounds(scope, &data.super_traits, data.source.file_id);
+    fn scan_impl(&mut self, impl_ref: ImplRef, data: &ImplData) -> anyhow::Result<()> {
+        // A synthesized impl participates in type analysis, but its paths were never written.
+        // For `#[derive(Clone)] struct Foo;`, its `Foo` path must not turn `Clone` into a
+        // renameable occurrence of the struct. Copied generic bounds are scanned on the type.
+        if matches!(data.source.kind, ItemSourceKind::Synthetic(_)) {
+            return Ok(());
         }
+        let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id))? else {
+            return Ok(());
+        };
+        let scope = SignatureTypePathScope {
+            context,
+            generic_owner: GenericDefRef::Impl(impl_ref),
+        };
+        self.scan_generic_params(scope, &data.generics, data.source.file_id);
 
-        Ok(())
-    }
-
-    fn scan_impls(&mut self) -> anyhow::Result<()> {
-        for (impl_ref, data) in self.items.impls_with_refs() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            // A synthesized impl participates in type analysis, but its paths were never written.
-            // For `#[derive(Clone)] struct Foo;`, its `Foo` path must not turn `Clone` into a
-            // renameable occurrence of the struct. Copied generic bounds are scanned on the type.
-            if matches!(data.source.kind, ItemSourceKind::Synthetic(_)) {
-                continue;
-            }
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let Some(context) = self.owner_context(ItemOwner::Impl(impl_ref.id))? else {
-                continue;
-            };
-            let scope = SignatureTypePathScope {
-                context,
-                generic_owner: GenericDefRef::Impl(impl_ref),
-            };
-            self.scan_generic_params(scope, &data.generics, data.source.file_id);
-
-            // The impl's generic parameters are in scope while its trait and self type are being
-            // written, but `Self` does not exist until that self type has been established.
-            // Associated items keep the full impl context through `owner_context`; only these two
-            // paths deliberately start from the containing module.
-            let header_scope = SignatureTypePathScope {
-                context: TypePathContext::module(scope.context.module),
-                ..scope
-            };
-            if let Some(trait_ref) = &data.trait_ref {
-                self.push_type_ref(
-                    header_scope,
-                    trait_ref,
-                    data.source.file_id,
-                    TypeNamePosition::Type,
-                );
-            }
+        // The impl's generic parameters are in scope while its trait and self type are being
+        // written, but `Self` does not exist until that self type has been established.
+        // Associated items keep the full impl context through `owner_context`; only these two
+        // paths deliberately start from the containing module.
+        let header_scope = SignatureTypePathScope {
+            context: TypePathContext::module(scope.context.module),
+            ..scope
+        };
+        if let Some(trait_ref) = &data.trait_ref {
             self.push_type_ref(
                 header_scope,
-                &data.self_ty,
+                trait_ref,
                 data.source.file_id,
                 TypeNamePosition::Type,
             );
         }
+        self.push_type_ref(
+            header_scope,
+            &data.self_ty,
+            data.source.file_id,
+            TypeNamePosition::Type,
+        );
 
         Ok(())
     }
 
-    fn scan_functions(&mut self) -> anyhow::Result<()> {
-        for (function_ref, data) in self.items.functions_with_refs() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            if data.local_def.is_none() {
-                let span = data.name_span.unwrap_or(data.span);
-                self.push_function(function_ref, span);
-            }
-            let Some(context) = self.owner_context(data.owner)? else {
-                continue;
-            };
-            let scope = SignatureTypePathScope {
-                context,
-                generic_owner: GenericDefRef::Function(function_ref),
-            };
-            if let Some(generics) = data.signature.generics() {
-                self.scan_generic_params(scope, generics, data.source.file_id);
-            }
-            for param in data.signature.params() {
-                if let Some(ty) = &param.ty {
-                    self.push_type_ref(scope, ty, data.source.file_id, TypeNamePosition::Type);
-                }
-            }
-            if let Some(ret_ty) = data.signature.ret_ty() {
-                self.push_type_ref(scope, ret_ty, data.source.file_id, TypeNamePosition::Type);
-            }
+    fn scan_function(
+        &mut self,
+        function_ref: FunctionRef,
+        data: &FunctionData,
+    ) -> anyhow::Result<()> {
+        if data.local_def.is_none() {
+            let span = data.name_span.unwrap_or(data.span);
+            self.push_function(function_ref, span);
         }
-
-        Ok(())
-    }
-
-    fn scan_type_aliases(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.type_aliases().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let Some(context) = self.owner_context(data.owner)? else {
-                continue;
-            };
-            let scope = SignatureTypePathScope {
-                context,
-                generic_owner: GenericDefRef::TypeAlias(TypeAliasRef { origin, id }),
-            };
-            if let Some(generics) = data.signature.generics() {
-                self.scan_generic_params(scope, generics, data.source.file_id);
-            }
-            self.scan_type_bounds(scope, data.signature.bounds(), data.source.file_id);
-            if let Some(ty) = data.signature.aliased_ty() {
+        let Some(context) = self.owner_context(data.owner)? else {
+            return Ok(());
+        };
+        let scope = SignatureTypePathScope {
+            context,
+            generic_owner: GenericDefRef::Function(function_ref),
+        };
+        if let Some(generics) = data.signature.generics() {
+            self.scan_generic_params(scope, generics, data.source.file_id);
+        }
+        for param in data.signature.params() {
+            if let Some(ty) = &param.ty {
                 self.push_type_ref(scope, ty, data.source.file_id, TypeNamePosition::Type);
             }
         }
-
-        Ok(())
-    }
-
-    fn scan_consts(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.consts().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            let Some(context) = self.owner_context(data.owner)? else {
-                continue;
-            };
-            let scope = SignatureTypePathScope {
-                context,
-                generic_owner: GenericDefRef::Const(ConstRef { origin, id }),
-            };
-            if let Some(ty) = data.signature.ty() {
-                self.push_type_ref(scope, ty, data.source.file_id, TypeNamePosition::Type);
-            }
+        if let Some(ret_ty) = data.signature.ret_ty() {
+            self.push_type_ref(scope, ret_ty, data.source.file_id, TypeNamePosition::Type);
         }
 
         Ok(())
     }
 
-    fn scan_statics(&mut self) -> anyhow::Result<()> {
-        let origin = self.origin;
-        for (id, data) in self.items.statics().iter_with_ids() {
-            rg_std::check_cancel!(self.db, "signature item scan");
-            if !self.file_matches(data.source.file_id) {
-                continue;
-            }
-            if let Some(ty) = &data.ty {
-                self.push_type_ref(
-                    SignatureTypePathScope {
-                        context: self.current_context(TypePathContext::module(data.owner))?,
-                        generic_owner: GenericDefRef::Static(StaticRef { origin, id }),
-                    },
-                    ty,
-                    data.source.file_id,
-                    TypeNamePosition::Type,
-                );
-            }
+    fn scan_type_alias(&mut self, alias: TypeAliasRef, data: &TypeAliasData) -> anyhow::Result<()> {
+        let Some(context) = self.owner_context(data.owner)? else {
+            return Ok(());
+        };
+        let scope = SignatureTypePathScope {
+            context,
+            generic_owner: GenericDefRef::TypeAlias(alias),
+        };
+        if let Some(generics) = data.signature.generics() {
+            self.scan_generic_params(scope, generics, data.source.file_id);
+        }
+        self.scan_type_bounds(scope, data.signature.bounds(), data.source.file_id);
+        if let Some(ty) = data.signature.aliased_ty() {
+            self.push_type_ref(scope, ty, data.source.file_id, TypeNamePosition::Type);
+        }
+
+        Ok(())
+    }
+
+    fn scan_const(&mut self, konst: ConstRef, data: &ConstData) -> anyhow::Result<()> {
+        let Some(context) = self.owner_context(data.owner)? else {
+            return Ok(());
+        };
+        let scope = SignatureTypePathScope {
+            context,
+            generic_owner: GenericDefRef::Const(konst),
+        };
+        if let Some(ty) = data.signature.ty() {
+            self.push_type_ref(scope, ty, data.source.file_id, TypeNamePosition::Type);
+        }
+
+        Ok(())
+    }
+
+    fn scan_static(&mut self, static_ref: StaticRef, data: &StaticData) -> anyhow::Result<()> {
+        if let Some(ty) = &data.ty {
+            self.push_type_ref(
+                SignatureTypePathScope {
+                    context: self.current_context(TypePathContext::module(data.owner))?,
+                    generic_owner: GenericDefRef::Static(static_ref),
+                },
+                ty,
+                data.source.file_id,
+                TypeNamePosition::Type,
+            );
         }
 
         Ok(())

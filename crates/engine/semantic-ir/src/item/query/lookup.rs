@@ -44,7 +44,7 @@ use rg_source::ReadError;
 use rg_std::{CancellationToken, Cancelled, OperationError, UniqueVec};
 use rg_text::Name;
 
-use super::{ItemStoreQuery, ItemStoreSource};
+use super::{ItemStoreQuery, SemanticItemSource};
 use crate::{
     ItemLookupFacts, ItemLookupIndex, ItemReader, TraitImplSelfHead, item::TraitItemTraitRefs,
 };
@@ -188,7 +188,7 @@ impl<'item> ItemLookupQuery<'item> {
         ty: TypeDefRef,
     ) -> Result<UniqueVec<FunctionRef>, OperationError<S::Error>>
     where
-        S: ItemStoreSource<'query>,
+        S: SemanticItemSource<'query>,
     {
         let mut functions = UniqueVec::new();
         for impl_ref in self.inherent_impls_for_type(ty)? {

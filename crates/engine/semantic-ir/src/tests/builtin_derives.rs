@@ -1,4 +1,5 @@
 use expect_test::expect;
+use rg_ir_model::DefMapRef;
 
 use crate::testonly::SemanticIrFixture;
 
@@ -45,11 +46,9 @@ pub struct Alias<T = ()>(T);
     );
     fixture.inspect(|view| {
         let crate_ref = view.crate_ref("derive_headers", rg_workspace::TargetKind::Lib);
-        let store = view
-            .crate_items(crate_ref)
-            .expect("fixture item store exists");
+        let store = view.all_items(DefMapRef::Crate(crate_ref));
         let mut headers = Vec::new();
-        for (_, data) in store.impls_with_refs() {
+        for data in store.iter().filter_map(|item| item.impl_data()) {
             assert!(
                 data.resolved_trait_ref.as_option().is_some(),
                 "derived trait should resolve through core"

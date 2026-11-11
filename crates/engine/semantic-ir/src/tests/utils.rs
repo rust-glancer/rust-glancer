@@ -2,9 +2,9 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 use rg_ir_model::{
-    AssocItemId, ConstId, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId, ImplRef,
-    ItemId, ModuleId, ModuleRef, PackageSlot, Path, TraitDefRef, TypeAliasId, TypeDefId,
-    TypeDefRef,
+    AssocItemId, ConstId, ConstRef, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId,
+    ImplRef, ModuleId, ModuleRef, PackageSlot, Path, SemanticItemRef, TraitDefRef, TypeAliasId,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -12,7 +12,7 @@ use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
 
 use crate::{
-    ItemLookupQuery, ItemReader, ItemResolutionQuery, ItemStore, ItemStoreQuery,
+    ItemLookupQuery, ItemReader, ItemResolutionQuery, ItemStoreQuery, SemanticItemView,
     testonly::{SemanticIrFixture, SemanticIrView},
 };
 
@@ -110,12 +110,14 @@ impl<'a> ProjectSemanticIrSnapshot<'a> {
                 let crate_dumps = Self::sorted_targets(package)
                     .into_iter()
                     .map(|target| {
+                        let crate_ref = CrateRef {
+                            package: PackageSlot(package_slot),
+                            crate_id: CrateId(target.id.0),
+                        };
                         CrateSemanticIrSnapshot {
                             project: self.project,
-                            crate_ref: CrateRef {
-                                package: PackageSlot(package_slot),
-                                crate_id: CrateId(target.id.0),
-                            },
+                            items: self.project.all_items(DefMapRef::Crate(crate_ref)),
+                            crate_ref,
                             target_name: &target.name,
                             target_kind: target.kind.to_string(),
                         }
@@ -345,19 +347,15 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_type_def_ref(&self, semantic_ir: &ItemReader<'_>, ty: TypeDefRef) -> String {
-        let crate_ref = ty
-            .origin
-            .as_crate_ref()
-            .expect("type ref should belong to a crate while rendering query");
         let items = semantic_ir
-            .items(crate_ref)
-            .expect("crate semantic IR should load while rendering type ref")
-            .expect("crate semantic IR should exist while rendering type ref");
+            .item(ty.into())
+            .expect("fixture type should load")
+            .expect("fixture type should exist");
 
         match ty.id {
-            TypeDefId::Struct(id) => {
+            TypeDefId::Struct(_) => {
                 let data = items
-                    .struct_data(id)
+                    .struct_data()
                     .expect("struct id should exist while rendering query");
                 format!(
                     "struct {}::{}",
@@ -365,15 +363,15 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     data.name
                 )
             }
-            TypeDefId::Enum(id) => {
+            TypeDefId::Enum(_) => {
                 let data = items
-                    .enum_data(id)
+                    .enum_data()
                     .expect("enum id should exist while rendering query");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
-            TypeDefId::Union(id) => {
+            TypeDefId::Union(_) => {
                 let data = items
-                    .union_data(id)
+                    .union_data()
                     .expect("union id should exist while rendering query");
                 format!(
                     "union {}::{}",
@@ -493,6 +491,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 
 struct CrateSemanticIrSnapshot<'a> {
     project: &'a SemanticIrView<'a>,
+    items: Vec<SemanticItemView<'a>>,
     crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,
@@ -505,11 +504,6 @@ impl CrateSemanticIrSnapshot<'_> {
             .project
             .def_map(self.crate_ref)
             .expect("crate def map should exist while rendering semantic IR");
-        let items = self
-            .project
-            .crate_items(self.crate_ref)
-            .expect("crate semantic IR should exist while rendering");
-
         for (idx, (module_path, module_id)) in self.sorted_modules().into_iter().enumerate() {
             if idx > 0 {
                 dump.push('\n');
@@ -521,33 +515,41 @@ impl CrateSemanticIrSnapshot<'_> {
                 .expect("module id should exist while rendering semantic IR");
 
             for local_def in &module.local_defs {
-                let Some(item_id) = items.item_for_local_def(*local_def) else {
+                let Some(item) = self.items.iter().find(|item| {
+                    item.local_def()
+                        .is_some_and(|definition| definition.local_def == *local_def)
+                }) else {
                     continue;
                 };
-                self.render_item(item_id, 0, &mut dump);
+                self.render_item(item.item(), 0, &mut dump);
             }
 
             for local_impl in &module.impls {
-                // There is one impl id per local id in the same order,
-                // so conversion should be stable.
-                let impl_id = ImplId(local_impl.0);
-                assert!(
-                    items.impl_data(impl_id).is_some(),
-                    "No impl id for local impl id"
-                );
-                self.render_impl(impl_id, 0, &mut dump);
+                let item = self
+                    .items
+                    .iter()
+                    .find(|item| {
+                        item.local_impl()
+                            .is_some_and(|implementation| implementation.local_impl == *local_impl)
+                    })
+                    .expect("fixture impl should exist");
+                self.render_item(item.item(), 0, &mut dump);
             }
         }
 
         dump
     }
 
-    fn render_item(&self, item_id: ItemId, depth: usize, dump: &mut String) {
-        match item_id {
-            ItemId::Struct(id) => {
+    fn render_item(&self, item: SemanticItemRef, depth: usize, dump: &mut String) {
+        match item {
+            SemanticItemRef::Impl(impl_ref) => self.render_impl(impl_ref.id, depth, dump),
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Struct(_),
+                ..
+            }) => {
                 let data = self
-                    .items()
-                    .struct_data(id)
+                    .item(item)
+                    .struct_data()
                     .expect("struct id should exist while rendering");
                 writeln!(
                     dump,
@@ -560,10 +562,13 @@ impl CrateSemanticIrSnapshot<'_> {
                 .expect("string writes should not fail");
                 self.render_fields(&data.fields, depth + 1, dump);
             }
-            ItemId::Union(id) => {
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Union(_),
+                ..
+            }) => {
                 let data = self
-                    .items()
-                    .union_data(id)
+                    .item(item)
+                    .union_data()
                     .expect("union id should exist while rendering");
                 writeln!(
                     dump,
@@ -576,10 +581,13 @@ impl CrateSemanticIrSnapshot<'_> {
                 .expect("string writes should not fail");
                 self.render_named_fields(&data.fields, depth + 1, dump);
             }
-            ItemId::Enum(id) => {
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Enum(_),
+                ..
+            }) => {
                 let data = self
-                    .items()
-                    .enum_data(id)
+                    .item(item)
+                    .enum_data()
                     .expect("enum id should exist while rendering");
                 writeln!(
                     dump,
@@ -601,10 +609,10 @@ impl CrateSemanticIrSnapshot<'_> {
                     self.render_fields(&variant.fields, depth + 2, dump);
                 }
             }
-            ItemId::Trait(id) => {
+            SemanticItemRef::Trait(_) => {
                 let data = self
-                    .items()
-                    .trait_data(id)
+                    .item(item)
+                    .trait_data()
                     .expect("trait id should exist while rendering");
                 let super_traits = if data.super_traits.is_empty() {
                     String::new()
@@ -633,13 +641,13 @@ impl CrateSemanticIrSnapshot<'_> {
                     self.render_assoc_item(*assoc_item, depth + 1, dump);
                 }
             }
-            ItemId::Function(id) => self.render_function(id, depth, dump),
-            ItemId::TypeAlias(id) => self.render_type_alias(id, depth, dump),
-            ItemId::Const(id) => self.render_const(id, depth, dump),
-            ItemId::Static(id) => {
+            SemanticItemRef::Function(function) => self.render_function(function.id, depth, dump),
+            SemanticItemRef::TypeAlias(alias) => self.render_type_alias(alias.id, depth, dump),
+            SemanticItemRef::Const(konst) => self.render_const(konst.id, depth, dump),
+            SemanticItemRef::Static(_) => {
                 let data = self
-                    .items()
-                    .static_data(id)
+                    .item(item)
+                    .static_data()
                     .expect("static id should exist while rendering");
                 let mutability = match data.mutability {
                     rg_ir_model::Mutability::Shared => "",
@@ -664,8 +672,14 @@ impl CrateSemanticIrSnapshot<'_> {
 
     fn render_impl(&self, id: ImplId, depth: usize, dump: &mut String) {
         let data = self
-            .items()
-            .impl_data(id)
+            .item(
+                ImplRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    id,
+                }
+                .into(),
+            )
+            .impl_data()
             .expect("impl id should exist while rendering");
         match &data.trait_ref {
             Some(trait_ref) => writeln!(
@@ -703,8 +717,14 @@ impl CrateSemanticIrSnapshot<'_> {
 
     fn render_function(&self, id: FunctionId, depth: usize, dump: &mut String) {
         let data = self
-            .items()
-            .function_data(id)
+            .item(
+                FunctionRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    id,
+                }
+                .into(),
+            )
+            .function_data()
             .expect("function id should exist while rendering");
         let params = data
             .signature
@@ -733,8 +753,14 @@ impl CrateSemanticIrSnapshot<'_> {
 
     fn render_type_alias(&self, id: TypeAliasId, depth: usize, dump: &mut String) {
         let data = self
-            .items()
-            .type_alias_data(id)
+            .item(
+                TypeAliasRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    id,
+                }
+                .into(),
+            )
+            .type_alias_data()
             .expect("type alias id should exist while rendering");
         let bounds = if data.signature.bounds().is_empty() {
             String::new()
@@ -771,8 +797,14 @@ impl CrateSemanticIrSnapshot<'_> {
 
     fn render_const(&self, id: ConstId, depth: usize, dump: &mut String) {
         let data = self
-            .items()
-            .const_data(id)
+            .item(
+                ConstRef {
+                    origin: DefMapRef::Crate(self.crate_ref),
+                    id,
+                }
+                .into(),
+            )
+            .const_data()
             .expect("const id should exist while rendering");
         let ty = data
             .signature
@@ -863,10 +895,12 @@ impl CrateSemanticIrSnapshot<'_> {
         }
     }
 
-    fn items(&self) -> &ItemStore {
-        self.project
-            .crate_items(self.crate_ref)
-            .expect("crate semantic IR should exist while rendering items")
+    fn item(&self, item: SemanticItemRef) -> SemanticItemView<'_> {
+        *self
+            .items
+            .iter()
+            .find(|candidate| candidate.item() == item)
+            .expect("fixture item exists")
     }
 
     fn render_param(param: &rg_item_tree::ParamItem) -> String {

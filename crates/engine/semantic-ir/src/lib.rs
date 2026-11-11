@@ -29,7 +29,7 @@ pub use self::{
         FunctionSignature, GenericParamSource, GenericParamView, Generics, GenericsQuery, ImplData,
         ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemLookupQueryCache,
         ItemLookupQueryCacheStats, ItemResolutionQuery, ItemStore, ItemStoreBuilder,
-        ItemStoreQuery, ItemStoreSource, LangItemIndex, SelfTypeOwner, SemanticItemView,
+        ItemStoreQuery, LangItemIndex, SelfTypeOwner, SemanticItemSource, SemanticItemView,
         StaticData, StructData, TraitData, TraitImplSelfHead, TypeAliasData, TypeAliasSignature,
         TypePathContext, TypePathResolution, UnionData,
     },

@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeBound, TypePath, TypeRef, WherePredicate};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource, TypePathResolution};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource, TypePathResolution};
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_type_ir::{ClauseKind, inherent::IntoKind as _};
@@ -17,7 +17,7 @@ use crate::solver::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     /// Lower a trait bound with `Self` already known.

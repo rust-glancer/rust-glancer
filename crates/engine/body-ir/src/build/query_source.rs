@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use rg_arena::Arena;
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
-use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, ModuleRef};
-use rg_semantic_ir::{ItemReader, ItemStore, ItemStoreSource};
+use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, LocalDefRef, ModuleRef, SemanticItemRef};
+use rg_semantic_ir::{ItemReader, SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 
@@ -96,18 +96,44 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
     }
 }
 
-impl<'source, 'db> ItemStoreSource<'source> for &'source BodyBuildQuerySource<'_, 'db> {
+impl<'source, 'db> SemanticItemSource<'source> for &'source BodyBuildQuerySource<'_, 'db> {
     type Error = ReadError;
 
-    fn item_store_for_origin(
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'source>>, ReadError> {
+        match item.origin() {
+            DefMapRef::Crate(_) => self.semantic_ir.item(item),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .map(BodyLocalItems::item_store)
+                .and_then(|items| items.semantic_item_view(item))),
+        }
+    }
+
+    fn item_for_local_def(
         &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'source ItemStore>, Self::Error> {
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        match definition.origin {
+            DefMapRef::Crate(_) => self.semantic_ir.item_for_local_def(definition),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .map(BodyLocalItems::item_store)
+                .and_then(|items| {
+                    items
+                        .item_for_local_def(definition.local_def)
+                        .map(|item| item.semantic_ref(definition.origin))
+                })),
+        }
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'source>>, ReadError> {
         match origin {
-            DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
-            DefMapRef::Body(body_ref) => Ok(self
-                .body_local_items(body_ref)
-                .map(BodyLocalItems::item_store)),
+            DefMapRef::Crate(_) => self.semantic_ir.all_items(origin),
+            DefMapRef::Body(body) => Ok(self
+                .body_local_items(body)
+                .map(BodyLocalItems::item_store)
+                .map(|items| items.semantic_items().collect())
+                .unwrap_or_default()),
         }
     }
 }

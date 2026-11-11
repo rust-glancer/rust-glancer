@@ -2,7 +2,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ConstOrStaticRef, EvaluatedConstValue, ExprId};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::{
     Ty,
@@ -58,7 +58,7 @@ impl ConstExprSource for LoweredBodyData {
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'a, Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     /// The declaration's annotation is interpreted by the same lowerer as body type inference,
     /// including aliases, generic arguments and `Self`. Evaluation only consumes its result.

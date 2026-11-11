@@ -6,7 +6,7 @@ use rg_ir_model::{
     ScopeId, TraitApplicability, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
@@ -33,7 +33,7 @@ pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

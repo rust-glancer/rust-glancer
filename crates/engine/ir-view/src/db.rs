@@ -3,11 +3,14 @@
 use anyhow::Context as _;
 use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore};
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, ModuleRef, PackageSlot, Span};
+use rg_ir_model::{
+    BodyRef, CrateRef, DefMapRef, FileId, LocalDefRef, ModuleRef, PackageSlot, SemanticItemRef,
+    Span,
+};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    ItemLookupQuery, ItemLookupQueryCache, ItemReader, ItemStore, ItemStoreSource, TypePathContext,
-    TypePathResolution,
+    ItemLookupQuery, ItemLookupQueryCache, ItemReader, SemanticItemSource, SemanticItemView,
+    TypePathContext, TypePathResolution,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, UniqueVec};
@@ -107,13 +110,6 @@ impl<'db> IndexedViewDb<'db> {
         self.body_ir.selected_current_impl(crate_ref, file, span)
     }
 
-    pub(crate) fn item_store_for_origin(
-        &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&ItemStore>, ReadError> {
-        ItemStoreSource::item_store_for_origin(&self, origin)
-    }
-
     pub(crate) fn def_map_for_origin(
         &self,
         origin: DefMapRef,
@@ -193,13 +189,30 @@ impl TypePathResolver for IndexedViewDb<'_> {
     }
 }
 
-impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
+impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
     type Error = ReadError;
 
-    fn item_store_for_origin(&self, origin: DefMapRef) -> Result<Option<&'a ItemStore>, ReadError> {
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        match item.origin() {
+            DefMapRef::Crate(_) => self.semantic_ir.item(item),
+            DefMapRef::Body(_) => (&self.body_ir).item(item),
+        }
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        match definition.origin {
+            DefMapRef::Crate(_) => self.semantic_ir.item_for_local_def(definition),
+            DefMapRef::Body(_) => (&self.body_ir).item_for_local_def(definition),
+        }
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         match origin {
-            DefMapRef::Crate(crate_ref) => self.semantic_ir.items(crate_ref),
-            DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
+            DefMapRef::Crate(_) => self.semantic_ir.all_items(origin),
+            DefMapRef::Body(_) => (&self.body_ir).all_items(origin),
         }
     }
 }

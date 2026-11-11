@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FieldKey, Mutability, PatId};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::solver::{Ty, TyShape};
 
@@ -17,7 +17,7 @@ use crate::body::{BodyPath, PatKind, RecordPatField};
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Pass each signature type through its parameter pattern before the body reads its bindings.
     /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.

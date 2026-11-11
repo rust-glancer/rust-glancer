@@ -8,7 +8,7 @@ use rg_def_map::{DefMapSource, NamespaceSet};
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, EnumVariantRef, ModuleId, ModuleRef, Path, ScopeId, TypeAliasRef,
 };
-use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{SemanticItemSource, TypePathContext, TypePathResolution};
 use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty};
@@ -25,7 +25,7 @@ pub struct BodyTypePathQuery<'query, D, I> {
 impl<'query, D, I> BodyTypePathQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

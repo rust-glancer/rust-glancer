@@ -17,7 +17,7 @@ use rg_ir_model::{
     TraitDefRef, TraitImplRef,
 };
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::{OperationError, UniqueVec};
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
@@ -32,7 +32,7 @@ pub(crate) struct BodyTraitQuery<'query, D, I> {
 impl<'query, D, I> BodyTraitQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

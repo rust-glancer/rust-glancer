@@ -7,7 +7,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_std::{OperationError, UniqueVec};
 
 use super::ImplQuery;
@@ -72,7 +72,7 @@ impl ReceiverImplMatches {
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
     R: SolverScope<Error = D::Error>,
 {
     /// Match inherent impls plus an already-discovered set of relevant traits.

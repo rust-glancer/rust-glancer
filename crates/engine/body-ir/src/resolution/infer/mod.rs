@@ -13,7 +13,7 @@ use std::collections::VecDeque;
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{BodyRef, ExprId, identity::DeclarationRef};
-use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, SemanticItemSource};
 use rg_source::ReadError;
 use rg_std::OperationError;
 use rg_ty::solver::{InferenceTable, SemanticDeclarations, SolverInterner, Ty};
@@ -42,7 +42,7 @@ pub(crate) struct InferenceContext<'query, D, I> {
 impl<'query, D, I> InferenceContext<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(
         def_maps: D,
@@ -112,7 +112,7 @@ struct BodyInference<'s, 'query, D, I> {
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     fn lower(&self, ty: &rg_ty::Ty) -> Ty<'s> {
         self.inference

@@ -1,11 +1,12 @@
 mod builtin_derives;
+mod item_reads;
 mod trait_impl_lookup;
 mod utils;
 
 use std::fmt::Write as _;
 
 use expect_test::expect;
-use rg_ir_model::{CrateId, CrateRef};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_std::UniqueVec;
 use rg_workspace::TargetKind;
 
@@ -49,12 +50,13 @@ fn main() {}
         // also checks that sharing the query cache does not mix library and binary choices.
         for use_site in [library, dependency, binary, binary, dependency, library] {
             let expected = view
-                .crate_items(use_site)
-                .expect("target store exists")
-                .traits_with_refs()
-                .next()
-                .expect("target declares its language item")
-                .0;
+                .all_items(DefMapRef::Crate(use_site))
+                .iter()
+                .find_map(|item| match item.item() {
+                    SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+                    _ => None,
+                })
+                .expect("target declares its language item");
             let query =
                 crate::ItemLookupQuery::build_with_cache(items, use_site, &cache, &cancellation)
                     .expect("target lookup succeeds");
@@ -111,23 +113,14 @@ pub struct Library;
         let mut fixture = SemanticIrFixture::build(&fixture_source);
         fixture.inspect(|view| {
             let dep = view.crate_ref("dep", TargetKind::Lib);
-            let shared_trait = view
-                .crate_items(dep)
-                .expect("dependency semantic store should exist")
-                .traits_with_refs()
-                .next()
-                .expect("dependency should declare one trait")
-                .0;
-            let shared_type = view
-                .crate_items(dep)
-                .expect("dependency semantic store should exist")
-                .semantic_items()
-                .find_map(|item| {
-                    (item.name()?.as_str() == "SharedType")
-                        .then(|| item.type_def())
-                        .flatten()
-                })
-                .expect("dependency should declare SharedType");
+            let dependency_items = view.all_items(DefMapRef::Crate(dep));
+            let shared_trait = dependency_items.iter().find_map(|item| match item.item() {
+                SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+                _ => None,
+            }).expect("dependency should declare one trait");
+            let shared_type = dependency_items.iter().find_map(|item| {
+                (item.name()?.as_str() == "SharedType").then(|| item.type_def()).flatten()
+            }).expect("dependency should declare SharedType");
             let app = view.package_slot_by_name("app");
             let test_crates = view.parse_db().packages()[app.0]
                 .targets()
@@ -160,10 +153,9 @@ pub struct Library;
                 .iter()
                 .map(|&use_site| {
                     items
-                        .items(use_site)
-                        .expect("test target semantic package should load")
-                        .expect("test target semantic store should exist")
-                        .semantic_items()
+                        .all_items(DefMapRef::Crate(use_site))
+                        .expect("test target items should load")
+                        .into_iter()
                         .find_map(|item| {
                             let name = item.name()?;
                             if !name.as_str().starts_with("Local") {
@@ -303,13 +295,11 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
         let def_map = view
             .def_map(crate_ref)
             .expect("proc-macro def map should exist");
-        let items = view
-            .crate_items(crate_ref)
-            .expect("proc-macro semantic items should exist");
+        let items = view.all_items(DefMapRef::Crate(crate_ref));
 
         let mut function_names = items
-            .functions()
             .iter()
+            .filter_map(|item| item.function_data())
             .map(|function| function.name.to_string())
             .collect::<Vec<_>>();
         function_names.sort();
@@ -330,7 +320,13 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 })
                 .expect("proc-macro export should exist");
             assert!(
-                items.item_for_local_def(export.local_def).is_none(),
+                view.items()
+                    .item_for_local_def(LocalDefRef {
+                        origin: DefMapRef::Crate(crate_ref),
+                        local_def: export.local_def
+                    })
+                    .expect("fixture definition should load")
+                    .is_none(),
                 "macro export `{export_name}` must not own a semantic function",
             );
 
@@ -343,16 +339,22 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
                 .expect("proc-macro implementation definition should exist");
             assert_eq!(implementation_def.name.as_str(), implementation_name);
 
-            let Some(rg_ir_model::ItemId::Function(function)) =
-                items.item_for_local_def(implementation)
+            let Some(SemanticItemRef::Function(function)) = view
+                .items()
+                .item_for_local_def(LocalDefRef {
+                    origin: DefMapRef::Crate(crate_ref),
+                    local_def: implementation,
+                })
+                .expect("fixture definition should load")
             else {
                 panic!(
                     "proc-macro implementation `{implementation_name}` should lower as a function"
                 );
             };
             assert_eq!(
-                items
+                crate::ItemStoreQuery::new(&view.items())
                     .function_data(function)
+                    .expect("fixture function should load")
                     .expect("proc-macro implementation function should exist")
                     .name
                     .as_str(),

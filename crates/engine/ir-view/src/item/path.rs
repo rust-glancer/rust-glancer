@@ -11,7 +11,7 @@ use rg_body_ir::BodyOwner;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
     ConstOrStaticRef, ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef,
-    StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    StaticRef, TraitDefRef, TypeAliasRef, TypeDefRef,
 };
 use rg_semantic_ir::{EnumVariantData, ItemStoreQuery};
 use rg_text::RustEdition;
@@ -223,29 +223,11 @@ impl<'a, 'db> PathView<'a, 'db> {
 
     /// Return the owner module and declared name for a type definition.
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
-        let item_query = ItemStoreQuery::new(self.db);
-        let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
+        let Some(item) = ItemStoreQuery::new(self.db).semantic_item_view(ty.into())? else {
             return Ok(None);
         };
-        match ty.id {
-            TypeDefId::Struct(id) => {
-                let Some(data) = items.struct_data(id) else {
-                    return Ok(None);
-                };
-                Ok(Some((data.owner, data.name.as_str())))
-            }
-            TypeDefId::Enum(id) => {
-                let Some(data) = items.enum_data(id) else {
-                    return Ok(None);
-                };
-                Ok(Some((data.owner, data.name.as_str())))
-            }
-            TypeDefId::Union(id) => {
-                let Some(data) = items.union_data(id) else {
-                    return Ok(None);
-                };
-                Ok(Some((data.owner, data.name.as_str())))
-            }
-        }
+        Ok(item
+            .module_owner()
+            .zip(item.name().map(|name| name.as_str())))
     }
 }

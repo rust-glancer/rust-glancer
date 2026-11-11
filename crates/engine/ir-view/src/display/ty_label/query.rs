@@ -6,7 +6,7 @@
 use std::cell::OnceCell;
 
 use rg_ir_model::{
-    CrateRef, GenericDefRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef, TypeDefId,
+    CrateRef, GenericDefRef, ItemOwner, TraitApplicability, TraitDefRef, TypeAliasRef,
 };
 use rg_item_tree::{LangItem, VisibilityLevel};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
@@ -64,10 +64,9 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
         };
         if let Some(iterator) = context.item_lookup().lang_trait(LangItem::Iterator)
             && ty.def.origin == iterator.origin
-            && let TypeDefId::Struct(id) = ty.def.id
             && let Some(data) = ItemStoreQuery::new(self.db)
-                .item_store_for_origin(ty.def.origin)?
-                .and_then(|items| items.struct_data(id))
+                .semantic_item_view(ty.def.into())?
+                .and_then(|item| item.struct_data())
             && data.visibility == VisibilityLevel::Public
         {
             // The compiler identity gives us the defining crate without relying on its import

@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{EnumVariantRef, FieldKey, FieldRef, TypeDefId};
 use rg_item_tree::FieldList;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::ExpectedUnique;
 use rg_ty::{AdtTy, Ty, solver::SemanticDeclarations};
@@ -20,7 +20,7 @@ pub struct BodyFieldQuery<'query, D, I> {
 impl<'query, D, I> BodyFieldQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

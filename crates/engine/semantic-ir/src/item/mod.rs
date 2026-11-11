@@ -30,7 +30,7 @@ pub use self::{
     lookup_index::{ItemLookupIndex, TraitImplSelfHead},
     query::{
         GenericsQuery, ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats,
-        ItemResolutionQuery, ItemStoreQuery, ItemStoreSource,
+        ItemResolutionQuery, ItemStoreQuery, SemanticItemSource,
     },
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
     store::{ItemStore, ItemStoreBuilder},

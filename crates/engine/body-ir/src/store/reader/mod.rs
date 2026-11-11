@@ -5,8 +5,11 @@ mod saved;
 use std::sync::Arc;
 
 use rg_def_map::DefMap;
-use rg_ir_model::{BodyRef, ConstOrStaticRef, CrateRef, EvaluatedConstValue, FileId, Span};
-use rg_semantic_ir::{ItemStore, TargetDeclarationReader};
+use rg_ir_model::{
+    BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, LocalDefRef,
+    SemanticItemRef, Span,
+};
+use rg_semantic_ir::{SemanticItemSource, SemanticItemView, TargetDeclarationReader};
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
@@ -78,7 +81,7 @@ impl<'db> BodyReader<'db> {
         if let Some(fallback) = self.current.declaration_fallback(module) {
             return Ok(fallback);
         }
-        if let rg_ir_model::DefMapRef::Body(body_ref) = module.origin
+        if let DefMapRef::Body(body_ref) = module.origin
             && let Some(body) = self.body(body_ref)?
             && module == body.owner_module()
         {
@@ -153,11 +156,8 @@ impl<'db> BodyReader<'db> {
         Ok(self.saved_body(body_ref)?.map(|(body, _)| body))
     }
 
-    pub fn body_local_items(
-        &self,
-        body_ref: BodyRef,
-    ) -> Result<Option<&BodyLocalItems>, ReadError> {
-        if let Some(items) = self.current.items(rg_ir_model::DefMapRef::Body(body_ref)) {
+    fn body_local_items(&self, body_ref: BodyRef) -> Result<Option<&BodyLocalItems>, ReadError> {
+        if let Some(items) = self.current.items(DefMapRef::Body(body_ref)) {
             return Ok(Some(items));
         }
         Ok(self.saved_body(body_ref)?.map(|(_, items)| items))
@@ -187,11 +187,46 @@ impl<'db> BodyReader<'db> {
             .body_local_items(body_ref)?
             .map(BodyLocalItems::def_map))
     }
+}
 
-    /// Return the body-local item store without exposing the containing storage object.
-    pub fn body_item_store(&self, body_ref: BodyRef) -> Result<Option<&ItemStore>, ReadError> {
+impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
+    type Error = ReadError;
+
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        let DefMapRef::Body(body) = item.origin() else {
+            return Ok(None);
+        };
         Ok(self
-            .body_local_items(body_ref)?
-            .map(BodyLocalItems::item_store))
+            .body_local_items(body)?
+            .map(BodyLocalItems::item_store)
+            .and_then(|items| items.semantic_item_view(item)))
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        let DefMapRef::Body(body) = definition.origin else {
+            return Ok(None);
+        };
+        Ok(self
+            .body_local_items(body)?
+            .map(BodyLocalItems::item_store)
+            .and_then(|items| {
+                items
+                    .item_for_local_def(definition.local_def)
+                    .map(|item| item.semantic_ref(definition.origin))
+            }))
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        let DefMapRef::Body(body) = origin else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .body_local_items(body)?
+            .map(BodyLocalItems::item_store)
+            .map(|items| items.semantic_items().collect())
+            .unwrap_or_default())
     }
 }

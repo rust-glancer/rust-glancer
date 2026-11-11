@@ -132,15 +132,15 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     /// Return details for a struct, enum, or union.
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let item_query = ItemStoreQuery::new(self.db);
-        let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
+        let Some(item) = item_query.semantic_item_view(ty.into())? else {
             return Ok(None);
         };
         let paths = PathView::new(self.db, self.edition);
         let signatures = SignatureRenderer::new(self.edition);
         let path = paths.type_def_path(ty)?;
         match ty.id {
-            TypeDefId::Struct(id) => {
-                let Some(data) = items.struct_data(id) else {
+            TypeDefId::Struct(_) => {
+                let Some(data) = item.struct_data() else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
@@ -150,8 +150,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
-            TypeDefId::Enum(id) => {
-                let Some(data) = items.enum_data(id) else {
+            TypeDefId::Enum(_) => {
+                let Some(data) = item.enum_data() else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
@@ -161,8 +161,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
-            TypeDefId::Union(id) => {
-                let Some(data) = items.union_data(id) else {
+            TypeDefId::Union(_) => {
+                let Some(data) = item.union_data() else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {

@@ -9,8 +9,9 @@ use rg_def_map::{
 use rg_ir_model::{
     AssocItemId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericDefRef, GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, SignedIntTy, Span, StructId,
-    TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnsignedIntTy,
+    LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, SemanticItemRef, SignedIntTy,
+    Span, StructId, TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef,
+    UnsignedIntTy,
 };
 use rg_item_tree::{
     FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg, GenericParams,
@@ -21,8 +22,8 @@ use rg_item_tree::{
 use rg_semantic_ir::{
     CrateItemSource, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
     ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder,
-    ItemStoreSource, LangItemIndex, ReadError, StructData, TraitData, TypeAliasData,
-    TypeAliasSignature,
+    LangItemIndex, ReadError, SemanticItemSource, SemanticItemView, StructData, TraitData,
+    TypeAliasData, TypeAliasSignature,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
@@ -171,8 +172,35 @@ impl DefMapSource for TraitSelectionFixture {
 }
 
 impl CrateItemSource for TraitSelectionFixture {
-    fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
-        Ok(self.crate_items(krate))
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
+        Ok(item
+            .origin()
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| items.semantic_item_view(item)))
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        Ok(definition
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| {
+                items
+                    .item_for_local_def(definition.local_def)
+                    .map(|item| item.semantic_ref(definition.origin))
+            }))
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        Ok(origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .map(|items| items.semantic_items().collect())
+            .unwrap_or_default())
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
@@ -202,16 +230,38 @@ struct TraitSelectionDependency {
     lookup_index: ItemLookupIndex,
 }
 
-impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
+impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
     type Error = Infallible;
 
-    fn item_store_for_origin(
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, Self::Error> {
+        Ok(item
+            .origin()
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| items.semantic_item_view(item)))
+    }
+
+    fn item_for_local_def(
         &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'a ItemStore>, Self::Error> {
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, Self::Error> {
+        Ok(definition
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| {
+                items
+                    .item_for_local_def(definition.local_def)
+                    .map(|item| item.semantic_ref(definition.origin))
+            }))
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, Self::Error> {
         Ok(origin
             .as_crate_ref()
-            .and_then(|krate| self.crate_items(krate)))
+            .and_then(|krate| self.crate_items(krate))
+            .map(|items| items.semantic_items().collect())
+            .unwrap_or_default())
     }
 }
 

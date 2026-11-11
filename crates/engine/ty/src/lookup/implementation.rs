@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, GenericDefRef, ImplRef, ItemOwner, TraitDefRef, TypeDefRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_std::{ExpectedUnique, OperationError, UniqueVec};
 
 use super::TraitImplFilter;
@@ -23,7 +23,7 @@ pub struct ImplementationQuery<'query, D, I> {
 impl<'query, D, I> ImplementationQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: ItemStoreSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query, Error = D::Error> + Clone,
 {
     /// Creates implementation lookup in one crate-scoped type-query environment.
     pub fn new(context: TyContext<'query, D, I>) -> Self {

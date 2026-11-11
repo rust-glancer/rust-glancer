@@ -8,7 +8,7 @@ mod signature;
 
 use rg_def_map::DefMapSource;
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
-use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_semantic_ir::{Generics, SemanticItemSource};
 
 use super::{TypeLoweringEnv, TypeLoweringSession, TypePathResolver};
 use crate::{
@@ -29,7 +29,7 @@ pub struct TypeLoweringQuery<'lower, 'query, D, I, R> {
 impl<'lower, 'query, D, I, R> TypeLoweringQuery<'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     pub fn new(item_paths: &'lower ItemPathQuery<'query, D, I>, resolver: &'lower R) -> Self {

@@ -16,9 +16,9 @@
 
 use rg_body_ir::{BodyPath, BodyReader, BodyView, ExprKind, PatKind, StmtKind};
 use rg_def_map::ItemSourceKind;
-use rg_ir_model::{BindingId, BodyRef, CrateRef, FileId, GenericDefRef, ScopeId, Span};
+use rg_ir_model::{BindingId, BodyRef, CrateRef, DefMapRef, FileId, GenericDefRef, ScopeId, Span};
 use rg_item_tree::TypePath;
-use rg_semantic_ir::ItemStore;
+use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 
 use super::{
@@ -65,8 +65,8 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 continue;
             }
 
-            let item_store = self.body_ir.body_item_store(body_ref)?;
-            self.scan_type_names(body_ref, body, item_store, &mut best);
+            let items = self.body_ir.all_items(DefMapRef::Body(body_ref))?;
+            self.scan_type_names(body_ref, body, &items, &mut best);
             self.scan_value_names(body_ref, body, &mut best);
             self.scan_pattern_names(body_ref, body, &mut best);
         }
@@ -184,11 +184,9 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         body_ref: BodyRef,
         body: BodyView<'_>,
     ) -> Result<Option<GenericDefRef>, ReadError> {
-        let Some(item_store) = self.body_ir.body_item_store(body_ref)? else {
-            return Ok(None);
-        };
+        let items = self.body_ir.all_items(DefMapRef::Body(body_ref))?;
         let mut best = NarrowestSourceSite::new();
-        for item in item_store.semantic_items() {
+        for item in items {
             let ItemSourceKind::Body(source) = item.source().kind else {
                 continue;
             };
@@ -210,7 +208,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-        item_store: Option<&ItemStore>,
+        items: &[SemanticItemView<'_>],
         best: &mut NarrowestSourceSite<UnqualifiedCompletionSite>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -219,7 +217,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 body_ref,
                 site.scope,
                 site.visible_bindings,
-                Self::generic_owner(item_store, body_ref, site.owner_item),
+                Self::generic_owner(items, body_ref, site.owner_item),
                 site.path,
                 site.position,
             ) {
@@ -384,13 +382,13 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     /// deliberately small and file-sharded, so a linear scan avoids a retained reverse index used
     /// solely by this point query.
     fn generic_owner(
-        item_store: Option<&ItemStore>,
+        items: &[SemanticItemView<'_>],
         body: BodyRef,
         owner_item: Option<rg_item_tree::ItemTreeId>,
     ) -> Option<GenericDefRef> {
         let owner_item = owner_item?;
-        item_store?
-            .semantic_items()
+        items
+            .iter()
             .find(|item| {
                 matches!(
                     item.source().kind,

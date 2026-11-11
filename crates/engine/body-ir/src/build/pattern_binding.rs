@@ -19,7 +19,7 @@ use rg_ir_model::{
     SemanticItemRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_item_tree::{FieldList, TypeRef};
-use rg_semantic_ir::{ItemLookupQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupQuery, SemanticItemSource};
 use rg_source::ReadError;
 use rg_ty::{Ty, signature::CallableSignature};
 
@@ -41,7 +41,7 @@ pub(crate) struct PatternBindingQuery<'query, D, I> {
 impl<'query, D, I> PatternBindingQuery<'query, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = ReadError>,
-    for<'source> &'source I: ItemStoreSource<'source, Error = ReadError>,
+    for<'source> &'source I: SemanticItemSource<'source, Error = ReadError>,
 {
     pub(crate) fn new(
         def_maps: &'query D,

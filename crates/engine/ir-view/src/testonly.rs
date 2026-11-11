@@ -24,16 +24,15 @@ struct TypeRenderer<'a, 'db> {
 
 impl TypeRenderer<'_, '_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let items = self
-            .db
-            .item_store_for_origin(ty.origin)
-            .expect("fixture item store should load")
-            .expect("type item store should exist while rendering view fixture type");
+        let items = ItemStoreQuery::new(self.db)
+            .semantic_item_view(ty.into())
+            .expect("fixture type should load")
+            .expect("fixture type should exist");
 
         match ty.id {
-            TypeDefId::Struct(id) => {
+            TypeDefId::Struct(_) => {
                 let data = items
-                    .struct_data(id)
+                    .struct_data()
                     .expect("struct id should exist while rendering view fixture type");
                 format!(
                     "struct {}::{}",
@@ -41,15 +40,15 @@ impl TypeRenderer<'_, '_> {
                     data.name
                 )
             }
-            TypeDefId::Enum(id) => {
+            TypeDefId::Enum(_) => {
                 let data = items
-                    .enum_data(id)
+                    .enum_data()
                     .expect("enum id should exist while rendering view fixture type");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
-            TypeDefId::Union(id) => {
+            TypeDefId::Union(_) => {
                 let data = items
-                    .union_data(id)
+                    .union_data()
                     .expect("union id should exist while rendering view fixture type");
                 format!(
                     "union {}::{}",
@@ -61,13 +60,9 @@ impl TypeRenderer<'_, '_> {
     }
 
     fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
-        let items = self
-            .db
-            .item_store_for_origin(trait_ref.origin)
-            .expect("fixture item store should load")
-            .expect("trait item store should exist while rendering view fixture type");
-        let data = items
-            .trait_data(trait_ref.id)
+        let data = ItemStoreQuery::new(self.db)
+            .trait_data(trait_ref)
+            .expect("fixture item should load")
             .expect("trait id should exist while rendering view fixture type");
         format!(
             "trait {}::{}",
@@ -319,13 +314,9 @@ impl TypeRenderer<'_, '_> {
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
-        let items = self
-            .db
-            .item_store_for_origin(function_ref.origin)
-            .expect("fixture item store should load")
-            .expect("function item store should exist while rendering view fixture body item");
-        let data = items
-            .function_data(function_ref.id)
+        let data = ItemStoreQuery::new(self.db)
+            .function_data(function_ref)
+            .expect("fixture item should load")
             .expect("function ref should exist while rendering view fixture body item");
         let owner = self.render_item_owner(function_ref.origin, data.owner);
 
@@ -336,27 +327,17 @@ impl TypeRenderer<'_, '_> {
         match owner {
             BodyOwner::Function(function_ref) => self.render_function_ref(function_ref),
             BodyOwner::Const(const_ref) => {
-                let items = self
-                    .db
-                    .item_store_for_origin(const_ref.origin)
-                    .expect("fixture item store should load")
-                    .expect("const item store should exist while rendering view fixture body item");
-                let data = items
-                    .const_data(const_ref.id)
+                let data = ItemStoreQuery::new(self.db)
+                    .const_data(const_ref)
+                    .expect("fixture item should load")
                     .expect("const ref should exist while rendering view fixture body item");
                 let owner = self.render_item_owner(const_ref.origin, data.owner);
                 format!("const {owner}::{}", data.name)
             }
             BodyOwner::Static(static_ref) => {
-                let items = self
-                    .db
-                    .item_store_for_origin(static_ref.origin)
-                    .expect("fixture item store should load")
-                    .expect(
-                        "static item store should exist while rendering view fixture body item",
-                    );
-                let data = items
-                    .static_data(static_ref.id)
+                let data = ItemStoreQuery::new(self.db)
+                    .static_data(static_ref)
+                    .expect("fixture item should load")
                     .expect("static ref should exist while rendering view fixture body item");
                 format!(
                     "static {}::{}",
@@ -371,14 +352,13 @@ impl TypeRenderer<'_, '_> {
         match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
-                let items = self
-                    .db
-                    .item_store_for_origin(origin)
-                    .expect("fixture item store should load")
-                    .expect("trait item store should exist while rendering view fixture body item");
-                let trait_data = items
-                    .trait_data(trait_id)
-                    .expect("trait owner should exist while rendering view fixture body item");
+                let trait_data = ItemStoreQuery::new(self.db)
+                    .trait_data(TraitDefRef {
+                        origin,
+                        id: trait_id,
+                    })
+                    .expect("fixture trait should load")
+                    .expect("fixture trait owner exists");
                 format!(
                     "trait {}::{}",
                     self.render_module_ref(trait_data.owner),

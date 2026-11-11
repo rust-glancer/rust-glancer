@@ -2,7 +2,7 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, GenericDefRef, ItemOwner, TraitDefRef};
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
 use rg_source::ReadError;
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
@@ -15,7 +15,7 @@ pub(crate) struct BodyGenericsQuery<'query, D, I> {
 impl<'query, D, I> BodyGenericsQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

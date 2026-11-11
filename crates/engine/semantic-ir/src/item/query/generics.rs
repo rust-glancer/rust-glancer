@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeOrConstParamData, TypeRef};
 
-use super::{ItemStoreQuery, ItemStoreSource};
+use super::{ItemStoreQuery, SemanticItemSource};
 use crate::{GenericParamSource, GenericParamView, Generics};
 
 /// Definition-level generic parameter query.
@@ -24,7 +24,7 @@ pub struct GenericsQuery<'a, S> {
 
 impl<'a, S> GenericsQuery<'a, S>
 where
-    S: ItemStoreSource<'a> + Clone,
+    S: SemanticItemSource<'a> + Clone,
 {
     pub fn new(source: S) -> Self {
         Self {

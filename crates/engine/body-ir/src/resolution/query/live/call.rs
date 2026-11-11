@@ -11,7 +11,7 @@ use rg_ir_model::{
     ExprId, FunctionRef, ItemOwner, Mutability, ScopeId, SemanticItemRef, identity::DeclarationRef,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, ParamKind, SelfParamKind};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
@@ -43,7 +43,7 @@ pub(crate) struct LiveCallTarget<'s> {
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Find the function candidates whose signatures can be used to understand this call.
     ///

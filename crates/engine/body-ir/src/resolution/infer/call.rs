@@ -7,7 +7,7 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FunctionRef, GenericDefRef};
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::solver::{CallableSignature, GenericArgs, InferenceTable, SolverInterner, Ty};
 
@@ -65,7 +65,7 @@ impl<'s> PreparedCall<'s> {
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Calls establish closure signatures early, then process ordinary arguments and fulfill
     /// their bounds before consuming closure bodies. Those bodies are still visited exactly once.

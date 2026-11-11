@@ -17,7 +17,7 @@ use rg_ir_model::{
     TraitDefRef, TraitImplRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::ImplPolarity;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{SemanticItemSource, TypePathContext};
 use rg_std::{Cancelable, OperationError};
 use rustc_type_ir::{
     ClauseKind,
@@ -136,7 +136,7 @@ impl<R: SolverScope + ?Sized> SolverScope for &R {
 impl<'query, D, I> SolverScope for ItemPathQuery<'query, D, I>
 where
     D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
+    I: SemanticItemSource<'query>,
 {
 }
 
@@ -160,7 +160,7 @@ pub struct DeclarationCache {
 /// Compiler callbacks ask for declarations as they explore a goal. This provider loads those
 /// declarations on demand, using the same path resolver as the body or editor query. If a read
 /// fails, the provider keeps the source error while unwinding to its own solver boundary.
-pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
+pub struct SemanticDeclarations<'a, 'query, D, I: SemanticItemSource<'query>> {
     paths: &'a ItemPathQuery<'query, D, I>,
     resolver: &'a dyn TypePathResolver<Error = I::Error>,
     // Only operations that evaluate goals need impl discovery and a use-site solver scope.
@@ -177,7 +177,7 @@ pub struct SemanticDeclarations<'a, 'query, D, I: ItemStoreSource<'query>> {
 impl<'a, 'query, D, I> SemanticDeclarations<'a, 'query, D, I>
 where
     D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
+    I: SemanticItemSource<'query>,
 {
     pub fn new(
         context: &'a TyContext<'query, D, I>,
@@ -452,7 +452,7 @@ where
 impl<'query, D, I> DeclarationProvider for SemanticDeclarations<'_, 'query, D, I>
 where
     D: DefMapSource<Error = I::Error>,
-    I: ItemStoreSource<'query>,
+    I: SemanticItemSource<'query>,
 {
     fn metadata(&self, id: DefId) -> Option<Arc<DeclarationMetadata>> {
         if let Some(data) = self.cached(|cache| cache.metadata.get(&id).cloned()) {
@@ -662,18 +662,18 @@ where
         }
         let fields = self.load(|| {
             let items = self.paths.items();
-            let Some(store) = items.item_store_for_origin(id.origin)? else {
+            let Some(store) = items.semantic_item_view(id.into())? else {
                 return Ok(None);
             };
             let (module, fields) = match id.id {
-                TypeDefId::Struct(id) => {
-                    let Some(data) = store.struct_data(id) else {
+                TypeDefId::Struct(_) => {
+                    let Some(data) = store.struct_data() else {
                         return Ok(None);
                     };
                     (data.owner, data.fields.fields().iter().collect::<Vec<_>>())
                 }
-                TypeDefId::Enum(id) => {
-                    let Some(data) = store.enum_data(id) else {
+                TypeDefId::Enum(_) => {
+                    let Some(data) = store.enum_data() else {
                         return Ok(None);
                     };
                     (
@@ -684,8 +684,8 @@ where
                             .collect(),
                     )
                 }
-                TypeDefId::Union(id) => {
-                    let Some(data) = store.union_data(id) else {
+                TypeDefId::Union(_) => {
+                    let Some(data) = store.union_data() else {
                         return Ok(None);
                     };
                     (data.owner, data.fields.iter().collect())

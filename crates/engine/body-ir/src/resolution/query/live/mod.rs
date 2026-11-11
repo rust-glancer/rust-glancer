@@ -8,7 +8,7 @@ mod member;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{EnumVariantRef, FieldKey, ScopeId, TypeDefId};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
-use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_semantic_ir::{Generics, SemanticItemSource};
 use rg_source::ReadError;
 use rg_ty::{
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
@@ -31,7 +31,7 @@ pub(crate) struct LiveBodyQuery<'query, D, I> {
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

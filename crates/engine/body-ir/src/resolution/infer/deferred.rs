@@ -10,7 +10,7 @@ use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, ItemOwner, Mutability, PatId, TraitDefRef};
 use rg_item_tree::LangItem;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::solver::{DynTy, List, TraitApplication, Ty, TyShape};
 
@@ -72,7 +72,7 @@ pub(super) enum DeferredKind<'s> {
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Apply an expression expectation, allowing divergence and trait-object conversion.
     /// An unfinished producer needs to supply its type before we can choose the relation.

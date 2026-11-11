@@ -7,7 +7,7 @@
 use rg_def_map::{DefMapQuery, DefMapSource};
 use rg_ir_model::{BodyRef, Path, ScopeId};
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, ItemStoreSource, TypePathResolution};
+use rg_semantic_ir::{ItemLookupQuery, ItemStoreQuery, SemanticItemSource, TypePathResolution};
 use rg_source::ReadError;
 use rg_std::CancellationToken;
 use rg_ty::{
@@ -55,7 +55,7 @@ impl<D, I> rg_std::Cancelable for BodyResolutionContext<'_, D, I> {
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = ReadError> + Clone,
-    I: ItemStoreSource<'a, Error = ReadError> + Clone,
+    I: SemanticItemSource<'a, Error = ReadError> + Clone,
 {
     pub fn new(
         def_maps: D,
@@ -115,7 +115,7 @@ impl<'a, D, I> BodyResolutionContext<'a, D, I> {
 impl<'a, D, I> BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'a, Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     pub(crate) fn def_map_query(&self) -> DefMapQuery<D> {
         DefMapQuery::new(self.def_maps)
@@ -222,7 +222,7 @@ where
 impl<'a, D, I> TypePathResolver for BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'a, Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     type Error = ReadError;
 
@@ -245,7 +245,7 @@ where
 impl<'a, D, I> rg_ty::solver::SolverScope for BodyResolutionContext<'a, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'a, Error = ReadError> + Copy,
+    I: SemanticItemSource<'a, Error = ReadError> + Copy,
 {
     fn local_trait_impls(
         &self,

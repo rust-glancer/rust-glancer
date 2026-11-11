@@ -153,9 +153,11 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // An unchanged declaration can reuse its saved owner. If no saved declaration matches, we
         // widen to the outermost current declaration so request-local parameters, `Self`, and
         // associated-item context remain available to nested bodies.
-        let saved_items = self.semantic_ir.items(self.crate_ref)?;
+        let saved_items = self
+            .semantic_ir
+            .all_items(DefMapRef::Crate(self.crate_ref))?;
         let saved_bodies = self.saved_body_ir.bodies(self.crate_ref, Some(self.file))?;
-        let saved_owners = SavedRootOwnerIndex::new(saved_items, self.crate_ref, self.file);
+        let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file);
         let mut roots = Vec::<PreparedCurrentRoot>::new();
         let mut unavailable = Vec::new();
         let mut association_us = 0;

@@ -3,7 +3,7 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, ScopeId};
 use rg_item_tree::TypeRef;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_ty::{
     TraitRefLowering, Ty,
@@ -21,7 +21,7 @@ pub(crate) struct TypeRefResolutionQuery<'query, D, I> {
 impl<'query, D, I> TypeRefResolutionQuery<'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>, scope: ScopeId) -> Self {
         Self { context, scope }

@@ -1,8 +1,11 @@
 use rg_def_map::{CrateData, CrateDataSource, DefMap, DefMapSource};
-use rg_ir_model::{BodyKey, BodyRef, CrateRef, DefMapRef, ModuleRef, SavedBodyOwner};
+use rg_ir_model::{
+    BodyKey, BodyRef, CrateRef, DefMapRef, ItemId, LocalDefRef, ModuleRef, SavedBodyOwner,
+    SemanticItemRef,
+};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    CrateItemSource, ItemStore, ItemStoreSource,
+    ItemStoreQuery, SemanticItemSource, SemanticItemView,
     testonly::{SemanticIrFixture, SemanticIrView},
 };
 use rg_source::ReadError;
@@ -63,10 +66,6 @@ impl<'db> BodyIrView<'db> {
         self.semantic.def_map(target)
     }
 
-    pub fn crate_items(&self, target: CrateRef) -> Option<&'db ItemStore> {
-        self.semantic.crate_items(target)
-    }
-
     /// Demand every owner in the selected target, including each owner's nested bodies.
     pub fn bodies(&self, target: CrateRef) -> Vec<(BodyRef, BodyView<'_>)> {
         self.bodies
@@ -84,22 +83,14 @@ impl<'db> BodyIrView<'db> {
             .expect("fixture body definitions should load")
     }
 
-    pub fn item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {
-        match origin {
-            DefMapRef::Crate(target) => self.crate_items(target),
-            DefMapRef::Body(body) => self
-                .bodies
-                .body_item_store(body)
-                .expect("fixture body items should load"),
-        }
+    pub fn item_query(&self) -> ItemStoreQuery<'_, &Self> {
+        ItemStoreQuery::new(self)
     }
 
     /// Resolve a named outer owner in an explicitly selected target. Tests with overloaded names
     /// can select an item from the declarations and construct its BodyKey directly.
     pub fn body_key(&self, target: CrateRef, name: &str) -> BodyKey {
-        let items = self
-            .crate_items(target)
-            .expect("fixture target should exist");
+        let items = self.semantic.all_items(DefMapRef::Crate(target));
         let declarations = rg_semantic_ir::target_declarations(self.semantic.db(), target)
             .expect("fixture declarations should load");
         let owners = declarations
@@ -107,12 +98,18 @@ impl<'db> BodyIrView<'db> {
             .value_ref(self.semantic.db())
             .expect("fixture body owners should load");
         let mut matching = owners.iter().filter(|owner| {
-            let item_name = match owner.owner {
-                SavedBodyOwner::Function(id) => items.function_data(id).map(|data| &data.name),
-                SavedBodyOwner::Const(id) => items.const_data(id).map(|data| &data.name),
-                SavedBodyOwner::Static(id) => items.static_data(id).map(|data| &data.name),
-            };
-            item_name.is_some_and(|candidate| candidate.as_str() == name)
+            let item_ref = match owner.owner {
+                SavedBodyOwner::Function(id) => ItemId::Function(id),
+                SavedBodyOwner::Const(id) => ItemId::Const(id),
+                SavedBodyOwner::Static(id) => ItemId::Static(id),
+            }
+            .semantic_ref(DefMapRef::Crate(target));
+            items.iter().any(|item| {
+                item.item() == item_ref
+                    && item
+                        .name()
+                        .is_some_and(|candidate| candidate.as_str() == name)
+            })
         });
         let owner = matching
             .next()
@@ -164,12 +161,29 @@ impl DefMapSource for BodyIrView<'_> {
     }
 }
 
-impl<'a> ItemStoreSource<'a> for &'a BodyIrView<'_> {
+impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
     type Error = ReadError;
-    fn item_store_for_origin(&self, origin: DefMapRef) -> Result<Option<&'a ItemStore>, ReadError> {
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        match item.origin() {
+            DefMapRef::Crate(_) => self.semantic.items().item(item),
+            DefMapRef::Body(_) => (&self.bodies).item(item),
+        }
+    }
+
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        match definition.origin {
+            DefMapRef::Crate(_) => self.semantic.items().item_for_local_def(definition),
+            DefMapRef::Body(_) => (&self.bodies).item_for_local_def(definition),
+        }
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         match origin {
-            DefMapRef::Crate(target) => self.semantic.declarations().items(target),
-            DefMapRef::Body(body) => self.bodies.body_item_store(body),
+            DefMapRef::Crate(_) => self.semantic.items().all_items(origin),
+            DefMapRef::Body(_) => (&self.bodies).all_items(origin),
         }
     }
 }

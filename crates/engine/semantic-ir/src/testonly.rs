@@ -1,12 +1,14 @@
 use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMap, DefinitionReader,
 };
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, PackageSlot};
 use rg_parse::{CargoTarget, ParseDb};
 use rg_source::{QueryContext, QueryDatabase};
 use rg_workspace::{TargetKind, WorkspaceMetadata, testonly::WorkspaceFixture};
 
-use crate::{CrateItemSource, ItemReader, ItemStore, TargetDeclarationReader, target_declarations};
+use crate::{
+    CrateItemSource, ItemReader, SemanticItemView, TargetDeclarationReader, target_declarations,
+};
 
 /// In-memory queries over fixture sources. The providers own declaration construction.
 pub struct SemanticIrFixture {
@@ -123,9 +125,9 @@ impl<'db> SemanticIrView<'db> {
             .map(CrateData::def_map)
     }
 
-    pub fn crate_items(&self, target: CrateRef) -> Option<&'db ItemStore> {
+    pub fn all_items(&self, origin: DefMapRef) -> Vec<SemanticItemView<'db>> {
         self.declarations
-            .items(target)
+            .all_items(origin)
             .expect("fixture items should load")
     }
 

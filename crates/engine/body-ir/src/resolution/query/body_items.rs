@@ -15,9 +15,13 @@
 //! few body item stores that can affect this body and builds a compact overlay index. Later
 //! queries read the same index through [`BodyLocalItemCache`](crate::resolution::cache::BodyLocalItemCache).
 
+use std::collections::HashMap;
+
 use rg_def_map::DefMapSource;
-use rg_ir_model::{AssocItemId, DefMapRef, ImplRef, TraitDefRef, TraitImplRef, TypeDefRef};
-use rg_semantic_ir::{ItemStore, ItemStoreSource};
+use rg_ir_model::{
+    AssocItemId, DefMapRef, ImplRef, SemanticItemRef, TraitDefRef, TraitImplRef, TypeDefRef,
+};
+use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 
@@ -37,7 +41,7 @@ pub(crate) struct BodyLocalItemQuery<'context, 'query, D, I> {
 impl<'context, 'query, D, I> BodyLocalItemQuery<'context, 'query, D, I>
 where
     D: DefMapSource<Error = ReadError> + Copy,
-    I: ItemStoreSource<'query, Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: &'context BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -129,10 +133,30 @@ where
     /// Build the request-local overlay once for queries throughout body inference.
     fn build_index(&self) -> Result<BodyLocalItemIndex, ReadError> {
         let mut index = BodyLocalItemIndex::default();
-        for store in self.body_lookup_stores()? {
+        for items in self.body_lookup_items()? {
+            // Follow member lists using this inventory, so each body's data is acquired once.
+            let item_names: HashMap<_, _> = items
+                .iter()
+                .filter_map(|item| {
+                    let id = match item.item() {
+                        SemanticItemRef::Function(function) => AssocItemId::Function(function.id),
+                        SemanticItemRef::Const(konst) => AssocItemId::Const(konst.id),
+                        SemanticItemRef::TypeAlias(alias) => AssocItemId::TypeAlias(alias.id),
+                        _ => return None,
+                    };
+                    Some((id, item.name()?))
+                })
+                .collect();
+
             // Impl declarations provide receiver candidates. Inherent impls additionally retain
             // member names so an active declaration can replace its stale saved counterpart.
-            for (impl_ref, impl_data) in store.impls_with_refs() {
+            for view in &items {
+                let SemanticItemRef::Impl(impl_ref) = view.item() else {
+                    continue;
+                };
+                let Some(impl_data) = view.impl_data() else {
+                    continue;
+                };
                 if let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() {
                     let trait_impl = TraitImplRef {
                         impl_ref,
@@ -165,21 +189,18 @@ where
                     .entry(*self_ty)
                     .or_default();
                 for item in &impl_data.items {
+                    let Some(name) = item_names.get(item) else {
+                        continue;
+                    };
                     match item {
-                        AssocItemId::Function(id) => {
-                            if let Some(data) = store.function_data(*id) {
-                                names.functions.push(data.name.clone());
-                            }
+                        AssocItemId::Function(_) => {
+                            names.functions.push((*name).clone());
                         }
-                        AssocItemId::Const(id) => {
-                            if let Some(data) = store.const_data(*id) {
-                                names.consts.push(data.name.clone());
-                            }
+                        AssocItemId::Const(_) => {
+                            names.consts.push((*name).clone());
                         }
-                        AssocItemId::TypeAlias(id) => {
-                            if let Some(data) = store.type_alias_data(*id) {
-                                names.type_aliases.push(data.name.clone());
-                            }
+                        AssocItemId::TypeAlias(_) => {
+                            names.type_aliases.push((*name).clone());
                         }
                     }
                 }
@@ -188,32 +209,37 @@ where
             // Trait declarations provide the name-first surfaces used before impl matching. A
             // method lookup for `value.draw()` discovers `Paint` here; receiver proof happens in
             // `BodyImplQuery` after lexical scope has filtered the declaration surface.
-            for (trait_ref, trait_data) in store.traits_with_refs() {
+            for view in &items {
+                let SemanticItemRef::Trait(trait_ref) = view.item() else {
+                    continue;
+                };
+                let Some(trait_data) = view.trait_data() else {
+                    continue;
+                };
                 if !trait_data.items.is_empty() {
                     index.traits_with_associated_items.push(trait_ref);
                 }
 
                 let mut has_function = false;
                 for item in &trait_data.items {
+                    has_function |= matches!(item, AssocItemId::Function(_));
+                    let Some(name) = item_names.get(item) else {
+                        continue;
+                    };
                     match item {
-                        AssocItemId::Function(id) => {
-                            has_function = true;
-                            if let Some(data) = store.function_data(*id) {
-                                index
-                                    .traits_by_function_name
-                                    .entry(data.name.clone())
-                                    .or_default()
-                                    .push(trait_ref);
-                            }
+                        AssocItemId::Function(_) => {
+                            index
+                                .traits_by_function_name
+                                .entry((*name).clone())
+                                .or_default()
+                                .push(trait_ref);
                         }
-                        AssocItemId::Const(id) => {
-                            if let Some(data) = store.const_data(*id) {
-                                index
-                                    .traits_by_const_name
-                                    .entry(data.name.clone())
-                                    .or_default()
-                                    .push(trait_ref);
-                            }
+                        AssocItemId::Const(_) => {
+                            index
+                                .traits_by_const_name
+                                .entry((*name).clone())
+                                .or_default()
+                                .push(trait_ref);
                         }
                         AssocItemId::TypeAlias(_) => {}
                     }
@@ -232,8 +258,8 @@ where
             .index_or_try_init(|| self.build_index())
     }
 
-    /// Gather body item stores that can affect the current body lookup.
-    fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, ReadError> {
+    /// Gather body declarations that can affect the current body lookup.
+    fn body_lookup_items(&self) -> Result<Vec<Vec<SemanticItemView<'query>>>, ReadError> {
         let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and
@@ -249,12 +275,10 @@ where
         }
 
         let item_query = self.context.item_query();
-        let mut stores = Vec::new();
+        let mut groups = Vec::new();
         for origin in origins {
-            if let Some(store) = item_query.item_store_for_origin(origin)? {
-                stores.push(store);
-            }
+            groups.push(item_query.semantic_items_for_origin(origin)?);
         }
-        Ok(stores)
+        Ok(groups)
     }
 }
