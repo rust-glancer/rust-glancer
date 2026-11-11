@@ -19,9 +19,9 @@ use rg_item_tree::{
     WherePredicate,
 };
 use rg_semantic_ir::{
-    CrateItemQuery, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
-    ItemLookupFacts, ItemLookupIndex, ItemLookupIndexSource, ItemLookupQuery, ItemStore,
-    ItemStoreBuilder, ItemStoreQuery, ItemStoreSource, StructData, TraitData, TypeAliasData,
+    CrateItemQuery, CrateItemSource, FunctionData, FunctionSignature, GenericParamSource,
+    GenericsQuery, ImplData, ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemReader,
+    ItemStore, ItemStoreBuilder, ItemStoreSource, ReadError, StructData, TraitData, TypeAliasData,
     TypeAliasSignature,
 };
 use rg_std::{ExpectedUnique, UniqueVec};
@@ -61,9 +61,16 @@ impl TraitSelectionFixture {
             .find(|dependency| dependency.target == crate_ref)
     }
 
+    fn crate_items(&self, krate: CrateRef) -> Option<&ItemStore> {
+        if krate == self.target {
+            return Some(&self.store);
+        }
+        self.dependency(krate).map(|dependency| &dependency.store)
+    }
+
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
         ItemLookupQuery::build_from(
-            &ItemStoreQuery::new(self),
+            ItemReader(self),
             self.target,
             &rg_std::CancellationToken::new(),
         )
@@ -163,6 +170,27 @@ impl DefMapSource for TraitSelectionFixture {
     }
 }
 
+impl CrateItemSource for TraitSelectionFixture {
+    fn items(&self, krate: CrateRef) -> Result<Option<&ItemStore>, ReadError> {
+        Ok(self.crate_items(krate))
+    }
+
+    fn lookup_index(&self, crate_ref: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
+        if crate_ref == self.target {
+            return Ok(Some(&self.lookup_index));
+        }
+        Ok(self
+            .dependency(crate_ref)
+            .map(|dependency| &dependency.lookup_index))
+    }
+
+    fn crates(&self) -> Vec<CrateRef> {
+        std::iter::once(self.target)
+            .chain(self.dependencies.iter().map(|dependency| dependency.target))
+            .collect()
+    }
+}
+
 struct TraitSelectionDependency {
     target: CrateRef,
     def_map: DefMap,
@@ -177,33 +205,9 @@ impl<'a> ItemStoreSource<'a> for &'a TraitSelectionFixture {
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        if origin == DefMapRef::Crate(self.target) {
-            return Ok(Some(&self.store));
-        }
         Ok(origin
             .as_crate_ref()
-            .and_then(|crate_ref| self.dependency(crate_ref))
-            .map(|dependency| &dependency.store))
-    }
-
-    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
-        Ok(std::iter::once(&self.store)
-            .chain(self.dependencies.iter().map(|dependency| &dependency.store))
-            .collect())
-    }
-}
-
-impl<'a> ItemLookupIndexSource<'a> for &'a TraitSelectionFixture {
-    fn item_lookup_index(
-        &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&'a ItemLookupIndex>, Self::Error> {
-        if crate_ref == self.target {
-            return Ok(Some(&self.lookup_index));
-        }
-        Ok(self
-            .dependency(crate_ref)
-            .map(|dependency| &dependency.lookup_index))
+            .and_then(|krate| self.crate_items(krate)))
     }
 }
 

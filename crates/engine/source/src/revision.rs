@@ -2,22 +2,22 @@
 //!
 //! `SourceRevision` is the content identity used while a project generation is alive.
 //! `SourceDescriptor` adds the path and byte length needed to carry that identity through a
-//! package-cache snapshot. Neither type owns source text.
+//! captured save. Neither type owns source text.
 
-use std::{fmt, path::Path};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use rg_std::{MemoryRecorder, MemorySize, Shrink};
-use wincode::{SchemaRead, SchemaWrite};
-
-use crate::SourcePath;
+use rg_std::MemorySize;
 
 /// Strong identity of the exact UTF-8 bytes captured for one source file.
 ///
 /// A revision does not mean "the latest contents at this path". It names the bytes that one
 /// project generation used, even if the path changes on disk after the generation is published.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
-#[shrink(leaf)]
 pub struct SourceRevision([u8; 32]);
 
 impl SourceRevision {
@@ -39,40 +39,24 @@ impl fmt::Display for SourceRevision {
     }
 }
 
-/// Cache-facing proof that a file belonged to one exact source generation.
-///
-/// The path identifies which source to capture during cache restoration. The revision and byte
-/// length then prove that the captured file is the same input that produced the cached analysis.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
-pub struct SourceDescriptor {
-    path: SourcePath,
+/// Metadata shared by an editor save and the corresponding source input.
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+pub(crate) struct SourceDescriptor {
+    path: Arc<Path>,
     revision: SourceRevision,
     byte_len: u64,
 }
 
 impl SourceDescriptor {
-    pub(crate) fn new(path: SourcePath, bytes: &[u8]) -> Self {
+    pub(crate) fn new(path: PathBuf, bytes: &[u8]) -> Self {
         Self {
-            path,
+            path: path.into(),
             revision: SourceRevision::from_bytes(bytes),
             byte_len: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
         }
     }
 
-    /// Copy the path allocation too; cloning the descriptor would keep sharing it.
-    pub(crate) fn reallocated(&self) -> Self {
-        Self {
-            path: SourcePath::new(self.path().to_path_buf()),
-            revision: self.revision,
-            byte_len: self.byte_len,
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
-    }
-
-    pub(crate) fn source_path(&self) -> &SourcePath {
+    pub(crate) fn path(&self) -> &Arc<Path> {
         &self.path
     }
 
@@ -82,11 +66,5 @@ impl SourceDescriptor {
 
     pub fn byte_len(&self) -> u64 {
         self.byte_len
-    }
-}
-
-impl MemorySize for SourceDescriptor {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("path", |recorder| self.path.record_allocation(recorder));
     }
 }
