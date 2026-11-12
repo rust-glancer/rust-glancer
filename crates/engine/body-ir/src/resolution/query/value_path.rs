@@ -29,8 +29,8 @@ pub struct BodyValuePathQuery<'query, D, I> {
 
 impl<'query, D, I> BodyValuePathQuery<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }

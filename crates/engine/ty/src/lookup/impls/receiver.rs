@@ -8,7 +8,8 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ImplRef, TraitApplicability, TraitDefRef, TraitImplRef};
 use rg_semantic_ir::SemanticItemSource;
-use rg_std::{OperationError, UniqueVec};
+use rg_source::ReadError;
+use rg_std::UniqueVec;
 
 use super::ImplQuery;
 use crate::{Substitution, Ty, solver::SolverScope, trait_selection::TraitSelection};
@@ -72,15 +73,15 @@ impl ReceiverImplMatches {
 impl<'query, D, I, R> ImplQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
-    R: SolverScope<Error = D::Error>,
+    I: SemanticItemSource<'query> + Clone,
+    R: SolverScope,
 {
     /// Match inherent impls plus an already-discovered set of relevant traits.
     pub fn matches_for_receiver_with_traits(
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
+    ) -> Result<ReceiverImplMatches, ReadError> {
         let mut matches = self.inherent_matches_for_receiver(receiver_ty)?;
         matches.extend(self.trait_matches_for_receiver(receiver_ty, trait_refs)?);
         Ok(matches)
@@ -91,7 +92,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
+    ) -> Result<ReceiverImplMatches, ReadError> {
         let mut matches = ReceiverImplMatches::default();
         matches
             .traits
@@ -103,7 +104,7 @@ where
     fn inherent_matches_for_receiver(
         &self,
         receiver_ty: &Ty,
-    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
+    ) -> Result<ReceiverImplMatches, ReadError> {
         let mut inherent_impls = UniqueVec::new();
         for receiver in receiver_ty.as_adts() {
             rg_std::check_cancel!(self.context, "match receiver impls");
@@ -148,7 +149,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<UniqueVec<TraitSelection>, OperationError<D::Error>> {
+    ) -> Result<UniqueVec<TraitSelection>, ReadError> {
         let mut selections = UniqueVec::new();
 
         for trait_ref in trait_refs {
@@ -167,7 +168,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_impls: impl IntoIterator<Item = TraitImplRef>,
-    ) -> Result<UniqueVec<TraitSelection>, OperationError<D::Error>> {
+    ) -> Result<UniqueVec<TraitSelection>, ReadError> {
         let mut selections = UniqueVec::new();
         for trait_impl in trait_impls {
             rg_std::check_cancel!(self.context, "match receiver impls");
@@ -189,7 +190,7 @@ where
         receiver_ty: &Ty,
         inherent_impls: UniqueVec<ImplRef>,
         trait_impls: UniqueVec<TraitImplRef>,
-    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
+    ) -> Result<ReceiverImplMatches, ReadError> {
         let mut matches =
             self.inherent_matches_for_receiver_from_impls(receiver_ty, inherent_impls)?;
         matches
@@ -203,16 +204,13 @@ where
         &self,
         receiver_ty: &Ty,
         inherent_impls: impl IntoIterator<Item = ImplRef>,
-    ) -> Result<ReceiverImplMatches, OperationError<D::Error>> {
+    ) -> Result<ReceiverImplMatches, ReadError> {
         let item_query = self.context.item_paths().items();
         let mut matches = ReceiverImplMatches::default();
 
         for impl_ref in inherent_impls {
             rg_std::check_cancel!(self.context, "match receiver impls");
-            let Some(impl_data) = item_query
-                .impl_data(impl_ref)
-                .map_err(OperationError::Source)?
-            else {
+            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
             if impl_data.trait_ref.is_some() {

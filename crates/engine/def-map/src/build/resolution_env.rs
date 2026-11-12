@@ -13,6 +13,7 @@
 use rg_ir_model::{
     CrateRef, DefId, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleId, ModuleRef,
 };
+use rg_source::ReadError;
 use rg_text::Name;
 
 use super::{
@@ -48,12 +49,10 @@ impl<'a, E> BuildResolutionEnv<'a, E> {
 }
 
 impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
-    type Error = E::Error;
-
     fn module_metadata(
         &self,
         module_ref: ModuleRef,
-    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+    ) -> Result<Option<ModuleResolutionView<'_>>, ReadError> {
         if let Some(crate_ref) = module_ref.origin.as_crate_ref()
             && let Some(state) = self.active_crate(crate_ref)
         {
@@ -70,7 +69,7 @@ impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, ReadError> {
         if module_ref.origin.as_crate_ref() == Some(self.state.crate_ref) {
             return Ok(self
                 .state
@@ -84,7 +83,7 @@ impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, ReadError> {
         if module_ref.origin.as_crate_ref() == Some(self.state.crate_ref) {
             return Ok(self
                 .state
@@ -99,7 +98,7 @@ impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, Self::Error> {
+    ) -> Result<Option<&LocalDefData>, ReadError> {
         if let Some(crate_ref) = local_def_ref.origin.as_crate_ref()
             && let Some(state) = self.active_crate(crate_ref)
         {
@@ -112,7 +111,7 @@ impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
     fn local_enum_variant_data(
         &self,
         variant_ref: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError> {
         if let Some(crate_ref) = variant_ref.origin.as_crate_ref()
             && let Some(state) = self.active_crate(crate_ref)
         {
@@ -127,7 +126,7 @@ impl<E: NameResolutionEnv> NameResolutionEnv for BuildResolutionEnv<'_, E> {
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError> {
         if let Some(crate_ref) = enum_def.origin.as_crate_ref()
             && let Some(state) = self.active_crate(crate_ref)
         {
@@ -146,7 +145,7 @@ impl<E: MacroDefinitionEnv> MacroDefinitionEnv for BuildResolutionEnv<'_, E> {
     fn macro_definition_view<'a>(
         &'a self,
         def: DefId,
-    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error> {
+    ) -> Result<Option<MacroDefinitionView<'a>>, ReadError> {
         let DefId::Local(def_ref) = def else {
             return Ok(None);
         };
@@ -165,25 +164,21 @@ impl<E: MacroDefinitionEnv> MacroDefinitionEnv for BuildResolutionEnv<'_, E> {
 }
 
 impl<E: CrateResolutionEnv> CrateResolutionEnv for BuildResolutionEnv<'_, E> {
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         if let Some(state) = self.active_crate(crate_ref) {
             return Ok(state.extern_prelude.resolve(name));
         }
         self.dependencies.extern_root(crate_ref, name)
     }
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         if let Some(state) = self.active_crate(crate_ref) {
             return Ok(state.prelude);
         }
         self.dependencies.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         if let Some(state) = self.active_crate(crate_ref) {
             return Ok(Some(ModuleRef::krate(crate_ref, state.root_module)));
         }
@@ -193,7 +188,7 @@ impl<E: CrateResolutionEnv> CrateResolutionEnv for BuildResolutionEnv<'_, E> {
 
 impl<E> ImportCollectionEnv for BuildResolutionEnv<'_, E>
 where
-    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>,
+    E: CrateResolutionEnv,
 {
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>> {
         let mut result = Vec::new();

@@ -9,6 +9,7 @@ use std::{collections::VecDeque, mem};
 use rg_ir_model::{
     CrateRef, DefId, ImportId, ImportRef, LocalDefRef, LocalEnumVariantRef, ModuleRef,
 };
+use rg_source::ReadError;
 use rg_text::Name;
 use rustc_hash::FxHashMap;
 
@@ -40,9 +41,7 @@ pub struct ModuleImportInput<'a> {
 /// The caller owns module metadata, item data, and access to frozen dependencies. The collector
 /// temporarily owns the mutable scope buffers and overlays them on these reads. Keeping that
 /// split lets the same algorithm serve an active crate or one body-local DefMap.
-pub trait ImportCollectionEnv:
-    CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
-{
+pub trait ImportCollectionEnv: CrateResolutionEnv {
     /// All modules with imports in this build, including those registered by an earlier call.
     fn import_modules(&self) -> Vec<ModuleImportInput<'_>>;
     fn import_data(&self, import: ImportRef) -> &ImportData;
@@ -392,7 +391,7 @@ impl ImportCollector {
         env: &E,
         old: Option<NameBinding>,
         incoming: NameBinding,
-    ) -> Result<NameBinding, E::Error> {
+    ) -> Result<NameBinding, ReadError> {
         old.map_or(Ok(incoming), |old| {
             old.select(incoming, |a, b| {
                 NameResolver::new(env).broadest_visibility(a, b)
@@ -596,18 +595,17 @@ struct ImportQueryEnv<'a, E> {
     env: &'a E,
 }
 impl<E: ImportCollectionEnv> NameResolutionEnv for ImportQueryEnv<'_, E> {
-    type Error = E::Error;
     fn module_metadata(
         &self,
         module: ModuleRef,
-    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+    ) -> Result<Option<ModuleResolutionView<'_>>, ReadError> {
         self.env.module_metadata(module)
     }
     fn module_scope_entry<'a>(
         &'a self,
         module: ModuleRef,
         name: &str,
-    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, ReadError> {
         match self.state.module_indices.get(&module) {
             Some(&index) => Ok(self.state.modules[index].scope.entry(name)),
             None => self.env.module_scope_entry(module, name),
@@ -616,36 +614,36 @@ impl<E: ImportCollectionEnv> NameResolutionEnv for ImportQueryEnv<'_, E> {
     fn module_scope_entries<'a>(
         &'a self,
         module: ModuleRef,
-    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, ReadError> {
         match self.state.module_indices.get(&module) {
             Some(&index) => Ok(self.state.modules[index].scope.entries().collect()),
             None => self.env.module_scope_entries(module),
         }
     }
-    fn local_def_data(&self, def: LocalDefRef) -> Result<Option<&LocalDefData>, Self::Error> {
+    fn local_def_data(&self, def: LocalDefRef) -> Result<Option<&LocalDefData>, ReadError> {
         self.env.local_def_data(def)
     }
     fn local_enum_variant_data(
         &self,
         def: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError> {
         self.env.local_enum_variant_data(def)
     }
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError> {
         self.env.local_enum_variant_entries_for_enum(def)
     }
 }
 impl<E: ImportCollectionEnv> CrateResolutionEnv for ImportQueryEnv<'_, E> {
-    fn extern_root(&self, krate: CrateRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, krate: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         self.env.extern_root(krate, name)
     }
-    fn prelude_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.env.prelude_module(krate)
     }
-    fn root_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.env.root_module(krate)
     }
 }

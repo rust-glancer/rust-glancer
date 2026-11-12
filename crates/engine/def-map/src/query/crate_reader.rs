@@ -6,23 +6,18 @@ use crate::{CrateData, DefMap, DefMapSource, ModuleOrigin};
 
 /// Acquisition boundary for sources that store one definition payload per configured target.
 pub trait CrateDataSource {
-    type Error;
-
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, Self::Error>;
+    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError>;
 }
 
 impl<S: CrateDataSource + ?Sized> CrateDataSource for &S {
-    type Error = S::Error;
-
-    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, Self::Error> {
+    fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         (**self).crate_data(krate)
     }
 }
 
 /// Definition access in a semantic operation. Local construction can use the same reader
 /// with its already completed declarations.
-pub type DefinitionReader<'db> =
-    CrateDefMapReader<&'db (dyn CrateDataSource<Error = ReadError> + Sync)>;
+pub type DefinitionReader<'db> = CrateDefMapReader<&'db (dyn CrateDataSource + Sync)>;
 
 /// Projects a target payload into the semantic definition queries used by features and builders.
 #[derive(Clone, Copy)]
@@ -35,11 +30,11 @@ impl<S> std::fmt::Debug for CrateDefMapReader<S> {
 }
 
 impl<S: CrateDataSource> CrateDefMapReader<S> {
-    pub fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, S::Error> {
+    pub fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         self.0.crate_data(krate)
     }
 
-    pub fn def_map(&self, krate: CrateRef) -> Result<Option<&DefMap>, S::Error> {
+    pub fn def_map(&self, krate: CrateRef) -> Result<Option<&DefMap>, ReadError> {
         Ok(self.crate_data(krate)?.map(CrateData::def_map))
     }
 
@@ -54,7 +49,7 @@ impl<S: CrateDataSource> CrateDefMapReader<S> {
         crate_ref: CrateRef,
         file: FileId,
         inline_module_path: &[T],
-    ) -> Result<Option<ModuleRef>, S::Error>
+    ) -> Result<Option<ModuleRef>, ReadError>
     where
         T: AsRef<str>,
     {
@@ -121,37 +116,35 @@ impl<S: CrateDataSource> CrateDefMapReader<S> {
 }
 
 impl<S: CrateDataSource> DefMapSource for CrateDefMapReader<S> {
-    type Error = S::Error;
-
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         let DefMapRef::Crate(krate) = origin else {
             return Ok(None);
         };
         self.def_map(krate)
     }
 
-    fn crate_is_proc_macro(&self, krate: CrateRef) -> Result<bool, Self::Error> {
+    fn crate_is_proc_macro(&self, krate: CrateRef) -> Result<bool, ReadError> {
         Ok(self
             .0
             .crate_data(krate)?
             .is_some_and(CrateData::is_proc_macro))
     }
 
-    fn target_pointer_width(&self, krate: CrateRef) -> Result<Option<u32>, Self::Error> {
+    fn target_pointer_width(&self, krate: CrateRef) -> Result<Option<u32>, ReadError> {
         Ok(self
             .0
             .crate_data(krate)?
             .and_then(CrateData::target_pointer_width))
     }
 
-    fn extern_root(&self, krate: CrateRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, krate: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         Ok(self
             .0
             .crate_data(krate)?
             .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
-    fn extern_roots(&self, krate: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+    fn extern_roots(&self, krate: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError> {
         Ok(self
             .0
             .crate_data(krate)?
@@ -164,21 +157,21 @@ impl<S: CrateDataSource> DefMapSource for CrateDefMapReader<S> {
             .unwrap_or_default())
     }
 
-    fn prelude_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         Ok(self.0.crate_data(krate)?.and_then(CrateData::prelude))
     }
 
     fn item_lookup_dependencies(
         &self,
         krate: CrateRef,
-    ) -> Result<rg_std::UniqueVec<CrateRef>, Self::Error> {
+    ) -> Result<rg_std::UniqueVec<CrateRef>, ReadError> {
         Ok(self
             .crate_data(krate)?
             .map(CrateData::item_lookup_dependencies)
             .unwrap_or_default())
     }
 
-    fn root_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, krate: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         Ok(self
             .0
             .crate_data(krate)?

@@ -16,8 +16,8 @@ use crate::body::{BodyPath, PatKind, RecordPatField};
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     /// Pass each signature type through its parameter pattern before the body reads its bindings.
     /// Even a pattern with one binding can change the type: `&value: &u8` binds `value: u8`.

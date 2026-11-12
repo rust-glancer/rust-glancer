@@ -10,7 +10,6 @@ mod lower;
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::BodyRef;
-use rg_source::ReadError;
 
 pub(crate) use self::lower::LocalItemLowering;
 use self::{def_map::LocalDefMapCollector, item_store::LocalItemStoreCollector};
@@ -48,7 +47,7 @@ impl<'a> LocalItemSource<'a> {
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<BodyLocalItems>
     where
-        S: DefMapSource<Error = ReadError> + Copy,
+        S: DefMapSource + Copy,
     {
         let def_map = LocalDefMapCollector::new(origin, self)
             .collect(cancellation)

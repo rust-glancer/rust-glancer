@@ -38,6 +38,7 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefId,
 };
 use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 
 use crate::{
     AdtTy, Clause, TraitApplication, Ty, TyContext,
@@ -89,7 +90,7 @@ pub struct AssociatedItemQuery<'query, D, I, R = ItemPathQuery<'query, D, I>> {
 impl<'query, D, I> AssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
+    I: SemanticItemSource<'query> + Clone,
 {
     pub fn new(context: TyContext<'query, D, I>) -> Self {
         let impls = ImplQuery::new(context.clone());
@@ -100,8 +101,8 @@ where
 impl<'query, D, I, R> AssociatedItemQuery<'query, D, I, R>
 where
     D: DefMapSource + Clone,
-    I: SemanticItemSource<'query, Error = D::Error> + Clone,
-    R: SolverScope<Error = D::Error>,
+    I: SemanticItemSource<'query> + Clone,
+    R: SolverScope,
 {
     pub fn with_resolver(context: TyContext<'query, D, I>, resolver: R) -> Self {
         let impls = ImplQuery::with_resolver(context.clone(), resolver);
@@ -116,13 +117,12 @@ where
     pub fn candidates_for_ty(
         &self,
         receiver_ty: &Ty,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, rg_std::OperationError<D::Error>> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let traits = self.context.item_lookup().traits_with_associated_items()?;
         let matches = self
             .impls
             .matches_for_receiver_with_traits(receiver_ty, traits)?;
         self.candidates_for_matches(receiver_ty, &matches)
-            .map_err(rg_std::OperationError::Source)
     }
 
     /// Expand already-matched impls into stable associated-item declarations.
@@ -133,7 +133,7 @@ where
         &self,
         receiver_ty: &Ty,
         matches: &ReceiverImplMatches,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let mut candidates = Vec::new();
 
         for nominal_ty in receiver_ty.as_adts() {
@@ -203,7 +203,7 @@ where
         &self,
         applications: impl IntoIterator<Item = TraitApplication>,
         applicability: TraitApplicability,
-    ) -> Result<Vec<AssociatedItemCandidateRef>, D::Error> {
+    ) -> Result<Vec<AssociatedItemCandidateRef>, ReadError> {
         let mut candidates = Vec::new();
         for application in applications {
             if self.context.cancellation().is_cancelled() {
@@ -224,7 +224,7 @@ where
         &self,
         candidates: &mut Vec<AssociatedItemCandidateRef>,
         receiver_ty: &AdtTy,
-    ) -> Result<(), D::Error> {
+    ) -> Result<(), ReadError> {
         let TypeDefId::Enum(enum_id) = receiver_ty.def.id else {
             return Ok(());
         };
@@ -260,7 +260,7 @@ where
         trait_ref: TraitDefRef,
         applicability: TraitApplicability,
         lineage: &mut Vec<TraitDefRef>,
-    ) -> Result<(), D::Error> {
+    ) -> Result<(), ReadError> {
         if lineage.contains(&trait_ref) {
             return Ok(());
         }

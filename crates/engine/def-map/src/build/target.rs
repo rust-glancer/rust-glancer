@@ -56,7 +56,7 @@ impl CrateData {
     pub fn build_target(
         db: &rg_source::QueryContext<'_>,
         krate: CrateRef,
-        dependencies: &(impl CrateResolutionEnv<Error = rg_source::ReadError> + MacroDefinitionEnv),
+        dependencies: &(impl CrateResolutionEnv + MacroDefinitionEnv),
     ) -> ajika::Result<(CrateBuildOutput, ItemTrees, TargetFileManifest)> {
         let build = || -> anyhow::Result<_> {
             let config = TargetInput::at(krate);

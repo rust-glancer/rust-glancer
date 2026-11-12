@@ -82,8 +82,6 @@ impl DefMapDb {
 }
 
 impl CrateDataSource for DefMapDb {
-    type Error = ReadError;
-
     fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         Ok(self
             .package(krate.package)

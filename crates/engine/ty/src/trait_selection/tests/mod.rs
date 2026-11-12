@@ -8,6 +8,7 @@ mod utils;
 use std::fmt::Write as _;
 
 use expect_test::expect;
+use rg_source::ReadError;
 
 use self::utils::*;
 use crate::{AdtTy, AliasTy, GenericArg, Ty, TyContext, lookup::ImplQuery};
@@ -1108,13 +1109,11 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
         cache: solver::DeclarationCache,
     }
     impl TypePathResolver for CachedScope<'_> {
-        type Error = std::convert::Infallible;
-
         fn resolve_type_path(
             &self,
             anchor: TypeLoweringAnchor,
             path: &Path,
-        ) -> Result<rg_semantic_ir::TypePathResolution, Self::Error> {
+        ) -> Result<rg_semantic_ir::TypePathResolution, ReadError> {
             TypePathResolver::resolve_type_path(&self.paths, anchor, path)
         }
     }

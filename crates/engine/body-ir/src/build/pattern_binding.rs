@@ -40,8 +40,8 @@ pub(crate) struct PatternBindingQuery<'query, D, I> {
 
 impl<'query, D, I> PatternBindingQuery<'query, D, I>
 where
-    for<'source> &'source D: DefMapSource<Error = ReadError>,
-    for<'source> &'source I: SemanticItemSource<'source, Error = ReadError>,
+    for<'source> &'source D: DefMapSource,
+    for<'source> &'source I: SemanticItemSource<'source>,
 {
     pub(crate) fn new(
         def_maps: &'query D,

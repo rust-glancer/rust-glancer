@@ -4,6 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{GenericParamSource, Generics, SemanticItemSource};
+use rg_source::ReadError;
 use rg_text::Name;
 use rustc_type_ir::{self as ir, inherent::IntoKind};
 
@@ -18,8 +19,8 @@ use crate::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     /// Lower written positional arguments against one definition's canonical parameter order.
     ///
@@ -35,7 +36,7 @@ where
         generics: &Generics<'_>,
         syntax_args: &[ItemGenericArg],
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<GenericArgs<'s>, D::Error> {
+    ) -> Result<GenericArgs<'s>, ReadError> {
         let mut parent_seed = Substitution::new();
         for param in generics.iter().take(generics.parent_len()) {
             if let Some(arg) = self.subst.get(param.param()) {
@@ -58,7 +59,7 @@ where
         seed: &Substitution<'s>,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<GenericArgs<'s>, D::Error> {
+    ) -> Result<GenericArgs<'s>, ReadError> {
         let positional = syntax_args
             .iter()
             .filter(|arg| {
@@ -204,7 +205,7 @@ where
         owner: GenericDefRef,
         ty: &TypeRef,
         subst: &Substitution<'s>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         let Some(context) = self
             .item_paths
             .items()
@@ -230,7 +231,7 @@ where
         text: &str,
         ty: Ty<'s>,
         subst: &Substitution<'s>,
-    ) -> Result<Const<'s>, D::Error> {
+    ) -> Result<Const<'s>, ReadError> {
         let Some(context) = self
             .item_paths
             .items()
@@ -250,7 +251,7 @@ where
         result
     }
 
-    pub(crate) fn lower_lifetime(&self, name: &Name) -> Result<Region<'s>, D::Error> {
+    pub(crate) fn lower_lifetime(&self, name: &Name) -> Result<Region<'s>, ReadError> {
         if name.as_str() == "'static" {
             return Ok(Region(ir::ReStatic));
         }
@@ -274,7 +275,7 @@ where
         &self,
         text: Option<&str>,
         ty: Ty<'s>,
-    ) -> Result<Const<'s>, D::Error> {
+    ) -> Result<Const<'s>, ReadError> {
         let Some(text) = text else {
             return Ok(self.cx.lower_const(ConstValue::Unknown, &[]));
         };

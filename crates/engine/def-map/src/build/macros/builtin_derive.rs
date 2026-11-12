@@ -40,8 +40,7 @@ impl BuiltinDeriveExpansion {
         package: &ItemTrees,
     ) -> anyhow::Result<Vec<Self>>
     where
-        E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
-            + MacroDefinitionEnv,
+        E: CrateResolutionEnv + MacroDefinitionEnv,
     {
         let mut expansions = Vec::new();
         let cfg = state.cfg_evaluator();
@@ -149,8 +148,7 @@ impl BuiltinDeriveExpansion {
         path: &Path,
     ) -> anyhow::Result<Option<(BuiltinDeriveKind, CrateRef)>>
     where
-        E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>
-            + MacroDefinitionEnv,
+        E: CrateResolutionEnv + MacroDefinitionEnv,
     {
         let resolver = NameResolver::new(env);
         let binding = if let Some(name) = path.relative_single_name() {

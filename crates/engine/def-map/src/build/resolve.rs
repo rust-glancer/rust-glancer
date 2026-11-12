@@ -44,7 +44,7 @@ const MAX_REPORTED_MACRO_GROUPS: usize = 64;
 /// Dependencies are frozen before this lookup, so their edition-prelude paths already have
 /// their final module structure. `std` and `core` first look for their own local prelude.
 pub(crate) fn select_prelude(
-    env: &impl CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>,
+    env: &impl CrateResolutionEnv,
     state: &CrateBuilder,
     origin: &PackageOrigin,
 ) -> anyhow::Result<Option<ModuleRef>> {
@@ -84,7 +84,7 @@ pub(super) fn resolve_crate<E>(
     state: &mut CrateBuilder,
 ) -> anyhow::Result<()>
 where
-    E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static> + MacroDefinitionEnv,
+    E: CrateResolutionEnv + MacroDefinitionEnv,
 {
     metric::MACRO_RECURSION_LIMIT.record_count(MAX_MACRO_EXPANSION_DEPTH);
 
@@ -248,7 +248,7 @@ where
 /// Only modules with imports need to move: other modules can supply names through the environment
 /// without receiving imported bindings. While these buffers are out, the collector overlays them
 /// on environment reads. Return both scopes and reports before the next macro batch can use them.
-fn collect_imports<E: CrateResolutionEnv<Error: std::error::Error + Send + Sync + 'static>>(
+fn collect_imports<E: CrateResolutionEnv>(
     dependencies: &E,
     state: &mut CrateBuilder,
     import_collector: &mut ImportCollector,

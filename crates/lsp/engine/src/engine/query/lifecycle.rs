@@ -578,9 +578,11 @@ mod tests {
                     let token = control.token();
                     token.cancel();
                     let error = if source_failed {
-                        rg_std::OperationError::Source(std::io::Error::other("source read failed"))
+                        rg_source::ReadError::Query(ajika::Error::application(
+                            std::io::Error::other("source read failed"),
+                        ))
                     } else {
-                        rg_std::OperationError::Cancelled(
+                        rg_source::ReadError::Cancelled(
                             rg_std::Cancelable::check_cancelled(&token, "test scan")
                                 .expect_err("request was cancelled"),
                         )

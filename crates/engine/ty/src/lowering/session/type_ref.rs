@@ -4,6 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericParamRef, OpaqueTyId, OpaqueTyRef, TypeParamRef};
 use rg_item_tree::{ConstExpr, TypeBound, TypeRef};
 use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_source::ReadError;
 use rustc_type_ir as ir;
 
 use super::{ImplTraitMode, MAX_TYPE_LOWERING_DEPTH, TypeLoweringSession, TypePathResolver};
@@ -15,11 +16,11 @@ use crate::{
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     /// Lower a source type, treating `impl Trait` as an opaque type occurrence.
-    pub fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty<'s>, D::Error> {
+    pub fn lower_type_ref(&mut self, ty: &TypeRef) -> Result<Ty<'s>, ReadError> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, None)
     }
 
@@ -29,7 +30,7 @@ where
         &mut self,
         ty: &TypeRef,
         table: &InferenceTable<'s>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Opaque, Some(table))
     }
 
@@ -37,7 +38,7 @@ where
     ///
     /// `fn visit(value: impl Display)` is generic over a hidden function parameter constrained by
     /// `Display`; it is not the opaque return type produced by `fn make() -> impl Display`.
-    pub(crate) fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty<'s>, D::Error> {
+    pub(crate) fn lower_parameter_type(&mut self, ty: &TypeRef) -> Result<Ty<'s>, ReadError> {
         self.lower_type_ref_with_mode(ty, ImplTraitMode::Argument, None)
     }
 
@@ -46,7 +47,7 @@ where
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         if self.type_ref_depth >= MAX_TYPE_LOWERING_DEPTH {
             self.report_limit("type_ref_depth", Some(MAX_TYPE_LOWERING_DEPTH));
             return Ok(self.cx.unknown());
@@ -63,7 +64,7 @@ where
         ty: &TypeRef,
         impl_trait_mode: ImplTraitMode,
         inference: Option<&InferenceTable<'s>>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         match ty {
             TypeRef::Unknown(_) => Ok(self.cx.unknown()),
             TypeRef::DynTrait(bounds) => {
@@ -229,7 +230,7 @@ where
     }
 
     /// Match the next parameter-position `impl Trait` syntax node to its precomputed parameter ref.
-    fn next_argument_impl_trait_param(&mut self) -> Result<Option<TypeParamRef>, D::Error> {
+    fn next_argument_impl_trait_param(&mut self) -> Result<Option<TypeParamRef>, ReadError> {
         let index = if let Some((_, index)) = self
             .argument_impl_trait_indices
             .iter_mut()
