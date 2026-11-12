@@ -9,7 +9,6 @@ use rg_ir_model::{CrateRef, FileId};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex};
 
 use super::ProjectSnapshot;
-use crate::selection::subset;
 
 /// Exact saved text can reuse saved Body IR. Changed text needs request-local syntax and bodies.
 #[derive(Debug)]
@@ -107,14 +106,9 @@ impl<'a> ProjectSnapshot<'a> {
         (crate_ref, file): (CrateRef, FileId),
         current_source_view: CurrentSourceView,
         selection: CurrentSourceSelection,
-        cancellation: rg_std::CancellationToken,
         checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<(Analysis<'a>, CurrentSourceBuildSummary)> {
-        let subset = subset::crates_with_visible_dependencies(self.state.workspace(), &[crate_ref]);
-        let txn = self
-            .state
-            .read_txn_for_subset(&subset, cancellation.clone())?;
-        let view_db = txn.view_db();
+        let view_db = self.view_db();
         let package = self
             .state
             .parse_db()
@@ -138,7 +132,7 @@ impl<'a> ProjectSnapshot<'a> {
             )
             .context("prepare current-source target")?;
         let analysis = Analysis::new(
-            view_db.clone().with_current_source(current),
+            view_db.with_current_source(current),
             SavedSourceView::new(self.state.parse_db()),
         )
         .with_current_source(current_source_view);

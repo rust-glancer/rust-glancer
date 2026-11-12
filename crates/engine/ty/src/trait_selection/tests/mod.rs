@@ -104,13 +104,7 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
             .expect("fixture should contain Target")]
     );
 
-    let context = TyContext::new(
-        &fixture,
-        &fixture,
-        lookup,
-        fixture.target,
-        rg_std::CancellationToken::new(),
-    );
+    let context = TyContext::new(&fixture, &fixture, lookup, rg_std::CancellationToken::new());
     let impl_query = ImplQuery::new(context);
     let receiver_ty = Ty::adt(AdtTy {
         def: fixture
@@ -830,7 +824,6 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -968,7 +961,6 @@ fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usab
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -1040,7 +1032,6 @@ fn successful_probe_keeps_its_type_evidence_independent() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -1075,7 +1066,6 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
@@ -1154,7 +1144,6 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        fixture.target,
         rg_std::CancellationToken::new(),
     );
     let signatures = SemanticSignatureQuery::new(&fixture, &fixture);

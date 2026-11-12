@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, GenericDefRef, ItemOwner, TraitDefRef};
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{GenericParamSource, ItemStoreSource};
+use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_source::ReadError;
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
 use crate::resolution::BodyResolutionContext;
@@ -14,18 +14,15 @@ pub(crate) struct BodyGenericsQuery<'query, D, I> {
 
 impl<'query, D, I> BodyGenericsQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
     /// Bind a concrete ADT's full argument list to the type definition's semantic parameters.
-    pub(crate) fn subst_for_nominal_ty(
-        &self,
-        ty: &AdtTy,
-    ) -> Result<Substitution, PackageStoreError> {
+    pub(crate) fn subst_for_nominal_ty(&self, ty: &AdtTy) -> Result<Substitution, ReadError> {
         let generics = self
             .context
             .item_paths()
@@ -35,10 +32,7 @@ where
     }
 
     /// Fill every canonical generic slot when a type-only prefix omitted its arguments.
-    pub(crate) fn complete_omitted_nominal_args(
-        &self,
-        ty: &AdtTy,
-    ) -> Result<AdtTy, PackageStoreError> {
+    pub(crate) fn complete_omitted_nominal_args(&self, ty: &AdtTy) -> Result<AdtTy, ReadError> {
         if !ty.args.is_empty() {
             return Ok(ty.clone());
         }
@@ -69,7 +63,7 @@ where
         owner: ItemOwner,
         receiver_ty: &Ty,
         impl_subst: Option<&Substitution>,
-    ) -> Result<Substitution, PackageStoreError> {
+    ) -> Result<Substitution, ReadError> {
         let mut subst = match receiver_ty {
             Ty::Adt(receiver_ty) => self.subst_for_nominal_ty(receiver_ty)?,
             _ => Substitution::new(),
@@ -108,7 +102,7 @@ where
     pub(crate) fn subst_for_trait_application(
         &self,
         application: &TraitApplication,
-    ) -> Result<Substitution, PackageStoreError> {
+    ) -> Result<Substitution, ReadError> {
         let generics = self
             .context
             .item_paths()

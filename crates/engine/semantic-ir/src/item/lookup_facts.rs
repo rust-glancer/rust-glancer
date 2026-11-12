@@ -4,14 +4,14 @@
 //! declarations or dependencies change. These small facts are saved with the crate's lookup index
 //! so later queries can borrow them without walking the dependency graph again.
 
-use rg_def_map::DefMapSource;
 use rg_ir_model::{CrateRef, DefMapRef, SemanticItemRef};
 use rg_item_tree::LangItem;
-use rg_std::{CancellationToken, MemorySize, OperationError, Shrink, UniqueVec};
+use rg_source::ReadError;
+use rg_std::{MemorySize, OperationError, Shrink, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{lang_item::VisibleLangItems, query::ItemStoreSource};
-use crate::CrateItemQuery;
+use super::lang_item::VisibleLangItems;
+use crate::{ItemReader, ItemStore};
 
 /// Saved lookup choices for one crate, including its visible dependencies.
 ///
@@ -27,35 +27,44 @@ pub struct ItemLookupFacts {
 }
 
 impl ItemLookupFacts {
-    /// Record DefMap's item-lookup order and select language items from those crates' declarations.
-    pub fn build<'item, D, I>(
-        crate_items: &CrateItemQuery<'item, D, I>,
-        cancellation: &CancellationToken,
-    ) -> Result<Self, OperationError<I::Error>>
-    where
-        D: DefMapSource<Error = I::Error>,
-        I: ItemStoreSource<'item>,
-    {
-        let stores = crate_items
-            .visible_stores()
-            .map_err(OperationError::Source)?;
+    /// Select language items in DefMap's lookup order, using the local store before it is published.
+    pub fn build(
+        crates: UniqueVec<CrateRef>,
+        local: &ItemStore,
+        dependencies: ItemReader<'_>,
+        mut check_cancelled: impl FnMut() -> Result<(), OperationError<ReadError>>,
+    ) -> Result<Self, OperationError<ReadError>> {
+        let mut visible_crates = UniqueVec::new();
         let mut lang_items = VisibleLangItems::default();
 
         // The first crate that declares a language item wins. For example, a local
         // #[lang = "deref"] takes precedence over the dependency's Deref trait. If that first
         // crate has duplicate declarations, keep the ambiguity instead of falling through to
         // a dependency and silently selecting a different trait.
-        for store in &stores {
-            rg_std::check_cancel!(cancellation, "visible language items");
-            let origin = DefMapRef::Crate(store.crate_ref());
+        for krate in crates {
+            check_cancelled()?;
+            // A dependency's signatures can change while its language-item identities stay equal.
+            // Reading only this output keeps those edits out of the declaration's dependencies.
+            let index = if krate == local.crate_ref() {
+                local.lang_items()
+            } else {
+                let Some(index) = dependencies
+                    .lang_items(krate)
+                    .map_err(OperationError::Source)?
+                else {
+                    continue;
+                };
+                index
+            };
+            visible_crates.push(krate);
+            let origin = DefMapRef::Crate(krate);
             for lang_item in LangItem::ALL {
-                lang_items
-                    .merge_prefer_existing(lang_item, store.lang_items().target(lang_item, origin));
+                lang_items.merge_prefer_existing(lang_item, index.target(lang_item, origin));
             }
         }
 
         Ok(Self {
-            visible_crates: stores.iter().map(|store| store.crate_ref()).collect(),
+            visible_crates,
             lang_items,
         })
     }

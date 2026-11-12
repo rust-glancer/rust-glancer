@@ -1,14 +1,11 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use rg_ir_model::{FileId, PackageSlot};
 use rg_parse::ParseDb;
 use rg_workspace::{SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, PackageResidencyPolicy, Project, SavedFileChange};
+use crate::{AnalysisChangeSummary, Project, SavedFileChange};
 
 /// Materialized project fixture sources plus marker metadata.
 pub struct ProjectSourceFixture {
@@ -58,15 +55,7 @@ impl ProjectSourceFixture {
     }
 
     pub fn build_project(&self) -> Project {
-        self.build_project_with_package_residency_policy(PackageResidencyPolicy::default())
-    }
-
-    pub fn build_project_with_package_residency_policy(
-        &self,
-        package_residency_policy: PackageResidencyPolicy,
-    ) -> Project {
         Project::builder(self.workspace_metadata())
-            .package_residency_policy(package_residency_policy)
             .build()
             .expect("analysis project should build")
     }
@@ -92,15 +81,8 @@ pub struct ProjectFixture {
 
 impl ProjectFixture {
     pub fn build(spec: &str) -> Self {
-        Self::build_with_package_residency_policy(spec, PackageResidencyPolicy::default())
-    }
-
-    pub fn build_with_package_residency_policy(
-        spec: &str,
-        package_residency_policy: PackageResidencyPolicy,
-    ) -> Self {
         let source = ProjectSourceFixture::build(spec);
-        let project = source.build_project_with_package_residency_policy(package_residency_policy);
+        let project = source.build_project();
         Self { source, project }
     }
 
@@ -146,47 +128,6 @@ impl ProjectFixture {
             .expect("fixture save changes should apply as one source generation")
     }
 
-    pub fn corrupt_package_cache_artifact(&self, package_name: &str) {
-        let path = self.package_cache_artifact_path(package_name);
-
-        fs::write(&path, b"not a package cache artifact").unwrap_or_else(|error| {
-            panic!(
-                "fixture package cache artifact {} should be writable: {error}",
-                path.display(),
-            )
-        });
-    }
-
-    pub fn remove_package_cache_artifact(&self, package_name: &str) {
-        let path = self.package_cache_artifact_path(package_name);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!(
-                "fixture package cache artifact {} should be removable: {error}",
-                path.display(),
-            ),
-        }
-    }
-
-    pub fn package_cache_artifact_exists(&self, package_name: &str) -> bool {
-        self.package_cache_artifact_path(package_name).exists()
-    }
-
-    pub(crate) fn package_cache_artifact_path(&self, package_name: &str) -> PathBuf {
-        let package = self.package_slot_by_name(package_name);
-        let header = self
-            .project
-            .state
-            .cache_plan
-            .artifact_header(package, &self.project.state.package_source_fingerprints)
-            .expect("fixture package should have a cache artifact header");
-        self.project
-            .state
-            .cache_store
-            .package_artifact_path(&header.package)
-    }
-
     pub fn file_id_for_path_in(parse: &ParseDb, path: &Path) -> FileId {
         let canonical_path = path
             .canonicalize()
@@ -210,5 +151,15 @@ impl ProjectFixture {
                 (package.package_name() == package_name).then_some(PackageSlot(idx))
             })
             .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
+    }
+}
+
+impl Project {
+    /// Keep fixture observations inside the same operation used by application requests.
+    pub(crate) fn inspect<R>(&self, observe: impl FnOnce(crate::ProjectSnapshot<'_>) -> R) -> R {
+        self.with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
+            Ok(observe(snapshot))
+        })
+        .expect("fixture query operation should succeed")
     }
 }

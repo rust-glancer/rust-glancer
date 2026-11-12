@@ -1,21 +1,24 @@
 mod builtin_derives;
+mod item_reads;
 mod trait_impl_lookup;
 mod utils;
 
 use std::fmt::Write as _;
 
 use expect_test::expect;
-use rg_ir_model::PackageSlot;
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_std::UniqueVec;
+use rg_workspace::TargetKind;
 
 use self::utils::{
     SemanticQuery, check_project_semantic_ir, check_project_semantic_queries,
     check_project_semantic_queries_with_sysroot,
 };
+use crate::{CrateItemSource as _, testonly::SemanticIrFixture};
 
 #[test]
 fn indexed_lookup_facts_keep_language_items_per_use_site() {
-    let fixture = crate::testonly::SemanticIrFixture::build(
+    let mut fixture = SemanticIrFixture::build(
         r#"
 //- /dep/src/lib.rs crate:dep root:dep
 #[lang = "deref"]
@@ -32,43 +35,38 @@ trait BinaryDeref {}
 fn main() {}
 "#,
     );
-    let [library, dependency, binary] = [
-        ("app", rg_workspace::TargetKind::Lib),
-        ("dep", rg_workspace::TargetKind::Lib),
-        ("app", rg_workspace::TargetKind::Bin),
-    ]
-    .map(|(package, kind)| fixture.def_map_fixture().crate_ref(package, kind));
-    let items = fixture
-        .semantic_ir_db()
-        .read_txn(crate::SemanticIrLoader::resident_only(
-            "language-item fixture",
-        ));
-    let cache = crate::ItemLookupQueryCache::new();
-    let cancellation = rg_std::CancellationToken::new();
+    fixture.inspect(|view| {
+        let [library, dependency, binary] = [
+            ("app", TargetKind::Lib),
+            ("dep", TargetKind::Lib),
+            ("app", TargetKind::Bin),
+        ]
+        .map(|(package, kind)| view.crate_ref(package, kind));
+        let items = view.items();
+        let cache = crate::ItemLookupQueryCache::new();
+        let cancellation = rg_std::CancellationToken::new();
 
-    // Each target's local language item wins over dependencies. Interleaving repeated queries
-    // also checks that sharing the query cache does not mix library and binary choices.
-    for use_site in [library, dependency, binary, binary, dependency, library] {
-        let expected = fixture
-            .resident_crate_ir(use_site)
-            .expect("target store exists")
-            .traits_with_refs()
-            .next()
-            .expect("target declares its language item")
-            .0;
-        let query = crate::ItemLookupQuery::build_with_cache(
-            &crate::ItemStoreQuery::new(&items),
-            use_site,
-            &cache,
-            &cancellation,
-        )
-        .expect("target lookup succeeds");
-        assert_eq!(
-            query.lang_trait(rg_item_tree::LangItem::Deref),
-            Some(expected),
-            "wrong language item for {use_site:?}",
-        );
-    }
+        // Each target's local language item wins over dependencies. Interleaving repeated queries
+        // also checks that sharing the query cache does not mix library and binary choices.
+        for use_site in [library, dependency, binary, binary, dependency, library] {
+            let expected = view
+                .all_items(DefMapRef::Crate(use_site))
+                .iter()
+                .find_map(|item| match item.item() {
+                    SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+                    _ => None,
+                })
+                .expect("target declares its language item");
+            let query =
+                crate::ItemLookupQuery::build_with_cache(items, use_site, &cache, &cancellation)
+                    .expect("target lookup succeeds");
+            assert_eq!(
+                query.lang_trait(rg_item_tree::LangItem::Deref),
+                Some(expected),
+                "wrong language item for {use_site:?}",
+            );
+        }
+    });
 }
 
 #[test]
@@ -112,161 +110,151 @@ pub struct Library;
 {test_sources}
 "#,
         );
-        let fixture = crate::testonly::SemanticIrFixture::build(&fixture_source);
-        let dep = fixture
-            .def_map_fixture()
-            .crate_ref("dep", rg_workspace::TargetKind::Lib);
-        let shared_trait = fixture
-            .resident_crate_ir(dep)
-            .expect("dependency semantic store should exist")
-            .traits_with_refs()
-            .next()
-            .expect("dependency should declare one trait")
-            .0;
-        let shared_type = fixture
-            .resident_crate_ir(dep)
-            .expect("dependency semantic store should exist")
-            .semantic_items()
-            .find_map(|item| {
-                (item.name()?.as_str() == "SharedType")
-                    .then(|| item.type_def())
-                    .flatten()
-            })
-            .expect("dependency should declare SharedType");
-        let (app_package_idx, app_package) = fixture
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .find(|(_, package)| package.package_name() == "app")
-            .expect("app parse package should exist");
-        let test_crates = app_package
-            .targets()
-            .iter()
-            .filter(|target| target.kind == rg_workspace::TargetKind::Test)
-            .map(|target| rg_ir_model::CrateRef {
-                package: PackageSlot(app_package_idx),
-                crate_id: rg_ir_model::CrateId(target.id.0),
-            })
-            .collect::<Vec<_>>();
+        let mut fixture = SemanticIrFixture::build(&fixture_source);
+        fixture.inspect(|view| {
+            let dep = view.crate_ref("dep", TargetKind::Lib);
+            let dependency_items = view.all_items(DefMapRef::Crate(dep));
+            let shared_trait = dependency_items.iter().find_map(|item| match item.item() {
+                SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+                _ => None,
+            }).expect("dependency should declare one trait");
+            let shared_type = dependency_items.iter().find_map(|item| {
+                (item.name()?.as_str() == "SharedType").then(|| item.type_def()).flatten()
+            }).expect("dependency should declare SharedType");
+            let app = view.package_slot_by_name("app");
+            let test_crates = view.parse_db().packages()[app.0]
+                .targets()
+                .iter()
+                .filter(|target| target.kind == TargetKind::Test)
+                .map(|target| CrateRef {
+                    package: app,
+                    crate_id: CrateId(target.id.0),
+                })
+                .collect::<Vec<_>>();
 
-        let def_maps = fixture
-            .def_map_db()
-            .read_txn(rg_def_map::DefMapLoader::resident_only(
-                "resident fanout fixture",
-            ));
-        let items = fixture
-            .semantic_ir_db()
-            .read_txn(crate::SemanticIrLoader::resident_only(
-                "resident fanout fixture",
-            ));
-        let cache = crate::ItemLookupQueryCache::new();
-        let dependency_sets = test_crates
-            .iter()
-            .map(|&use_site| {
-                crate::CrateItemQuery::new(&def_maps, &items, use_site)
-                    .visible_stores()
-                    .expect("test target visible stores should load")
-                    .into_iter()
-                    .map(crate::ItemStore::crate_ref)
-                    .filter(|&crate_ref| crate_ref != use_site)
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        let local_types = test_crates
-            .iter()
-            .map(|&use_site| {
-                items
-                    .items(use_site)
-                    .expect("test target semantic package should load")
-                    .expect("test target semantic store should exist")
-                    .semantic_items()
-                    .find_map(|item| {
-                        let name = item.name()?;
-                        if !name.as_str().starts_with("Local") {
-                            return None;
-                        }
-                        item.type_def()
-                    })
-                    .expect("test target should declare its local receiver type")
-            })
-            .collect::<Vec<_>>();
-        let queries = test_crates
-            .iter()
-            .map(|&use_site| {
-                crate::ItemLookupQuery::build_with_cache(
-                    &crate::ItemStoreQuery::new(&items),
-                    use_site,
-                    &cache,
-                    &rg_std::CancellationToken::new(),
-                )
-                .expect("test target lookup query should build")
-            })
-            .collect::<Vec<_>>();
-        for query in &queries {
-            let candidates = query
-                .trait_impl_candidates_for_self_head(
-                    shared_trait,
-                    Some(crate::TraitImplSelfHead::Adt(shared_type)),
-                )
-                .expect("candidate lookup succeeds")
-                .expect("shared dependency trait should be visible from every test target");
-            let candidate = candidates
-                .as_one()
-                .expect("SharedType should have one direct dependency impl");
-            assert_eq!(candidate.impl_ref.origin.as_crate_ref(), Some(dep));
-        }
-
-        let cache_stats = cache.stats();
-        let distinct_dependency_sets = dependency_sets.iter().cloned().collect::<UniqueVec<_>>();
-        let distinct_dependency_count = distinct_dependency_sets.len();
-        assert_eq!(
-            cache_stats.dependency_cache_constructions, distinct_dependency_count,
-            "target_count={target_count}, cache_stats={cache_stats:?}, dependency_sets={dependency_sets:?}",
-        );
-        assert_eq!(
-            cache_stats.dependency_cache_reuses,
-            target_count - distinct_dependency_count,
-            "each ordered dependency set should construct only one shared result cache",
-        );
-        assert_eq!(
-            cache_stats.dependency_result_misses,
-            distinct_dependency_count
-        );
-        assert_eq!(
-            cache_stats.dependency_result_hits,
-            target_count - distinct_dependency_count,
-        );
-        assert!(
-            distinct_dependency_count <= 2,
-            "dependency cache count should stay bounded as sibling test targets grow",
-        );
-
-        // Each query must still add only its own local overlay after sharing dependency results.
-        // Looking up one target's receiver from a sibling query must not reuse that local impl.
-        for ((query, use_site), local_type) in queries.iter().zip(&test_crates).zip(&local_types) {
-            let local_impls = query
-                .trait_impls_for_type(*local_type)
-                .expect("candidate lookup succeeds");
-            let local_impl = local_impls
-                .as_one()
-                .expect("each test target should find exactly its own local trait impl");
-            assert_eq!(local_impl.trait_ref, shared_trait);
-            assert_eq!(local_impl.impl_ref.origin.as_crate_ref(), Some(*use_site));
-        }
-        if queries.len() > 1 {
-            assert!(
-                queries[1]
-                    .trait_impls_for_type(local_types[0])
+            let items = view.items();
+            let cache = crate::ItemLookupQueryCache::new();
+            let dependency_sets = test_crates
+                .iter()
+                .map(|&use_site| {
+                    items
+                        .lookup_index(use_site)
+                        .expect("test target lookup index should load")
+                        .expect("test target lookup index should exist")
+                        .lookup_facts()
+                        .visible_crates()
+                        .iter()
+                        .copied()
+                        .filter(|&crate_ref| crate_ref != use_site)
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let local_types = test_crates
+                .iter()
+                .map(|&use_site| {
+                    items
+                        .all_items(DefMapRef::Crate(use_site))
+                        .expect("test target items should load")
+                        .into_iter()
+                        .find_map(|item| {
+                            let name = item.name()?;
+                            if !name.as_str().starts_with("Local") {
+                                return None;
+                            }
+                            item.type_def()
+                        })
+                        .expect("test target should declare its local receiver type")
+                })
+                .collect::<Vec<_>>();
+            let queries = test_crates
+                .iter()
+                .map(|&use_site| {
+                    crate::ItemLookupQuery::build_with_cache(
+                        items,
+                        use_site,
+                        &cache,
+                        &rg_std::CancellationToken::new(),
+                    )
+                    .expect("test target lookup query should build")
+                })
+                .collect::<Vec<_>>();
+            for query in &queries {
+                let candidates = query
+                    .trait_impl_candidates_for_self_head(
+                        shared_trait,
+                        Some(crate::TraitImplSelfHead::Adt(shared_type)),
+                    )
                     .expect("candidate lookup succeeds")
-                    .is_empty(),
-                "a shared dependency cache must not expose another target's local impl",
-            );
-        }
+                    .expect("shared dependency trait should be visible from every test target");
+                let candidate = candidates
+                    .as_one()
+                    .expect("SharedType should have one direct dependency impl");
+                assert_eq!(candidate.impl_ref.origin.as_crate_ref(), Some(dep));
+            }
 
-        let semantic_stats = fixture.semantic_ir_db().stats();
-        assert_eq!(semantic_stats.lookup_index_count, target_count + 2);
-        retained_entries.push(semantic_stats.lookup_index_entry_count);
+            let cache_stats = cache.stats();
+            let distinct_dependency_sets = dependency_sets.iter().cloned().collect::<UniqueVec<_>>();
+            let distinct_dependency_count = distinct_dependency_sets.len();
+            assert_eq!(
+                cache_stats.dependency_cache_constructions, distinct_dependency_count,
+                "target_count={target_count}, cache_stats={cache_stats:?}, dependency_sets={dependency_sets:?}",
+            );
+            assert_eq!(
+                cache_stats.dependency_cache_reuses,
+                target_count - distinct_dependency_count,
+                "each ordered dependency set should construct only one shared result cache",
+            );
+            assert_eq!(
+                cache_stats.dependency_result_misses,
+                distinct_dependency_count
+            );
+            assert_eq!(
+                cache_stats.dependency_result_hits,
+                target_count - distinct_dependency_count,
+            );
+            assert!(
+                distinct_dependency_count <= 2,
+                "dependency cache count should stay bounded as sibling test targets grow",
+            );
+
+            // Each query must still add only its own local overlay after sharing dependency results.
+            // Looking up one target's receiver from a sibling query must not reuse that local impl.
+            for ((query, use_site), local_type) in queries.iter().zip(&test_crates).zip(&local_types) {
+                let local_impls = query
+                    .trait_impls_for_type(*local_type)
+                    .expect("candidate lookup succeeds");
+                let local_impl = local_impls
+                    .as_one()
+                    .expect("each test target should find exactly its own local trait impl");
+                assert_eq!(local_impl.trait_ref, shared_trait);
+                assert_eq!(local_impl.impl_ref.origin.as_crate_ref(), Some(*use_site));
+            }
+            if queries.len() > 1 {
+                assert!(
+                    queries[1]
+                        .trait_impls_for_type(local_types[0])
+                        .expect("candidate lookup succeeds")
+                        .is_empty(),
+                    "a shared dependency cache must not expose another target's local impl",
+                );
+            }
+
+            let index_source = view.declarations();
+            let crates = index_source.crates();
+            assert_eq!(crates.len(), target_count + 2);
+            retained_entries.push(
+                crates
+                    .into_iter()
+                    .map(|krate| {
+                        index_source
+                            .lookup_index(krate)
+                            .expect("fixture lookup index reads")
+                            .expect("fixture target has a lookup index")
+                            .entry_count()
+                    })
+                    .sum::<usize>(),
+            );
+        });
     }
 
     assert_eq!(
@@ -278,7 +266,7 @@ pub struct Library;
 
 #[test]
 fn proc_macro_exports_link_to_semantic_implementation_functions() {
-    let fixture = crate::testonly::SemanticIrFixture::build(
+    let mut fixture = SemanticIrFixture::build(
         r#"
 //- /src/lib.rs crate:semantic_proc_macros kind:proc-macro
 extern crate proc_macro;
@@ -302,71 +290,83 @@ pub fn stored(_item: proc_macro::TokenStream) -> proc_macro::TokenStream {
 }
 "#,
     );
-    let crate_ref = fixture
-        .def_map_fixture()
-        .crate_ref("semantic_proc_macros", rg_workspace::TargetKind::ProcMacro);
-    let def_map = fixture
-        .resident_def_map(crate_ref)
-        .expect("proc-macro def map should exist");
-    let items = fixture
-        .resident_crate_ir(crate_ref)
-        .expect("proc-macro semantic items should exist");
+    fixture.inspect(|view| {
+        let crate_ref = view.crate_ref("semantic_proc_macros", TargetKind::ProcMacro);
+        let def_map = view
+            .def_map(crate_ref)
+            .expect("proc-macro def map should exist");
+        let items = view.all_items(DefMapRef::Crate(crate_ref));
 
-    let mut function_names = items
-        .functions()
-        .iter()
-        .map(|function| function.name.to_string())
-        .collect::<Vec<_>>();
-    function_names.sort();
-    assert_eq!(function_names, ["emit", "stored", "traced"]);
+        let mut function_names = items
+            .iter()
+            .filter_map(|item| item.function_data())
+            .map(|function| function.name.to_string())
+            .collect::<Vec<_>>();
+        function_names.sort();
+        assert_eq!(function_names, ["emit", "stored", "traced"]);
 
-    for (export_name, implementation_name) in
-        [("emit", "emit"), ("traced", "traced"), ("Stored", "stored")]
-    {
-        let export = def_map
-            .local_def_refs()
-            .find(|local_def_ref| {
-                def_map
-                    .local_def(local_def_ref.local_def)
-                    .is_some_and(|data| {
-                        data.kind == rg_def_map::LocalDefKind::MacroDefinition
-                            && data.name.as_str() == export_name
+        for (export_name, implementation_name) in
+            [("emit", "emit"), ("traced", "traced"), ("Stored", "stored")]
+        {
+            let export = def_map
+                .local_def_refs()
+                .find(|local_def_ref| {
+                    def_map
+                        .local_def(local_def_ref.local_def)
+                        .is_some_and(|data| {
+                            data.kind == rg_def_map::LocalDefKind::MacroDefinition
+                                && data.name.as_str() == export_name
+                        })
+                })
+                .expect("proc-macro export should exist");
+            assert!(
+                view.items()
+                    .item_for_local_def(LocalDefRef {
+                        origin: DefMapRef::Crate(crate_ref),
+                        local_def: export.local_def
                     })
-            })
-            .expect("proc-macro export should exist");
-        assert!(
-            items.item_for_local_def(export.local_def).is_none(),
-            "macro export `{export_name}` must not own a semantic function",
-        );
+                    .expect("fixture definition should load")
+                    .is_none(),
+                "macro export `{export_name}` must not own a semantic function",
+            );
 
-        let implementation = def_map
-            .macro_definition(export.local_def)
-            .and_then(|data| data.proc_macro_implementation())
-            .expect("proc-macro export should retain its implementation identity");
-        let implementation_def = def_map
-            .local_def(implementation)
-            .expect("proc-macro implementation definition should exist");
-        assert_eq!(implementation_def.name.as_str(), implementation_name);
+            let implementation = def_map
+                .macro_definition(export.local_def)
+                .and_then(|data| data.proc_macro_implementation())
+                .expect("proc-macro export should retain its implementation identity");
+            let implementation_def = def_map
+                .local_def(implementation)
+                .expect("proc-macro implementation definition should exist");
+            assert_eq!(implementation_def.name.as_str(), implementation_name);
 
-        let Some(rg_ir_model::ItemId::Function(function)) =
-            items.item_for_local_def(implementation)
-        else {
-            panic!("proc-macro implementation `{implementation_name}` should lower as a function");
-        };
-        assert_eq!(
-            items
-                .function_data(function)
-                .expect("proc-macro implementation function should exist")
-                .name
-                .as_str(),
-            implementation_name,
-        );
-    }
+            let Some(SemanticItemRef::Function(function)) = view
+                .items()
+                .item_for_local_def(LocalDefRef {
+                    origin: DefMapRef::Crate(crate_ref),
+                    local_def: implementation,
+                })
+                .expect("fixture definition should load")
+            else {
+                panic!(
+                    "proc-macro implementation `{implementation_name}` should lower as a function"
+                );
+            };
+            assert_eq!(
+                crate::ItemStoreQuery::new(&view.items())
+                    .function_data(function)
+                    .expect("fixture function should load")
+                    .expect("proc-macro implementation function should exist")
+                    .name
+                    .as_str(),
+                implementation_name,
+            );
+        }
+    });
 }
 
 #[test]
 fn proc_macro_implementation_stores_do_not_cross_the_dependency_boundary() {
-    let fixture = crate::testonly::SemanticIrFixture::build(
+    let mut fixture = SemanticIrFixture::build(
         r#"
 //- /app/src/lib.rs crate:app root:app deps:runtime
 pub struct App;
@@ -392,47 +392,40 @@ pub fn emit(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub struct Parser;
 "#,
     );
-    let crate_ref =
-        |package, target_kind| fixture.def_map_fixture().crate_ref(package, target_kind);
-    let app = crate_ref("app", rg_workspace::TargetKind::Lib);
-    let runtime = crate_ref("runtime", rg_workspace::TargetKind::Lib);
-    let derive_macro = crate_ref("derive_macro", rg_workspace::TargetKind::ProcMacro);
-    let parser = crate_ref("parser", rg_workspace::TargetKind::Lib);
-    let def_maps = fixture
-        .def_map_db()
-        .read_txn(rg_def_map::DefMapLoader::resident_only(
-            "resident item visibility fixture",
-        ));
-    let items = fixture
-        .semantic_ir_db()
-        .read_txn(crate::SemanticIrLoader::resident_only(
-            "resident item visibility fixture",
-        ));
-    let visible_from = |use_site| {
-        let mut crates = crate::CrateItemQuery::new(&def_maps, &items, use_site)
-            .visible_stores()
-            .expect("visible semantic stores should load")
-            .into_iter()
-            .map(crate::ItemStore::crate_ref)
-            .collect::<Vec<_>>();
-        crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
-        crates
-    };
-    let sorted = |mut crates: Vec<rg_ir_model::CrateRef>| {
-        crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
-        crates
-    };
+    fixture.inspect(|view| {
+        let app = view.crate_ref("app", TargetKind::Lib);
+        let runtime = view.crate_ref("runtime", TargetKind::Lib);
+        let derive_macro = view.crate_ref("derive_macro", TargetKind::ProcMacro);
+        let parser = view.crate_ref("parser", TargetKind::Lib);
+        let items = view.items();
+        let visible_from = |use_site| {
+            let mut crates = items
+                .lookup_index(use_site)
+                .expect("target lookup index should load")
+                .expect("target lookup index should exist")
+                .lookup_facts()
+                .visible_crates()
+                .as_slice()
+                .to_vec();
+            crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
+            crates
+        };
+        let sorted = |mut crates: Vec<CrateRef>| {
+            crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));
+            crates
+        };
 
-    assert_eq!(
-        visible_from(app),
-        sorted(vec![app, runtime]),
-        "a consumer should see its runtime dependency, but neither a proc-macro implementation nor its host dependencies",
-    );
-    assert_eq!(
-        visible_from(derive_macro),
-        sorted(vec![derive_macro, parser]),
-        "a proc-macro crate should see its own implementation and normal host dependencies",
-    );
+        assert_eq!(
+            visible_from(app),
+            sorted(vec![app, runtime]),
+            "a consumer should see its runtime dependency, but neither a proc-macro implementation nor its host dependencies",
+        );
+        assert_eq!(
+            visible_from(derive_macro),
+            sorted(vec![derive_macro, parser]),
+            "a proc-macro crate should see its own implementation and normal host dependencies",
+        );
+    });
 }
 
 #[test]

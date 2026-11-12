@@ -47,36 +47,16 @@ impl ReferenceSearchPlan {
 }
 
 impl QueryRunner<'_> {
-    /// Complete any targets in the search scope that startup left out.
-    fn ensure_reference_plan(
-        &mut self,
-        query: &'static str,
-        plan: &ReferenceSearchPlan,
-        cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<()> {
-        self.project
-            .ensure_body_analysis(&plan.targets, &cancellation.token())
-            .with_context(|| format!("prepare {query} reference scan"))?;
-        Ok(())
-    }
-
-    /// Keep owned identities and scan coverage while completing any missing targets.
     fn reference_search_plan_for_position(
-        &mut self,
+        snapshot: ProjectSnapshot<'_>,
         path: &Path,
         position: gen_lsp_types::Position,
         cancellation: &QueryCancellation<'_>,
     ) -> anyhow::Result<Option<(FileContext, u32, ReferenceSearchPlan)>> {
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for reference planning")?;
         let Some((context, offset)) = Self::file_offset(snapshot, path, position)? else {
             return Ok(None);
         };
-        let analysis = snapshot
-            .analysis_for_crates(&[context.crate_ref], cancellation.token())
-            .context("load reference-search analysis")?;
+        let analysis = snapshot.analysis();
         let declaration_targets = analysis
             .goto_definition(context.crate_ref, context.file, offset)
             .context("resolve reference declaration")?
@@ -110,62 +90,51 @@ impl QueryRunner<'_> {
         include_declaration: bool,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        if let Some(path) = self
-            .save_required_for_global_operation(&input, cancellation)
-            .context("check references source safety")?
-        {
-            return Err(QueryRunError::SaveRequired(path));
-        }
-        let document = Self::global_operation_target(&input)?;
-        let path = document.source_path().to_path_buf();
-        let position = input.position();
-        let started = Instant::now();
-        self.ensure_path("references", &path, cancellation)
-            .context("prepare references path")?;
-        let Some((context, offset, search_plan)) = self
-            .reference_search_plan_for_position(&path, position, cancellation)
-            .context("plan references query")?
-        else {
-            return Ok(Vec::new());
-        };
-        self.ensure_reference_plan("references", &search_plan, cancellation)?;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for references")?;
-        let analysis = snapshot
-            .full_analysis(cancellation.token())
-            .context("load references analysis")?;
-        let mut locations = UniqueVec::new();
-
-        // The search still visits several crates, which can share physical source locations.
-        let reference_query = search_plan.query(include_declaration);
-        for reference in analysis
-            .references(context.crate_ref, context.file, offset, reference_query)
-            .context("find references")?
-        {
-            rg_std::check_cancel!(cancellation, "reference locations");
-            let Some(location) = references_proto::location_for_reference(snapshot, &reference)
-                .context("convert reference location")?
+        self.with_saved_snapshot(cancellation, |snapshot| {
+            Self::require_saved_documents(snapshot, &input, cancellation)?;
+            let document = Self::global_operation_target(&input)?;
+            let path = document.source_path().to_path_buf();
+            let position = input.position();
+            let started = Instant::now();
+            let Some((context, offset, search_plan)) =
+                Self::reference_search_plan_for_position(snapshot, &path, position, cancellation)
+                    .context("plan references query")?
             else {
-                continue;
+                return Ok(Vec::new());
             };
-            locations.push(location);
-        }
+            let analysis = snapshot.analysis();
+            let mut locations = UniqueVec::new();
 
-        let locations = locations.into_vec();
+            // The search still visits several crates, which can share physical source locations.
+            let reference_query = search_plan.query(include_declaration);
+            for reference in analysis
+                .references(context.crate_ref, context.file, offset, reference_query)
+                .context("find references")?
+            {
+                rg_std::check_cancel!(cancellation, "reference locations");
+                let Some(location) = references_proto::location_for_reference(snapshot, &reference)
+                    .context("convert reference location")?
+                else {
+                    continue;
+                };
+                locations.push(location);
+            }
 
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            include_declaration,
-            result_count = locations.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "references query finished"
-        );
+            let locations = locations.into_vec();
 
-        Ok(locations)
+            tracing::trace!(
+                path = %path.display(),
+                line = position.line,
+                character = position.character,
+                include_declaration,
+                result_count = locations.len(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "references query finished"
+            );
+
+            Ok(locations)
+        })
+        .map_err(Into::into)
     }
 
     /// Return a rename range only for a workspace-owned target whose source still matches.
@@ -174,57 +143,50 @@ impl QueryRunner<'_> {
         input: GlobalPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Option<gen_lsp_types::PrepareRenameResult>, QueryRunError> {
-        if let Some(path) = self
-            .save_required_for_global_operation(&input, cancellation)
-            .context("check prepare-rename source safety")?
-        {
-            return Err(QueryRunError::SaveRequired(path));
-        }
-        let document = Self::global_operation_target(&input)?;
-        let path = document.source_path().to_path_buf();
-        let position = input.position();
-        let started = Instant::now();
-        self.ensure_path("prepare_rename", &path, cancellation)
-            .context("prepare rename path")?;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for prepare rename")?;
-        let Some((context, offset)) = Self::file_offset(snapshot, &path, position)? else {
-            return Ok(None);
-        };
-        if !snapshot.package_is_workspace_member(context.crate_ref.package) {
-            return Ok(None);
-        }
-        let analysis = snapshot
-            .analysis_for_crates(&[context.crate_ref], cancellation.token())
-            .context("load prepare-rename analysis")?;
-        let Some(rename_target) = analysis
-            .prepare_rename(context.crate_ref, context.file, offset)
-            .context("resolve rename target")?
-        else {
-            return Ok(None);
-        };
-        if !Self::rename_target_matches_source(snapshot, context.crate_ref.package, &rename_target)?
-        {
-            return Ok(None);
-        }
-        let response = Some(rename_proto::prepare_rename(
-            snapshot,
-            context.crate_ref.package,
-            rename_target,
-        )?);
+        self.with_saved_snapshot(cancellation, |snapshot| {
+            Self::require_saved_documents(snapshot, &input, cancellation)?;
+            let document = Self::global_operation_target(&input)?;
+            let path = document.source_path().to_path_buf();
+            let position = input.position();
+            let started = Instant::now();
+            let Some((context, offset)) = Self::file_offset(snapshot, &path, position)? else {
+                return Ok(None);
+            };
+            if !snapshot.package_is_workspace_member(context.crate_ref.package) {
+                return Ok(None);
+            }
+            let analysis = snapshot.analysis();
+            let Some(rename_target) = analysis
+                .prepare_rename(context.crate_ref, context.file, offset)
+                .context("resolve rename target")?
+            else {
+                return Ok(None);
+            };
+            if !Self::rename_target_matches_source(
+                snapshot,
+                context.crate_ref.package,
+                &rename_target,
+            )? {
+                return Ok(None);
+            }
+            let response = Some(rename_proto::prepare_rename(
+                snapshot,
+                context.crate_ref.package,
+                rename_target,
+            )?);
 
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            has_result = response.is_some(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "prepare rename query finished"
-        );
+            tracing::trace!(
+                path = %path.display(),
+                line = position.line,
+                character = position.character,
+                has_result = response.is_some(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "prepare rename query finished"
+            );
 
-        Ok(response)
+            Ok(response)
+        })
+        .map_err(Into::into)
     }
 
     /// Build one all-or-nothing workspace edit for the selected symbol.
@@ -237,82 +199,67 @@ impl QueryRunner<'_> {
         new_name: String,
         cancellation: &QueryCancellation<'_>,
     ) -> Result<Option<gen_lsp_types::WorkspaceEdit>, QueryRunError> {
-        if let Some(path) = self
-            .save_required_for_global_operation(&input, cancellation)
-            .context("check rename source safety")?
-        {
-            return Err(QueryRunError::SaveRequired(path));
-        }
-        let document = Self::global_operation_target(&input)?;
-        let path = document.source_path().to_path_buf();
-        let position = input.position();
-        let started = Instant::now();
-        self.ensure_path("rename", &path, cancellation)
-            .context("prepare rename path")?;
-        let Some((context, offset, search_plan)) = self
-            .reference_search_plan_for_position(&path, position, cancellation)
-            .context("plan rename references")?
-        else {
-            return Ok(None);
-        };
-        if !self
-            .project
-            .saved_snapshot()?
-            .package_is_workspace_member(context.crate_ref.package)
-        {
-            return Ok(None);
-        }
-        self.ensure_reference_plan("rename", &search_plan, cancellation)?;
-        let snapshot = self
-            .project
-            .saved_snapshot()
-            .context("borrow saved project for rename")?;
-        let analysis = snapshot
-            .full_analysis(cancellation.token())
-            .context("load rename analysis")?;
-        let Some(rename_result) = analysis
-            .rename(
-                context.crate_ref,
-                context.file,
-                offset,
-                &new_name,
-                search_plan.query(true),
-            )
-            .context("compute rename edits")?
-        else {
-            return Ok(None);
-        };
-        if !Self::rename_target_matches_source(
-            snapshot,
-            context.crate_ref.package,
-            &rename_result.target,
-        )? {
-            return Ok(None);
-        }
-        let edits = rename_result.edits;
-
-        let edit = match Self::verified_rename_edits(snapshot, edits, cancellation)
-            .context("verify rename edit sources")?
-        {
-            Some(edits) if !edits.is_empty() => {
-                rename_proto::workspace_edit(snapshot, edits, &cancellation.token())
-                    .map(Some)
-                    .context("build rename workspace edit")?
+        self.with_saved_snapshot(cancellation, |snapshot| {
+            Self::require_saved_documents(snapshot, &input, cancellation)?;
+            let document = Self::global_operation_target(&input)?;
+            let path = document.source_path().to_path_buf();
+            let position = input.position();
+            let started = Instant::now();
+            let Some((context, offset, search_plan)) =
+                Self::reference_search_plan_for_position(snapshot, &path, position, cancellation)
+                    .context("plan rename references")?
+            else {
+                return Ok(None);
+            };
+            if !snapshot.package_is_workspace_member(context.crate_ref.package) {
+                return Ok(None);
             }
-            Some(_) | None => None,
-        };
+            let analysis = snapshot.analysis();
+            let Some(rename_result) = analysis
+                .rename(
+                    context.crate_ref,
+                    context.file,
+                    offset,
+                    &new_name,
+                    search_plan.query(true),
+                )
+                .context("compute rename edits")?
+            else {
+                return Ok(None);
+            };
+            if !Self::rename_target_matches_source(
+                snapshot,
+                context.crate_ref.package,
+                &rename_result.target,
+            )? {
+                return Ok(None);
+            }
+            let edits = rename_result.edits;
 
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            new_name = %new_name,
-            has_edit = edit.is_some(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "rename query finished"
-        );
+            let edit = match Self::verified_rename_edits(snapshot, edits, cancellation)
+                .context("verify rename edit sources")?
+            {
+                Some(edits) if !edits.is_empty() => {
+                    rename_proto::workspace_edit(snapshot, edits, &cancellation.token())
+                        .map(Some)
+                        .context("build rename workspace edit")?
+                }
+                Some(_) | None => None,
+            };
 
-        Ok(edit)
+            tracing::trace!(
+                path = %path.display(),
+                line = position.line,
+                character = position.character,
+                new_name = %new_name,
+                has_edit = edit.is_some(),
+                elapsed_ms = started.elapsed().as_millis(),
+                "rename query finished"
+            );
+
+            Ok(edit)
+        })
+        .map_err(Into::into)
     }
 
     /// Reuse file-scoped reference search to highlight occurrences in the requested document.
@@ -324,50 +271,52 @@ impl QueryRunner<'_> {
         let (document, position) = input.into_parts();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
-        let Some(current) = self
-            .document_analysis(
-                "document_highlight",
-                &document,
-                DocumentSelection::Position(position),
-                cancellation,
-            )
-            .context("prepare document highlights")?
-        else {
-            return Ok(Vec::new());
-        };
-        let mut highlights = Vec::new();
-        let offset = current.offset();
+        self.with_document_analysis(
+            "document_highlight",
+            &document,
+            DocumentSelection::Position(position),
+            cancellation,
+            |current| {
+                let Some(current) = current else {
+                    return Ok(Vec::new());
+                };
+                let mut highlights = Vec::new();
+                let offset = current.offset();
 
-        let target = current.target;
-        rg_std::check_cancel!(cancellation, "document highlights");
-        for reference in current
-            .analysis
-            .references(
-                target.crate_ref,
-                target.file,
-                offset,
-                ReferenceQuery::file_scoped(target.crate_ref, target.file),
-            )
-            .context("find current document references")?
-        {
-            rg_std::check_cancel!(cancellation, "highlight conversion");
-            highlights.push(references_proto::document_highlight_for_current_document(
-                current.source.line_index(),
-                reference.span,
-            ));
-        }
+                let target = current.target;
+                rg_std::check_cancel!(cancellation, "document highlights");
+                for reference in current
+                    .analysis
+                    .references(
+                        target.crate_ref,
+                        target.file,
+                        offset,
+                        ReferenceQuery::file_scoped(target.crate_ref, target.file),
+                    )
+                    .context("find current document references")?
+                {
+                    rg_std::check_cancel!(cancellation, "highlight conversion");
+                    highlights.push(references_proto::document_highlight_for_current_document(
+                        current.source.line_index(),
+                        reference.span,
+                    ));
+                }
 
-        tracing::trace!(
-            path = %path.display(),
-            line = position.line,
-            character = position.character,
-            result_count = highlights.len(),
-            source = current.source.name(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "document highlight query finished"
-        );
+                tracing::trace!(
+                    path = %path.display(),
+                    line = position.line,
+                    character = position.character,
+                    result_count = highlights.len(),
+                    source = current.source.name(),
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "document highlight query finished"
+                );
 
-        Ok(highlights)
+                Ok(highlights)
+            },
+        )
+        .context("prepare document highlights")
+        .map_err(Into::into)
     }
 
     /// Check that the selected declaration still contains the placeholder seen by analysis.

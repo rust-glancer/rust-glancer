@@ -11,9 +11,9 @@
 //! use $0;          request-local empty name in the importing module
 //! ```
 
-use rg_def_map::{DefMap, DefMapReadTxn, ImportPath, ModuleOrigin};
+use rg_def_map::{DefMap, DefinitionReader, ImportPath, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span};
-use rg_package_store::PackageStoreError;
+use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
 
@@ -42,7 +42,7 @@ pub(crate) struct ImportUnqualifiedNameSite {
 /// This scanner reports the module containing the `use`, because import lookup starts from that
 /// module even when the written path itself is relative or incomplete.
 pub(crate) struct ImportPathCompletionSiteScanner<'txn, 'db> {
-    def_map: &'txn DefMapReadTxn<'db>,
+    def_map: &'txn DefinitionReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -50,7 +50,7 @@ pub(crate) struct ImportPathCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        def_map: &'txn DefMapReadTxn<'db>,
+        def_map: &'txn DefinitionReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -64,9 +64,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Finds a qualified segment such as `mo$0` or the empty segment in `crate::$0`.
-    pub(crate) fn qualified_site(
-        &self,
-    ) -> Result<Option<ImportQualifiedPathSite>, PackageStoreError> {
+    pub(crate) fn qualified_site(&self) -> Result<Option<ImportQualifiedPathSite>, ReadError> {
         let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
@@ -77,9 +75,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Finds a single relative import name such as `use cr$0;`.
-    pub(crate) fn unqualified_site(
-        &self,
-    ) -> Result<Option<ImportUnqualifiedNameSite>, PackageStoreError> {
+    pub(crate) fn unqualified_site(&self) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
         let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
@@ -108,7 +104,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     /// Finds the module that owns an explicit empty import such as `use $0;`.
     pub(crate) fn empty_unqualified_site(
         &self,
-    ) -> Result<Option<ImportUnqualifiedNameSite>, PackageStoreError> {
+    ) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
         let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };

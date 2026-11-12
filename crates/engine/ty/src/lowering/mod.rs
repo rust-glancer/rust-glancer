@@ -17,7 +17,7 @@ mod session;
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, Path, ScopeId};
-use rg_semantic_ir::{ItemStoreSource, TypePathContext, TypePathResolution};
+use rg_semantic_ir::{SemanticItemSource, TypePathContext, TypePathResolution};
 
 pub use self::{query::TypeLoweringQuery, session::TypeLoweringSession};
 use crate::lookup::ItemPathQuery;
@@ -65,7 +65,7 @@ where
 impl<'query, D, I> TypePathResolver for ItemPathQuery<'query, D, I>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
 {
     type Error = D::Error;
 

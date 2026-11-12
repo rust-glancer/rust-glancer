@@ -1,13 +1,14 @@
 use expect_test::expect;
 use rg_def_map::{ItemSourceKind, ModuleOrigin, Namespace};
-use rg_ir_model::{BodyId, BodyRef, CrateId, CrateRef, DefId, PackageSlot};
+use rg_ir_model::{BodyId, DefId};
+use rg_workspace::TargetKind;
 
 use super::utils::check_project_body_ir;
 use crate::testonly::BodyIrFixture;
 
 #[test]
 fn body_local_extern_blocks_collect_declarations_without_scheduling_foreign_bodies() {
-    let db = BodyIrFixture::build(
+    let mut fixture = BodyIrFixture::build(
         r#"
 //- /src/lib.rs crate:body_local_foreign
 macro_rules! nested_foreign_macro {
@@ -28,50 +29,35 @@ pub fn outer() {
 }
 "#,
     );
-    let package = db
-        .parse_db()
-        .packages()
-        .first()
-        .expect("fixture should contain one package");
-    let target = package
-        .targets()
-        .first()
-        .expect("fixture package should contain one target");
-    let crate_ref = CrateRef {
-        package: PackageSlot(0),
-        crate_id: CrateId(target.id.0),
-    };
-    let crate_bodies = db
-        .body_ir_db()
-        .resident_package(crate_ref.package)
-        .and_then(|package| package.crate_bodies(crate_ref.crate_id))
-        .expect("fixture crate bodies should exist");
-    assert_eq!(
-        crate_bodies.bodies().len(),
-        1,
-        "foreign functions and statics should not create body work",
-    );
+    fixture.inspect(|view| {
+        let target = view
+            .semantic()
+            .crate_ref("body_local_foreign", TargetKind::Lib);
+        let bodies = view.bodies(target);
+        assert_eq!(
+            bodies.len(),
+            1,
+            "foreign functions and statics should not create body work",
+        );
 
-    let body_ref = BodyRef {
-        crate_ref,
-        body: BodyId(0),
-    };
-    let def_map = db
-        .resident_body_def_map(body_ref)
-        .expect("outer body should contain a finalized local def map");
-    let mut names = def_map
-        .local_defs()
-        .iter()
-        .map(|local_def| local_def.name.to_string())
-        .collect::<Vec<_>>();
-    names.sort();
-    assert_eq!(names, ["LOCAL_FOREIGN", "LocalOpaque", "local_foreign"]);
-    for local_def in def_map.local_def_refs() {
-        let block = def_map
-            .foreign_block(local_def.local_def)
-            .expect("every local foreign declaration should retain its block owner");
-        assert!(matches!(block.kind, ItemSourceKind::Body(_)));
-    }
+        let body_ref = view.body_key(target, "outer").body(BodyId(0));
+        let def_map = view
+            .body_def_map(body_ref)
+            .expect("outer body should contain a finalized local def map");
+        let mut names = def_map
+            .local_defs()
+            .iter()
+            .map(|local_def| local_def.name.to_string())
+            .collect::<Vec<_>>();
+        names.sort();
+        assert_eq!(names, ["LOCAL_FOREIGN", "LocalOpaque", "local_foreign"]);
+        for local_def in def_map.local_def_refs() {
+            let block = def_map
+                .foreign_block(local_def.local_def)
+                .expect("every local foreign declaration should retain its block owner");
+            assert!(matches!(block.kind, ItemSourceKind::Body(_)));
+        }
+    });
 }
 
 #[test]
@@ -95,7 +81,7 @@ pub fn use_it() {
             package body_local_item_fixture
 
             body_local_item_fixture [lib]
-            body b0 fn body_local_item_fixture[lib]::crate::use_it @ 3:1-11:2
+            fn body_local_item_fixture[lib]::crate::use_it @ 3:1-11:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v2; source_items i0
@@ -156,7 +142,7 @@ pub fn use_it() {
             package body_local_field_fixture
 
             body_local_field_fixture [lib]
-            body b0 fn body_local_field_fixture[lib]::crate::use_it @ 3:1-20:2
+            fn body_local_field_fixture[lib]::crate::use_it @ 3:1-20:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3; source_items i0, i1, i2
@@ -229,7 +215,7 @@ pub fn use_it() {
             package body_local_generic_alias_fixture
 
             body_local_generic_alias_fixture [lib]
-            body b0 fn body_local_generic_alias_fixture[lib]::crate::use_it @ 5:1-11:2
+            fn body_local_generic_alias_fixture[lib]::crate::use_it @ 5:1-11:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1; source_items i0, i1
@@ -286,7 +272,7 @@ pub fn use_it() {
             package body_local_impl_fixture
 
             body_local_impl_fixture [lib]
-            body b0 fn body_local_impl_fixture[lib]::crate::use_it @ 3:1-23:2
+            fn body_local_impl_fixture[lib]::crate::use_it @ 3:1-23:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2; source_items i0, i4
@@ -317,7 +303,7 @@ pub fn use_it() {
                       expr e2 path user -> local v0 => nominal struct fn body_local_impl_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 22:17-22:21
 
 
-            body b1 fn impl User::id @ 7:9-9:10
+            fn impl User::id @ 7:9-9:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -331,7 +317,7 @@ pub fn use_it() {
                     expr e0 path missing => <unknown> @ 8:13-8:20
 
 
-            body b2 fn impl User::again @ 11:9-13:10
+            fn impl User::again @ 11:9-13:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -345,7 +331,7 @@ pub fn use_it() {
                     expr e0 path missing => <unknown> @ 12:13-12:20
 
 
-            body b3 fn impl User::associated @ 15:9-17:10
+            fn impl User::associated @ 15:9-17:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -392,7 +378,7 @@ pub fn use_it(id: GlobalId) {
             package body_local_target_impl_fixture
 
             body_local_target_impl_fixture [lib]
-            body b0 fn body_local_target_impl_fixture[lib]::crate::use_it @ 4:1-22:2
+            fn body_local_target_impl_fixture[lib]::crate::use_it @ 4:1-22:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2, v3, v4; source_items i4
@@ -429,7 +415,7 @@ pub fn use_it(id: GlobalId) {
                   expr e5 path LocalId -> struct body_local_target_impl_fixture[lib]::crate::LocalId => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 21:34-21:41
 
 
-            body b1 const impl GlobalId::DEFAULT @ 6:9-6:41
+            const impl GlobalId::DEFAULT @ 6:9-6:41
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -439,7 +425,7 @@ pub fn use_it(id: GlobalId) {
                 expr e0 path missing => <unknown> @ 6:31-6:38
 
 
-            body b2 fn impl GlobalId::local @ 9:9-11:10
+            fn impl GlobalId::local @ 9:9-11:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -453,7 +439,7 @@ pub fn use_it(id: GlobalId) {
                     expr e0 path missing => <unknown> @ 10:13-10:20
 
 
-            body b3 fn impl GlobalId::again @ 13:9-15:10
+            fn impl GlobalId::again @ 13:9-15:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -489,7 +475,7 @@ pub fn use_it() {
             package body_local_impl_alias_self_fixture
 
             body_local_impl_alias_self_fixture [lib]
-            body b0 fn body_local_impl_alias_self_fixture[lib]::crate::use_it @ 1:1-10:2
+            fn body_local_impl_alias_self_fixture[lib]::crate::use_it @ 1:1-10:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1; source_items i0, i2
@@ -546,7 +532,7 @@ pub fn use_it(id: GlobalId) {
             package body_local_trait_impl_fixture
 
             body_local_trait_impl_fixture [lib]
-            body b0 fn body_local_trait_impl_fixture[lib]::crate::use_it @ 4:1-22:2
+            fn body_local_trait_impl_fixture[lib]::crate::use_it @ 4:1-22:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2; source_items i2, i5
@@ -577,7 +563,7 @@ pub fn use_it(id: GlobalId) {
                       expr e2 path GlobalId::make -> fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::make => <unknown> @ 21:16-21:30
 
 
-            body b1 fn impl Named for GlobalId::label @ 11:9-13:10
+            fn impl Named for GlobalId::label @ 11:9-13:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -591,7 +577,7 @@ pub fn use_it(id: GlobalId) {
                     expr e0 path missing => <unknown> @ 12:13-12:20
 
 
-            body b2 fn impl Named for GlobalId::make @ 15:9-17:10
+            fn impl Named for GlobalId::make @ 15:9-17:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -649,7 +635,7 @@ pub fn use_it() {
             package body_more_local_items_fixture
 
             body_more_local_items_fixture [lib]
-            body b0 fn body_more_local_items_fixture[lib]::crate::use_it @ 3:1-31:2
+            fn body_more_local_items_fixture[lib]::crate::use_it @ 3:1-31:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3; source_items i0, i1, i2, i3, i4, i5, i6, i10
@@ -700,7 +686,7 @@ pub fn use_it() {
                       expr e5 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 30:32-30:40
 
 
-            body b1 const fn body_more_local_items_fixture[lib]::crate::use_it::DEFAULT @ 13:5-13:37
+            const fn body_more_local_items_fixture[lib]::crate::use_it::DEFAULT @ 13:5-13:37
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -708,7 +694,7 @@ pub fn use_it() {
             expr e0 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 13:28-13:36
 
 
-            body b2 static fn body_more_local_items_fixture[lib]::crate::use_it::CURRENT @ 14:5-14:45
+            static fn body_more_local_items_fixture[lib]::crate::use_it::CURRENT @ 14:5-14:45
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -716,7 +702,7 @@ pub fn use_it() {
             expr e0 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 14:36-14:44
 
 
-            body b3 fn fn body_more_local_items_fixture[lib]::crate::use_it::helper @ 15:5-17:6
+            fn fn body_more_local_items_fixture[lib]::crate::use_it::helper @ 15:5-17:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -727,7 +713,7 @@ pub fn use_it() {
                 expr e0 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 16:9-16:17
 
 
-            body b4 const impl Action::NAME @ 20:9-20:38
+            const impl Action::NAME @ 20:9-20:38
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -735,7 +721,7 @@ pub fn use_it() {
             expr e0 path GlobalId -> struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 20:29-20:37
 
 
-            body b5 fn impl Action::build @ 22:9-24:10
+            fn impl Action::build @ 22:9-24:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -770,7 +756,7 @@ pub fn use_it() {
             package nested_body_parent_items_fixture
 
             nested_body_parent_items_fixture [lib]
-            body b0 fn nested_body_parent_items_fixture[lib]::crate::use_it @ 1:1-10:2
+            fn nested_body_parent_items_fixture[lib]::crate::use_it @ 1:1-10:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0, i1, i2
@@ -792,7 +778,7 @@ pub fn use_it() {
                       expr e0 path helper -> fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper => function item fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper @ 9:24-9:30
 
 
-            body b1 const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT @ 3:5-3:34
+            const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT @ 3:5-3:34
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -800,7 +786,7 @@ pub fn use_it() {
             expr e0 path Local -> struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 3:28-3:33
 
 
-            body b2 fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper @ 5:5-7:6
+            fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper @ 5:5-7:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -838,7 +824,7 @@ pub fn use_it() {
             package body_in_body_in_body_fixture
 
             body_in_body_in_body_fixture [lib]
-            body b0 fn body_in_body_in_body_fixture[lib]::crate::use_it @ 3:1-15:2
+            fn body_in_body_in_body_fixture[lib]::crate::use_it @ 3:1-15:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
@@ -856,7 +842,7 @@ pub fn use_it() {
                       expr e0 path outer -> fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer => function item fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 14:27-14:32
 
 
-            body b1 fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 4:5-12:6
+            fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 4:5-12:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>; source_items i0, i1
@@ -874,7 +860,7 @@ pub fn use_it() {
                     expr e0 path deeper -> fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper => function item fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper @ 11:9-11:15
 
 
-            body b2 const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER @ 5:9-5:42
+            const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER @ 5:9-5:42
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -882,7 +868,7 @@ pub fn use_it() {
             expr e0 path GlobalId -> struct body_in_body_in_body_fixture[lib]::crate::GlobalId => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 5:33-5:41
 
 
-            body b3 fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper @ 7:9-9:10
+            fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper @ 7:9-9:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -926,7 +912,7 @@ pub fn use_it() {
             package nested_body_parent_impl_items_fixture
 
             nested_body_parent_impl_items_fixture [lib]
-            body b0 fn nested_body_parent_impl_items_fixture[lib]::crate::use_it @ 3:1-21:2
+            fn nested_body_parent_impl_items_fixture[lib]::crate::use_it @ 3:1-21:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>; source_items i0, i4, i5
@@ -945,7 +931,7 @@ pub fn use_it() {
               stmt s2 source_item i5 @ 15:5-20:6
 
 
-            body b1 fn impl User::id @ 7:9-9:10
+            fn impl User::id @ 7:9-9:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -957,7 +943,7 @@ pub fn use_it() {
                 expr e0 path GlobalId -> struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 8:13-8:21
 
 
-            body b2 const impl User::DEFAULT @ 11:9-11:44
+            const impl User::DEFAULT @ 11:9-11:44
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -965,7 +951,7 @@ pub fn use_it() {
             expr e0 path GlobalId -> struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 11:35-11:43
 
 
-            body b3 fn fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::helper @ 15:5-20:6
+            fn fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::helper @ 15:5-20:6
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1, v2, v3
@@ -1024,7 +1010,7 @@ pub fn use_it() {
             package body_local_value_shadowing_fixture
 
             body_local_value_shadowing_fixture [lib]
-            body b0 fn body_local_value_shadowing_fixture[lib]::crate::use_it @ 4:1-21:2
+            fn body_local_value_shadowing_fixture[lib]::crate::use_it @ 4:1-21:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
@@ -1060,7 +1046,7 @@ pub fn use_it() {
                       expr e4 path helper -> const fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 19:26-19:32
 
 
-            body b1 fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 5:5-7:6
+            fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 5:5-7:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -1071,7 +1057,7 @@ pub fn use_it() {
                 expr e0 path Outer -> struct body_local_value_shadowing_fixture[lib]::crate::Outer => nominal struct body_local_value_shadowing_fixture[lib]::crate::Outer @ 6:9-6:14
 
 
-            body b2 fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value @ 11:9-13:10
+            fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value @ 11:9-13:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -1082,7 +1068,7 @@ pub fn use_it() {
                 expr e0 path Inner -> struct body_local_value_shadowing_fixture[lib]::crate::Inner => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 12:13-12:18
 
 
-            body b3 const fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 18:9-18:37
+            const fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 18:9-18:37
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1117,7 +1103,7 @@ pub fn use_it() {
             package body_local_trait_assoc_const_fixture
 
             body_local_trait_assoc_const_fixture [lib]
-            body b0 fn body_local_trait_assoc_const_fixture[lib]::crate::use_it @ 3:1-15:2
+            fn body_local_trait_assoc_const_fixture[lib]::crate::use_it @ 3:1-15:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0, i2, i4
@@ -1139,7 +1125,7 @@ pub fn use_it() {
                   expr e0 path Local::DEFAULT -> const impl Tagged for Local::DEFAULT => nominal struct body_local_trait_assoc_const_fixture[lib]::crate::GlobalId @ 14:19-14:33
 
 
-            body b1 const impl Tagged for Local::DEFAULT @ 11:9-11:44
+            const impl Tagged for Local::DEFAULT @ 11:9-11:44
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1182,7 +1168,7 @@ pub fn make() {
             package body_local_assoc_body_fixture
 
             body_local_assoc_body_fixture [lib]
-            body b0 fn body_local_assoc_body_fixture[lib]::crate::make @ 3:1-23:2
+            fn body_local_assoc_body_fixture[lib]::crate::make @ 3:1-23:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2; source_items i0, i1, i2, i6
@@ -1217,7 +1203,7 @@ pub fn make() {
                   expr e3 path GlobalId -> struct body_local_assoc_body_fixture[lib]::crate::GlobalId => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 22:27-22:35
 
 
-            body b1 const fn body_local_assoc_body_fixture[lib]::crate::make::SEED @ 6:5-6:35
+            const fn body_local_assoc_body_fixture[lib]::crate::make::SEED @ 6:5-6:35
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1225,7 +1211,7 @@ pub fn make() {
             expr e0 path GlobalId -> struct body_local_assoc_body_fixture[lib]::crate::GlobalId => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 6:26-6:34
 
 
-            body b2 const impl User::DEFAULT @ 11:9-11:38
+            const impl User::DEFAULT @ 11:9-11:38
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1233,7 +1219,7 @@ pub fn make() {
             expr e0 path SEED -> const fn body_local_assoc_body_fixture[lib]::crate::make::SEED => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 11:33-11:37
 
 
-            body b3 fn impl User::make @ 13:9-15:10
+            fn impl User::make @ 13:9-15:10
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
@@ -1270,7 +1256,7 @@ pub fn use_it() {
             package body_local_enum_pattern_fixture
 
             body_local_enum_pattern_fixture [lib]
-            body b0 fn body_local_enum_pattern_fixture[lib]::crate::use_it @ 4:1-14:2
+            fn body_local_enum_pattern_fixture[lib]::crate::use_it @ 4:1-14:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1, v2, v3; source_items i0
@@ -1326,7 +1312,7 @@ pub fn use_it(id: GlobalId) {
             package body_local_import_alias_fixture
 
             body_local_import_alias_fixture [lib]
-            body b0 fn body_local_import_alias_fixture[lib]::crate::use_it @ 3:1-8:2
+            fn body_local_import_alias_fixture[lib]::crate::use_it @ 3:1-8:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1; source_items i0, i1
@@ -1369,7 +1355,7 @@ pub fn use_it() {
             package body_local_module_import_fixture
 
             body_local_module_import_fixture [lib]
-            body b0 fn body_local_module_import_fixture[lib]::crate::use_it @ 1:1-12:2
+            fn body_local_module_import_fixture[lib]::crate::use_it @ 1:1-12:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1; source_items i2, i3, i4
@@ -1393,7 +1379,7 @@ pub fn use_it() {
                   expr e0 path VALUE -> const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE => nominal struct fn body_local_module_import_fixture[lib]::crate::use_it::local::User @ 3:9-3:25 @ 11:17-11:22
 
 
-            body b1 const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE @ 4:9-4:43
+            const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE @ 4:9-4:43
             scopes
             - s0 parent <none>: <none>
             bindings
@@ -1407,7 +1393,7 @@ pub fn use_it() {
 
 #[test]
 fn records_unresolved_body_local_imports() {
-    let db = BodyIrFixture::build(
+    let mut fixture = BodyIrFixture::build(
         r#"
 //- /src/lib.rs crate:body_local_unresolved_import_fixture
 pub fn use_it() {
@@ -1417,38 +1403,28 @@ pub fn use_it() {
 }
 "#,
     );
-    let package = db
-        .parse_db()
-        .packages()
-        .first()
-        .expect("fixture should contain one package");
-    let target = package
-        .targets()
-        .first()
-        .expect("fixture package should contain one target");
-    let body_ref = BodyRef {
-        crate_ref: CrateRef {
-            package: PackageSlot(0),
-            crate_id: CrateId(target.id.0),
-        },
-        body: BodyId(0),
-    };
-    let def_map = db
-        .resident_body_def_map(body_ref)
-        .expect("lowered body should contain a finalized body-local defmap");
+    fixture.inspect(|view| {
+        let target = view
+            .semantic()
+            .crate_ref("body_local_unresolved_import_fixture", TargetKind::Lib);
+        let body_ref = view.body_key(target, "use_it").body(BodyId(0));
+        let def_map = view
+            .body_def_map(body_ref)
+            .expect("lowered body should contain a finalized body-local defmap");
 
-    let unresolved_imports = def_map
-        .modules()
-        .iter()
-        .flat_map(|module| module.unresolved_imports.iter())
-        .collect::<Vec<_>>();
-    assert_eq!(unresolved_imports.len(), 1);
+        let unresolved_imports = def_map
+            .modules()
+            .iter()
+            .flat_map(|module| module.unresolved_imports.iter())
+            .collect::<Vec<_>>();
+        assert_eq!(unresolved_imports.len(), 1);
 
-    let import = def_map
-        .imports()
-        .get(unresolved_imports[0].0)
-        .expect("unresolved import id should point to a body-local import");
-    assert_eq!(import.binding_name().as_deref(), Some("Item"));
+        let import = def_map
+            .imports()
+            .get(unresolved_imports[0].0)
+            .expect("unresolved import id should point to a body-local import");
+        assert_eq!(import.binding_name().as_deref(), Some("Item"));
+    });
 }
 
 #[test]
@@ -1475,7 +1451,7 @@ pub fn use_it(id: GlobalId) {
             package body_local_imported_impl_header_fixture
 
             body_local_imported_impl_header_fixture [lib]
-            body b0 fn body_local_imported_impl_header_fixture[lib]::crate::use_it @ 4:1-14:2
+            fn body_local_imported_impl_header_fixture[lib]::crate::use_it @ 4:1-14:2
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1; source_items i0, i2
@@ -1497,7 +1473,7 @@ pub fn use_it(id: GlobalId) {
                       expr e0 path id -> local v0 => nominal struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 13:17-13:19
 
 
-            body b1 fn impl Id::local @ 8:9-10:10
+            fn impl Id::local @ 8:9-10:10
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: <none>
@@ -1541,7 +1517,7 @@ pub fn use_it() {
             package body_cfg_fixture
 
             body_cfg_fixture [lib]
-            body b0 fn body_cfg_fixture[lib]::crate::use_it @ 3:1-18:2
+            fn body_cfg_fixture[lib]::crate::use_it @ 3:1-18:2
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: v0; source_items i0
@@ -1561,7 +1537,7 @@ pub fn use_it() {
 
 #[test]
 fn body_local_import_cycles_settle_before_freezing() {
-    let db = BodyIrFixture::build(
+    let mut fixture = BodyIrFixture::build(
         r#"
 //- /src/lib.rs crate:body_import_cycle
 fn use_it() {
@@ -1574,33 +1550,27 @@ fn use_it() {
 }
 "#,
     );
-    let package = db
-        .parse_db()
-        .packages()
-        .first()
-        .expect("fixture package exists");
-    let target = package.targets().first().expect("fixture target exists");
-    let map = db
-        .resident_body_def_map(BodyRef {
-            crate_ref: CrateRef {
-                package: PackageSlot(0),
-                crate_id: CrateId(target.id.0),
-            },
-            body: BodyId(0),
-        })
-        .expect("body declarations should be finalized");
-    let binding = map
-        .modules()
-        .iter()
-        .filter(|module| matches!(module.origin, ModuleOrigin::Synthetic { .. }))
-        .find_map(|module| module.scope.entry("Thing"))
-        .and_then(|entry| entry.binding(Namespace::Types))
-        .expect("body import should retain a target");
-    assert!(matches!(binding.def, DefId::Local(_)));
-    assert!(
-        map.modules()
+    fixture.inspect(|view| {
+        let target = view
+            .semantic()
+            .crate_ref("body_import_cycle", TargetKind::Lib);
+        let body_ref = view.body_key(target, "use_it").body(BodyId(0));
+        let map = view
+            .body_def_map(body_ref)
+            .expect("body declarations should be finalized");
+        let binding = map
+            .modules()
             .iter()
-            .all(|module| module.unresolved_imports.is_empty()),
-        "seeded body imports should all resolve"
-    );
+            .filter(|module| matches!(module.origin, ModuleOrigin::Synthetic { .. }))
+            .find_map(|module| module.scope.entry("Thing"))
+            .and_then(|entry| entry.binding(Namespace::Types))
+            .expect("body import should retain a target");
+        assert!(matches!(binding.def, DefId::Local(_)));
+        assert!(
+            map.modules()
+                .iter()
+                .all(|module| module.unresolved_imports.is_empty()),
+            "seeded body imports should all resolve"
+        );
+    });
 }

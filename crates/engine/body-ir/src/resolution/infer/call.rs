@@ -7,8 +7,8 @@
 use anyhow::Context as _;
 use rg_def_map::DefMapSource;
 use rg_ir_model::{ExprId, FunctionRef, GenericDefRef};
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 use rg_ty::solver::{CallableSignature, GenericArgs, InferenceTable, SolverInterner, Ty};
 
 use super::{BodyInference, deferred::DeferredKind};
@@ -64,8 +64,8 @@ impl<'s> PreparedCall<'s> {
 
 impl<'s, 'query, D, I> BodyInference<'s, 'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     /// Calls establish closure signatures early, then process ordinary arguments and fulfill
     /// their bounds before consuming closure bodies. Those bodies are still visited exactly once.
@@ -165,7 +165,7 @@ where
         &mut self,
         call: ExprId,
         receiver: Option<ExprId>,
-    ) -> Result<Option<PreparedCall<'s>>, PackageStoreError> {
+    ) -> Result<Option<PreparedCall<'s>>, ReadError> {
         crate::profile::metric::CALL_ATTEMPTS.inc();
         let resolution = match self.body.expr_unchecked(call).kind {
             ExprKind::Call {
@@ -189,7 +189,7 @@ where
         }
         let function = target.function;
         let table = target.table.as_ref().unwrap_or(self.inference.table());
-        let prepared = table.commit_if_some(|table| {
+        let prepared = table.commit_if_some(|table| -> Result<_, ReadError> {
             let generics = self
                 .context
                 .item_paths()

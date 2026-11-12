@@ -1,247 +1,189 @@
-use std::convert::Infallible;
-
-use rg_def_map::{DefMap, DefMapDb, DefMapLoader, DefMapSource};
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, ModuleRef, PackageSlot};
-use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
+use rg_def_map::{CrateData, CrateDataSource, DefMap, DefMapSource};
+use rg_ir_model::{
+    BodyKey, BodyRef, CrateRef, DefMapRef, ItemId, LocalDefRef, ModuleRef, SavedBodyOwner,
+    SemanticItemRef,
+};
 use rg_parse::ParseDb;
 use rg_semantic_ir::{
-    ItemStore, ItemStoreSource, SemanticIrDb, SemanticIrLoader, testonly::SemanticIrFixture,
+    ItemStoreQuery, SemanticItemSource, SemanticItemView,
+    testonly::{SemanticIrFixture, SemanticIrView},
 };
+use rg_source::ReadError;
+use rg_std::UniqueVec;
 
-use crate::{BodyIrBuildPolicy, BodyIrBuilder, BodyIrDb, BodyView, PackageBodiesCoverage};
+use crate::{BodyReader, BodyView};
 
-/// End-to-end fixture for tests that need body lowering and type propagation data.
-///
-/// Declare crate roots with headers such as `//- /src/lib.rs crate:demo`. The shared semantic
-/// setup builds workspace metadata from those declarations; Rust files still live on disk.
 pub struct BodyIrFixture {
-    semantic_ir: SemanticIrFixture,
-    body_ir: BodyIrDb,
+    semantic: SemanticIrFixture,
 }
 
 impl BodyIrFixture {
-    pub fn build(fixture: &str) -> Self {
-        Self::build_with_policy(fixture, BodyIrBuildPolicy::default())
-    }
-
-    pub fn build_with_sysroot(fixture: &str) -> Self {
-        Self::build_from_semantic_ir(SemanticIrFixture::build_with_sysroot(fixture))
-    }
-
-    pub fn build_with_fake_sysroot(fixture: &str) -> Self {
-        Self::build_from_semantic_ir(SemanticIrFixture::build_with_fake_sysroot(fixture))
-    }
-
-    pub fn build_with_policy(fixture: &str, policy: BodyIrBuildPolicy) -> Self {
-        Self::build_from_semantic_ir_with_policy(SemanticIrFixture::build(fixture), policy)
-    }
-
-    pub fn build_from_semantic_ir(semantic_ir: SemanticIrFixture) -> Self {
-        Self::build_from_semantic_ir_with_policy(semantic_ir, BodyIrBuildPolicy::default())
-    }
-
-    pub fn build_from_semantic_ir_with_policy(
-        mut semantic_ir: SemanticIrFixture,
-        policy: BodyIrBuildPolicy,
-    ) -> Self {
-        let package_count = semantic_ir.parse_db().package_count();
-        let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
-        let subset = PackageSubset::all(package_count);
-        let mut body_ir = BodyIrDb::from_package_store(PackageStore::from_entries(
-            (0..package_count)
-                .map(|_| {
-                    PackageEntry::offloaded_with(PackageBodiesCoverage::from_crates(Vec::new()))
-                })
-                .collect(),
-        ));
-
-        let initializer_values = BodyIrBuilder::new(
-            semantic_ir.parse_db(),
-            semantic_ir.def_map_db(),
-            semantic_ir.semantic_ir_db(),
-            &packages,
-            true,
-            DefMapLoader::resident_only("fixture DefMap"),
-            SemanticIrLoader::resident_only("fixture Semantic IR"),
-            &subset,
-        )
-        .evaluate_initializers()
-        .expect("fixture initializer values should build");
-        semantic_ir
-            .semantic_ir_db_mut()
-            .apply_initializer_values(initializer_values);
-
-        // Every fixture package is selected, so provisional coverage is replaced before reads.
-        // Construction returns one CrateBodies per target; the fixture groups them into packages.
-        let products = BodyIrBuilder::new(
-            semantic_ir.parse_db(),
-            semantic_ir.def_map_db(),
-            semantic_ir.semantic_ir_db(),
-            &packages,
-            true,
-            DefMapLoader::resident_only("fixture DefMap"),
-            SemanticIrLoader::resident_only("fixture Semantic IR"),
-            &subset,
-        )
-        .configured_bodies(policy)
-        .build()
-        .expect("fixture body products should build");
-        body_ir
-            .replace_built_packages(products)
-            .expect("fixture body packages should assemble");
-
+    pub fn build(spec: &str) -> Self {
         Self {
-            semantic_ir,
-            body_ir,
+            semantic: SemanticIrFixture::build(spec),
         }
     }
 
-    pub fn parse_db(&self) -> &ParseDb {
-        self.semantic_ir.parse_db()
-    }
-
-    pub fn def_map_db(&self) -> &DefMapDb {
-        self.semantic_ir.def_map_db()
-    }
-
-    pub fn semantic_ir_db(&self) -> &SemanticIrDb {
-        self.semantic_ir.semantic_ir_db()
-    }
-
-    pub fn body_ir_db(&self) -> &BodyIrDb {
-        &self.body_ir
-    }
-
-    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.semantic_ir.resident_def_map(crate_ref)
-    }
-
-    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
-        self.semantic_ir.resident_crate_ir(crate_ref)
-    }
-
-    pub fn resident_body(&self, body_ref: BodyRef) -> Option<BodyView<'_>> {
-        self.body_ir
-            .resident_package(body_ref.crate_ref.package)?
-            .crate_bodies(body_ref.crate_ref.crate_id)?
-            .body(body_ref.body)
-    }
-
-    pub fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
-        self.body_ir
-            .resident_package(body_ref.crate_ref.package)?
-            .crate_bodies(body_ref.crate_ref.crate_id)?
-            .body_item_store(body_ref.body)
-    }
-
-    pub fn resident_body_def_map(&self, body_ref: BodyRef) -> Option<&DefMap> {
-        self.body_ir
-            .resident_package(body_ref.crate_ref.package)?
-            .crate_bodies(body_ref.crate_ref.crate_id)?
-            .body_def_map(body_ref.body)
-    }
-
-    pub fn resident_item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {
-        match origin {
-            DefMapRef::Crate(crate_ref) => self.resident_crate_ir(crate_ref),
-            DefMapRef::Body(body_ref) => self.resident_body_item_store(body_ref),
+    pub fn build_with_sysroot(spec: &str) -> Self {
+        Self {
+            semantic: SemanticIrFixture::build_with_sysroot(spec),
         }
     }
-}
 
-impl DefMapSource for BodyIrFixture {
-    type Error = Infallible;
+    pub fn build_with_fake_sysroot(spec: &str) -> Self {
+        Self {
+            semantic: SemanticIrFixture::build_with_fake_sysroot(spec),
+        }
+    }
 
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
-        Ok(match origin {
-            DefMapRef::Crate(crate_ref) => self.resident_def_map(crate_ref),
-            DefMapRef::Body(body_ref) => self.resident_body_def_map(body_ref),
+    pub fn inspect<R>(&mut self, observe: impl FnOnce(BodyIrView<'_>) -> R) -> R {
+        self.semantic.inspect(|semantic| {
+            let bodies = BodyReader::new(semantic.db(), semantic.declarations());
+            observe(BodyIrView { semantic, bodies })
         })
     }
+}
 
-    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .is_some_and(rg_def_map::CrateData::is_proc_macro))
+pub struct BodyIrView<'db> {
+    semantic: SemanticIrView<'db>,
+    bodies: BodyReader<'db>,
+}
+
+impl<'db> BodyIrView<'db> {
+    pub fn semantic(&self) -> SemanticIrView<'db> {
+        self.semantic
     }
 
-    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .and_then(rg_def_map::CrateData::target_pointer_width))
+    pub fn parse_db(&self) -> &'db ParseDb {
+        self.semantic.parse_db()
     }
 
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .and_then(|data| data.extern_prelude().get(name).copied()))
+    pub fn body_reader(&self) -> BodyReader<'db> {
+        self.bodies.clone()
     }
 
-    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .map(|data| {
-                data.extern_prelude()
-                    .iter()
-                    .map(|(name, module)| (name.to_string(), *module))
-                    .collect()
+    pub fn def_map(&self, target: CrateRef) -> Option<&'db DefMap> {
+        self.semantic.def_map(target)
+    }
+
+    /// Demand every owner in the selected target, including each owner's nested bodies.
+    pub fn bodies(&self, target: CrateRef) -> Vec<(BodyRef, BodyView<'_>)> {
+        self.bodies
+            .bodies(target, None)
+            .expect("fixture bodies should load")
+    }
+
+    pub fn body(&self, body: BodyRef) -> Option<BodyView<'_>> {
+        self.bodies.body(body).expect("fixture body should load")
+    }
+
+    pub fn body_def_map(&self, body: BodyRef) -> Option<&DefMap> {
+        self.bodies
+            .body_def_map(body)
+            .expect("fixture body definitions should load")
+    }
+
+    pub fn item_query(&self) -> ItemStoreQuery<'_, &Self> {
+        ItemStoreQuery::new(self)
+    }
+
+    /// Resolve a named outer owner in an explicitly selected target. Tests with overloaded names
+    /// can select an item from the declarations and construct its BodyKey directly.
+    pub fn body_key(&self, target: CrateRef, name: &str) -> BodyKey {
+        let items = self.semantic.all_items(DefMapRef::Crate(target));
+        let declarations = rg_semantic_ir::target_declarations(self.semantic.db(), target)
+            .expect("fixture declarations should load");
+        let owners = declarations
+            .body_owners
+            .value_ref(self.semantic.db())
+            .expect("fixture body owners should load");
+        let mut matching = owners.iter().filter(|owner| {
+            let item_ref = match owner.owner {
+                SavedBodyOwner::Function(id) => ItemId::Function(id),
+                SavedBodyOwner::Const(id) => ItemId::Const(id),
+                SavedBodyOwner::Static(id) => ItemId::Static(id),
+            }
+            .semantic_ref(DefMapRef::Crate(target));
+            items.iter().any(|item| {
+                item.item() == item_ref
+                    && item
+                        .name()
+                        .is_some_and(|candidate| candidate.as_str() == name)
             })
-            .unwrap_or_default())
-    }
-
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .and_then(|data| data.prelude()))
-    }
-
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
-        Ok(self
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
-            .and_then(|data| {
-                Some(ModuleRef {
-                    origin: DefMapRef::Crate(crate_ref),
-                    module: data.root_module()?,
-                })
-            }))
+        });
+        let owner = matching
+            .next()
+            .expect("fixture body owner should exist")
+            .owner;
+        assert!(
+            matching.next().is_none(),
+            "fixture body owner name should be unique"
+        );
+        BodyKey {
+            krate: target,
+            owner,
+        }
     }
 }
 
-impl<'a> ItemStoreSource<'a> for &'a BodyIrFixture {
-    type Error = Infallible;
+impl DefMapSource for BodyIrView<'_> {
+    type Error = ReadError;
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
+        match origin {
+            DefMapRef::Crate(target) => self
+                .semantic
+                .declarations()
+                .crate_data(target)
+                .map(|data| data.map(CrateData::def_map)),
+            DefMapRef::Body(body) => self.bodies.body_def_map(body),
+        }
+    }
+    fn crate_is_proc_macro(&self, target: CrateRef) -> Result<bool, ReadError> {
+        self.semantic.definitions().crate_is_proc_macro(target)
+    }
+    fn target_pointer_width(&self, target: CrateRef) -> Result<Option<u32>, ReadError> {
+        self.semantic.definitions().target_pointer_width(target)
+    }
+    fn extern_root(&self, target: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
+        self.semantic.definitions().extern_root(target, name)
+    }
+    fn extern_roots(&self, target: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError> {
+        self.semantic.definitions().extern_roots(target)
+    }
+    fn prelude_module(&self, target: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
+        self.semantic.definitions().prelude_module(target)
+    }
+    fn root_module(&self, target: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
+        self.semantic.definitions().root_module(target)
+    }
+    fn item_lookup_dependencies(&self, target: CrateRef) -> Result<UniqueVec<CrateRef>, ReadError> {
+        self.semantic.definitions().item_lookup_dependencies(target)
+    }
+}
 
-    fn item_store_for_origin(
-        &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        Ok(self.resident_item_store(origin))
+impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
+    type Error = ReadError;
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        match item.origin() {
+            DefMapRef::Crate(_) => self.semantic.items().item(item),
+            DefMapRef::Body(_) => (&self.bodies).item(item),
+        }
     }
 
-    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
-        Ok((0..self.semantic_ir_db().package_count())
-            .filter_map(|index| self.semantic_ir_db().resident_package(PackageSlot(index)))
-            .flat_map(|package| {
-                package
-                    .crates()
-                    .iter()
-                    .map(rg_semantic_ir::SemanticCrate::items)
-            })
-            .collect())
+    fn item_for_local_def(
+        &self,
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
+        match definition.origin {
+            DefMapRef::Crate(_) => self.semantic.items().item_for_local_def(definition),
+            DefMapRef::Body(_) => (&self.bodies).item_for_local_def(definition),
+        }
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic.items().all_items(origin),
+            DefMapRef::Body(_) => (&self.bodies).all_items(origin),
+        }
     }
 }

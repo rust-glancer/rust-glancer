@@ -1,86 +1,165 @@
-use rg_def_map::{DefMap, testonly::DefMapFixture};
-use rg_ir_model::{CrateRef, PackageSlot};
-use rg_package_store::{PackageStore, PackageSubset};
-use rg_parse::ParseDb;
+use rg_def_map::{
+    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMap, DefinitionReader,
+};
+use rg_ir_model::{CrateId, CrateRef, DefMapRef, PackageSlot};
+use rg_parse::{CargoTarget, ParseDb};
+use rg_source::{QueryContext, QueryDatabase};
+use rg_workspace::{TargetKind, WorkspaceMetadata, testonly::WorkspaceFixture};
 
-use crate::{ItemStore, SemanticIrDb};
+use crate::{
+    CrateItemSource, ItemReader, SemanticItemView, TargetDeclarationReader, target_declarations,
+};
 
-/// End-to-end fixture for tests that need semantic item data.
+/// In-memory queries over fixture sources. The providers own declaration construction.
 pub struct SemanticIrFixture {
-    def_map: DefMapFixture,
-    semantic_ir: SemanticIrDb,
+    database: QueryDatabase,
+    parse: ParseDb,
+    targets: Vec<CrateRef>,
+    workspace: WorkspaceFixture,
 }
 
 impl SemanticIrFixture {
-    pub fn build(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build(fixture))
+    pub fn build(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec))
     }
 
-    pub fn build_with_sysroot(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build_with_sysroot(fixture))
+    pub fn build_with_sysroot(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec).with_sysroot())
     }
 
-    pub fn build_with_fake_sysroot(fixture: &str) -> Self {
-        Self::build_from_def_map(DefMapFixture::build_with_fake_sysroot(fixture))
+    pub fn build_with_fake_sysroot(spec: &str) -> Self {
+        Self::from_workspace(WorkspaceFixture::build(spec).with_fake_sysroot())
     }
 
-    pub fn build_from_def_map(mut def_map: DefMapFixture) -> Self {
-        let package_count = def_map.parse_db().package_count();
-        let packages = (0..package_count).map(PackageSlot).collect::<Vec<_>>();
-        let subset = PackageSubset::all(package_count);
-        let baseline = SemanticIrDb::from_package_store(PackageStore::all_offloaded(package_count));
-        let generated_items = def_map.take_generated_items();
-
-        // Fixtures build every package from source, but still enter Semantic IR through the same
-        // baseline-replacement path used by project construction. The generated declaration store
-        // is dropped immediately afterward so every downstream fixture query exercises the same
-        // retained-state boundary as a real project.
-        let semantic_ir = baseline
-            .build_packages(
-                def_map.item_tree_db(),
-                def_map.def_map_db(),
-                &generated_items,
-                &packages,
-                rg_def_map::DefMapLoader::resident_only("fixture DefMap"),
-                crate::SemanticIrLoader::resident_only("fixture Semantic IR"),
-                &subset,
-            )
-            .expect("fixture semantic ir db should build");
-        drop(generated_items);
-
+    pub fn from_workspace(workspace: WorkspaceFixture) -> Self {
+        let mut database = rg_item_tree::testonly::fixture_database(workspace.metadata());
+        let targets = database
+            .update_inputs(|update| CrateDependencies::write_inputs(workspace.metadata(), update))
+            .expect("fixture target inputs should install");
+        let inputs = database.inputs().clone();
+        // Source routing comes from the same declarations used by later fixture queries.
+        let parse = database
+            .run(|db| {
+                let metadata = targets
+                    .iter()
+                    .map(|&target| target_declarations(db, target)?.metadata.value_ref(db))
+                    .collect::<Result<Vec<_>, _>>()?;
+                ParseDb::from_target_manifests(
+                    workspace.metadata(),
+                    &inputs,
+                    targets
+                        .iter()
+                        .copied()
+                        .zip(metadata.iter().map(|metadata| &metadata.sources)),
+                )
+            })
+            .expect("fixture source routing should build");
         Self {
-            def_map,
-            semantic_ir,
+            database,
+            parse,
+            targets,
+            workspace,
         }
     }
 
-    pub fn parse_db(&self) -> &ParseDb {
-        self.def_map.parse_db()
+    pub fn inspect<R>(&mut self, observe: impl FnOnce(SemanticIrView<'_>) -> R) -> R {
+        // Borrowed results stay inside the operation, as they do for application queries.
+        self.database
+            .run(|db| {
+                let declarations =
+                    TargetDeclarationReader::for_project(db, self.targets.iter().copied());
+                Ok(observe(SemanticIrView {
+                    db,
+                    declarations: &declarations,
+                    parse: &self.parse,
+                    workspace: self.workspace.metadata(),
+                    targets: &self.targets,
+                }))
+            })
+            .expect("fixture query operation should succeed")
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SemanticIrView<'db> {
+    db: &'db QueryContext<'db>,
+    declarations: &'db TargetDeclarationReader<'db>,
+    parse: &'db ParseDb,
+    workspace: &'db WorkspaceMetadata,
+    targets: &'db [CrateRef],
+}
+
+impl<'db> SemanticIrView<'db> {
+    pub fn db(&self) -> &'db QueryContext<'db> {
+        self.db
     }
 
-    pub fn def_map_fixture(&self) -> &DefMapFixture {
-        &self.def_map
+    pub fn declarations(&self) -> &'db TargetDeclarationReader<'db> {
+        self.declarations
     }
 
-    pub fn def_map_db(&self) -> &rg_def_map::DefMapDb {
-        self.def_map.def_map_db()
+    pub fn definitions(&self) -> DefinitionReader<'db> {
+        CrateDefMapReader(self.declarations)
     }
 
-    pub fn semantic_ir_db(&self) -> &SemanticIrDb {
-        &self.semantic_ir
+    pub fn items(&self) -> ItemReader<'db> {
+        ItemReader(self.declarations)
     }
 
-    pub fn semantic_ir_db_mut(&mut self) -> &mut SemanticIrDb {
-        &mut self.semantic_ir
+    pub fn parse_db(&self) -> &'db ParseDb {
+        self.parse
     }
 
-    pub fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.def_map.resident_def_map(crate_ref)
+    pub fn workspace(&self) -> &'db WorkspaceMetadata {
+        self.workspace
     }
 
-    pub fn resident_crate_ir(&self, crate_ref: CrateRef) -> Option<&ItemStore> {
-        self.semantic_ir
-            .resident_package(crate_ref.package)?
-            .crate_items(crate_ref.crate_id)
+    pub fn targets(&self) -> &'db [CrateRef] {
+        self.targets
+    }
+
+    pub fn def_map(&self, target: CrateRef) -> Option<&'db DefMap> {
+        self.declarations
+            .crate_data(target)
+            .expect("fixture definitions should load")
+            .map(CrateData::def_map)
+    }
+
+    pub fn all_items(&self, origin: DefMapRef) -> Vec<SemanticItemView<'db>> {
+        self.declarations
+            .all_items(origin)
+            .expect("fixture items should load")
+    }
+
+    pub fn package_slot_by_name(&self, name: &str) -> PackageSlot {
+        PackageSlot(
+            self.parse
+                .packages()
+                .iter()
+                .position(|package| package.package_name() == name)
+                .unwrap_or_else(|| panic!("fixture package {name} should exist")),
+        )
+    }
+
+    pub fn target(&self, name: &str, kind: TargetKind) -> (PackageSlot, &'db CargoTarget) {
+        let slot = self.package_slot_by_name(name);
+        let mut targets = self.parse.packages()[slot.0]
+            .targets()
+            .iter()
+            .filter(|target| target.kind == kind);
+        let target = targets.next().expect("fixture target should exist");
+        assert!(
+            targets.next().is_none(),
+            "fixture target selection should be unique"
+        );
+        (slot, target)
+    }
+
+    pub fn crate_ref(&self, name: &str, kind: TargetKind) -> CrateRef {
+        let (package, target) = self.target(name, kind);
+        CrateRef {
+            package,
+            crate_id: CrateId(target.id.0),
+        }
     }
 }

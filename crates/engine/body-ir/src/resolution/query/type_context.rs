@@ -2,8 +2,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::FunctionRef;
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{SemanticItemSource, TypePathContext};
+use rg_source::ReadError;
 
 use crate::{body::BodyOwner, resolution::BodyResolutionContext};
 
@@ -14,18 +14,15 @@ pub(crate) struct BodyTypeContextQuery<'query, D, I> {
 
 impl<'query, D, I> BodyTypeContextQuery<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
     /// Find the module/impl context that anchors a function signature.
-    pub(crate) fn for_function(
-        &self,
-        function: FunctionRef,
-    ) -> Result<TypePathContext, PackageStoreError> {
+    pub(crate) fn for_function(&self, function: FunctionRef) -> Result<TypePathContext, ReadError> {
         let fallback_module = self.context.body().owner_module();
         Ok(self
             .context
@@ -35,7 +32,7 @@ where
     }
 
     /// Find the module/impl context that anchors the current body owner.
-    pub(crate) fn for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
+    pub(crate) fn for_body_owner(&self) -> Result<TypePathContext, ReadError> {
         let fallback_module = self.context.body().owner_module();
         match self.context.body().owner() {
             BodyOwner::Function(function) => self.for_function(function),

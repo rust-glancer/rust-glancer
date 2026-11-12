@@ -1,18 +1,12 @@
-pub(crate) mod cancellation;
 mod cargo_build_outputs;
 mod current_source;
-mod eager_indexing;
 mod file_queries;
 mod generated_modules;
 mod utils;
 
 use std::{
     collections::BTreeSet,
-    path::PathBuf,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
 };
 
 use expect_test::expect;
@@ -22,8 +16,7 @@ use rg_source::CapturedSource;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    AnalysisChangeSummary, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, SavedFileChange,
+    AnalysisChangeSummary, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint, SavedFileChange,
     testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
@@ -39,208 +32,6 @@ impl ProjectMemoryHooks for RecordingMemoryHooks {
             .expect("recorded memory hook points should not be poisoned")
             .push(point);
     }
-}
-
-#[derive(Debug)]
-struct SourceMutationMemoryHooks {
-    armed: AtomicBool,
-    point: ProjectMemoryPurgePoint,
-    path: PathBuf,
-    replacement: &'static str,
-}
-
-impl SourceMutationMemoryHooks {
-    fn new(path: PathBuf, replacement: &'static str, armed: bool) -> Self {
-        Self {
-            armed: AtomicBool::new(armed),
-            point: ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
-            path,
-            replacement,
-        }
-    }
-
-    fn at_point(point: ProjectMemoryPurgePoint, path: PathBuf, replacement: &'static str) -> Self {
-        Self {
-            armed: AtomicBool::new(true),
-            point,
-            path,
-            replacement,
-        }
-    }
-
-    fn arm(&self) {
-        self.armed.store(true, Ordering::Release);
-    }
-}
-
-impl ProjectMemoryHooks for SourceMutationMemoryHooks {
-    fn purge(&self, point: ProjectMemoryPurgePoint) {
-        if point == self.point && self.armed.swap(false, Ordering::AcqRel) {
-            std::fs::write(&self.path, self.replacement)
-                .expect("source mutation hook should replace fixture source");
-        }
-    }
-}
-
-#[test]
-fn fresh_build_rejects_source_changed_between_item_tree_and_body_ir() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "source_generation_build_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Before;
-"#,
-    );
-    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(SourceMutationMemoryHooks::new(
-        fixture.path("src/lib.rs"),
-        "pub struct After;\n",
-        true,
-    ));
-
-    let error = Project::builder(fixture.workspace_metadata())
-        .memory_hooks(hooks)
-        .build()
-        .expect_err("a source change during construction should invalidate the candidate");
-
-    assert!(
-        error.chain().any(|cause| cause
-            .downcast_ref::<rg_source::SourceError>()
-            .is_some_and(|error| { matches!(error, rg_source::SourceError::Stale { .. }) })),
-        "build failure should retain the typed stale-source cause: {error:#}",
-    );
-}
-
-#[test]
-fn fresh_build_rejects_module_existence_changed_after_discovery() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "source_generation_existence_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod later;
-"#,
-    );
-    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(SourceMutationMemoryHooks::new(
-        fixture.path("src/later.rs"),
-        "pub struct Appeared;\n",
-        true,
-    ));
-
-    let error = Project::builder(fixture.workspace_metadata())
-        .memory_hooks(hooks)
-        .build()
-        .expect_err("a module appearing during construction should invalidate the candidate");
-    assert!(
-        error.chain().any(|cause| matches!(
-            cause.downcast_ref::<rg_source::SourceError>(),
-            Some(rg_source::SourceError::ExistenceChanged { .. })
-        )),
-        "build failure should retain the source-existence cause: {error:#}",
-    );
-}
-
-#[test]
-fn failed_saved_candidate_preserves_published_generation() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "source_generation_update_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-pub struct Published;
-"#,
-    );
-    let path = fixture.path("src/lib.rs");
-    let hooks = Arc::new(SourceMutationMemoryHooks::new(
-        path.clone(),
-        "pub struct Concurrent;\n",
-        false,
-    ));
-    let mut project = Project::builder(fixture.workspace_metadata())
-        .memory_hooks(hooks.clone())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("initial project generation should build");
-    let published_generation = project.generation_id();
-    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
-    let published_tree = project
-        .queries
-        .database
-        .run(|db| rg_item_tree::file_declarations(db, PackageSlot(0), file_id))
-        .expect("accepted file declarations should be available");
-
-    std::fs::write(&path, "pub struct Candidate;\n")
-        .expect("candidate fixture source should be written");
-    hooks.arm();
-    let error = project
-        .apply_change(SavedFileChange::fs_path(&path))
-        .expect_err("concurrently changed candidate should not publish");
-    assert!(
-        error.chain().any(|cause| matches!(
-            cause.downcast_ref::<rg_source::SourceError>(),
-            Some(rg_source::SourceError::Stale { .. })
-        )),
-        "saved update failure should retain the typed stale-source cause: {error:#}",
-    );
-    assert_eq!(
-        project.generation_id(),
-        published_generation,
-        "a rejected candidate must not advance project generation identity",
-    );
-
-    assert!(
-        project.queries.database.statistics().bytes_written > 0,
-        "the candidate file query should have checkpointed before the source race",
-    );
-
-    let reload_error = project
-        .queries
-        .database
-        .run(|db| rg_parse::saved_syntax(db, file_id, rg_text::RustEdition::Edition2024))
-        .expect_err("evicted accepted source must reject newer disk bytes");
-    let canonical = path
-        .canonicalize()
-        .expect("fixture source should canonicalize");
-    assert_eq!(
-        Project::stale_source_path(&reload_error.into()),
-        Some(canonical.as_path())
-    );
-
-    // Restoring the old disk bytes proves the published ParseDb still points at the old source
-    // entry rather than at either failed candidate revision.
-    std::fs::write(&path, "pub struct Published;\n")
-        .expect("published fixture source should be restored");
-    let text = project
-        .snapshot()
-        .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
-        .expect("published source should load after rejected candidate")
-        .expect("published source span should exist");
-    assert_eq!(text, "pub struct Published;");
-    let tree = project
-        .queries
-        .database
-        .run(|db| rg_item_tree::file_declarations(db, PackageSlot(0), file_id))
-        .expect("the next query should use accepted inputs after failure");
-    assert_eq!(tree, published_tree);
-    let symbols = project
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("the accepted package artifact should still load after rejection")
-        .workspace_symbols("Published")
-        .expect("the accepted symbol should still be searchable");
-    assert_eq!(symbols.len(), 1);
 }
 
 #[test]
@@ -269,20 +60,18 @@ pub struct Before;
         .expect("matching captured source should publish");
 
     assert_ne!(project.generation_id(), previous_generation);
-    assert_eq!(summary.affected_packages, [PackageSlot(0)]);
     let canonical = path
         .canonicalize()
         .expect("published fixture source should canonicalize");
-    let entry = project
-        .state
-        .parse_db()
-        .source_inventory()
-        .entry(&canonical)
-        .expect("published captured source should remain in the inventory");
-    assert_eq!(entry.revision(), captured.revision());
+    let entry = project.state.parse_db().packages()[0]
+        .parsed_files()
+        .find(|file| file.path() == canonical)
+        .expect("published captured source should remain available");
+    assert_eq!(summary.changed_files.len(), 1);
+    assert_eq!(entry.source_revision(), captured.revision());
     assert_eq!(
         entry
-            .text()
+            .source_text()
             .expect("published captured source should reload from matching disk")
             .as_ref(),
         "pub struct Captured;\n"
@@ -330,11 +119,12 @@ pub struct Published;
     // proposal never leaked into its ParseDb.
     std::fs::write(&path, "pub struct Published;\n")
         .expect("published fixture source should be restored");
-    let text = project
-        .snapshot()
-        .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
-        .expect("published source should load after rejected proposal")
-        .expect("published source span should exist");
+    let text = project.inspect(|snapshot| {
+        snapshot
+            .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
+            .expect("published source should load after rejected proposal")
+            .expect("published source span should exist")
+    });
     assert_eq!(text, "pub struct Published;");
 }
 
@@ -465,16 +255,7 @@ pub struct Before;
         ])
         .expect("module rename should publish a new source generation");
 
-    assert_eq!(summary.affected_packages, [PackageSlot(0)]);
-    assert!(
-        project
-            .state
-            .parse_db()
-            .source_inventory()
-            .entry(&old_canonical)
-            .is_none(),
-        "renamed module source should leave the published inventory",
-    );
+    assert_eq!(summary.changed_files.len(), 3);
     assert!(
         !project.state.parse_db().contains_file_path(&old_canonical),
         "renamed module source should leave the package file table",
@@ -490,7 +271,7 @@ pub struct Before;
 }
 
 #[test]
-fn offloaded_line_index_rejects_newer_disk_revision() {
+fn saved_line_index_rejects_newer_disk_revision() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -504,15 +285,17 @@ pub struct Before;
 "#,
     );
     let path = fixture.path("src/lib.rs");
-    let project =
-        fixture.build_project_with_package_residency_policy(PackageResidencyPolicy::AllOffloadable);
+    let project = fixture.build_project();
     let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
     std::fs::write(&path, "\n\npub struct After;\n")
         .expect("newer fixture source should be written");
 
     let error = project
-        .snapshot()
-        .file_line_index(PackageSlot(0), file_id)
+        .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
+            snapshot
+                .file_line_index(PackageSlot(0), file_id)
+                .map(|index| index.cloned())
+        })
         .expect_err("line index reload should reject a newer source revision");
     assert!(
         error.chain().any(|cause| matches!(
@@ -524,69 +307,7 @@ pub struct Before;
 }
 
 #[test]
-fn saved_change_without_an_affected_package_still_seals_the_generation() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["crates/app"]
-resolver = "3"
-
-//- /crates/app/Cargo.toml
-[package]
-name = "source_generation_irrelevant_change_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /crates/app/src/lib.rs
-pub struct App;
-"#,
-    );
-    let mut project = fixture.build_project();
-    fixture.write_fixture_files(
-        r#"
-//- /generated/irrelevant.rs
-pub struct Irrelevant;
-"#,
-    );
-    let path = fixture.path("generated/irrelevant.rs");
-
-    let summary = project
-        .apply_change(SavedFileChange::fs_path(&path))
-        .expect("irrelevant saved source should produce a valid generation");
-
-    assert!(summary.changed_files.is_empty());
-    assert!(summary.affected_packages.is_empty());
-    assert!(
-        project.state.parse_db().source_inventory().is_sealed(),
-        "a published generation must be sealed even when no package was rebuilt",
-    );
-    project
-        .state
-        .parse_db()
-        .validate_saved_sources()
-        .expect("the published source set should remain valid");
-
-    assert!(
-        project
-            .state
-            .parse_db()
-            .source_inventory()
-            .entry(&path)
-            .is_none(),
-        "an unrelated watcher path should not become part of the published inventory",
-    );
-    std::fs::remove_file(&path).expect("irrelevant fixture source should be removable");
-    let root = fixture.path("crates/app/src/lib.rs");
-    std::fs::write(&root, "pub struct Updated;\n")
-        .expect("known fixture source should accept a later edit");
-    project
-        .apply_change(SavedFileChange::fs_path(root))
-        .expect("removed unrelated source must not poison later saved updates");
-}
-
-#[test]
-fn batched_saved_source_changes_skip_missing_paths_and_rebuild_packages_once() {
+fn batched_saves_publish_both_changes_and_skip_missing_paths() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -648,25 +369,22 @@ pub struct SavedUser;
         "both saved module files should be reported as changed"
     );
     assert_eq!(
-        summary.affected_packages.len(),
+        summary.changed_crates.len(),
         1,
-        "one package should be rebuilt for the source-change batch"
+        "both changed modules belong to one target"
     );
     assert_eq!(
         points
             .lock()
             .expect("recorded memory hook points should not be poisoned")
             .as_slice(),
-        [
-            ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
-            ProjectMemoryPurgePoint::AfterPackageRebuild,
-        ],
-        "a multi-file source batch should rebuild the affected package closure once",
+        [ProjectMemoryPurgePoint::AfterProjectChange],
+        "a multi-file batch should publish one generation",
     );
 }
 
 #[test]
-fn repeated_saved_source_notifications_do_not_rebuild_unchanged_packages() {
+fn repeated_saved_source_notifications_preserve_generation() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -708,74 +426,7 @@ pub struct AlreadyApplied;
             .lock()
             .expect("recorded memory hook points should not be poisoned")
             .is_empty(),
-        "an unchanged watcher replay must not enter package rebuilding",
-    );
-}
-
-#[test]
-fn source_batch_skips_file_removed_after_canonicalization() {
-    let fixture = ProjectSourceFixture::build(
-        r#"
-//- /Cargo.toml
-[package]
-name = "removed_during_batch_fixture"
-version = "0.1.0"
-edition = "2024"
-
-//- /src/lib.rs
-mod user;
-
-//- /src/user.rs
-pub struct User;
-"#,
-    );
-    let mut project = fixture.build_project();
-    let transient = fixture.path("src/transient.rs");
-    let user = fixture.path("src/user.rs");
-    std::fs::write(&transient, "pub struct Transient;\n")
-        .expect("transient fixture should be writable");
-    std::fs::write(&user, "pub struct SavedUser;\n").expect("user fixture should be writable");
-
-    // The iterator removes transient.rs only when Project asks for the second item. This places the
-    // removal after transient.rs was canonicalized and before the source-capture phase begins.
-    let transient_for_changes = transient.clone();
-    let user_for_changes = user.clone();
-    let mut next_change = 0usize;
-    let changes = std::iter::from_fn(move || match next_change {
-        0 => {
-            next_change += 1;
-            Some(SavedFileChange::fs_path(&transient_for_changes))
-        }
-        1 => {
-            next_change += 1;
-            std::fs::remove_file(&transient_for_changes)
-                .expect("transient fixture should be removable between batch phases");
-            Some(SavedFileChange::fs_path(&user_for_changes))
-        }
-        _ => None,
-    });
-
-    let summary = project
-        .apply_changes(changes)
-        .expect("surviving source changes should still apply");
-
-    let [changed_file] = summary.changed_files.as_slice() else {
-        panic!("only the surviving user file should be reported as changed");
-    };
-    let changed_path = project
-        .state
-        .parse_db()
-        .package(changed_file.package.0)
-        .expect("changed package should exist")
-        .parsed_file(changed_file.file)
-        .expect("changed file should exist")
-        .path()
-        .to_path_buf();
-    assert_eq!(
-        changed_path,
-        user.canonicalize()
-            .expect("user fixture should canonicalize"),
-        "a disappeared path should not prevent later batch members from rebuilding"
+        "an unchanged watcher replay must not purge a replaced generation",
     );
 }
 
@@ -811,91 +462,85 @@ pub fn demo(user: User) -> usize {
         .expect("eager project build should succeed");
 
     let subject = fixture.markers().position("subject");
-    let lib_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path(&subject.path))
-        .expect("subject file contexts should resolve")
-        .expect("subject file should have one context");
-    let other_context = project
-        .snapshot()
-        .file_context_for_path(fixture.path("src/other.rs"))
-        .expect("other file contexts should resolve")
-        .expect("other file should have one context");
-    let target = lib_context.crate_ref;
+    project.inspect(|snapshot| {
+        let lib_context = snapshot
+            .file_context_for_path(fixture.path(&subject.path))
+            .expect("subject file contexts should resolve")
+            .expect("subject file should have one context");
+        let other_context = snapshot
+            .file_context_for_path(fixture.path("src/other.rs"))
+            .expect("other file contexts should resolve")
+            .expect("other file should have one context");
+        let target = lib_context.crate_ref;
 
-    let search_files = {
-        let snapshot = project.snapshot();
-        let analysis = snapshot
-            .full_analysis(rg_std::CancellationToken::new())
-            .expect("eager analysis should materialize");
-        let declaration_targets = analysis
-            .goto_definition(target, lib_context.file, subject.offset)
-            .expect("definition lookup should resolve")
-            .into_iter()
-            .map(|target| target.crate_ref)
-            .collect::<Vec<_>>();
-        let search_targets = snapshot
-            .reference_search_crates(
-                lib_context.crate_ref.package,
-                &declaration_targets,
-                &rg_std::CancellationToken::new(),
-            )
-            .expect("plan reference crates");
-        let labels = analysis
-            .reference_search_labels(target, lib_context.file, subject.offset)
-            .expect("reference labels should resolve");
-        let files = snapshot
-            .reference_search_files_matching_labels(
-                &search_targets,
-                &labels,
-                &rg_std::CancellationToken::new(),
-            )
-            .expect("reference text prefilter should resolve")
-            .expect("reference text prefilter should find label-bearing files");
+        let search_files = {
+            let analysis = snapshot.analysis();
+            let declaration_targets = analysis
+                .goto_definition(target, lib_context.file, subject.offset)
+                .expect("definition lookup should resolve")
+                .into_iter()
+                .map(|target| target.crate_ref)
+                .collect::<Vec<_>>();
+            let search_targets = snapshot
+                .reference_search_crates(
+                    lib_context.crate_ref.package,
+                    &declaration_targets,
+                    &rg_std::CancellationToken::new(),
+                )
+                .expect("plan reference crates");
+            let labels = analysis
+                .reference_search_labels(target, lib_context.file, subject.offset)
+                .expect("reference labels should resolve");
+            let files = snapshot
+                .reference_search_files_matching_labels(
+                    &search_targets,
+                    &labels,
+                    &rg_std::CancellationToken::new(),
+                )
+                .expect("reference text prefilter should resolve")
+                .expect("reference text prefilter should find label-bearing files");
 
-        assert!(
+            assert!(
+                files
+                    .iter()
+                    .any(|file| file.crate_ref == target && file.file_id == other_context.file),
+                "reference scan surface should include the file with body references",
+            );
+
             files
+        };
+
+        let analysis = snapshot.analysis();
+        let query = ReferenceQuery::find_references_in_files(&search_files, true);
+        let references = analysis
+            .references(target, lib_context.file, subject.offset, query)
+            .expect("references should resolve after indexing");
+        assert!(
+            references
                 .iter()
-                .any(|file| file.crate_ref == target && file.file_id == other_context.file),
-            "reference scan surface should include the file with body references",
+                .any(|reference| reference.file_id == other_context.file),
+            "references should include body occurrences from the indexed scan surface",
         );
 
-        files
-    };
-
-    let snapshot = project.snapshot();
-    let analysis = snapshot
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("completed analysis should materialize");
-    let query = ReferenceQuery::find_references_in_files(&search_files, true);
-    let references = analysis
-        .references(target, lib_context.file, subject.offset, query)
-        .expect("references should resolve after indexing");
-    assert!(
-        references
-            .iter()
-            .any(|reference| reference.file_id == other_context.file),
-        "references should include body occurrences from the indexed scan surface",
-    );
-
-    let query = ReferenceQuery::find_references_in_files(&search_files, true);
-    let rename = analysis
-        .rename(target, lib_context.file, subject.offset, "label", query)
-        .expect("rename should resolve after indexing")
-        .expect("rename should be available for the selected field");
-    assert!(
-        rename.edits.iter().any(|edit| {
-            edit.file_id == other_context.file
-                && edit.old_text == "name"
-                && edit.new_text == "label"
-        }),
-        "rename should edit body occurrences from the indexed scan surface",
-    );
+        let query = ReferenceQuery::find_references_in_files(&search_files, true);
+        let rename = analysis
+            .rename(target, lib_context.file, subject.offset, "label", query)
+            .expect("rename should resolve after indexing")
+            .expect("rename should be available for the selected field");
+        assert!(
+            rename.edits.iter().any(|edit| {
+                edit.file_id == other_context.file
+                    && edit.old_text == "name"
+                    && edit.new_text == "label"
+            }),
+            "rename should edit body occurrences from the indexed scan surface",
+        );
+    });
 }
 
 #[test]
 fn reexpands_items_from_a_cached_dependency_macro() {
-    let mut fixture = ProjectFixture::build_with_package_residency_policy(
+    let mut fixture = ProjectFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -920,33 +565,28 @@ macro_rules! make {
     };
 }
 "#,
-        PackageResidencyPolicy::AllOffloadable,
     );
-    let app = fixture.package_slot_by_name("macro_cache_app");
-    let summary = fixture.apply_saved_fixture("//- /src/lib.rs\nmacro_cache_dep::make!(After);\n");
-    assert_eq!(summary.affected_packages, vec![app]);
-    let analysis = fixture
-        .project()
-        .snapshot()
-        .full_analysis(rg_std::CancellationToken::new())
-        .expect("reloaded macro expansion should be queryable");
-    assert_eq!(
-        analysis
-            .workspace_symbols("After")
-            .expect("symbol query should succeed")
-            .len(),
-        1
-    );
-    assert!(
-        analysis
-            .workspace_symbols("Before")
-            .expect("symbol query should succeed")
-            .is_empty()
-    );
+    fixture.apply_saved_fixture("//- /src/lib.rs\nmacro_cache_dep::make!(After);\n");
+    fixture.project().inspect(|snapshot| {
+        let analysis = snapshot.analysis();
+        assert_eq!(
+            analysis
+                .workspace_symbols("After")
+                .expect("symbol query should succeed")
+                .len(),
+            1
+        );
+        assert!(
+            analysis
+                .workspace_symbols("Before")
+                .expect("symbol query should succeed")
+                .is_empty()
+        );
+    });
 }
 
 #[test]
-fn macro_expansion_limit_build_summary_survives_offloading_and_refreshes_on_rebuild() {
+fn macro_expansion_limit_summary_refreshes_on_save() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -967,15 +607,10 @@ recurse!();
     );
     let source_path = fixture.path("src/lib.rs");
     let mut project = Project::builder(fixture.workspace_metadata())
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
         .build()
         .expect("recursive macro fixture should build a bounded project");
 
-    // The detailed report leaves memory with the package payload, while the small build summary
-    // remains available to the host that publishes the project.
-    assert_eq!(project.macro_expansion_limit_reports().count(), 0);
-    let snapshot = project.snapshot();
-    let summary = snapshot.macro_expansion_limit_summary();
+    let summary = project.macro_expansion_limit_summary();
     assert_eq!(summary.affected_crate_count(), 1);
     assert!(summary.skipped_macro_call_count() > 0);
     assert_eq!(
@@ -989,12 +624,9 @@ recurse!();
     let change = project
         .apply_change(SavedFileChange::fs_path(source_path))
         .expect("finite replacement should rebuild the affected package");
-    assert_eq!(change.affected_packages.len(), 1);
+    assert_eq!(change.changed_crates.len(), 1);
     assert!(
-        project
-            .snapshot()
-            .macro_expansion_limit_summary()
-            .is_empty(),
+        project.macro_expansion_limit_summary().is_empty(),
         "a later successful expansion build should not retain the previous warning summary",
     );
 }
@@ -1052,43 +684,44 @@ pub struct Independent;
 "#,
     );
     let project = fixture.build_project();
-    let snapshot = project.snapshot();
-    let dep_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "dep");
-    let app_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "app");
-    let dep_file = ProjectFixture::file_id_for_path_in(
-        snapshot.parse_db(),
-        &fixture.path("crates/dep/src/lib.rs"),
-    );
-    let dep_target = snapshot
-        .crates_for_file(dep_package, dep_file)
-        .expect("dep target lookup should succeed")
-        .into_iter()
-        .next()
-        .expect("dep lib file should belong to the dep lib target");
+    project.inspect(|snapshot| {
+        let dep_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "dep");
+        let app_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "app");
+        let dep_file = ProjectFixture::file_id_for_path_in(
+            snapshot.parse_db(),
+            &fixture.path("crates/dep/src/lib.rs"),
+        );
+        let dep_target = snapshot
+            .crates_for_file(dep_package, dep_file)
+            .expect("dep target lookup should succeed")
+            .into_iter()
+            .next()
+            .expect("dep lib file should belong to the dep lib target");
 
-    let package_names = snapshot
-        .reference_search_crates(
-            app_package,
-            &[dep_target],
-            &rg_std::CancellationToken::new(),
-        )
-        .expect("plan reference crates")
-        .into_iter()
-        .map(|target| {
-            snapshot
-                .parse_db()
-                .package(target.package.0)
-                .expect("reference search target package should exist")
-                .package_name()
-                .to_owned()
-        })
-        .collect::<BTreeSet<_>>();
+        let package_names = snapshot
+            .reference_search_crates(
+                app_package,
+                &[dep_target],
+                &rg_std::CancellationToken::new(),
+            )
+            .expect("plan reference crates")
+            .into_iter()
+            .map(|target| {
+                snapshot
+                    .parse_db()
+                    .package(target.package.0)
+                    .expect("reference search target package should exist")
+                    .package_name()
+                    .to_owned()
+            })
+            .collect::<BTreeSet<_>>();
 
-    assert_eq!(
-        package_names,
-        BTreeSet::from(["app".to_string(), "dep".to_string(), "mid".to_string()]),
-        "workspace reference searches should skip unrelated workspace packages"
-    );
+        assert_eq!(
+            package_names,
+            BTreeSet::from(["app".to_string(), "dep".to_string(), "mid".to_string()]),
+            "workspace reference searches should skip unrelated workspace packages"
+        );
+    });
 }
 
 #[test]
@@ -1127,9 +760,6 @@ pub struct Account;
         expect![[r#"
             changed files
             - host_update_fixture src/lib.rs
-
-            affected packages
-            - host_update_fixture
 
             changed targets
             - host_update_fixture[lib]
@@ -1183,9 +813,6 @@ mod api;
             changed files
             - host_new_module_fixture src/api.rs
             - host_new_module_fixture src/lib.rs
-
-            affected packages
-            - host_new_module_fixture
 
             changed targets
             - host_new_module_fixture[lib]
@@ -1254,10 +881,6 @@ dep = { path = "../dep" }
             changed files
             - <none>
 
-            affected packages
-            - app
-            - dep
-
             changed targets
             - app[lib]
             - dep[lib]
@@ -1311,9 +934,6 @@ path = "src/tool.rs"
             changed files
             - <none>
 
-            affected packages
-            - target_fixture
-
             changed targets
             - target_fixture[bin]
             - target_fixture[lib]
@@ -1360,10 +980,6 @@ pub struct NewType;
             changed files
             - new_pkg crates/new_pkg/src/lib.rs
 
-            affected packages
-            - app
-            - new_pkg
-
             changed targets
             - app[lib]
             - new_pkg[lib]
@@ -1407,9 +1023,6 @@ edition = "2024"
             changed files
             - <none>
 
-            affected packages
-            - <none>
-
             changed targets
             - <none>
 
@@ -1428,10 +1041,6 @@ pub struct NewType;
             changed files
             - new_pkg crates/new_pkg/src/lib.rs
 
-            affected packages
-            - app
-            - new_pkg
-
             changed targets
             - app[lib]
             - new_pkg[lib]
@@ -1443,8 +1052,8 @@ pub struct NewType;
 }
 
 #[test]
-fn workspace_graph_rebuild_reports_changed_crates_when_packages_are_offloaded() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
+fn workspace_graph_change_reports_changed_crates() {
+    let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -1458,7 +1067,6 @@ pub struct Lib;
 //- /src/tool.rs
 fn main() {}
 "#,
-        PackageResidencyPolicy::AllOffloadable,
     );
 
     fixture.check_save(
@@ -1477,9 +1085,6 @@ path = "src/tool.rs"
         expect![[r#"
             changed files
             - <none>
-
-            affected packages
-            - offloaded_target_fixture
 
             changed targets
             - offloaded_target_fixture[bin]
@@ -1517,9 +1122,6 @@ fn smoke() {}
             changed files
             - autotarget_fixture tests/smoke.rs
 
-            affected packages
-            - autotarget_fixture
-
             changed targets
             - autotarget_fixture[lib]
             - autotarget_fixture[test]
@@ -1531,7 +1133,7 @@ fn smoke() {}
 }
 
 #[test]
-fn updates_existing_auto_discovered_target_without_full_rebuild() {
+fn updates_existing_auto_discovered_target() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -1559,9 +1161,6 @@ fn changed_smoke() {}
         expect![[r#"
             changed files
             - autotarget_update_fixture tests/smoke.rs
-
-            affected packages
-            - autotarget_update_fixture
 
             changed targets
             - autotarget_update_fixture[test]
@@ -1609,9 +1208,6 @@ version = "0.1.0"
         expect![[r#"
             changed files
             - <none>
-
-            affected packages
-            - lock_fixture
 
             changed targets
             - lock_fixture[lib]
@@ -1669,7 +1265,7 @@ pub struct Orphan;
 }
 
 #[test]
-fn rebuilds_package_roots_for_new_saved_module_files() {
+fn discovers_new_saved_module_files() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -1713,10 +1309,6 @@ pub struct Root;
             changed files
             - dep crates/dep/src/lib.rs
 
-            affected packages
-            - app
-            - dep
-
             changed targets
             - dep[lib]
 
@@ -1734,10 +1326,6 @@ pub struct Api;
         expect![[r#"
             changed files
             - dep crates/dep/src/api.rs
-
-            affected packages
-            - app
-            - dep
 
             changed targets
             - dep[lib]
@@ -1812,11 +1400,8 @@ pub struct Root;
         ],
         expect![[r#"
             changed files
+            - dep crates/dep/src/api.rs
             - dep crates/dep/src/lib.rs
-
-            affected packages
-            - app
-            - dep
 
             changed targets
             - dep[lib]
@@ -1861,20 +1446,17 @@ dep = { path = "../dep" }
 //- /app/src/lib.rs
 pub struct App;
 "#;
-    for policy in [
-        PackageResidencyPolicy::AllResident,
-        PackageResidencyPolicy::AllOffloadable,
-    ] {
-        let mut fixture = ProjectFixture::build_with_package_residency_policy(source, policy);
-        let app = rg_ir_model::CrateRef {
-            package: fixture.package_slot_by_name("app"),
-            crate_id: rg_ir_model::CrateId(0),
-        };
-        let selected_name = |project: &Project| {
-            let loaders = project.state.query_read_loaders();
-            let items = project.state.semantic_ir.read_txn(loaders.semantic_ir);
+    let mut fixture = ProjectFixture::build(source);
+    let app = rg_ir_model::CrateRef {
+        package: fixture.package_slot_by_name("app"),
+        crate_id: rg_ir_model::CrateId(0),
+    };
+    let selected_name = |project: &Project| {
+        project.inspect(|snapshot| {
+            let reader = rg_semantic_ir::ItemReader(snapshot.declarations());
+            let items = &reader;
             let query = rg_semantic_ir::ItemLookupQuery::build_from(
-                &rg_semantic_ir::ItemStoreQuery::new(&items),
+                reader,
                 app,
                 &rg_std::CancellationToken::new(),
             )
@@ -1882,42 +1464,35 @@ pub struct App;
             let selected = query
                 .lang_trait(rg_item_tree::LangItem::Deref)
                 .expect("dependency supplies the language item");
-            rg_semantic_ir::ItemStoreQuery::new(&items)
+            rg_semantic_ir::ItemStoreQuery::new(items)
                 .trait_data(selected)
                 .expect("selected trait should load")
                 .expect("selected trait exists")
                 .name
                 .to_string()
-        };
-        assert_eq!(selected_name(fixture.project()), "FirstDeref");
+        })
+    };
+    assert_eq!(selected_name(fixture.project()), "FirstDeref");
 
-        // Move the language item to another trait id. A dependent's stale saved mapping would
-        // select Existing instead of SecondDeref even if the dependency's own items were refreshed.
-        fixture.apply_saved_fixture(
-            r#"
+    // Move the language item to another trait id. A dependent's stale saved mapping would
+    // select Existing instead of SecondDeref even if the dependency's own items were refreshed.
+    fixture.apply_saved_fixture(
+        r#"
 //- /dep/src/lib.rs
 #[lang = "deref"]
 pub trait SecondDeref {}
 pub trait Existing {}
 "#,
-        );
-        assert_eq!(selected_name(fixture.project()), "SecondDeref");
+    );
+    assert_eq!(selected_name(fixture.project()), "SecondDeref");
 
-        // Reload from the saved artifacts to check that the updated choice survives a new project.
-        let reloaded = fixture
-            .source()
-            .build_project_with_package_residency_policy(policy);
-        assert_eq!(selected_name(&reloaded), "SecondDeref");
-        assert_eq!(
-            reloaded.state.semantic_ir.package_is_offloaded(app.package),
-            policy == PackageResidencyPolicy::AllOffloadable,
-            "query reads should preserve package residency",
-        );
-    }
+    let source = fixture.source();
+    let reloaded = source.build_project();
+    assert_eq!(selected_name(&reloaded), "SecondDeref");
 }
 
 #[test]
-fn rebuilds_reverse_dependent_packages_after_dependency_changes() {
+fn updates_dependent_lookup_after_dependency_changes() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -1968,10 +1543,6 @@ pub struct Renamed;
             changed files
             - dep crates/dep/src/lib.rs
 
-            affected packages
-            - app
-            - dep
-
             changed targets
             - dep[lib]
 
@@ -1982,360 +1553,7 @@ pub struct Renamed;
 }
 
 #[test]
-fn rebuilds_offloaded_path_dependency_after_source_change() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-pub fn use_dep(_: dep::Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#,
-        PackageResidencyPolicy::AllOffloadable,
-    );
-
-    fixture.check(
-        &[HostObservation::workspace_symbols("Api")],
-        expect![[r#"
-            workspace symbols `Api`
-            - struct Api @ dep[lib] dep/src/lib.rs
-        "#]],
-    );
-
-    fixture.check_save(
-        r#"
-//- /dep/src/lib.rs
-pub struct Renamed;
-"#,
-        &[
-            HostObservation::workspace_symbols("Renamed"),
-            HostObservation::workspace_symbols("Api"),
-        ],
-        expect![[r#"
-            changed files
-            - dep dep/src/lib.rs
-
-            affected packages
-            - app
-            - dep
-
-            changed targets
-            - dep[lib]
-
-            workspace symbols `Renamed`
-            - struct Renamed @ dep[lib] dep/src/lib.rs
-
-            workspace symbols `Api`
-            - <none>
-        "#]],
-    );
-}
-
-const OFFLOADED_ARTIFACT_FIXTURE: &str = r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-use dep::Api;
-pub struct Before;
-pub fn use_dep(_: Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#;
-
-#[derive(Debug, Clone, Copy)]
-enum OffloadedArtifactDamage {
-    Missing,
-    Corrupt,
-}
-
-impl OffloadedArtifactDamage {
-    const ALL: [Self; 2] = [Self::Missing, Self::Corrupt];
-
-    fn apply(self, fixture: &HostFixture) {
-        match self {
-            Self::Missing => fixture.remove_package_cache_artifact("dep"),
-            Self::Corrupt => fixture.corrupt_package_cache_artifact("dep"),
-        }
-    }
-
-    fn query_error_fragment(self) -> &'static str {
-        match self {
-            Self::Missing => {
-                "offloaded package slot PackageSlot(1) is missing from backing storage"
-            }
-            Self::Corrupt => "offloaded package slot PackageSlot(1) has malformed cache data",
-        }
-    }
-
-    fn artifact_remains_on_disk(self) -> bool {
-        matches!(self, Self::Corrupt)
-    }
-}
-
-#[test]
-fn queries_report_missing_and_corrupt_offloaded_package_cache_artifacts() {
-    for damage in OffloadedArtifactDamage::ALL {
-        let fixture = HostFixture::build_with_package_residency_policy(
-            OFFLOADED_ARTIFACT_FIXTURE,
-            PackageResidencyPolicy::AllOffloadable,
-        );
-
-        assert!(fixture.package_cache_artifact_exists("dep"));
-        damage.apply(&fixture);
-        assert_eq!(
-            fixture.package_cache_artifact_exists("dep"),
-            damage.artifact_remains_on_disk(),
-            "unexpected artifact state after {damage:?} damage",
-        );
-
-        let error = fixture.workspace_symbols_error("Api");
-        assert!(
-            error.contains(damage.query_error_fragment()),
-            "unexpected query error after {damage:?} damage: {error}",
-        );
-        assert_eq!(
-            fixture.package_cache_artifact_exists("dep"),
-            damage.artifact_remains_on_disk(),
-            "querying should not change artifact state after {damage:?} damage",
-        );
-    }
-}
-
-#[test]
-fn narrow_queries_and_source_updates_avoid_unrelated_offloaded_packages() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[workspace]
-members = ["app", "dep", "unrelated"]
-resolver = "3"
-
-//- /app/Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "../dep" }
-
-//- /app/src/lib.rs
-pub struct Before;
-pub fn use_dep(_: dep::Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-
-//- /unrelated/Cargo.toml
-[package]
-name = "unrelated"
-version = "0.1.0"
-edition = "2024"
-
-//- /unrelated/src/lib.rs
-pub struct Unrelated;
-"#,
-        PackageResidencyPolicy::AllOffloadable,
-    );
-
-    assert!(fixture.package_cache_artifact_exists("unrelated"));
-    fixture.remove_package_cache_artifact("unrelated");
-    assert!(!fixture.package_cache_artifact_exists("unrelated"));
-
-    assert_eq!(
-        fixture.document_symbol_names("app/src/lib.rs"),
-        vec!["Before", "use_dep"],
-    );
-    assert!(
-        !fixture.package_cache_artifact_exists("unrelated"),
-        "narrow file-local queries should not recover artifacts outside their package subset",
-    );
-
-    fixture.check_save(
-        r#"
-//- /app/src/lib.rs
-pub struct After;
-pub fn use_dep(_: dep::Api) {}
-"#,
-        &[HostObservation::resident_stats("after save")],
-        expect![[r#"
-            changed files
-            - app app/src/lib.rs
-
-            affected packages
-            - app
-
-            changed targets
-            - app[lib]
-
-            resident stats `after save`
-            - def-map crates 0
-            - semantic crates 0
-            - body crates 0
-        "#]],
-    );
-
-    assert_eq!(
-        fixture.document_symbol_names("app/src/lib.rs"),
-        vec!["After", "use_dep"],
-    );
-    assert!(
-        !fixture.package_cache_artifact_exists("unrelated"),
-        "source updates should not recover artifacts outside their rebuild package subset",
-    );
-}
-
-#[test]
-fn source_updates_rebuild_missing_and_corrupt_offloaded_package_cache_artifacts() {
-    for damage in OffloadedArtifactDamage::ALL {
-        let mut fixture = HostFixture::build_with_package_residency_policy(
-            OFFLOADED_ARTIFACT_FIXTURE,
-            PackageResidencyPolicy::AllOffloadable,
-        );
-        damage.apply(&fixture);
-
-        fixture.check_save(
-            r#"
-//- /src/lib.rs
-use dep::Api;
-pub struct After;
-pub fn use_dep(_: Api) {}
-"#,
-            &[
-                HostObservation::workspace_symbols("After"),
-                HostObservation::workspace_symbols("Api"),
-            ],
-            expect![[r#"
-                changed files
-                - app src/lib.rs
-
-                affected packages
-                - app
-
-                changed targets
-                - app[lib]
-
-                workspace symbols `After`
-                - struct After @ app[lib] src/lib.rs
-
-                workspace symbols `Api`
-                - struct Api @ dep[lib] dep/src/lib.rs
-            "#]],
-        );
-        assert!(
-            fixture.package_cache_artifact_exists("dep"),
-            "source update should recover dependency artifact after {damage:?} damage",
-        );
-    }
-}
-
-#[test]
-fn source_updates_restore_offloaded_residency_for_unchanged_packages() {
-    let mut fixture = HostFixture::build_with_package_residency_policy(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep = { path = "dep" }
-
-//- /src/lib.rs
-pub struct Before;
-pub fn use_dep(_: dep::Api) {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep"
-version = "0.1.0"
-edition = "2024"
-
-//- /dep/src/lib.rs
-pub struct Api;
-"#,
-        PackageResidencyPolicy::AllOffloadable,
-    );
-
-    fixture.check(
-        &[HostObservation::resident_stats("after build")],
-        expect![[r#"
-            resident stats `after build`
-            - def-map crates 0
-            - semantic crates 0
-            - body crates 0
-        "#]],
-    );
-
-    fixture.check_save(
-        r#"
-//- /src/lib.rs
-pub struct After;
-pub fn use_dep(_: dep::Api) {}
-"#,
-        &[
-            HostObservation::resident_stats("after save"),
-            HostObservation::workspace_symbols("After"),
-        ],
-        expect![[r#"
-            changed files
-            - app src/lib.rs
-
-            affected packages
-            - app
-
-            changed targets
-            - app[lib]
-
-            resident stats `after save`
-            - def-map crates 0
-            - semantic crates 0
-            - body crates 0
-
-            workspace symbols `After`
-            - struct After @ app[lib] src/lib.rs
-        "#]],
-    );
-}
-
-#[test]
-fn rebuilds_transitive_reverse_dependent_packages_after_dependency_changes() {
+fn updates_transitive_dependent_lookup_after_dependency_changes() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -2400,11 +1618,6 @@ pub struct Renamed;
         expect![[r#"
             changed files
             - dep crates/dep/src/lib.rs
-
-            affected packages
-            - app
-            - dep
-            - mid
 
             changed targets
             - dep[lib]

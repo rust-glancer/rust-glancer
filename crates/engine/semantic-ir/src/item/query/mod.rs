@@ -1,56 +1,34 @@
-//! Shared queries over semantic-shaped item stores.
-//!
-//! Crate and body IR store item data in the same `ItemStore` shape. This module separates raw
-//! store routing from queries that need a concrete Rust visibility universe.
+//! Shared semantic item queries over crate and body-local declarations.
 
-mod crate_item;
 mod generics;
 mod item_store;
 mod lookup;
 mod resolution;
 
-use rg_ir_model::{CrateRef, DefMapRef};
+use rg_ir_model::{DefMapRef, LocalDefRef, SemanticItemRef};
 
 pub use self::{
-    crate_item::CrateItemQuery,
     generics::GenericsQuery,
     item_store::ItemStoreQuery,
     lookup::{ItemLookupQuery, ItemLookupQueryCache, ItemLookupQueryCacheStats},
     resolution::ItemResolutionQuery,
 };
-use crate::{ItemLookupIndex, ItemStore};
+use crate::SemanticItemView;
 
-/// Provides the stores that semantic-shaped item refs can point into.
+/// Supplies borrowed declarations without requiring a complete store for their origin.
 ///
-/// Layer-specific code implements this once, and the query modules can then treat crate items and
-/// body-local items as the same kind of data.
-pub trait ItemStoreSource<'a>: Clone {
+/// Providers acquire the data containing an item before selecting it. Missing items and local
+/// definitions must observe that data too, so a later update can invalidate an absent result.
+pub trait SemanticItemSource<'a>: Clone {
     type Error;
 
-    /// Finds the store that owns refs with this origin.
-    ///
-    /// `None` means the origin is outside of the source's view, for example a different body.
-    fn item_store_for_origin(
-        &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'a ItemStore>, Self::Error>;
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, Self::Error>;
 
-    /// Enumerates all stores materialized by the source.
-    ///
-    /// This is a storage boundary, not a language visibility boundary. Impl and method lookup use
-    /// `CrateItemQuery`, which derives visibility from a concrete use-site crate through DefMap
-    /// data.
-    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error>;
-}
-
-/// Provides declaration-local lookup indexes for crate-level semantic item stores.
-///
-/// `ItemStoreSource` also routes body-local stores, but those stores intentionally do not own a
-/// crate-global lookup index. Keeping this as a separate capability lets visibility-scoped lookup
-/// require the stronger source without burdening ordinary item reads.
-pub trait ItemLookupIndexSource<'a>: ItemStoreSource<'a> {
-    fn item_lookup_index(
+    fn item_for_local_def(
         &self,
-        crate_ref: CrateRef,
-    ) -> Result<Option<&'a ItemLookupIndex>, Self::Error>;
+        definition: LocalDefRef,
+    ) -> Result<Option<SemanticItemRef>, Self::Error>;
+
+    /// Acquire each containing group once and enumerate its items in storage order.
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, Self::Error>;
 }

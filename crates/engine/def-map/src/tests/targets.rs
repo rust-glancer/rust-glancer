@@ -5,10 +5,10 @@ use rg_workspace::{TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use super::utils;
-use crate::{DefMapLoader, DefMapSource, Namespace, testonly::DefMapFixture};
+use crate::{DefMapSource, Namespace, testonly::DefMapFixture};
 
 #[test]
-fn retains_compilation_target_width_without_loading_offloaded_scopes() {
+fn retains_compilation_target_width() {
     // Use workspace lowering to supply an explicit compilation target.
     let source = fixture_crate(
         r#"
@@ -30,23 +30,14 @@ pub fn use_it() {}
     .expect("fixture target metadata should lower");
     let fixture = DefMapFixture::build_from_crate(source, workspace);
     let crate_ref = fixture.crate_ref("target_width", TargetKind::Lib);
-    let mut db = fixture.def_map_db().clone();
-
-    for offload in [false, true] {
-        if offload {
-            db.offload_package(crate_ref.package)
-                .expect("fixture package should exist");
-        }
-        let read = db.read_txn(DefMapLoader::resident_only(
-            "target width needs no crate payload",
-        ));
-        assert_eq!(
-            read.target_pointer_width(crate_ref)
-                .expect("target width should be available"),
-            Some(32),
-            "compilation target width survives offloading: {offload}",
-        );
-    }
+    assert_eq!(
+        fixture
+            .def_map_db()
+            .reader()
+            .target_pointer_width(crate_ref)
+            .expect("read target width"),
+        Some(32),
+    );
 }
 
 #[test]
@@ -66,7 +57,7 @@ fn main() {}
         .expect("fixture package should be parsed");
     let def_maps = fixture
         .def_map_db()
-        .resident_package(package_slot)
+        .package(package_slot)
         .expect("fixture def-map package should be resident");
 
     assert_eq!(def_maps.crates().len(), parsed.targets().len());
@@ -281,9 +272,7 @@ pub use a::Generated as FromA;
 "#,
     );
     let krate = fixture.crate_ref("a", TargetKind::Test);
-    let map = fixture
-        .resident_def_map(krate)
-        .expect("test target should exist");
+    let map = fixture.def_map(krate).expect("test target should exist");
     let root = map.module(ModuleId(0)).expect("test root should exist");
     let bindings = ["Generated", "FromA"].map(|name| {
         root.scope

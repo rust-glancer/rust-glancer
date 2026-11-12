@@ -13,19 +13,14 @@
 //! The last value is only a lookup hint. Type lowering and trait selection still compare the full
 //! header later; this pass does not try to prove that an impl applies.
 
-use std::collections::HashMap;
-
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{
-    CrateId, CrateRef, ImplRef, ModuleRef, PackageSlot, PrimitiveTy, TraitDefRef, TypeDefRef,
-};
+use rg_def_map::DefMapSource;
+use rg_ir_model::{ImplRef, ModuleRef, PrimitiveTy, TraitDefRef, TypeDefRef};
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 
 use crate::{
-    ItemResolutionQuery, ItemStoreQuery, SelfTypeOwner, SemanticIrReadTxn, TraitImplSelfHead,
-    TypePathContext, store::SemanticIrDbMutator,
+    ItemResolutionQuery, ItemStore, SelfTypeOwner, SemanticItemSource, TraitImplSelfHead,
+    TypePathContext,
 };
 
 /// Named identities and a conservative lookup key collected for one impl declaration.
@@ -34,99 +29,45 @@ use crate::{
 /// it rebuilds indexes. For an inherent `impl Widget`, `resolved_trait_ref` and `self_head` are
 /// empty. For `impl<T> Paint for [T]`, the named trait resolves while `resolved_self_ty` remains
 /// empty and `self_head` records `Slice`.
-pub(super) struct ImplHeaderResolution {
-    impl_ref: ImplRef,
-    resolved_self_ty: ExpectedUnique<TypeDefRef>,
-    resolved_trait_ref: ExpectedUnique<TraitDefRef>,
-    self_head: Option<TraitImplSelfHead>,
+pub(crate) struct ImplHeaderResolution {
+    pub(crate) impl_ref: ImplRef,
+    pub(crate) resolved_self_ty: ExpectedUnique<TypeDefRef>,
+    pub(crate) resolved_trait_ref: ExpectedUnique<TraitDefRef>,
+    pub(crate) self_head: Option<TraitImplSelfHead>,
 }
 
-/// Collect every impl's resolvable header facts without mutating the database being read.
-///
-/// Name resolution needs the complete semantic item graph, so this phase runs after initial item
-/// lowering. The returned batch is applied only after the read transaction has ended.
-pub(super) fn impl_header_resolutions_for_packages(
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    def_map: &DefMapReadTxn<'_>,
-    packages: &[PackageSlot],
-) -> Result<Vec<ImplHeaderResolution>, PackageStoreError> {
+/// Resolve one target's impl headers against its local items and acquired dependency declarations.
+pub(crate) fn impl_header_resolutions<'a, D, I>(
+    items: &ItemStore,
+    query: &ItemResolutionQuery<'a, D, I>,
+) -> Result<Vec<ImplHeaderResolution>, D::Error>
+where
+    D: DefMapSource,
+    I: SemanticItemSource<'a, Error = D::Error>,
+{
     let mut resolutions = Vec::new();
-    let item_query = ItemStoreQuery::new(semantic_ir);
-
-    for package in packages {
-        let semantic_package = semantic_ir.package(*package)?;
-
-        for (crate_idx, _) in semantic_package.crates().iter().enumerate() {
-            let crate_ref = CrateRef {
-                package: *package,
-                crate_id: CrateId(crate_idx),
-            };
-            for (impl_ref, _) in semantic_ir
-                .items(crate_ref)?
-                .into_iter()
-                .flat_map(|i| i.impls_with_refs())
-            {
-                let Some(data) = item_query.impl_data(impl_ref)? else {
-                    continue;
-                };
-
-                let resolved_self_ty =
-                    resolve_type_defs_from_ref(semantic_ir, def_map, data.owner, &data.self_ty)?;
-                let resolved_trait_ref = data
-                    .trait_ref
-                    .as_ref()
-                    .map(|ty| resolve_traits_from_ref(semantic_ir, def_map, data.owner, ty))
-                    .transpose()?
-                    .unwrap_or_default();
-                let self_head = data
-                    .trait_ref
-                    .as_ref()
-                    .map(|_| {
-                        trait_impl_self_head(
-                            semantic_ir,
-                            def_map,
-                            impl_ref,
-                            data,
-                            &resolved_self_ty,
-                        )
-                    })
-                    .transpose()?
-                    .flatten();
-
-                resolutions.push(ImplHeaderResolution {
-                    impl_ref,
-                    resolved_self_ty,
-                    resolved_trait_ref,
-                    self_head,
-                });
-            }
-        }
+    for (impl_ref, data) in items.impls_with_refs() {
+        let resolved_self_ty = resolve_type_defs_from_ref(query, data.owner, &data.self_ty)?;
+        let resolved_trait_ref = data
+            .trait_ref
+            .as_ref()
+            .map(|ty| resolve_traits_from_ref(query, data.owner, ty))
+            .transpose()?
+            .unwrap_or_default();
+        let self_head = data
+            .trait_ref
+            .as_ref()
+            .map(|_| trait_impl_self_head(query, impl_ref, data, &resolved_self_ty))
+            .transpose()?
+            .flatten();
+        resolutions.push(ImplHeaderResolution {
+            impl_ref,
+            resolved_self_ty,
+            resolved_trait_ref,
+            self_head,
+        });
     }
-
     Ok(resolutions)
-}
-
-/// Store resolved header identities and return the self-head keys needed for index rebuilding.
-///
-/// The database owns the full resolved `Self` and trait facts. The returned map is intentionally
-/// temporary: it carries the smaller trait-impl routing key only across the boundary where each
-/// crate-local [`crate::ItemLookupIndex`] is rebuilt.
-pub(super) fn apply_impl_header_resolutions(
-    db: &mut SemanticIrDbMutator<'_>,
-    resolutions: Vec<ImplHeaderResolution>,
-) -> HashMap<ImplRef, TraitImplSelfHead> {
-    let mut self_heads = HashMap::with_capacity(resolutions.len());
-    for resolution in resolutions {
-        if let Some(self_head) = resolution.self_head {
-            self_heads.insert(resolution.impl_ref, self_head);
-        }
-        let _ = db.set_impl_header_facts(
-            resolution.impl_ref,
-            resolution.resolved_self_ty,
-            resolution.resolved_trait_ref,
-        );
-    }
-    self_heads
 }
 
 /// Classify only the outer `Self` syntax that Semantic IR can establish without type lowering.
@@ -145,13 +86,16 @@ pub(super) fn apply_impl_header_resolutions(
 /// `type Alias = u32; impl Trait for Alias` deliberately remains a fallback because discovering
 /// its primitive head would require alias normalization. Trait solving can still normalize and
 /// accept it later; the declaration index merely declines to put it in the direct `u32` lane.
-fn trait_impl_self_head(
-    db: &SemanticIrReadTxn<'_>,
-    def_map: &DefMapReadTxn<'_>,
+fn trait_impl_self_head<'a, D, I>(
+    query: &ItemResolutionQuery<'a, D, I>,
     impl_ref: ImplRef,
     data: &crate::ImplData,
     resolved_self_ty: &ExpectedUnique<TypeDefRef>,
-) -> Result<Option<TraitImplSelfHead>, PackageStoreError> {
+) -> Result<Option<TraitImplSelfHead>, D::Error>
+where
+    D: DefMapSource,
+    I: SemanticItemSource<'a, Error = D::Error>,
+{
     let head = match &data.self_ty {
         TypeRef::Unit => Some(TraitImplSelfHead::Unit),
         TypeRef::Never => Some(TraitImplSelfHead::Never),
@@ -181,8 +125,7 @@ fn trait_impl_self_head(
                     module: data.owner,
                     self_owner: Some(SelfTypeOwner::Impl(impl_ref)),
                 };
-                let declarations = ItemResolutionQuery::new(def_map, db)
-                    .semantic_items_for_type_path(context, &path)?;
+                let declarations = query.semantic_items_for_type_path(context, &path)?;
                 declarations
                     .is_empty()
                     .then_some(TraitImplSelfHead::Primitive(primitive))
@@ -196,35 +139,41 @@ fn trait_impl_self_head(
     Ok(head)
 }
 
-fn resolve_type_defs_from_ref(
-    db: &SemanticIrReadTxn<'_>,
-    def_map: &DefMapReadTxn<'_>,
+fn resolve_type_defs_from_ref<'a, D, I>(
+    query: &ItemResolutionQuery<'a, D, I>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<ExpectedUnique<TypeDefRef>, PackageStoreError> {
+) -> Result<ExpectedUnique<TypeDefRef>, D::Error>
+where
+    D: DefMapSource,
+    I: SemanticItemSource<'a, Error = D::Error>,
+{
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
     };
 
     let mut result = ExpectedUnique::new();
-    for type_def in ItemResolutionQuery::new(def_map, db).type_defs_for_path(owner, &path)? {
+    for type_def in query.type_defs_for_path(owner, &path)? {
         result.push(type_def);
     }
     Ok(result)
 }
 
-fn resolve_traits_from_ref(
-    db: &SemanticIrReadTxn<'_>,
-    def_map: &DefMapReadTxn<'_>,
+fn resolve_traits_from_ref<'a, D, I>(
+    query: &ItemResolutionQuery<'a, D, I>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<ExpectedUnique<TraitDefRef>, PackageStoreError> {
+) -> Result<ExpectedUnique<TraitDefRef>, D::Error>
+where
+    D: DefMapSource,
+    I: SemanticItemSource<'a, Error = D::Error>,
+{
     let Some(path) = ty.as_def_map_path() else {
         return Ok(ExpectedUnique::new());
     };
 
     let mut result = ExpectedUnique::new();
-    for trait_ref in ItemResolutionQuery::new(def_map, db).traits_for_path(owner, &path)? {
+    for trait_ref in query.traits_for_path(owner, &path)? {
         result.push(trait_ref);
     }
     Ok(result)

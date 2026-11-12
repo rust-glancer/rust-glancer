@@ -42,11 +42,8 @@ impl<'s> Solver<'s> {
         use rustc_next_trait_solver::solve::SolverDelegateEvalExt;
         use rustc_type_ir::TypeVisitableExt;
         let callbacks = self.interner.track_callbacks();
-        if self.interner.is_cancelled()
-            || env.unavailable
-            || predicate.references_error()
-            || env.references_error()
-        {
+        self.interner.check_cancelled();
+        if env.unavailable || predicate.references_error() || env.references_error() {
             return Outcome::Unavailable;
         }
         let snapshot = self.snapshot();
@@ -56,7 +53,8 @@ impl<'s> Solver<'s> {
             tracing::debug!(reason, "trait goal unavailable");
             return Outcome::Unavailable;
         }
-        if self.interner.is_cancelled() || self.is_tainted() && !was_tainted {
+        self.interner.check_cancelled();
+        if self.is_tainted() && !was_tainted {
             return Outcome::Unavailable;
         }
         match result {

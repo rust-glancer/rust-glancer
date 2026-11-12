@@ -3,10 +3,9 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
-    FunctionRef, GenericParamRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef,
-    PackageSlot, PatId, SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef,
-    identity::DeclarationRef,
+    BindingId, BodyRef, CrateRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
+    GenericParamRef, ImplRef, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PackageSlot, PatId,
+    SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_item_tree::FieldItem;
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -17,59 +16,54 @@ use rg_ty::{
 };
 
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrLoader, BodyIrReadTxn, BodyOwner, BodySource, BodyView,
-    ClosureCapture, ClosureKind, ClosureParamData, CrateBodiesStatus, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind, body::facts::BodyResolution,
-    testonly::BodyIrFixture,
+    BindingData, BodyOwner, BodySource, BodyView, ClosureCapture, ClosureKind, ClosureParamData,
+    ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatKind, StmtKind,
+    body::facts::BodyResolution,
+    testonly::{BodyIrFixture, BodyIrView},
 };
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_with_sysroot(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build_with_sysroot(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build_with_sysroot(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_with_fake_sysroot(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build_with_fake_sysroot(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build_with_fake_sysroot(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
 
 pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
-    let db = BodyIrFixtureDb::build(fixture);
-    let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
+    let mut fixture = BodyIrFixture::build(fixture);
+    fixture.inspect(|view| {
+        let actual = ProjectBodyIrSnapshot::new(&view).render_patterns();
+        let actual = format!("{}\n", actual.trim_end());
+        expect.assert_eq(&actual);
+    });
 }
-
-pub(super) fn check_project_body_ir_with_policy(
-    fixture: &str,
-    policy: BodyIrBuildPolicy,
-    expect: Expect,
-) {
-    let db = BodyIrFixtureDb::build_with_policy(fixture, policy);
-    let actual = ProjectBodyIrSnapshot::new(&db).render();
-    let actual = format!("{}\n", actual.trim_end());
-    expect.assert_eq(&actual);
-}
-
-type BodyIrFixtureDb = BodyIrFixture;
 
 struct ProjectBodyIrSnapshot<'a> {
-    project: &'a BodyIrFixtureDb,
+    project: &'a BodyIrView<'a>,
 }
 
 impl<'a> ProjectBodyIrSnapshot<'a> {
-    fn new(project: &'a BodyIrFixtureDb) -> Self {
+    fn new(project: &'a BodyIrView<'a>) -> Self {
         Self { project }
     }
 
@@ -152,7 +146,7 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
 }
 
 struct CrateBodyIrSnapshot<'a> {
-    project: &'a BodyIrFixtureDb,
+    project: &'a BodyIrView<'a>,
     crate_ref: CrateRef,
     target_name: &'a str,
     target_kind: String,
@@ -161,28 +155,22 @@ struct CrateBodyIrSnapshot<'a> {
 impl CrateBodyIrSnapshot<'_> {
     fn render(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let body_ir = self.body_ir_txn();
-        let Some(crate_bodies) = body_ir
-            .crate_bodies(self.crate_ref)
-            .expect("crate body IR should load while rendering body IR")
-        else {
-            return dump;
-        };
-
-        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
+        // Whole-project snapshots focus on workspace targets. Dependency owners remain available
+        // through the fixture for tests that explicitly select them.
+        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
             dump.push_str("\nskipped");
             return dump;
         }
+        let bodies = self.project.bodies(self.crate_ref);
 
-        // Body IDs encode the order bodies were materialized. Rendering in that order keeps
-        // multi-body snapshots readable once nested const/static initializer bodies appear.
-        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
+        // Each outer owner has an independent arena. Keep its nested bodies beside that owner.
+        for (idx, (_, body)) in bodies.into_iter().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-            self.render_body(body, body_id, &mut dump);
+            self.render_body(body, &mut dump);
         }
 
         dump
@@ -190,36 +178,30 @@ impl CrateBodyIrSnapshot<'_> {
 
     fn render_patterns(&self) -> String {
         let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
-        let body_ir = self.body_ir_txn();
-        let Some(crate_bodies) = body_ir
-            .crate_bodies(self.crate_ref)
-            .expect("crate body IR should load while rendering body IR patterns")
-        else {
-            return dump;
-        };
-
-        if matches!(crate_bodies.status(), CrateBodiesStatus::Skipped) {
+        // Whole-project snapshots focus on workspace targets. Dependency owners remain available
+        // through the fixture for tests that explicitly select them.
+        if !self.project.parse_db().packages()[self.crate_ref.package.0].is_workspace_member() {
             dump.push_str("\nskipped");
             return dump;
         }
+        let bodies = self.project.bodies(self.crate_ref);
 
-        for (idx, (body_id, body)) in crate_bodies.body_views().enumerate() {
+        for (idx, (_, body)) in bodies.into_iter().enumerate() {
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-            self.render_body_patterns(body, body_id, &mut dump);
+            self.render_body_patterns(body, &mut dump);
         }
 
         dump
     }
 
-    fn render_body(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
+    fn render_body(&self, body: BodyView<'_>, dump: &mut String) {
         writeln!(
             dump,
-            "body b{} {} @ {}",
-            body_id.0,
+            "{} @ {}",
             self.render_body_owner(body.owner()),
             self.render_source(body.source()),
         )
@@ -274,11 +256,10 @@ impl CrateBodyIrSnapshot<'_> {
         self.render_expr(body, body.root_expr(), 0, dump);
     }
 
-    fn render_body_patterns(&self, body: BodyView<'_>, body_id: BodyId, dump: &mut String) {
+    fn render_body_patterns(&self, body: BodyView<'_>, dump: &mut String) {
         writeln!(
             dump,
-            "body b{} {} @ {}",
-            body_id.0,
+            "{} @ {}",
             self.render_body_owner(body.owner()),
             self.render_source(body.source()),
         )
@@ -1112,8 +1093,9 @@ impl CrateBodyIrSnapshot<'_> {
                 for binding in &object.associated_types {
                     let name = self
                         .project
-                        .resident_item_store(binding.associated_ty.origin)
-                        .and_then(|items| items.type_alias_data(binding.associated_ty.id))
+                        .item_query()
+                        .type_alias_data(binding.associated_ty)
+                        .expect("fixture alias should load")
                         .map(|data| data.name.to_string())
                         .unwrap_or_else(|| "<missing>".to_string());
                     args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
@@ -1200,8 +1182,9 @@ impl CrateBodyIrSnapshot<'_> {
         for binding in &bound.associated_types {
             let name = self
                 .project
-                .resident_item_store(binding.projection.associated_ty.origin)
-                .and_then(|items| items.type_alias_data(binding.projection.associated_ty.id))
+                .item_query()
+                .type_alias_data(binding.projection.associated_ty)
+                .expect("fixture alias should load")
                 .map(|data| data.name.to_string())
                 .unwrap_or_else(|| "<missing>".to_string());
             args.push(format!("{name} = {}", self.render_ty(&binding.ty)));
@@ -1250,23 +1233,25 @@ impl CrateBodyIrSnapshot<'_> {
             DefId::Local(local_def) => self.render_local_def(local_def),
             DefId::EnumVariant(variant_def) => {
                 let variant_data = match variant_def.origin {
-                    DefMapRef::Crate(target) => {
-                        self.project.resident_def_map(target).and_then(|def_map| {
-                            def_map.local_enum_variant(variant_def.local_enum_variant)
-                        })
-                    }
-                    DefMapRef::Body(body) => {
-                        self.project
-                            .resident_body_def_map(body)
-                            .and_then(|def_map| {
-                                def_map.local_enum_variant(variant_def.local_enum_variant)
-                            })
-                    }
+                    DefMapRef::Crate(target) => self.project.def_map(target).and_then(|def_map| {
+                        def_map.local_enum_variant(variant_def.local_enum_variant)
+                    }),
+                    DefMapRef::Body(body) => self.project.body_def_map(body).and_then(|def_map| {
+                        def_map.local_enum_variant(variant_def.local_enum_variant)
+                    }),
                 };
                 if let Some(variant_data) = variant_data
-                    && let Some(items) = self.project.resident_item_store(variant_def.origin)
-                    && let Some(ItemId::Enum(enum_id)) =
-                        items.item_for_local_def(variant_data.enum_def)
+                    && let Some(SemanticItemRef::TypeDef(TypeDefRef {
+                        id: TypeDefId::Enum(enum_id),
+                        ..
+                    })) = self
+                        .project
+                        .item_query()
+                        .semantic_item_for_local_def(LocalDefRef {
+                            origin: variant_def.origin,
+                            local_def: variant_data.enum_def,
+                        })
+                        .expect("fixture definition should load")
                 {
                     self.render_enum_variant_ref(EnumVariantRef {
                         origin: variant_def.origin,
@@ -1306,12 +1291,11 @@ impl CrateBodyIrSnapshot<'_> {
             SemanticItemRef::Impl(impl_ref) => self.render_impl_ref(impl_ref),
             SemanticItemRef::Function(function) => self.render_function_ref(function),
             SemanticItemRef::TypeAlias(type_alias_ref) => {
-                let items = self
+                let data = self
                     .project
-                    .resident_item_store(type_alias_ref.origin)
-                    .expect("item store should exist while rendering type alias");
-                let data = items
-                    .type_alias_data(type_alias_ref.id)
+                    .item_query()
+                    .type_alias_data(type_alias_ref)
+                    .expect("fixture item should load")
                     .expect("type alias ref should exist while rendering body IR");
                 format!(
                     "type {}::{}",
@@ -1320,12 +1304,11 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             SemanticItemRef::Const(const_ref) => {
-                let items = self
+                let data = self
                     .project
-                    .resident_item_store(const_ref.origin)
-                    .expect("item store should exist while rendering const");
-                let data = items
-                    .const_data(const_ref.id)
+                    .item_query()
+                    .const_data(const_ref)
+                    .expect("fixture item should load")
                     .expect("const ref should exist while rendering body IR");
                 format!(
                     "const {}::{}",
@@ -1334,12 +1317,11 @@ impl CrateBodyIrSnapshot<'_> {
                 )
             }
             SemanticItemRef::Static(static_ref) => {
-                let items = self
+                let data = self
                     .project
-                    .resident_item_store(static_ref.origin)
-                    .expect("item store should exist while rendering static");
-                let data = items
-                    .static_data(static_ref.id)
+                    .item_query()
+                    .static_data(static_ref)
+                    .expect("fixture item should load")
                     .expect("static ref should exist while rendering body IR");
                 format!(
                     "static {}::{}",
@@ -1351,17 +1333,29 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(items) = self.project.resident_item_store(local_def.origin) else {
-            return "<missing>".to_string();
-        };
-        let Some(item_id) = items.item_for_local_def(local_def.local_def) else {
+        let Some(item) = self
+            .project
+            .item_query()
+            .semantic_item_for_local_def(local_def)
+            .expect("fixture definition should load")
+        else {
             return "<unsupported>".to_string();
         };
+        let items = self
+            .project
+            .item_query()
+            .semantic_item_view(item)
+            .expect("fixture item should load")
+            .expect("fixture item exists");
 
-        match item_id {
-            ItemId::Struct(id) => {
+        match item {
+            SemanticItemRef::Impl(impl_ref) => self.render_impl_ref(impl_ref),
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Struct(_),
+                ..
+            }) => {
                 let data = items
-                    .struct_data(id)
+                    .struct_data()
                     .expect("struct id should exist while rendering body IR");
                 format!(
                     "struct {}::{}",
@@ -1369,9 +1363,12 @@ impl CrateBodyIrSnapshot<'_> {
                     data.name
                 )
             }
-            ItemId::Union(id) => {
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Union(_),
+                ..
+            }) => {
                 let data = items
-                    .union_data(id)
+                    .union_data()
                     .expect("union id should exist while rendering body IR");
                 format!(
                     "union {}::{}",
@@ -1379,15 +1376,18 @@ impl CrateBodyIrSnapshot<'_> {
                     data.name
                 )
             }
-            ItemId::Enum(id) => {
+            SemanticItemRef::TypeDef(TypeDefRef {
+                id: TypeDefId::Enum(_),
+                ..
+            }) => {
                 let data = items
-                    .enum_data(id)
+                    .enum_data()
                     .expect("enum id should exist while rendering body IR");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
-            ItemId::Trait(id) => {
+            SemanticItemRef::Trait(_) => {
                 let data = items
-                    .trait_data(id)
+                    .trait_data()
                     .expect("trait id should exist while rendering body IR");
                 format!(
                     "trait {}::{}",
@@ -1395,13 +1395,10 @@ impl CrateBodyIrSnapshot<'_> {
                     data.name
                 )
             }
-            ItemId::Function(id) => self.render_function_ref(FunctionRef {
-                origin: local_def.origin,
-                id,
-            }),
-            ItemId::TypeAlias(id) => {
+            SemanticItemRef::Function(function) => self.render_function_ref(function),
+            SemanticItemRef::TypeAlias(_) => {
                 let data = items
-                    .type_alias_data(id)
+                    .type_alias_data()
                     .expect("type alias id should exist while rendering body IR");
                 format!(
                     "type {}::{}",
@@ -1409,9 +1406,9 @@ impl CrateBodyIrSnapshot<'_> {
                     data.name
                 )
             }
-            ItemId::Const(id) => {
+            SemanticItemRef::Const(_) => {
                 let data = items
-                    .const_data(id)
+                    .const_data()
                     .expect("const id should exist while rendering body IR");
                 format!(
                     "const {}::{}",
@@ -1419,9 +1416,9 @@ impl CrateBodyIrSnapshot<'_> {
                     data.name
                 )
             }
-            ItemId::Static(id) => {
+            SemanticItemRef::Static(_) => {
                 let data = items
-                    .static_data(id)
+                    .static_data()
                     .expect("static id should exist while rendering body IR");
                 format!(
                     "static {}::{}",
@@ -1435,13 +1432,15 @@ impl CrateBodyIrSnapshot<'_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .project
-            .resident_item_store(ty.origin)
-            .expect("item store should exist while rendering body type");
+            .item_query()
+            .semantic_item_view(ty.into())
+            .expect("fixture type should load")
+            .expect("fixture type exists");
 
         match ty.id {
-            TypeDefId::Struct(id) => {
+            TypeDefId::Struct(_) => {
                 let data = items
-                    .struct_data(id)
+                    .struct_data()
                     .expect("struct id should exist while rendering body type");
                 format!(
                     "struct {}::{}{}",
@@ -1450,9 +1449,9 @@ impl CrateBodyIrSnapshot<'_> {
                     self.render_local_def_source_suffix(data.local_def),
                 )
             }
-            TypeDefId::Enum(id) => {
+            TypeDefId::Enum(_) => {
                 let data = items
-                    .enum_data(id)
+                    .enum_data()
                     .expect("enum id should exist while rendering body type");
                 format!(
                     "enum {}::{}{}",
@@ -1461,9 +1460,9 @@ impl CrateBodyIrSnapshot<'_> {
                     self.render_local_def_source_suffix(data.local_def),
                 )
             }
-            TypeDefId::Union(id) => {
+            TypeDefId::Union(_) => {
                 let data = items
-                    .union_data(id)
+                    .union_data()
                     .expect("union id should exist while rendering body type");
                 format!(
                     "union {}::{}{}",
@@ -1479,7 +1478,7 @@ impl CrateBodyIrSnapshot<'_> {
         let DefMapRef::Body(body_ref) = local_def.origin else {
             return String::new();
         };
-        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
+        let Some(def_map) = self.project.body_def_map(body_ref) else {
             return String::new();
         };
         let Some(data) = def_map.local_def(local_def.local_def) else {
@@ -1507,26 +1506,21 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn field_data(&self, field_ref: FieldRef) -> Option<&FieldItem> {
-        let items = self.project.resident_item_store(field_ref.owner.origin)?;
-        match field_ref.owner.id {
-            TypeDefId::Struct(id) => items.struct_data(id)?.fields.fields().get(field_ref.index),
-            TypeDefId::Union(id) => items.union_data(id)?.fields.get(field_ref.index),
-            TypeDefId::Enum(_) => None,
-        }
+        self.project
+            .item_query()
+            .field_data(field_ref)
+            .expect("fixture field should load")
+            .map(|data| data.field)
     }
 
     fn render_enum_variant_ref(&self, variant_ref: EnumVariantRef) -> String {
-        let items = self
+        let data = self
             .project
-            .resident_item_store(variant_ref.origin)
-            .expect("item store should exist while rendering enum variant");
-        let data = items
-            .enum_data(variant_ref.enum_id)
-            .expect("enum id should exist while rendering enum variant");
-        let variant = data
-            .variants
-            .get(variant_ref.index)
-            .expect("variant id should exist while rendering enum variant");
+            .item_query()
+            .enum_variant_data(variant_ref)
+            .expect("fixture variant should load")
+            .expect("fixture variant exists");
+        let variant = data.variant;
 
         format!(
             "variant {}::{}",
@@ -1539,12 +1533,11 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
-        let items = self
+        let data = self
             .project
-            .resident_item_store(function_ref.origin)
-            .expect("item store should exist while rendering function");
-        let data = items
-            .function_data(function_ref.id)
+            .item_query()
+            .function_data(function_ref)
+            .expect("fixture item should load")
             .expect("function id should exist while rendering body IR");
         let owner = self.render_owner(data.owner, function_ref.origin);
 
@@ -1566,12 +1559,11 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_trait_ref(&self, trait_ref: TraitDefRef) -> String {
-        let items = self
+        let data = self
             .project
-            .resident_item_store(trait_ref.origin)
-            .expect("item store should exist while rendering trait");
-        let data = items
-            .trait_data(trait_ref.id)
+            .item_query()
+            .trait_data(trait_ref)
+            .expect("fixture item should load")
             .expect("trait id should exist while rendering body IR");
 
         format!(
@@ -1582,24 +1574,17 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_impl_ref(&self, impl_ref: ImplRef) -> String {
-        let items = self
+        let data = self
             .project
-            .resident_item_store(impl_ref.origin)
-            .expect("item store should exist while rendering impl");
-        let data = items
-            .impl_data(impl_ref.id)
+            .item_query()
+            .impl_data(impl_ref)
+            .expect("fixture item should load")
             .expect("impl id should exist while rendering body IR");
 
         match &data.trait_ref {
             Some(trait_ref) => format!("impl {trait_ref} for {}", data.self_ty),
             None => format!("impl {}", data.self_ty),
         }
-    }
-
-    fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
-        self.project
-            .body_ir_db()
-            .read_txn(BodyIrLoader::resident_only("resident body IR fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
@@ -1617,9 +1602,10 @@ impl CrateBodyIrSnapshot<'_> {
             .expect("package slot should exist while rendering body IR module");
         let cargo_target = self
             .project
-            .def_map_db()
-            .resident_package(crate_ref.package)
-            .and_then(|package| package.crate_data(crate_ref.crate_id))
+            .semantic()
+            .definitions()
+            .crate_data(crate_ref)
+            .expect("fixture declarations should load")
             .expect("semantic crate should exist while rendering body IR module")
             .cargo_target();
         let target = package
@@ -1635,10 +1621,10 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_body_module_ref(&self, body_ref: BodyRef, module: ModuleId) -> String {
-        let Some(body) = self.project.resident_body(body_ref) else {
+        let Some(body) = self.project.body(body_ref) else {
             return "<missing>".to_string();
         };
-        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
+        let Some(def_map) = self.project.body_def_map(body_ref) else {
             return self.render_body_owner(body.owner());
         };
         let Some(module_data) = def_map.module(module) else {
@@ -1662,7 +1648,7 @@ impl CrateBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.origin.origin_crate())
+            .def_map(module_ref.origin.origin_crate())
             .expect("crate def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");

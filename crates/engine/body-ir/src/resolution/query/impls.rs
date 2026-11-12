@@ -10,8 +10,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
+use rg_semantic_ir::SemanticItemSource;
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{Ty, lookup::ReceiverImplMatches};
 
@@ -77,8 +77,8 @@ pub(crate) struct BodyImplQuery<'context, 'query, D, I> {
 
 impl<'context, 'query, D, I> BodyImplQuery<'context, 'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Copy,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+    D: DefMapSource<Error = ReadError> + Copy,
+    I: SemanticItemSource<'query, Error = ReadError> + Copy,
 {
     pub(crate) fn new(context: &'context BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -89,7 +89,7 @@ where
         &self,
         scope: ScopeId,
         receiver_ty: &Ty,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+    ) -> Result<BodyReceiverImplMatches, ReadError> {
         let trait_refs = self
             .context
             .traits()
@@ -103,7 +103,7 @@ where
         scope: ScopeId,
         receiver_ty: &Ty,
         name: &str,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+    ) -> Result<BodyReceiverImplMatches, ReadError> {
         let trait_refs = self
             .context
             .traits()
@@ -116,7 +116,7 @@ where
         &self,
         receiver_ty: &Ty,
         trait_refs: impl IntoIterator<Item = TraitDefRef>,
-    ) -> Result<BodyReceiverImplMatches, PackageStoreError> {
+    ) -> Result<BodyReceiverImplMatches, ReadError> {
         // Type-only paths can omit nominal arguments. Complete them before matching so every item
         // adapter sees the same canonical receiver and the same impl substitution.
         let receiver_ty = match receiver_ty {

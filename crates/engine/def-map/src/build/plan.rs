@@ -5,40 +5,32 @@
 //! dependencies, and ordinary targets can refer to their sibling library.
 //!
 //! Those same roots form the scheduling graph. Preparation removes cyclic edges from that graph
-//! and from name lookup together, then returns selected crate inputs in dependency-first order.
+//! and from name lookup together, then returns crate inputs in dependency-first order.
 //! Once a plan is returned, neither its order nor its visible roots need further normalization.
 
 use std::{collections::HashMap, mem};
 
-use anyhow::Context as _;
 use rg_ir_model::{CrateId, CrateRef, DefMapRef, ModuleId, ModuleRef, PackageSlot};
-use rg_parse::Package;
 use rg_text::Name;
 use rg_workspace::{SysrootCrate, WorkspaceMetadata};
 
 type CrateImplicitRoots = HashMap<Name, ModuleRef>;
 type PackageCrateImplicitRoots = Vec<CrateImplicitRoots>;
 
-/// One selected crate and its normalized roots, moved into declaration collection together.
+/// One crate and its normalized roots, moved into declaration collection together.
 pub(crate) struct CrateBuildInput {
     pub(crate) crate_ref: CrateRef,
     pub(crate) implicit_roots: CrateImplicitRoots,
 }
 
-/// Inputs for selected crates in dependency-first order. Original crate slots stay unchanged.
+/// Inputs for all crates in dependency-first order. Original crate slots stay unchanged.
 pub(crate) struct CrateBuildPlan {
     pub(crate) crates: Vec<CrateBuildInput>,
 }
 
 impl CrateBuildPlan {
-    /// Normalize the complete graph before selecting work, so subset rebuilds omit the same
-    /// cyclic edges as a full build. Selected package slots are sorted by the caller.
-    pub(crate) fn prepare(
-        workspace: &WorkspaceMetadata,
-        packages: &[Package],
-        selected: &[PackageSlot],
-    ) -> anyhow::Result<Self> {
-        let mut roots = Self::implicit_roots(workspace, packages)?;
+    pub(crate) fn prepare(workspace: &WorkspaceMetadata) -> Self {
+        let mut roots = Self::implicit_roots(workspace);
         let mut visits = roots
             .iter()
             .map(|roots| vec![Visit::Pending; roots.len()])
@@ -61,17 +53,12 @@ impl CrateBuildPlan {
         }
         let crates = order
             .into_iter()
-            .filter(|krate| {
-                selected
-                    .binary_search_by_key(&krate.package.0, |slot| slot.0)
-                    .is_ok()
-            })
             .map(|crate_ref| CrateBuildInput {
                 crate_ref,
                 implicit_roots: mem::take(&mut roots[crate_ref.package.0][crate_ref.crate_id.0]),
             })
             .collect();
-        Ok(Self { crates })
+        Self { crates }
     }
 
     fn visit(
@@ -111,27 +98,25 @@ impl CrateBuildPlan {
     }
 
     /// Derive the names and target roots that can start a path outside a crate's module tree.
-    fn implicit_roots(
-        workspace: &WorkspaceMetadata,
-        packages: &[Package],
-    ) -> anyhow::Result<Vec<PackageCrateImplicitRoots>> {
+    fn implicit_roots(workspace: &WorkspaceMetadata) -> Vec<PackageCrateImplicitRoots> {
+        let packages = workspace.packages();
         let lib_targets = packages
             .iter()
             .enumerate()
             .filter_map(|(package_slot, package)| {
                 package
-                    .targets()
-                    .iter()
-                    .find(|target| target.kind.is_lib())
-                    .map(|target| {
+                    .analyzed_targets()
+                    .enumerate()
+                    .find(|(_, target)| target.kind.is_lib())
+                    .map(|(index, target)| {
                         (
-                            package.id().clone(),
+                            &package.id,
                             (
                                 CrateRef {
                                     package: PackageSlot(package_slot),
-                                    crate_id: CrateId(target.id.0),
+                                    crate_id: CrateId(index),
                                 },
-                                target.id,
+                                target.name.as_str(),
                             ),
                         )
                     })
@@ -144,28 +129,17 @@ impl CrateBuildPlan {
         let mut roots = Vec::with_capacity(packages.len());
 
         for package in packages {
-            let mut package_roots = Vec::with_capacity(package.targets().len());
-            let workspace_package = workspace.package(package.id()).with_context(|| {
-                format!(
-                    "while attempting to fetch workspace metadata for package {}",
-                    package.id()
-                )
-            })?;
+            let mut package_roots = Vec::new();
 
-            for target in package.targets() {
+            for (index, target) in package.analyzed_targets().enumerate() {
                 let mut crate_roots = HashMap::new();
 
                 // Cargo lets package targets refer to their sibling library by crate name, but build
                 // scripts are separate crates and only see explicit build-dependencies.
-                if let Some(&(lib_crate, lib_target)) = lib_targets.get(package.id())
-                    && lib_target != target.id
+                if let Some(&(lib_crate, lib_name)) = lib_targets.get(&package.id)
+                    && lib_crate.crate_id != CrateId(index)
                     && !target.kind.is_custom_build()
                 {
-                    let lib_name = package
-                        .target(lib_target)
-                        .expect("library target should exist")
-                        .name
-                        .clone();
                     crate_roots.insert(
                         Name::new(lib_name),
                         ModuleRef {
@@ -190,7 +164,7 @@ impl CrateBuildPlan {
                     );
                 }
 
-                for dependency in &workspace_package.dependencies {
+                for dependency in &package.dependencies {
                     if dependency.name().is_empty() || !dependency.applies_to_target(&target.kind) {
                         continue;
                     }
@@ -214,7 +188,7 @@ impl CrateBuildPlan {
             roots.push(package_roots);
         }
 
-        Ok(roots)
+        roots
     }
 }
 

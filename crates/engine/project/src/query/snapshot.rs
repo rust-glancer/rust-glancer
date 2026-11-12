@@ -1,41 +1,59 @@
 //! Read-only access to one published project generation.
 
-use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
+use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel, SavedSourceView};
 use rg_ir_model::{CrateRef, PackageSlot};
-use rg_std::MemorySize;
+use rg_ir_view::IndexedViewDb;
+use rg_semantic_ir::TargetDeclarationReader;
+use rg_source::QueryContext;
 
 use super::reference_search::ReferenceSearchPlanner;
-use crate::{
-    MacroExpansionLimitBuildSummary, ProjectStats, selection::subset, state::ProjectState,
-};
+use crate::state::ProjectState;
 
 /// Immutable project view used to answer LSP-shaped queries.
 #[derive(Debug, Clone, Copy)]
 pub struct ProjectSnapshot<'a> {
     pub(crate) state: &'a ProjectState,
+    db: &'a QueryContext<'a>,
+    declarations: &'a TargetDeclarationReader<'a>,
 }
 
 impl<'a> ProjectSnapshot<'a> {
-    /// Returns a full-project analysis view.
-    pub fn full_analysis(
-        &self,
-        cancellation: rg_std::CancellationToken,
-    ) -> anyhow::Result<Analysis<'a>> {
-        let txn = self.state.read_txn(cancellation)?;
-        Ok(self.state.analysis(&txn))
+    pub(crate) fn new(
+        state: &'a ProjectState,
+        db: &'a QueryContext<'a>,
+        declarations: &'a TargetDeclarationReader<'a>,
+    ) -> Self {
+        Self {
+            state,
+            db,
+            declarations,
+        }
     }
 
-    /// Returns an analysis view scoped to the package dependency closure of crate queries.
-    pub fn analysis_for_crates(
-        &self,
-        crates: &[CrateRef],
-        cancellation: rg_std::CancellationToken,
-    ) -> anyhow::Result<Analysis<'a>> {
-        let subset = subset::crates_with_visible_dependencies(self.state.workspace(), crates);
-        let txn = self
-            .state
-            .read_txn_for_subset(&subset, cancellation.clone())?;
-        Ok(self.state.analysis(&txn))
+    /// Build a facade over the active operation. Individual feature reads acquire their
+    /// declarations and bodies as they need them.
+    pub fn analysis(&self) -> Analysis<'a> {
+        Analysis::new(self.view_db(), SavedSourceView::new(self.state.parse_db()))
+    }
+
+    pub(crate) fn view_db(&self) -> IndexedViewDb<'a> {
+        IndexedViewDb::new(
+            rg_def_map::CrateDefMapReader(self.declarations),
+            rg_semantic_ir::ItemReader(self.declarations),
+            rg_body_ir::BodyReader::new(self.db, self.declarations),
+            self.state.parse_db(),
+            self.db.services().cancellation.clone(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn query_context(&self) -> &'a QueryContext<'a> {
+        self.db
+    }
+
+    #[cfg(test)]
+    pub(crate) fn declarations(&self) -> &'a TargetDeclarationReader<'a> {
+        self.declarations
     }
 
     /// Returns crates whose source should be scanned for an explicit references query.
@@ -71,24 +89,5 @@ impl<'a> ProjectSnapshot<'a> {
             labels,
             cancellation,
         )
-    }
-
-    pub fn stats(&self) -> ProjectStats {
-        self.state.stats()
-    }
-
-    /// Returns bounded diagnostics from the def-map packages built for this project state.
-    pub fn macro_expansion_limit_summary(&self) -> &MacroExpansionLimitBuildSummary {
-        &self.state.macro_expansion_limit_summary
-    }
-
-    /// Returns an approximate retained-memory total for the current immutable analysis graph.
-    ///
-    /// This is intended for observability, not correctness. Computing it walks the graph, so LSP
-    /// callers should keep it behind explicit memory logging.
-    pub fn retained_memory_bytes(&self) -> usize {
-        use MemorySize as _;
-
-        self.state.memory_size()
     }
 }

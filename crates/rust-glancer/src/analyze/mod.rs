@@ -6,7 +6,7 @@ use std::{
 use anyhow::Context as _;
 use rg_lsp_engine::MemoryControl;
 use rg_profile::ProfileRun;
-use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
+use rg_project::{BuildProcessMemory, Project};
 use rg_workspace::{
     CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
 };
@@ -16,19 +16,14 @@ mod data;
 mod output;
 mod profile;
 
-pub(crate) use self::{
-    config::{CliPackageResidencyPolicy, OutputFormat},
-    profile::profile_groups_help,
-};
+pub(crate) use self::{config::OutputFormat, profile::profile_groups_help};
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze(
     path: PathBuf,
     profile_filter: Option<String>,
     include_memory: bool,
-    startup_cache_load: StartupCacheLoad,
-    package_residency_policy: PackageResidencyPolicy,
+    reuse_cache: bool,
     target: Option<String>,
     output_format: OutputFormat,
 ) -> anyhow::Result<()> {
@@ -80,8 +75,7 @@ pub(crate) fn analyze(
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
-        .package_residency_policy(package_residency_policy)
-        .startup_cache_load(startup_cache_load)
+        .reuse_cache(reuse_cache)
         .memory_hooks(crate::memory::project_memory_hooks());
     let builder = if include_memory {
         let build_memory_control = memory_control;
@@ -174,12 +168,12 @@ mod tests {
             "memory reports should extend explicit selectors instead of replacing them",
         );
 
-        let filter = parse_filter(Some("project.build.def_map"), true)
+        let filter = parse_filter(Some("project.build.ajika"), true)
             .expect("detailed project build profile filter with memory should parse")
             .expect("memory reporting should keep a profile run enabled");
         assert_eq!(
             selector_texts(&filter),
-            vec!["project.build.def_map"],
+            vec!["project.build.ajika"],
             "detailed project build selectors already cover parent checkpoints",
         );
 
@@ -194,15 +188,13 @@ mod tests {
 
     #[test]
     fn analyze_profile_filter_expands_aliases() {
-        let build_checkpoints = rg_project::BUILD_CHECKPOINTS.scope();
-
         let filter = parse_filter(Some("default"), false)
             .expect("default profile alias should parse")
             .expect("default profile alias should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
-            vec![build_checkpoints],
-            "the default alias should collect build checkpoints",
+            vec!["project.build.ajika"],
+            "the default alias should collect Ajika counters and parent build metrics",
         );
 
         let filter = parse_filter(Some("macros"), false)
@@ -214,22 +206,13 @@ mod tests {
             "the macros alias should collect aggregate timings, counters, and by-name stats",
         );
 
-        let filter = parse_filter(Some("memory:def-map"), false)
-            .expect("def-map memory profile alias should parse")
-            .expect("def-map memory profile alias should enable a profile run");
-        assert_eq!(
-            selector_texts(&filter),
-            vec![build_checkpoints, "project.build.def_map"],
-            "the def-map memory alias should collect checkpoints and the def-map memory snapshot",
-        );
-
         let filter = parse_filter(Some("default,macros"), false)
             .expect("mixed profile aliases and selectors should parse")
             .expect("mixed profile aliases and selectors should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
             vec![
-                build_checkpoints,
+                "project.build.ajika",
                 "def_map.construction",
                 "def_map.macros.by_name"
             ],
@@ -241,11 +224,10 @@ mod tests {
     fn analyze_profile_run_accepts_registered_selectors() {
         for selector in [
             "project.build",
-            "project.build.def_map",
+            "project.build.ajika",
             "def_map.macros.by_name",
             "default",
             "macros",
-            "memory:def-map",
         ] {
             let filter = parse_filter(Some(selector), false)
                 .expect("registered analyze profile selector should parse")

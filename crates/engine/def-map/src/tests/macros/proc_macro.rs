@@ -46,7 +46,7 @@ fn proc_macro_export_retains_its_implementation_identity() {
     let fixture = DefMapFixture::build(PROC_MACRO_FIXTURE);
     let crate_ref = fixture.crate_ref("fixture_macros", TargetKind::ProcMacro);
     let def_map = fixture
-        .resident_def_map(crate_ref)
+        .def_map(crate_ref)
         .expect("proc-macro def map should exist");
     let root = def_map
         .modules()

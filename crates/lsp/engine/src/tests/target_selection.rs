@@ -170,8 +170,8 @@ pub fn inspect(_: api::User) {}
                 // all dependent targets
                 /api/src/lib.rs:0:11-0:15
                 /app/src/lib.rs:1:23-1:27
-                /app/src/shared.rs:0:23-0:27
                 /app/src/main.rs:1:25-1:29
+                /app/src/shared.rs:0:23-0:27
             "#]],
         )
         .await;

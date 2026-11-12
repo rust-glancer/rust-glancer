@@ -16,8 +16,8 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ImportAlias, ItemKind, ItemNode,
-    ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem,
-    ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
+    ItemTreeId, ItemTreeRef, ItemTrees, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
+    ModuleItem, ModuleSource, UseImport, UseItem, VisibilityLevel,
 };
 use rg_parse::ModuleFileContext;
 use rg_text::Name;
@@ -47,7 +47,7 @@ use crate::{
 /// whether it added declaration facts or queued calls, so the caller knows when imports need replay.
 pub(crate) struct DeclarationCollector<'a> {
     state: &'a mut CrateBuilder,
-    item_tree: &'a ItemTreePackage,
+    item_tree: &'a ItemTrees,
     resolutions: &'a MacroSourceFileResolutions,
     origin: MacroCallOrigin,
     dollar_crate: Option<CrateRef>,
@@ -58,7 +58,7 @@ pub(crate) struct DeclarationCollector<'a> {
 impl<'a> DeclarationCollector<'a> {
     pub(crate) fn new(
         state: &'a mut CrateBuilder,
-        item_tree: &'a ItemTreePackage,
+        item_tree: &'a ItemTrees,
         resolutions: &'a MacroSourceFileResolutions,
         origin: MacroCallOrigin,
         dollar_crate: Option<CrateRef>,
@@ -174,6 +174,7 @@ impl<'a> DeclarationCollector<'a> {
     /// Complete only the deferred module declaration; its surrounding expansion was already collected.
     pub(crate) fn collect_pending_module(mut self, pending: PendingGeneratedModule) -> Result<()> {
         let item = self.item(pending.source);
+        self.active_files.insert(item.file_id);
         let ItemKind::Module(module_item) = &item.kind else {
             unreachable!("pending module should point to a module item");
         };
@@ -432,44 +433,54 @@ impl<'a> DeclarationCollector<'a> {
         let generated = matches!(source.kind, ItemSourceKind::Generated(_));
         let resolved_file = match &module_item.source {
             ModuleSource::Inline { .. } => None,
-            ModuleSource::OutOfLine if generated => {
-                let request = MacroSourceFileRequest::module(
-                    self.state.crate_ref.package,
-                    Arc::clone(&context),
-                    name.to_string(),
-                    module_item.path_override.clone(),
-                );
-                match self.resolutions.get(&request) {
-                    None => {
-                        self.state.macro_source_file_requests.push(request.clone());
-                        self.state
-                            .pending_generated_modules
-                            .push(PendingGeneratedModule {
-                                request,
-                                parent_module,
-                                source,
-                                order,
-                                module_file_context: context,
-                                origin: self.origin,
-                            });
-                        return Ok(());
-                    }
-                    // TODO: Choose a common missing-module policy; written source retains the declaration.
-                    Some(MacroSourceFileResolution::Missing) => return Ok(()),
-                    Some(MacroSourceFileResolution::Module {
-                        file_id,
-                        child_context,
-                    }) => Some((*file_id, Arc::clone(child_context))),
-                    Some(MacroSourceFileResolution::Include { .. }) => {
-                        unreachable!("module request received an include answer")
+            ModuleSource::OutOfLine => {
+                let discovered = if generated {
+                    None
+                } else {
+                    self.state.resolve_module_file(
+                        &context,
+                        name.as_str(),
+                        module_item.path_override.as_deref(),
+                    )
+                };
+                // The initial walk saw written modules, but a selected cfg_select arm also
+                // carries real item-tree IDs and can name a module that discovery never visited.
+                if discovered.is_some() || matches!(self.origin, MacroCallOrigin::Source) {
+                    discovered
+                } else {
+                    let request = MacroSourceFileRequest::Module {
+                        parent_context: Arc::clone(&context),
+                        module_name: name.to_string(),
+                        path_override: module_item.path_override.clone(),
+                    };
+                    match self.resolutions.get(&request) {
+                        None => {
+                            self.state.macro_source_file_requests.push(request.clone());
+                            self.state
+                                .pending_generated_modules
+                                .push(PendingGeneratedModule {
+                                    request,
+                                    parent_module,
+                                    source,
+                                    order,
+                                    module_file_context: context,
+                                    origin: self.origin,
+                                });
+                            return Ok(());
+                        }
+                        // TODO: Choose a common missing-module policy for written and generated items.
+                        Some(MacroSourceFileResolution::Missing) if generated => return Ok(()),
+                        Some(MacroSourceFileResolution::Missing) => None,
+                        Some(MacroSourceFileResolution::Module {
+                            file_id,
+                            child_context,
+                        }) => Some((*file_id, Arc::clone(child_context))),
+                        Some(MacroSourceFileResolution::Include { .. }) => {
+                            unreachable!("module request received an include answer")
+                        }
                     }
                 }
             }
-            ModuleSource::OutOfLine => self.state.resolve_module_file(
-                &context,
-                name.as_str(),
-                module_item.path_override.as_deref(),
-            ),
         };
         let (origin, inner_docs) = match &module_item.source {
             ModuleSource::Inline { .. } => (

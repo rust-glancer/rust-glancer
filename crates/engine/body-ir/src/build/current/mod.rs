@@ -11,10 +11,10 @@ mod types;
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, BodyRef, CrateRef, FileId, Span};
+use rg_def_map::DefinitionReader;
+use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_module_path};
-use rg_semantic_ir::{ItemLookupQueryCache, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemLookupQueryCache, ItemReader};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast};
 
@@ -24,7 +24,7 @@ pub use self::types::{
 };
 use super::{local_items::LocalItemSource, lower::CurrentDeclarationBuilder};
 use crate::{
-    BodyIrReadTxn, BodySource, BodySourceItems, CurrentSourceStore, ScopeData,
+    BodyReader, BodySource, BodySourceItems, CurrentSourceStore, ScopeData,
     store::current::{CurrentImplData, CurrentImplRole, SelectedImpl},
 };
 
@@ -56,9 +56,9 @@ impl CurrentSourceBuildSummary {
 ///
 /// The builder is consumed by one target build, so unfinished work cannot enter a query.
 pub struct CurrentSourceBuilder<'request, 'db> {
-    def_map: &'request DefMapReadTxn<'db>,
-    semantic_ir: &'request SemanticIrReadTxn<'db>,
-    saved_bodies: &'request BodyIrReadTxn<'db>,
+    def_map: &'request DefinitionReader<'db>,
+    semantic_ir: &'request ItemReader<'db>,
+    saved_bodies: &'request BodyReader<'db>,
     source: &'request CurrentSource,
     lookup_cache: ItemLookupQueryCache,
     cancellation: rg_std::CancellationToken,
@@ -72,9 +72,9 @@ impl rg_std::Cancelable for CurrentSourceBuilder<'_, '_> {
 
 impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
     pub fn new(
-        def_map: &'request DefMapReadTxn<'db>,
-        semantic_ir: &'request SemanticIrReadTxn<'db>,
-        saved_bodies: &'request BodyIrReadTxn<'db>,
+        def_map: &'request DefinitionReader<'db>,
+        semantic_ir: &'request ItemReader<'db>,
+        saved_bodies: &'request BodyReader<'db>,
         source: &'request CurrentSource,
         lookup_cache: ItemLookupQueryCache,
         cancellation: rg_std::CancellationToken,
@@ -110,9 +110,8 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         // Bodies and declaration-only contexts use the same Cargo target's cfg policy.
         let cargo_target = self
             .def_map
-            .package(crate_ref.package)
+            .crate_data(crate_ref)
             .context("load current target definitions")?
-            .crate_data(crate_ref.crate_id)
             .context("current crate has no definition data")?
             .cargo_target();
         let target = package
@@ -120,7 +119,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             .context("current crate has no parse target")?;
         let cfg = CfgEvaluator::new(package.cfg_options(), target.enables_test_cfg());
 
-        let mut next_body_id = None;
+        let mut next_body_id = 0;
         let mut current = CurrentSourceStore::default();
         let saved_bodies = self.saved_bodies;
         let mut built = CurrentBodyBuilder::new(
@@ -138,7 +137,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             self.cancellation.clone(),
         )
         .build(
-            || Self::allocate_body(&mut next_body_id, saved_bodies, crate_ref),
+            || Self::allocate_body(&mut next_body_id, crate_ref),
             &mut checkpoint,
         )
         .context("prepare selected current bodies")?;
@@ -194,17 +193,23 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                 let mut saved_impl = ExpectedUnique::Empty;
                 if let ExpectedUnique::One(saved_span) =
                     associations.saved_declaration_for_current(impl_.syntax())
-                    && let Some(items) = self
-                        .semantic_ir
-                        .items(crate_ref)
-                        .context("load saved impl items")?
                 {
                     let def_map = self
                         .def_map
                         .def_map(crate_ref)
                         .context("load saved impl definitions")?
                         .context("saved impl has no definition map")?;
-                    for (impl_ref, data) in items.impls_with_refs() {
+                    for item in self
+                        .semantic_ir
+                        .all_items(DefMapRef::Crate(crate_ref))
+                        .context("load saved impl items")?
+                    {
+                        let rg_ir_model::SemanticItemRef::Impl(impl_ref) = item.item() else {
+                            continue;
+                        };
+                        let Some(data) = item.impl_data() else {
+                            continue;
+                        };
                         rg_std::check_cancel!(self.cancellation, "saved impl identity");
                         let Some(local) = def_map.local_impl(data.local_impl.local_impl) else {
                             continue;
@@ -241,9 +246,8 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         .module_for_inline_path(crate_ref, file, &module_path)
                         .context("match current impl module to saved semantics")?
                     {
-                        let body_ref =
-                            Self::allocate_body(&mut next_body_id, self.saved_bodies, crate_ref)
-                                .context("allocate current impl identity")?;
+                        let body_ref = Self::allocate_body(&mut next_body_id, crate_ref)
+                            .context("allocate current impl identity")?;
                         let mut items = BodySourceItems::default();
                         let root = CurrentDeclarationBuilder {
                             file,
@@ -318,30 +322,16 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         Ok((current, summary))
     }
 
-    /// Bodies and declaration-only stores share the `DefMapRef::Body` namespace. Allocate from
-    /// one sequence after the selected crate's saved body ids, so each store has a distinct origin.
-    fn allocate_body(
-        next: &mut Option<usize>,
-        saved: &BodyIrReadTxn<'_>,
-        crate_ref: CrateRef,
-    ) -> anyhow::Result<BodyRef> {
-        let id = match *next {
-            Some(id) => id,
-            None => {
-                saved
-                    .first_synthetic_body_ref(crate_ref)
-                    .context("read saved body identity limit")?
-                    .body
-                    .0
-            }
-        };
-        *next = Some(
-            id.checked_add(1)
-                .context("request-only body identity overflowed")?,
-        );
+    /// Current-only declarations and nested bodies share one request-local ID sequence.
+    fn allocate_body(next: &mut usize, crate_ref: CrateRef) -> anyhow::Result<BodyRef> {
+        let body = BodyId(*next);
+        *next = next
+            .checked_add(1)
+            .context("request-only body identity overflowed")?;
         Ok(BodyRef {
+            root: rg_ir_model::BodyRoot::Current,
             crate_ref,
-            body: BodyId(id),
+            body,
         })
     }
 }

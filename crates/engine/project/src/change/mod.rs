@@ -1,37 +1,27 @@
-//! Applies saved source and workspace changes to a private project candidate.
-//!
-//! This layer decides what changed and which packages must be rebuilt. Indexing produces the new
-//! analysis; the project publishes its generation only after the complete change succeeds.
+//! Capture saved changes, validate the corresponding queries, then publish source routing.
 
 mod input;
-mod source;
-mod workspace;
 mod workspace_graph;
 
-use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 
 use anyhow::Context as _;
+use rg_def_map::CrateDependencies;
 use rg_ir_model::PackageSlot;
+use rg_source::{SourceInput, SourcePresence};
+use rg_std::{NormalizedPathBuf, UniqueVec};
+use rg_workspace::WorkspaceMetadata;
 
 pub use self::input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
 use self::workspace_graph::WorkspaceGraphChanges;
-use crate::{Project, StartupCacheLoad, state::ProjectState};
+use crate::{Project, ProjectMemoryPurgePoint, indexing::build_state, state::ProjectState};
 
 impl Project {
-    /// Rebuilds the whole project from the current workspace graph and saved source files.
-    ///
-    /// Manual reindex is the explicit freshness boundary for passive Cargo build outputs. It
-    /// bypasses startup cache restoration so the newly discovered artifact snapshot is rebuilt
-    /// from source even when an older cached snapshot still validates on disk.
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
-        self.try_publish_generation(reindex_workspace)
+        self.publish_changes(&[], true)?;
+        Ok(())
     }
 
-    /// Applies one saved file replacement and refreshes derived analysis state.
-    ///
-    /// A path that disappeared before processing is ignored. Filesystem watchers can observe the
-    /// old side of a rename after the new saved state is already on disk, and that stale event must
-    /// not prevent other paths in the same batch from being applied.
     pub fn apply_change(
         &mut self,
         change: SavedFileChange,
@@ -39,162 +29,179 @@ impl Project {
         self.apply_changes([change])
     }
 
-    /// Applies existing saved file replacements as one coherent project update.
     pub fn apply_changes(
         &mut self,
         changes: impl IntoIterator<Item = SavedFileChange>,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        let mut canonical_changes = std::collections::BTreeMap::new();
-
+        let mut saved = BTreeMap::new();
+        let mut spellings = Vec::new();
         for change in changes {
             let change = match change {
                 SavedFileChange::FsPath(path) => {
-                    let canonical_path = match path.canonicalize() {
-                        Ok(path) => path,
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                            // We intentionally do not care about deleted module files. Valid Rust
-                            // removes or changes the surviving `mod foo;` declaration, and saving
-                            // that file rebuilds the graph. If the declaration still names the
-                            // deleted file, keeping the previous analysis is good enough.
-                            continue;
-                        }
-                        Err(error) => {
-                            return Err(error).with_context(|| {
-                                format!(
-                                    "while attempting to canonicalize changed file {}",
-                                    path.display()
-                                )
-                            });
-                        }
-                    };
-                    SavedFileChange::FsPath(canonical_path)
-                }
-                SavedFileChange::Captured(source) => SavedFileChange::Captured(source),
-            };
-            let path = change.path().to_path_buf();
-            match canonical_changes.entry(path) {
-                Entry::Vacant(entry) => {
-                    entry.insert(change);
-                }
-                Entry::Occupied(mut entry) => {
-                    // Exact captured bytes are the stronger input boundary. A repeated filesystem
-                    // path must not replace them with a later recapture, while a later captured
-                    // value for the same path intentionally supersedes the first.
-                    if change.captured_source().is_some() || entry.get().captured_source().is_none()
-                    {
-                        entry.insert(change);
+                    let path = std::path::absolute(path).context("resolve saved source path")?;
+                    let canonical = NormalizedPathBuf::from_absolute(&path)
+                        .with_context(|| format!("normalize {}", path.display()))?
+                        .into_path_buf();
+                    // A symlink can change targets while keeping its original module spelling.
+                    if path != canonical {
+                        spellings.push(path);
                     }
+                    SavedFileChange::FsPath(canonical)
                 }
+                captured => captured,
+            };
+            let key = change.path().to_path_buf();
+            if change.captured_source().is_some() || !saved.contains_key(&key) {
+                saved.insert(key, change);
             }
         }
-
-        // Watcher and editor notifications can name the same file through separate paths. The map
-        // removes canonical aliases while preferring the latest exact captured value for a path.
-        let canonical_changes = canonical_changes.into_values().collect::<Vec<_>>();
-
-        if canonical_changes.is_empty() {
+        if saved.is_empty() {
             return Ok(AnalysisChangeSummary::default());
         }
 
-        let application = self
-            .try_publish_generation_when(
-                move |candidate, database| {
-                    apply_canonical_changes(candidate, database, canonical_changes)
-                },
-                |application| matches!(application, ProjectChangeApplication::Applied(_)),
+        let graph_changed = saved.values().any(|change| {
+            WorkspaceGraphChanges::check(
+                self.workspace(),
+                self.state.parse_db(),
+                &self.cargo_metadata_config,
+                change,
+            ) == WorkspaceGraphChanges::Changed
+        });
+        let mut changes = saved.into_values().collect::<Vec<_>>();
+        changes.extend(spellings.into_iter().map(SavedFileChange::FsPath));
+        self.publish_changes(&changes, graph_changed)
+    }
+
+    fn publish_changes(
+        &mut self,
+        changes: &[SavedFileChange],
+        graph_changed: bool,
+    ) -> anyhow::Result<AnalysisChangeSummary> {
+        let workspace = if graph_changed {
+            let manifest = self.workspace().workspace_root().join("Cargo.toml");
+            let loaded = self
+                .cargo_metadata_config
+                .load_metadata_with_target_cfg(&manifest)
+                .with_context(|| format!("load {}", manifest.display()))?;
+            WorkspaceMetadata::lower(
+                loaded.metadata,
+                loaded.target_cfg,
+                self.workspace_lowering_config.clone(),
             )
-            .context("while attempting to apply saved file changes")?;
-        match application {
-            ProjectChangeApplication::Unchanged => Ok(AnalysisChangeSummary::default()),
-            ProjectChangeApplication::Applied(summary) => Ok(summary),
-        }
-    }
-}
-
-/// Whether one canonical path batch changed the candidate's published project state.
-enum ProjectChangeApplication {
-    Unchanged,
-    Applied(AnalysisChangeSummary),
-}
-
-fn reindex_workspace(
-    project: &mut ProjectState,
-    database: &mut ajika::Database,
-) -> anyhow::Result<()> {
-    workspace::rebuild_workspace_graph(project, database, &[], StartupCacheLoad::Disabled)
-        .context("while attempting to reindex analysis project from workspace root")?;
-    Ok(())
-}
-
-/// Applies one nonempty canonicalized change batch to a private project candidate.
-fn apply_canonical_changes(
-    project: &mut ProjectState,
-    database: &mut ajika::Database,
-    changes: Vec<SavedFileChange>,
-) -> anyhow::Result<ProjectChangeApplication> {
-    debug_assert!(
-        !changes.is_empty(),
-        "candidate updates should contain at least one canonical change",
-    );
-
-    let graph_changed = changes.iter().any(|change| {
-        WorkspaceGraphChanges::check(
-            project.workspace(),
-            project.parse_db(),
-            &project.cargo_metadata_config,
-            change,
-        ) == WorkspaceGraphChanges::Changed
-    });
-
-    if graph_changed {
-        workspace::rebuild_workspace_graph(project, database, &changes, StartupCacheLoad::Enabled)
-            .map(ProjectChangeApplication::Applied)
-            .context("while attempting to rebuild analysis project after workspace change")
-    } else {
-        let summary = source::apply_source_changes(project, database, changes)
-            .context("while attempting to apply saved source changes")?;
-        if summary.is_empty() {
-            Ok(ProjectChangeApplication::Unchanged)
+            .context("normalize refreshed Cargo metadata")?
+            .with_sysroot_sources(self.workspace().sysroot_sources())
         } else {
-            Ok(ProjectChangeApplication::Applied(summary))
+            self.workspace().clone()
+        };
+        let database = self.database.get_mut().expect("project query runtime");
+        // Lazy captures made during refresh may also become visible in the accepted inputs. Ajika
+        // requires queries to work regardless of whether an initializer has already run.
+        // Input changes advance the revision, so later queries will observe the updated state anyway.
+        let accepted = database.inputs().clone();
+        let interner = database.interner();
+        let (targets, presence_changed) = database.update_inputs(|update| {
+            let (targets, presence_changed) = if graph_changed {
+                update.forget_all(SourceInput::CAPTURE);
+                update.forget_all(SourcePresence::RESOLVED_FILE);
+                workspace.write_inputs(update)?;
+                (CrateDependencies::write_inputs(&workspace, update)?, false)
+            } else {
+                let paths = changes
+                    .iter()
+                    .map(SavedFileChange::path)
+                    .collect::<Vec<_>>();
+                let presence_changed =
+                    SourceInput::refresh_saved_paths(&accepted, update, &interner, &paths)?;
+                (self.state.targets.clone(), presence_changed)
+            };
+            for source in changes.iter().filter_map(SavedFileChange::captured_source) {
+                SourceInput::set_saved(update, &interner, source)?;
+            }
+            Ok((targets, presence_changed))
+        })?;
+        let result = build_state(database, workspace, targets);
+        match result {
+            Ok(candidate) => {
+                let summary = if graph_changed {
+                    let changed_files = changes
+                        .iter()
+                        .flat_map(|change| candidate.parse.file_refs_for_path(change.path()))
+                        .map(|file| ChangedFile {
+                            package: file.package,
+                            file: file.file,
+                        })
+                        .collect::<UniqueVec<_>>()
+                        .into_vec();
+                    let changed_crates = candidate
+                        .targets
+                        .iter()
+                        .copied()
+                        .filter(|krate| {
+                            !candidate.workspace.packages()[krate.package.0]
+                                .origin
+                                .is_sysroot()
+                        })
+                        .collect::<Vec<_>>();
+                    AnalysisChangeSummary {
+                        changed_files,
+                        changed_crates,
+                    }
+                } else {
+                    Self::summarize_changes(&self.state, &candidate)
+                };
+                // A path can change its referent while both files stay in the target manifest.
+                // A successful request must observe the new lookup even in that case.
+                if graph_changed || presence_changed || !summary.is_empty() {
+                    self.state = candidate;
+                    self.memory_hooks
+                        .purge(ProjectMemoryPurgePoint::AfterProjectChange);
+                    return Ok(summary);
+                }
+            }
+            Err(error) => {
+                // Ajika can finish a checkpoint before the host learns that it cannot publish.
+                // The previous inputs must validate any such records before serving a request.
+                database.replace_inputs(accepted);
+                return Err(error).context("validate saved project candidate");
+            }
+        }
+        database.replace_inputs(accepted);
+        Ok(AnalysisChangeSummary::default())
+    }
+
+    fn summarize_changes(before: &ProjectState, after: &ProjectState) -> AnalysisChangeSummary {
+        let mut changed_files = UniqueVec::new();
+        let mut changed_crates = UniqueVec::new();
+        for (slot, (old, new)) in before
+            .parse
+            .packages()
+            .iter()
+            .zip(after.parse.packages())
+            .enumerate()
+        {
+            let package = PackageSlot(slot);
+            for file in old.parsed_files().chain(new.parsed_files()) {
+                let id = file.file_id();
+                if old.parsed_file(id).map(|file| file.source_revision())
+                    != new.parsed_file(id).map(|file| file.source_revision())
+                {
+                    changed_files.push(ChangedFile { package, file: id });
+                    changed_crates.extend(before.crates_for_file(package, id));
+                    changed_crates.extend(after.crates_for_file(package, id));
+                }
+            }
+        }
+        // A shared file can leave one target while remaining in the same package's source union.
+        changed_crates.extend(
+            after
+                .targets
+                .iter()
+                .copied()
+                .filter(|krate| before.module_files.get(krate) != after.module_files.get(krate)),
+        );
+        AnalysisChangeSummary {
+            changed_files: changed_files.into_vec(),
+            changed_crates: changed_crates.into_vec(),
         }
     }
-}
-
-fn affected_packages(
-    project: &ProjectState,
-    changed_files: &[ChangedFile],
-    fallback_package_roots: &[PackageSlot],
-) -> Vec<PackageSlot> {
-    let changed_package_ids = changed_packages(changed_files, fallback_package_roots)
-        .iter()
-        .filter_map(|package_slot| {
-            project
-                .workspace()
-                .packages()
-                .get(package_slot.0)
-                .map(|package| package.id.clone())
-        })
-        .collect::<Vec<_>>();
-
-    project
-        .workspace()
-        .reverse_dependency_closure(&changed_package_ids)
-        .into_iter()
-        .map(PackageSlot)
-        .collect()
-}
-
-fn changed_packages(
-    changed_files: &[ChangedFile],
-    fallback_package_roots: &[PackageSlot],
-) -> Vec<PackageSlot> {
-    let mut packages = changed_files
-        .iter()
-        .map(|changed_file| changed_file.package)
-        .chain(fallback_package_roots.iter().copied())
-        .collect::<Vec<_>>();
-    packages.sort_by_key(|package| package.0);
-    packages.dedup();
-    packages
 }

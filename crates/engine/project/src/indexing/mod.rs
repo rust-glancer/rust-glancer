@@ -1,17 +1,7 @@
-//! Builds saved analysis eagerly and completes policy-excluded targets on request.
+//! Demand and validate saved query roots at the project boundary.
 
-pub mod bench_support;
-mod bodies;
 mod builder;
-mod cache_probe;
-mod checkpoint_memory;
-mod config;
 mod initial;
-mod macro_source_files;
-mod phases;
-mod plan;
-mod rebuild;
-mod recovery;
 
-pub use self::{builder::ProjectBuilder, config::StartupCacheLoad};
-pub(crate) use self::{rebuild::rebuild_packages, recovery::recover_from_cache_load_failure};
+pub use self::builder::ProjectBuilder;
+pub(crate) use self::initial::build_state;

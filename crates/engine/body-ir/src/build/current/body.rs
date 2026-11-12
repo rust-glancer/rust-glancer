@@ -32,7 +32,7 @@ use super::{
     syntax_owner::SyntaxBodyOwner,
 };
 use crate::{
-    BodyOwner, CrateBodiesCoverage, CurrentBody,
+    BodyOwner, CurrentBody,
     build::{
         lower::{
             BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
@@ -58,9 +58,9 @@ pub(super) struct CurrentBodyBuildOutcome {
 pub(super) struct CurrentBodyBuilder<'source, 'db> {
     parse_package: &'source rg_parse::Package,
     cfg: CfgEvaluator<'source>,
-    def_map: &'source rg_def_map::DefMapReadTxn<'db>,
-    semantic_ir: &'source rg_semantic_ir::SemanticIrReadTxn<'db>,
-    saved_body_ir: &'source crate::BodyIrReadTxn<'db>,
+    def_map: &'source rg_def_map::DefinitionReader<'db>,
+    semantic_ir: &'source rg_semantic_ir::ItemReader<'db>,
+    saved_body_ir: &'source crate::BodyReader<'db>,
     crate_ref: CrateRef,
     file: FileId,
     current_source: &'source CurrentSource,
@@ -76,9 +76,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     pub fn new(
         parse_package: &'source rg_parse::Package,
         cfg: CfgEvaluator<'source>,
-        def_map: &'source rg_def_map::DefMapReadTxn<'db>,
-        semantic_ir: &'source rg_semantic_ir::SemanticIrReadTxn<'db>,
-        saved_body_ir: &'source crate::BodyIrReadTxn<'db>,
+        def_map: &'source rg_def_map::DefinitionReader<'db>,
+        semantic_ir: &'source rg_semantic_ir::ItemReader<'db>,
+        saved_body_ir: &'source crate::BodyReader<'db>,
         crate_ref: CrateRef,
         file: FileId,
         current_source: &'source CurrentSource,
@@ -153,9 +153,11 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // An unchanged declaration can reuse its saved owner. If no saved declaration matches, we
         // widen to the outermost current declaration so request-local parameters, `Self`, and
         // associated-item context remain available to nested bodies.
-        let saved_items = self.semantic_ir.items(self.crate_ref)?;
+        let saved_items = self
+            .semantic_ir
+            .all_items(DefMapRef::Crate(self.crate_ref))?;
         let saved_bodies = self.saved_body_ir.bodies(self.crate_ref, Some(self.file))?;
-        let saved_owners = SavedRootOwnerIndex::new(saved_items, self.crate_ref, self.file);
+        let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file);
         let mut roots = Vec::<PreparedCurrentRoot>::new();
         let mut unavailable = Vec::new();
         let mut association_us = 0;
@@ -283,7 +285,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         )?;
 
         let item_lookup_query = ItemLookupQuery::build_with_cache(
-            &ItemStoreQuery::new(self.semantic_ir),
+            *self.semantic_ir,
             self.crate_ref,
             &self.item_lookup_cache,
             &cancellation,
@@ -303,10 +305,9 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // lowerer: it records expressions, patterns, and lexical scopes but does not resolve their
         // meaning yet.
         let lowering_started = Instant::now();
-        let mut lowered =
-            LoweredCrateBodies::with_coverage(CrateBodiesCoverage::files(vec![self.file]));
+        let mut lowered = LoweredCrateBodies::default();
         let mut macro_expansion = BodyMacroExpansion::new(
-            self.parse_package,
+            self.parse_package.edition(),
             self.def_map,
             self.cfg,
             cancellation.clone(),
@@ -347,6 +348,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             self.def_map,
             self.semantic_ir,
             task_source,
+            self.cfg,
             |lowered| {
                 if let Some(saved_body) = self
                     .associations

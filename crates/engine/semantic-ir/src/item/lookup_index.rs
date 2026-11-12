@@ -125,6 +125,7 @@ impl ItemLookupIndex {
     }
 
     /// Count retained candidate references across every declaration-local lookup table.
+    #[cfg(test)]
     pub(crate) fn entry_count(&self) -> usize {
         self.inherent_impls_by_type
             .values()
@@ -385,6 +386,7 @@ impl IndexedTraitImpls {
         }
     }
 
+    #[cfg(test)]
     fn entry_count(&self) -> usize {
         self.all.len()
             + self.fallbacks.len()
@@ -408,6 +410,7 @@ pub(crate) struct TraitItemTraitRefs {
 }
 
 impl TraitItemTraitRefs {
+    #[cfg(test)]
     fn entry_count(&self) -> usize {
         self.functions.len() + self.consts.len()
     }

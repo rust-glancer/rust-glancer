@@ -15,13 +15,14 @@
 //! second lane because one lowered expression can contain several independently navigable path
 //! segments.
 
-use rg_body_ir::{BodyIrReadTxn, BodyOwner, BodyView, ExprData, ExprKind, PatKind};
+use rg_body_ir::{BodyOwner, BodyReader, BodyView, ExprData, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
     SemanticItemRef, Span, TypeDefId,
 };
-use rg_package_store::PackageStoreError;
+use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
+use rg_source::ReadError;
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -37,7 +38,7 @@ use crate::source::scan::NarrowestSourceSite;
 /// that touch the same offset. If a macro copied the selected token into several nodes, keep each
 /// expanded use. Analysis can then interpret all uses without Body IR choosing a navigation target.
 pub(crate) struct BodyCursorScanner<'txn, 'db> {
-    body_ir: &'txn BodyIrReadTxn<'db>,
+    body_ir: &'txn BodyReader<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -45,7 +46,7 @@ pub(crate) struct BodyCursorScanner<'txn, 'db> {
 
 impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     pub(crate) fn new(
-        body_ir: &'txn BodyIrReadTxn<'db>,
+        body_ir: &'txn BodyReader<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
@@ -59,7 +60,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Returns body-local candidates that can answer an editor query at this exact offset.
-    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
+    pub(crate) fn scan(&self) -> Result<Vec<BodySourceCandidate>, ReadError> {
         let Some(body_ref) = self.body_at()? else {
             return Ok(Vec::new());
         };
@@ -78,7 +79,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Finds the innermost enclosing body at the cursor offset.
-    fn body_at(&self) -> Result<Option<BodyRef>, PackageStoreError> {
+    fn body_at(&self) -> Result<Option<BodyRef>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
         for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
@@ -99,7 +100,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: BodyView<'_>,
-    ) -> Result<Vec<BodySourceCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodySourceCandidate>, ReadError> {
         let mut best = BestCursorCandidate::new(BodySourceCandidate::Body {
             body: body_ref,
             span: body.source().span,
@@ -209,60 +210,58 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        if let Some(item_store) = self.body_ir.body_item_store(body_ref)? {
-            // Body-local items live in the same source range as the body but are stored in a local
-            // item store. Their names can be the best answer when the cursor is on a nested item
-            // declaration or one of its fields/variants.
-            for item in item_store.semantic_items() {
-                if let ItemSourceKind::Body(source) = item.source().kind
-                    && source.body == body_ref
-                    && !body.source_item_is_written(source.item)
-                {
-                    continue;
+        // Body-local items live in the same source range as the body but are stored in a local
+        // item store. Their names can be the best answer when the cursor is on a nested item
+        // declaration or one of its fields/variants.
+        for item in self.body_ir.all_items(DefMapRef::Body(body_ref))? {
+            if let ItemSourceKind::Body(source) = item.source().kind
+                && source.body == body_ref
+                && !body.source_item_is_written(source.item)
+            {
+                continue;
+            }
+            if item.source().file_id != self.file_id {
+                continue;
+            }
+            let declaration_span = match item.source().kind {
+                ItemSourceKind::Body(source) if source.body == body_ref => body
+                    .source_item(source.item)
+                    .and_then(|item| item.name_span)
+                    .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
+                _ => item.span().unwrap_or(body.source().span),
+            };
+            if declaration_span.touches(self.offset) {
+                match item.item() {
+                    SemanticItemRef::TypeDef(_)
+                    | SemanticItemRef::Trait(_)
+                    | SemanticItemRef::TypeAlias(_) => best.consider(
+                        declaration_span,
+                        BodySourceCandidate::LocalItem {
+                            item: item.item(),
+                            span: declaration_span,
+                        },
+                    ),
+                    SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
+                        declaration_span,
+                        BodySourceCandidate::LocalValueItem {
+                            item: item.item(),
+                            span: declaration_span,
+                        },
+                    ),
+                    SemanticItemRef::Function(function) => best.consider(
+                        declaration_span,
+                        BodySourceCandidate::LocalFunction {
+                            function,
+                            span: declaration_span,
+                        },
+                    ),
+                    SemanticItemRef::Impl(_) => {}
                 }
-                if item.source().file_id != self.file_id {
-                    continue;
-                }
-                let declaration_span = match item.source().kind {
-                    ItemSourceKind::Body(source) if source.body == body_ref => body
-                        .source_item(source.item)
-                        .and_then(|item| item.name_span)
-                        .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
-                    _ => item.span().unwrap_or(body.source().span),
-                };
-                if declaration_span.touches(self.offset) {
-                    match item.item() {
-                        SemanticItemRef::TypeDef(_)
-                        | SemanticItemRef::Trait(_)
-                        | SemanticItemRef::TypeAlias(_) => best.consider(
-                            declaration_span,
-                            BodySourceCandidate::LocalItem {
-                                item: item.item(),
-                                span: declaration_span,
-                            },
-                        ),
-                        SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
-                            declaration_span,
-                            BodySourceCandidate::LocalValueItem {
-                                item: item.item(),
-                                span: declaration_span,
-                            },
-                        ),
-                        SemanticItemRef::Function(function) => best.consider(
-                            declaration_span,
-                            BodySourceCandidate::LocalFunction {
-                                function,
-                                span: declaration_span,
-                            },
-                        ),
-                        SemanticItemRef::Impl(_) => {}
-                    }
-                }
+            }
 
-                if let SemanticItemRef::TypeDef(ty) = item.item() {
-                    self.consider_fields(item_store, ty, &mut best);
-                    self.consider_variants(item_store, ty, &mut best);
-                }
+            if let SemanticItemRef::TypeDef(ty) = item.item() {
+                self.consider_fields(item, ty, &mut best);
+                self.consider_variants(item, ty, &mut best);
             }
         }
 
@@ -279,7 +278,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         body: BodyView<'_>,
         best: &mut BestCursorCandidate,
-    ) -> Result<(), PackageStoreError> {
+    ) -> Result<(), ReadError> {
         let Some((item, declaration_span)) = self.body_owner_declaration(body)? else {
             return Ok(());
         };
@@ -343,45 +342,20 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn body_owner_declaration(
         &self,
         body: BodyView<'_>,
-    ) -> Result<Option<(SemanticItemRef, Span)>, PackageStoreError> {
-        match body.owner() {
-            BodyOwner::Function(function) => {
-                if let DefMapRef::Body(parent_body_ref) = function.origin
-                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
-                    && let Some(data) = item_store.function_data(function.id)
-                {
-                    Ok(data
-                        .name_span
-                        .map(|span| (SemanticItemRef::from(function), span)))
-                } else {
-                    Ok(None)
-                }
-            }
-            BodyOwner::Const(konst) => {
-                if let DefMapRef::Body(parent_body_ref) = konst.origin
-                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
-                    && let Some(data) = item_store.const_data(konst.id)
-                {
-                    Ok(data
-                        .name_span
-                        .map(|span| (SemanticItemRef::from(konst), span)))
-                } else {
-                    Ok(None)
-                }
-            }
-            BodyOwner::Static(static_ref) => {
-                if let DefMapRef::Body(parent_body_ref) = static_ref.origin
-                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
-                    && let Some(data) = item_store.static_data(static_ref.id)
-                {
-                    Ok(data
-                        .name_span
-                        .map(|span| (SemanticItemRef::from(static_ref), span)))
-                } else {
-                    Ok(None)
-                }
-            }
+    ) -> Result<Option<(SemanticItemRef, Span)>, ReadError> {
+        let item = match body.owner() {
+            BodyOwner::Function(function) => SemanticItemRef::from(function),
+            BodyOwner::Const(konst) => SemanticItemRef::from(konst),
+            BodyOwner::Static(static_ref) => SemanticItemRef::from(static_ref),
+        };
+        if !matches!(item.origin(), DefMapRef::Body(_)) {
+            return Ok(None);
         }
+        Ok(self
+            .body_ir
+            .item(item)?
+            .and_then(|view| view.name_span())
+            .map(|span| (item, span)))
     }
 
     /// Recognize macro ranges even when they produce no expression, such as type expansions.
@@ -503,13 +477,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_fields(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {
         match ty.id {
-            TypeDefId::Struct(id) => {
-                let Some(data) = item_store.struct_data(id) else {
+            TypeDefId::Struct(_) => {
+                let Some(data) = item.struct_data() else {
                     return;
                 };
                 if data.source.file_id != self.file_id {
@@ -527,8 +501,8 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     }
                 }
             }
-            TypeDefId::Union(id) => {
-                let Some(data) = item_store.union_data(id) else {
+            TypeDefId::Union(_) => {
+                let Some(data) = item.union_data() else {
                     return;
                 };
                 if data.source.file_id != self.file_id {
@@ -552,14 +526,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_variants(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return;
         };
-        let Some(data) = item_store.enum_data(enum_id) else {
+        let Some(data) = item.enum_data() else {
             return;
         };
         if data.source.file_id != self.file_id {

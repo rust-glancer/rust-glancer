@@ -8,7 +8,7 @@ mod signature;
 
 use rg_def_map::DefMapSource;
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
-use rg_semantic_ir::{Generics, ItemStoreSource};
+use rg_semantic_ir::{Generics, SemanticItemSource};
 
 use super::{TypeLoweringEnv, TypeLoweringSession, TypePathResolver};
 use crate::{
@@ -29,7 +29,7 @@ pub struct TypeLoweringQuery<'lower, 'query, D, I, R> {
 impl<'lower, 'query, D, I, R> TypeLoweringQuery<'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: ItemStoreSource<'query, Error = D::Error>,
+    I: SemanticItemSource<'query, Error = D::Error>,
     R: TypePathResolver<Error = D::Error>,
 {
     pub fn new(item_paths: &'lower ItemPathQuery<'query, D, I>, resolver: &'lower R) -> Self {
@@ -51,13 +51,23 @@ where
     }
 
     /// Own the temporary storage for an independent result. Declaration callbacks during this
-    /// operation use this same storage; recursive source steps never create their own arenas.
+    /// operation use this same storage. Recursive source steps never create their own arenas.
     pub fn with_storage<T>(
         &self,
         run: impl for<'s> FnOnce(SolverInterner<'s>) -> Result<T, D::Error>,
     ) -> Result<T, D::Error> {
         let declarations = SemanticDeclarations::for_lowering(self.item_paths, self.resolver);
-        declarations.with_storage(run)?
+        // The closure returns its own read errors. The storage boundary also catches failures
+        // raised by solver callbacks.
+        match declarations.with_storage(run) {
+            Ok(result) => result,
+            Err(rg_std::OperationError::Source(error)) => Err(error),
+            Err(rg_std::OperationError::Cancelled(_)) => {
+                // `for_lowering` leaves `solving` unset, which disables solver cancellation
+                // checkpoints. Cancellation from a source read still propagates as `D::Error`.
+                unreachable!("source-only lowering has no cancellation context")
+            }
+        }
     }
 
     pub fn lower(&self, ty: &TypeRef, env: TypeLoweringEnv) -> Result<crate::Ty, D::Error> {

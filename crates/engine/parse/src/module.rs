@@ -1,7 +1,5 @@
 //! Module path resolution for ordinary source and macro expansion.
 
-#[cfg(test)]
-use std::collections::HashSet;
 use std::{
     collections::BTreeSet,
     fs as std_fs,
@@ -10,15 +8,12 @@ use std::{
 
 use anyhow::Context as _;
 use rg_ir_model::FileId;
-use rg_source::SourceInventory;
 use rg_syntax::{
     AstNode as _, Edition, SourceFile, SyntaxNode,
     ast::{self, HasAttrs, HasModuleItem, HasName},
 };
 use rg_text::{Name, identifier_text};
 
-#[cfg(test)]
-use crate::Package;
 use crate::fs;
 
 /// Return the inline modules that contain `node`, from the outermost module inward.
@@ -34,13 +29,6 @@ pub fn enclosing_inline_module_path(node: &SyntaxNode) -> Vec<Name> {
         .collect::<Vec<_>>();
     path.reverse();
     path
-}
-
-#[cfg(test)]
-impl Package {
-    pub(crate) fn discover_modules(&mut self, sources: &SourceInventory) -> anyhow::Result<()> {
-        ModuleDiscovery::new(self, sources).discover()
-    }
 }
 
 /// Filesystem bases used to resolve children of one logical Rust module.
@@ -195,11 +183,11 @@ impl ModuleFileContext {
     ///
     /// The resolver intentionally handles only the module forms that lowering already supports.
     /// More advanced attribute expansion belongs with a broader module-system implementation.
-    pub fn resolve_module_file(
+    pub fn resolve_module_file<E>(
         &self,
-        sources: &SourceInventory,
         module: &ast::Module,
-    ) -> anyhow::Result<Option<ModuleFileResolution>> {
+        exists: impl FnMut(&Path) -> Result<bool, E>,
+    ) -> Result<Option<ModuleFileResolution>, E> {
         let Some(module_name) = module.name().map(|name| {
             let text = name.text();
             identifier_text(&text).to_string()
@@ -207,9 +195,9 @@ impl ModuleFileContext {
             return Ok(None);
         };
         self.resolve_module_name(
-            sources,
             &module_name,
             module_path_override(module).as_deref(),
+            exists,
         )
     }
 
@@ -218,14 +206,14 @@ impl ModuleFileContext {
     /// Declarative macro expansion happens after ItemTree lowering. Keeping this entry point next
     /// to the ordinary AST resolver makes generated `mod child;` requests use exactly the same
     /// conventional and direct-literal `#[path]` rules as source declarations.
-    pub fn resolve_module_name(
+    pub fn resolve_module_name<E>(
         &self,
-        sources: &SourceInventory,
         module_name: &str,
         path_override: Option<&str>,
-    ) -> anyhow::Result<Option<ModuleFileResolution>> {
+        mut exists: impl FnMut(&Path) -> Result<bool, E>,
+    ) -> Result<Option<ModuleFileResolution>, E> {
         for candidate in self.module_file_candidates(module_name, path_override) {
-            if sources.probe_exists(candidate.path())? {
+            if exists(candidate.path())? {
                 return Ok(Some(candidate));
             }
         }
@@ -320,168 +308,6 @@ impl ModuleFileResolution {
 
     pub fn into_parts(self) -> (PathBuf, ModuleFileContext) {
         (self.path, self.context)
-    }
-}
-
-// TODO(ajika integration): Move the parse discovery cases to the target discovery fixtures, then remove
-// this test-only walker.
-#[cfg(test)]
-struct ModuleDiscovery<'db> {
-    package: &'db mut Package,
-    sources: &'db SourceInventory,
-    visited: HashSet<(FileId, ModuleFileContext)>,
-    active_files: HashSet<FileId>,
-}
-
-#[cfg(test)]
-impl<'db> ModuleDiscovery<'db> {
-    fn new(package: &'db mut Package, sources: &'db SourceInventory) -> Self {
-        Self {
-            package,
-            sources,
-            visited: HashSet::default(),
-            active_files: HashSet::default(),
-        }
-    }
-
-    fn discover(mut self) -> anyhow::Result<()> {
-        let roots = self
-            .package
-            .targets()
-            .iter()
-            .map(|target| (target.name.clone(), target.root_file))
-            .collect::<Vec<_>>();
-
-        for (target_name, root_file) in roots {
-            let root_path = self
-                .package
-                .file_path(root_file)
-                .expect("target root should have a parsed path");
-            let root_context = ModuleFileContext::for_target_root(root_path);
-            self.discover_file(root_file, root_context)
-                .with_context(|| {
-                    format!("while attempting to discover modules for target {target_name}")
-                })?;
-        }
-
-        Ok(())
-    }
-
-    fn discover_file(
-        &mut self,
-        current_file_id: FileId,
-        module_file_context: ModuleFileContext,
-    ) -> anyhow::Result<()> {
-        let visit = (current_file_id, module_file_context.clone());
-        if self.visited.contains(&visit) {
-            return Ok(());
-        }
-
-        // Completed visits stay context-sensitive because one file can contribute modules from
-        // several logical locations. Re-entering a file already on this recursion path is always a
-        // cycle, even when each edge builds a different lexical context such as repeated `a/..`.
-        if !self.active_files.insert(current_file_id) {
-            return Ok(());
-        }
-
-        self.package
-            .ensure_file_syntax(current_file_id)
-            .with_context(|| {
-                format!("while attempting to load syntax for {:?}", current_file_id)
-            })?;
-
-        let items = {
-            let parsed_file = self.package.parsed_file(current_file_id).with_context(|| {
-                format!(
-                    "while attempting to fetch parsed file {:?}",
-                    current_file_id
-                )
-            })?;
-            let syntax = parsed_file.syntax().with_context(|| {
-                format!(
-                    "while attempting to access retained syntax for {:?}",
-                    current_file_id
-                )
-            })?;
-            syntax.items().collect::<Vec<_>>()
-        };
-
-        self.discover_items(items, &module_file_context)
-            .with_context(|| {
-                format!(
-                    "while attempting to discover module items for {:?}",
-                    current_file_id
-                )
-            })?;
-
-        self.active_files.remove(&current_file_id);
-        self.visited.insert(visit);
-        Ok(())
-    }
-
-    fn discover_items(
-        &mut self,
-        items: Vec<ast::Item>,
-        module_file_context: &ModuleFileContext,
-    ) -> anyhow::Result<()> {
-        for item in items {
-            let ast::Item::Module(module) = item else {
-                continue;
-            };
-
-            self.discover_module(&module, module_file_context)
-                .context("while attempting to discover module declaration")?;
-        }
-
-        Ok(())
-    }
-
-    fn discover_module(
-        &mut self,
-        module: &ast::Module,
-        module_file_context: &ModuleFileContext,
-    ) -> anyhow::Result<()> {
-        if let Some(item_list) = module.item_list() {
-            // Inline modules do not introduce a file, but their out-of-line children resolve under
-            // a directory named after the inline module path.
-            let inline_module_context = module.name().map_or_else(
-                || module_file_context.clone(),
-                |name| {
-                    let text = name.text();
-                    module_file_context.descend_inline(
-                        identifier_text(&text),
-                        module_path_override(module).as_deref(),
-                    )
-                },
-            );
-            let inline_items = item_list.items().collect::<Vec<_>>();
-            return self
-                .discover_items(inline_items, &inline_module_context)
-                .context("while attempting to discover inline module items");
-        }
-
-        let Some(resolution) = module_file_context.resolve_module_file(self.sources, module)?
-        else {
-            return Ok(());
-        };
-        let (module_file_path, child_context) = resolution.into_parts();
-        let module_file_id = self
-            .package
-            .parse_file(self.sources, &module_file_path)
-            .with_context(|| {
-                format!(
-                    "while attempting to parse module file {}",
-                    module_file_path.display()
-                )
-            })?;
-
-        self.discover_file(module_file_id, child_context)
-            .with_context(|| {
-                format!(
-                    "while attempting to discover modules from {}",
-                    module_file_path.display()
-                )
-            })
     }
 }
 

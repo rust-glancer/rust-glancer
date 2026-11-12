@@ -66,7 +66,7 @@ fn foreign_declarations_resolve_import_and_reexport_like_named_items() {
     let fixture = DefMapFixture::build(SOURCE_FOREIGN_FIXTURE);
     let crate_ref = fixture.crate_ref("foreign_items", TargetKind::Lib);
     let def_map = fixture
-        .resident_def_map(crate_ref)
+        .def_map(crate_ref)
         .expect("foreign fixture def map should exist");
     let foreign_defs = def_map
         .local_def_refs()
@@ -120,7 +120,7 @@ make_foreign!();
     let fixture = DefMapFixture::build(fixture);
     let crate_ref = fixture.crate_ref("generated_foreign_items", TargetKind::Lib);
     let def_map = fixture
-        .resident_def_map(crate_ref)
+        .def_map(crate_ref)
         .expect("generated foreign fixture def map should exist");
     let foreign_blocks = def_map
         .local_def_refs()

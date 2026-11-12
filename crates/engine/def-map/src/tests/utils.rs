@@ -7,9 +7,9 @@ use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 use crate::{
-    DefMap, DefMapDb, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind,
-    NameBinding, NameBindings, Namespace, NamespaceSet, ResolvePathResult, Visibility,
-    testonly::DefMapFixture,
+    DefMap, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, NameBinding,
+    NameBindings, Namespace, NamespaceSet, ResolvePathResult, Visibility,
+    testonly::{DefMapDb, DefMapFixture},
 };
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
@@ -159,8 +159,8 @@ impl DefMapFixtureDb {
         self.fixture.def_map_db()
     }
 
-    fn resident_def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
-        self.fixture.resident_def_map(crate_ref)
+    fn def_map(&self, crate_ref: CrateRef) -> Option<&DefMap> {
+        self.fixture.def_map(crate_ref)
     }
 
     /// Returns the library target for one package.
@@ -213,7 +213,7 @@ impl<'a> FixtureCrate<'a> {
         let entry = self
             .db
             .def_map_db()
-            .resident_package(self.crate_ref.package)
+            .package(self.crate_ref.package)
             .and_then(|package| package.crate_data(self.crate_ref.crate_id))
             .and_then(|crate_data| crate_data.root_module())
             .and_then(|root_module| self.def_map().module(root_module))
@@ -229,7 +229,7 @@ impl<'a> FixtureCrate<'a> {
 
     pub(super) fn def_map(&self) -> &'a DefMap {
         self.db
-            .resident_def_map(self.crate_ref)
+            .def_map(self.crate_ref)
             .expect("crate def map should exist in fixture db")
     }
 }
@@ -347,7 +347,7 @@ impl<'a> FixtureEntry<'a> {
         };
         let crate_ref = origin.as_crate_ref()?;
         self.db.parse_db().packages().get(crate_ref.package.0)?;
-        self.db.resident_def_map(crate_ref)?;
+        self.db.def_map(crate_ref)?;
 
         Some(FixtureBindingOrigin {
             db: self.db,
@@ -369,7 +369,7 @@ impl FixtureBindingOrigin<'_> {
         };
 
         self.db
-            .resident_def_map(local_def_ref.origin.as_crate_ref()?)?
+            .def_map(local_def_ref.origin.as_crate_ref()?)?
             .local_def(local_def_ref.local_def)
             .map(|data| data.kind)
     }
@@ -380,7 +380,7 @@ impl FixtureBindingOrigin<'_> {
         };
 
         self.db
-            .resident_def_map(module_ref.origin.as_crate_ref()?)?
+            .def_map(module_ref.origin.as_crate_ref()?)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
     }
@@ -391,13 +391,13 @@ impl FixtureBindingOrigin<'_> {
                 let crate_ref = local_def_ref.origin.as_crate_ref()?;
                 let local_def = self
                     .db
-                    .resident_def_map(crate_ref)?
+                    .def_map(crate_ref)?
                     .local_def(local_def_ref.local_def)?;
                 (crate_ref, local_def.file_id)
             }
             DefId::EnumVariant(variant_ref) => {
                 let crate_ref = variant_ref.origin.as_crate_ref()?;
-                let def_map = self.db.resident_def_map(crate_ref)?;
+                let def_map = self.db.def_map(crate_ref)?;
                 let variant = def_map.local_enum_variant(variant_ref.local_enum_variant)?;
                 let enum_def = def_map.local_def(variant.enum_def)?;
                 (crate_ref, enum_def.file_id)
@@ -471,10 +471,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let (crate_ref, target) = self.crate_ref(query);
         let module_id = self.module_id(crate_ref, query.module_path);
         let path = Self::parse_path(query.path);
-        let def_map = self
-            .project
-            .def_map_db()
-            .read_txn(crate::DefMapLoader::resident_only("def-map fixture query"));
+        let def_map = self.project.def_map_db().reader();
         let result = crate::DefMapQuery::new(&def_map)
             .name_resolver()
             .resolve_path(
@@ -540,7 +537,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     fn module_id(&self, crate_ref: CrateRef, module_path: &str) -> ModuleId {
         let def_map = self
             .project
-            .resident_def_map(crate_ref)
+            .def_map(crate_ref)
             .expect("crate def map should exist while resolving path snapshot query");
 
         def_map
@@ -557,7 +554,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(crate_ref)
+            .def_map(crate_ref)
             .expect("crate def map should exist while building module path")
             .module(module_id)
             .expect("module id should exist while building module path");
@@ -725,7 +722,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
 
     fn def_map(&self) -> &'a DefMap {
         self.project
-            .resident_def_map(self.crate_ref)
+            .def_map(self.crate_ref)
             .expect("crate def map should exist while rendering snapshot")
     }
 
@@ -780,14 +777,14 @@ impl<'a> CrateDefMapSnapshot<'a> {
             .parse_db()
             .packages()
             .get(crate_ref.package.0)?;
-        self.project.resident_def_map(crate_ref)?;
+        self.project.def_map(crate_ref)?;
 
         let visibility_prefix =
             if binding.attribute_import().is_none() && binding.has_direct_declaration() {
                 match binding.def {
                     DefId::Local(local_def) => self
                         .project
-                        .resident_def_map(crate_ref)?
+                        .def_map(crate_ref)?
                         .local_def(local_def.local_def)
                         .map(|data| BindingOrigin::source_visibility_prefix(&data.visibility))
                         .unwrap_or_else(|| {
@@ -840,7 +837,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
     fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(crate_ref)
+            .def_map(crate_ref)
             .expect("crate def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");
@@ -918,7 +915,7 @@ impl ResolvedDefOrigin<'_> {
             DefId::Local(local_def_ref) => {
                 let local_def = self
                     .project
-                    .resident_def_map(local_def_ref.origin.origin_crate())
+                    .def_map(local_def_ref.origin.origin_crate())
                     .expect("crate def map should exist while dumping")
                     .local_def(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
@@ -932,13 +929,13 @@ impl ResolvedDefOrigin<'_> {
             DefId::EnumVariant(variant_ref) => {
                 let variant = self
                     .project
-                    .resident_def_map(variant_ref.origin.origin_crate())
+                    .def_map(variant_ref.origin.origin_crate())
                     .expect("crate def map should exist while dumping")
                     .local_enum_variant(variant_ref.local_enum_variant)
                     .expect("enum variant id should exist while dumping");
                 let enum_def = self
                     .project
-                    .resident_def_map(variant_ref.origin.origin_crate())
+                    .def_map(variant_ref.origin.origin_crate())
                     .expect("crate def map should exist while dumping")
                     .local_def(variant.enum_def)
                     .expect("enum def id should exist while dumping");
@@ -967,7 +964,7 @@ impl ResolvedDefOrigin<'_> {
             .target(
                 self.project
                     .def_map_db()
-                    .resident_package(crate_ref.package)
+                    .package(crate_ref.package)
                     .and_then(|package| package.crate_data(crate_ref.crate_id))
                     .expect("semantic crate should exist while dumping")
                     .cargo_target(),
@@ -985,7 +982,7 @@ impl ResolvedDefOrigin<'_> {
     fn module_path(&self, crate_ref: CrateRef, module_id: ModuleId) -> String {
         let module = self
             .project
-            .resident_def_map(crate_ref)
+            .def_map(crate_ref)
             .expect("crate def map should exist while building relative module path")
             .module(module_id)
             .expect("module id should exist while building relative module path");

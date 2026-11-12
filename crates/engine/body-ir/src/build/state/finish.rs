@@ -3,7 +3,7 @@
 use rg_arena::Arena;
 
 use super::CrateBodyBuildState;
-use crate::{CrateBodies, CurrentBody};
+use crate::{BodyStore, CurrentBody};
 
 impl CrateBodyBuildState<'_> {
     /// Finish request-local bodies without requiring their IDs to match worklist slots.
@@ -41,7 +41,7 @@ impl CrateBodyBuildState<'_> {
             .collect())
     }
 
-    pub(crate) fn finish(mut self) -> CrateBodies {
+    pub(crate) fn finish(mut self) -> BodyStore {
         debug_assert!(
             self.body_refs
                 .iter_with_ids()
@@ -55,7 +55,6 @@ impl CrateBodyBuildState<'_> {
             let allocated = body_local_items.alloc(items);
             debug_assert_eq!(allocated, body);
         }
-        let coverage = self.crate_bodies.coverage();
         let bodies = Arena::from_vec(
             self.crate_bodies
                 .into_bodies()
@@ -65,6 +64,6 @@ impl CrateBodyBuildState<'_> {
                 .collect(),
         );
 
-        CrateBodies::from_build(coverage, bodies, self.body_facts, body_local_items)
+        BodyStore::new(bodies, self.body_facts, body_local_items)
     }
 }
