@@ -19,9 +19,9 @@ dependencies = [
 
 [[package]]
 name = "ajika"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13f3e12eafe51962219c94acf34de12de000bfd60c6ffe7af83b931c58a6abea"
+checksum = "e67e0b6b5bc9b4865e1f3929b5d03e1f69996b622b1e744fda1632abf85033fb"
 dependencies = [
  "ajika_macros",
  "ajika_storage",
@@ -35,9 +35,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_macros"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64ac80ca9ed9093910db3fb39b4447b32aab65305c2d22adab242ee3d8055758"
+checksum = "de4a271d6c6c15be63a27ce0763363c01e9e1e173fbd5408e11224e9d56893df"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -46,9 +46,9 @@ dependencies = [
 
 [[package]]
 name = "ajika_storage"
-version = "0.1.5"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13550bfe171d7540a21dfdd48858ace8a673e7f13b354499bee2697f0b0def40"
+checksum = "4af19d1fe36f1911e59119c555aaf5f7551032fc4c2bb4476c2bafee6a610cf4"
 dependencies = [
  "blake3",
  "getrandom 0.4.3",
@@ -2689,7 +2689,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
