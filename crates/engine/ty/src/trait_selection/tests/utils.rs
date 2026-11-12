@@ -1,4 +1,4 @@
-use std::{collections::HashMap, convert::Infallible, fmt::Write as _};
+use std::{collections::HashMap, fmt::Write as _};
 
 use expect_test::Expect;
 use rg_def_map::{
@@ -22,9 +22,10 @@ use rg_item_tree::{
 use rg_semantic_ir::{
     CrateItemSource, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
     ItemLookupFacts, ItemLookupIndex, ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder,
-    LangItemIndex, ReadError, SemanticItemSource, SemanticItemView, StructData, TraitData,
-    TypeAliasData, TypeAliasSignature,
+    LangItemIndex, SemanticItemSource, SemanticItemView, StructData, TraitData, TypeAliasData,
+    TypeAliasSignature,
 };
+use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
@@ -41,6 +42,7 @@ pub(super) struct TraitSelectionFixture {
     pub(super) store: ItemStore,
     pub(super) target: CrateRef,
     lookup_index: ItemLookupIndex,
+    lookup_facts: ItemLookupFacts,
     dependencies: Vec<TraitSelectionDependency>,
     type_names: HashMap<TypeDefRef, String>,
     trait_names: HashMap<TraitDefRef, String>,
@@ -70,12 +72,13 @@ impl TraitSelectionFixture {
     }
 
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
-        ItemLookupQuery::build_from(
-            ItemReader(self),
-            self.target,
-            &rg_std::CancellationToken::new(),
+        ItemLookupQuery::from_indexes(
+            &self.lookup_facts,
+            std::iter::once(&self.lookup_index)
+                .chain(self.dependencies.iter().map(|dep| &dep.lookup_index))
+                .collect(),
+            rg_std::CancellationToken::new(),
         )
-        .expect("fixture lookup query should build")
     }
 
     pub(super) fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
@@ -112,9 +115,7 @@ impl From<&str> for TraitSelectionFixture {
 }
 
 impl DefMapSource for TraitSelectionFixture {
-    type Error = Infallible;
-
-    fn def_map_for_origin(&self, origin_ref: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
+    fn def_map_for_origin(&self, origin_ref: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         if origin_ref == DefMapRef::Crate(self.target) {
             return Ok(Some(&self.def_map));
         }
@@ -124,34 +125,30 @@ impl DefMapSource for TraitSelectionFixture {
             .map(|dependency| &dependency.def_map))
     }
 
-    fn crate_is_proc_macro(&self, _crate_ref: CrateRef) -> Result<bool, Self::Error> {
+    fn crate_is_proc_macro(&self, _crate_ref: CrateRef) -> Result<bool, ReadError> {
         Ok(false)
     }
 
-    fn target_pointer_width(&self, _crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
+    fn target_pointer_width(&self, _crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         Ok(Some(64))
     }
 
-    fn extern_root(
-        &self,
-        _target: CrateRef,
-        _name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, _target: CrateRef, _name: &str) -> Result<Option<ModuleRef>, ReadError> {
         Ok(None)
     }
 
-    fn extern_roots(&self, _target: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+    fn extern_roots(&self, _target: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError> {
         Ok(Vec::new())
     }
 
-    fn prelude_module(&self, _target: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, _target: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         Ok(None)
     }
 
     fn item_lookup_dependencies(
         &self,
         crate_ref: CrateRef,
-    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+    ) -> Result<UniqueVec<CrateRef>, ReadError> {
         if crate_ref != self.target {
             return Ok(UniqueVec::new());
         }
@@ -162,7 +159,7 @@ impl DefMapSource for TraitSelectionFixture {
             .collect())
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         let known = crate_ref == self.target || self.dependency(crate_ref).is_some();
         Ok(known.then_some(ModuleRef {
             origin: DefMapRef::Crate(crate_ref),
@@ -207,13 +204,32 @@ impl CrateItemSource for TraitSelectionFixture {
         Ok(self.crate_items(krate).map(ItemStore::lang_items))
     }
 
-    fn lookup_index(&self, crate_ref: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
-        if crate_ref == self.target {
-            return Ok(Some(&self.lookup_index));
-        }
-        Ok(self
-            .dependency(crate_ref)
-            .map(|dependency| &dependency.lookup_index))
+    fn lookup_facts(&self, krate: CrateRef) -> Result<Option<&ItemLookupFacts>, ReadError> {
+        Ok(if krate == self.target {
+            Some(&self.lookup_facts)
+        } else {
+            self.dependency(krate).map(|dep| &dep.lookup_facts)
+        })
+    }
+
+    fn lookup_candidates(
+        &self,
+        use_site: CrateRef,
+        question: &rg_semantic_ir::LookupQuestion,
+    ) -> Result<rg_semantic_ir::LookupAnswer, ReadError> {
+        assert_eq!(use_site, self.target);
+        Ok(question.answer(
+            std::iter::once(&self.lookup_index)
+                .chain(self.dependencies.iter().map(|dep| &dep.lookup_index)),
+        ))
+    }
+
+    fn symbol_names(
+        &self,
+        _krate: CrateRef,
+    ) -> Result<&[rg_semantic_ir::SymbolNameData], ReadError> {
+        // These solver fixtures describe types directly and have no source-symbol surface.
+        Ok(&[])
     }
 
     fn crates(&self) -> Vec<CrateRef> {
@@ -228,12 +244,11 @@ struct TraitSelectionDependency {
     def_map: DefMap,
     store: ItemStore,
     lookup_index: ItemLookupIndex,
+    lookup_facts: ItemLookupFacts,
 }
 
 impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
-    type Error = Infallible;
-
-    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, Self::Error> {
+    fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         Ok(item
             .origin()
             .as_crate_ref()
@@ -244,7 +259,7 @@ impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
     fn item_for_local_def(
         &self,
         definition: LocalDefRef,
-    ) -> Result<Option<SemanticItemRef>, Self::Error> {
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
         Ok(definition
             .origin
             .as_crate_ref()
@@ -256,7 +271,7 @@ impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, Self::Error> {
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         Ok(origin
             .as_crate_ref()
             .and_then(|krate| self.crate_items(krate))
@@ -864,6 +879,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             store: builder.build(),
             target: target(),
             lookup_index: ItemLookupIndex::default(),
+            lookup_facts: ItemLookupFacts::default(),
             dependencies: Vec::new(),
             type_names: HashMap::new(),
             trait_names: HashMap::new(),
@@ -899,8 +915,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             || Ok(()),
         )
         .expect("fixture lookup facts should build");
-        fixture.lookup_index =
-            ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new(), lookup_facts);
+        fixture.lookup_facts = lookup_facts;
+        fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
         fixture
     }
 

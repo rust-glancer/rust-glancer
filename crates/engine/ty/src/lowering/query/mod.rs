@@ -9,6 +9,7 @@ mod signature;
 use rg_def_map::DefMapSource;
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeRef};
 use rg_semantic_ir::{Generics, SemanticItemSource};
+use rg_source::ReadError;
 
 use super::{TypeLoweringEnv, TypeLoweringSession, TypePathResolver};
 use crate::{
@@ -29,8 +30,8 @@ pub struct TypeLoweringQuery<'lower, 'query, D, I, R> {
 impl<'lower, 'query, D, I, R> TypeLoweringQuery<'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     pub fn new(item_paths: &'lower ItemPathQuery<'query, D, I>, resolver: &'lower R) -> Self {
         Self {
@@ -46,7 +47,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         env: TypeLoweringEnv,
-    ) -> Result<TypeLoweringSession<'s, 'lower, 'query, D, I, R>, D::Error> {
+    ) -> Result<TypeLoweringSession<'s, 'lower, 'query, D, I, R>, ReadError> {
         TypeLoweringSession::new(self.item_paths, self.resolver, cx, env)
     }
 
@@ -54,23 +55,15 @@ where
     /// operation use this same storage. Recursive source steps never create their own arenas.
     pub fn with_storage<T>(
         &self,
-        run: impl for<'s> FnOnce(SolverInterner<'s>) -> Result<T, D::Error>,
-    ) -> Result<T, D::Error> {
+        run: impl for<'s> FnOnce(SolverInterner<'s>) -> Result<T, ReadError>,
+    ) -> Result<T, ReadError> {
         let declarations = SemanticDeclarations::for_lowering(self.item_paths, self.resolver);
         // The closure returns its own read errors. The storage boundary also catches failures
         // raised by solver callbacks.
-        match declarations.with_storage(run) {
-            Ok(result) => result,
-            Err(rg_std::OperationError::Source(error)) => Err(error),
-            Err(rg_std::OperationError::Cancelled(_)) => {
-                // `for_lowering` leaves `solving` unset, which disables solver cancellation
-                // checkpoints. Cancellation from a source read still propagates as `D::Error`.
-                unreachable!("source-only lowering has no cancellation context")
-            }
-        }
+        declarations.with_storage(run)?
     }
 
-    pub fn lower(&self, ty: &TypeRef, env: TypeLoweringEnv) -> Result<crate::Ty, D::Error> {
+    pub fn lower(&self, ty: &TypeRef, env: TypeLoweringEnv) -> Result<crate::Ty, ReadError> {
         self.with_storage(|cx| {
             let ty = self.session(cx, env)?.lower_type_ref(ty)?;
             Ok(cx.raise_ty(ty).unwrap_or(crate::Ty::Unknown))
@@ -84,7 +77,7 @@ where
         ty: &TypeRef,
         env: TypeLoweringEnv,
         table: &InferenceTable<'s>,
-    ) -> Result<Ty<'s>, D::Error> {
+    ) -> Result<Ty<'s>, ReadError> {
         self.session(table.interner(), env)?
             .lower_type_ref_with_inference(ty, table)
     }
@@ -97,7 +90,7 @@ where
         args: &[ItemGenericArg],
         env: TypeLoweringEnv,
         table: &InferenceTable<'s>,
-    ) -> Result<GenericArgs<'s>, D::Error> {
+    ) -> Result<GenericArgs<'s>, ReadError> {
         self.session(table.interner(), env)?
             .lower_generic_args_for(generics, args, Some(table))
     }
