@@ -54,8 +54,8 @@ impl<'txn, 'db> LabelScopeScanner<'txn, 'db> {
                 continue;
             }
             for expr in body.exprs() {
-                if !expr.source.is_written_in_file(self.file_id)
-                    || !expr.source.span.touches(self.offset)
+                if !body.source_at(expr.source).is_written_in_file(self.file_id)
+                    || !body.source_at(expr.source).span.touches(self.offset)
                 {
                     continue;
                 }
@@ -69,7 +69,10 @@ impl<'txn, 'db> LabelScopeScanner<'txn, 'db> {
                 let Some(label) = label else {
                     continue;
                 };
-                labels.push((expr.source.span.len(), label.name.to_string()));
+                labels.push((
+                    body.source_at(expr.source).span.len(),
+                    label.name.to_string(),
+                ));
             }
         }
 

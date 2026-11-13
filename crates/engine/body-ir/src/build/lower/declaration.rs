@@ -4,7 +4,7 @@
 //! includes every supported current member. Both use the same lowering and cfg policy here.
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{FileId, SourceLocation, Span};
+use rg_ir_model::{FileId, Span};
 use rg_item_tree::{
     Documentation, FromAst as _, ImplItem, ItemKind, ItemNode, ItemTreeId, MaybeFromAst, OuterDocs,
     RecordSource, SourceRole, TraitItem, VisibilityLevel,
@@ -16,7 +16,10 @@ use rg_syntax::{
 };
 use rg_text::Name;
 
-use crate::{BodySource, BodySourceItems, build::local_items::LocalItemLowering};
+use crate::{
+    BodySource, BodySourceItems, BodySourceStore, body::BodyLocation,
+    build::local_items::LocalItemLowering,
+};
 
 /// Which current declaration supplies a selected body's inherited context.
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +42,7 @@ pub(crate) struct CurrentDeclarationBuilder<'a> {
     pub(crate) file: FileId,
     pub(crate) cfg: CfgEvaluator<'a>,
     pub(crate) items: &'a mut BodySourceItems,
+    pub(crate) sources: &'a mut BodySourceStore,
     pub(crate) cancellation: &'a CancellationToken,
 }
 
@@ -96,7 +100,8 @@ impl CurrentDeclarationBuilder<'_> {
                     source.file_id,
                 )
             });
-            return Ok(Some(self.items.alloc(node, source)));
+            let location = node.location;
+            return Ok(Some(self.items.alloc(node, location)));
         }
         Ok(Some(member))
     }
@@ -154,25 +159,24 @@ impl CurrentDeclarationBuilder<'_> {
                 source.file_id,
             )
         });
-        Ok(self.items.alloc(node, source))
+        let location = node.location;
+        Ok(self.items.alloc(node, location))
     }
 
     fn declaration(&mut self, item: &ast::Item) -> Option<ItemTreeId> {
         let source = self.source(item.syntax());
         let node =
             self.with_sources(|locations| LocalItemLowering::declaration(item, source, locations))?;
-        Some(self.items.alloc(node, source))
+        let location = node.location;
+        Some(self.items.alloc(node, location))
     }
 
     fn with_sources<T>(&mut self, lower: impl FnOnce(&mut dyn RecordSource) -> T) -> T {
-        let mut map = |range, _| SourceLocation {
-            span: Span::from_text_range(range),
+        let map = |range, _| BodyLocation {
+            source: BodySource::written(self.file, Span::from_text_range(range)),
             editable: true,
         };
-        let mut sources = self.items.locations.start_owner(&mut map);
-        let result = lower(&mut sources);
-        self.items.locations.finish_owner(sources);
-        result
+        lower(&mut self.sources.recorder(&map))
     }
 
     fn source(&self, syntax: &SyntaxNode) -> BodySource {

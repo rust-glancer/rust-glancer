@@ -24,13 +24,13 @@ pub(super) use self::{
     macro_expansion::BodyMacroExpansion,
     task::{BodyLoweringTask, BodyTaskLowering, BodyTaskSource, LoweredBodyTask},
 };
-/// Crate-local bodies that still retain source-ambiguous pattern binding candidates.
+/// The growing owner worklist, retaining source-ambiguous bindings until preparation settles them.
 #[derive(Default)]
-pub(super) struct LoweredCrateBodies {
+pub(super) struct LoweredBodies {
     bodies: Arena<BodyId, LoweredBodyData>,
 }
 
-impl LoweredCrateBodies {
+impl LoweredBodies {
     pub(super) fn bodies(&self) -> &Arena<BodyId, LoweredBodyData> {
         &self.bodies
     }

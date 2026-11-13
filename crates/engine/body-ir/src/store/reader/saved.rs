@@ -1,4 +1,4 @@
-use std::{collections::HashSet, fmt};
+use std::{collections::HashSet, fmt, sync::Arc};
 
 use rg_def_map::{ItemSource, ItemSourceKind};
 use rg_ir_model::{
@@ -9,8 +9,11 @@ use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, target_declarati
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
-use super::{BodySource, DeclarationSourceView};
-use crate::{BodyLocalItems, BodyView, SavedBody, saved_body};
+use super::DeclarationSourceView;
+use crate::{
+    BodyData, BodyFactsStore, BodyLocalItems, BodyStore, BodyView, PreparedBodyStore,
+    infer_saved_body, prepare_saved_body, saved_body,
+};
 
 /// Read saved bodies for the targets in this view. The owner catalog lets file enumeration
 /// find bodies without computing them.
@@ -27,40 +30,62 @@ impl<'db> SavedBodyReader<'db> {
         }
     }
 
-    fn owner(&self, key: BodyKey) -> Result<Option<&'db SavedBody>, ReadError> {
+    fn owner(&self, key: BodyKey) -> Result<Option<&'db BodyStore>, ReadError> {
         if !self.targets.contains(&key.krate) {
             return Ok(None);
         }
         Ok(saved_body(self.db, key).map_err(ReadError::Query)?.as_ref())
     }
-}
 
-impl BodySource for SavedBodyReader<'_> {
-    fn declaration_source(
+    pub(crate) fn declaration_source(
         &self,
         krate: CrateRef,
         source: ItemSource,
     ) -> Result<DeclarationSourceView<'_>, ReadError> {
         if let ItemSourceKind::Body(source) = source.kind {
-            return self
-                .body(source.body)?
-                .map(|(body, _)| DeclarationSourceView::Body(body.source_items()))
-                .ok_or_else(|| {
-                    ReadError::Query(ajika::Error::application(
-                        "body declaration source is absent",
-                    ))
-                });
+            // Resolving an occurrence only needs the location output. Keep this separate from
+            // local declaration reads, which must observe prepared meaning alone.
+            let sources = if let Some(owner) = source.body.root.owner()
+                && self.targets.contains(&source.body.crate_ref)
+            {
+                let prepared = prepare_saved_body(
+                    self.db,
+                    BodyKey {
+                        krate: source.body.crate_ref,
+                        owner,
+                    },
+                )
+                .map_err(ReadError::Query)?;
+                match prepared.as_ref() {
+                    Some(prepared) => prepared
+                        .sources
+                        .value_ref(self.db)
+                        .map_err(ReadError::Query)?
+                        .get(source.body.body),
+                    None => None,
+                }
+            } else {
+                None
+            };
+            return sources.map(DeclarationSourceView::Body).ok_or_else(|| {
+                ReadError::Query(ajika::Error::application(
+                    "body declaration source is absent",
+                ))
+            });
         }
         SavedDeclarationSourceView::new(self.db, krate, source)
             .map(DeclarationSourceView::Saved)
             .map_err(ReadError::Query)
     }
 
-    fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError> {
+    pub(crate) fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError> {
         Ok(self.owners(krate)?.iter().map(|owner| owner.file).collect())
     }
 
-    fn body(&self, body: BodyRef) -> Result<Option<(BodyView<'_>, &BodyLocalItems)>, ReadError> {
+    pub(crate) fn body(
+        &self,
+        body: BodyRef,
+    ) -> Result<Option<(BodyView<'_>, &BodyLocalItems)>, ReadError> {
         let Some(owner) = body.root.owner() else {
             return Ok(None);
         };
@@ -71,13 +96,88 @@ impl BodySource for SavedBodyReader<'_> {
         let Some(saved) = self.owner(key)? else {
             return Ok(None);
         };
-        Ok(saved
-            .bodies
-            .body(body.body)
-            .zip(saved.bodies.body_local_items(body.body)))
+        Ok(saved.body(body.body).zip(saved.body_local_items(body.body)))
     }
 
-    fn initializer(
+    pub(crate) fn prepared_body(
+        &self,
+        body: BodyRef,
+    ) -> Result<Option<(&BodyData, &BodyLocalItems)>, ReadError> {
+        let Some(owner) = body.root.owner() else {
+            return Ok(None);
+        };
+        if !self.targets.contains(&body.crate_ref) {
+            return Ok(None);
+        }
+        let prepared = prepare_saved_body(
+            self.db,
+            BodyKey {
+                krate: body.crate_ref,
+                owner,
+            },
+        )
+        .map_err(ReadError::Query)?;
+        let Some(prepared) = prepared.as_ref() else {
+            return Ok(None);
+        };
+        let data = prepared.data.value_ref(self.db).map_err(ReadError::Query)?;
+        Ok(data
+            .bodies
+            .get(body.body)
+            .zip(data.local_items.get(body.body)))
+    }
+
+    pub(crate) fn prepared_bodies(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+        selected: &dyn Fn(&BodyOwnerData) -> bool,
+    ) -> Result<Vec<(BodyRef, &BodyData)>, ReadError> {
+        let mut result = Vec::new();
+        for owner in self
+            .owners(krate)?
+            .iter()
+            .filter(|owner| owner.file == file && selected(owner))
+        {
+            let key = BodyKey {
+                krate,
+                owner: owner.owner,
+            };
+            let prepared = prepare_saved_body(self.db, key).map_err(ReadError::Query)?;
+            let Some(prepared) = prepared.as_ref() else {
+                continue;
+            };
+            let data = prepared.data.value_ref(self.db).map_err(ReadError::Query)?;
+            result.extend(
+                data.bodies
+                    .iter_with_ids()
+                    .map(|(slot, body)| (key.body(slot), body)),
+            );
+        }
+        Ok(result)
+    }
+
+    pub(crate) fn prepared_owner(
+        &self,
+        key: BodyKey,
+    ) -> Result<Option<Arc<PreparedBodyStore>>, ReadError> {
+        if !self.targets.contains(&key.krate) {
+            return Ok(None);
+        }
+        let prepared = prepare_saved_body(self.db, key).map_err(ReadError::Query)?;
+        let Some(prepared) = prepared.as_ref() else {
+            return Ok(None);
+        };
+        Ok(Some(
+            prepared.data.value(self.db).map_err(ReadError::Query)?,
+        ))
+    }
+
+    pub(crate) fn facts(&self, key: BodyKey) -> Result<Arc<BodyFactsStore>, ReadError> {
+        infer_saved_body(self.db, key).map_err(ReadError::Query)
+    }
+
+    pub(crate) fn initializer(
         &self,
         item: ConstOrStaticRef,
     ) -> Result<Option<&EvaluatedConstValue>, ReadError> {
@@ -88,12 +188,23 @@ impl BodySource for SavedBodyReader<'_> {
             ConstOrStaticRef::Const(item) => SavedBodyOwner::Const(item.id),
             ConstOrStaticRef::Static(item) => SavedBodyOwner::Static(item.id),
         };
-        Ok(self
-            .owner(BodyKey { krate, owner })?
-            .and_then(|saved| saved.initializer.as_ref()))
+        if !self.targets.contains(&krate) {
+            return Ok(None);
+        }
+        let prepared =
+            prepare_saved_body(self.db, BodyKey { krate, owner }).map_err(ReadError::Query)?;
+        let Some(prepared) = prepared.as_ref() else {
+            return Ok(None);
+        };
+        Ok(prepared
+            .data
+            .value_ref(self.db)
+            .map_err(ReadError::Query)?
+            .initializer
+            .as_ref())
     }
 
-    fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {
+    pub(crate) fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {
         if !self.targets.contains(&krate) {
             return Ok(&[]);
         }
@@ -105,7 +216,7 @@ impl BodySource for SavedBodyReader<'_> {
         Ok(owners.as_slice())
     }
 
-    fn bodies(
+    pub(crate) fn bodies(
         &self,
         krate: CrateRef,
         file: Option<FileId>,
@@ -132,12 +243,7 @@ impl BodySource for SavedBodyReader<'_> {
         let mut bodies = Vec::new();
         for key in keys {
             if let Some(owner) = self.owner(key)? {
-                bodies.extend(
-                    owner
-                        .bodies
-                        .body_views()
-                        .map(|(id, view)| (key.body(id), view)),
-                );
+                bodies.extend(owner.body_views().map(|(id, view)| (key.body(id), view)));
             }
         }
         Ok(bodies)

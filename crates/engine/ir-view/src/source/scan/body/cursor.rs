@@ -132,12 +132,13 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // so on. Record shorthand values are skipped here because the key token has its own
         // source-level candidate.
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
-            if expr.source.file_id != self.file_id {
+            let source = body.source_at(expr.source);
+            if source.file_id != self.file_id {
                 continue;
             }
-            if !expr.source.is_written() {
+            if !source.is_written() {
                 self.consider_record_expr_fields(body_ref, body, expr, &mut best);
-                let span = Self::expression_reference_span(expr).unwrap_or(expr.source.span);
+                let span = Self::expression_reference_span(body, expr).unwrap_or(source.span);
                 if span.touches(self.offset) && body.source_map().is_macro_argument(span) {
                     best.consider_mapped(
                         span,
@@ -153,16 +154,16 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             if inside_expansion {
                 continue;
             }
-            if expr.source.span.touches(self.offset) {
+            if source.span.touches(self.offset) {
                 if record_shorthand_values.contains(&ExprId(expr_idx)) {
                     continue;
                 }
                 // Record expression keys can resolve to fields, while the record expression itself
                 // is still an ordinary expression candidate.
                 self.consider_record_expr_fields(body_ref, body, expr, &mut best);
-                let span = Self::expression_reference_span(expr)
+                let span = Self::expression_reference_span(body, expr)
                     .filter(|span| span.touches(self.offset))
-                    .unwrap_or(expr.source.span);
+                    .unwrap_or(source.span);
                 best.consider(
                     span,
                     BodySourceCandidate::Expr {
@@ -181,9 +182,12 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // Then look for local bindings introduced by params, lets, closures, and patterns. For
         // shorthand record patterns, keep enough surface information for rename to expand the field.
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
-            let binding_span = binding.name_span.unwrap_or(binding.source.span);
-            if binding.source.file_id != self.file_id
-                || !body.contains_source_span(binding.source, binding_span)
+            let binding_span = binding
+                .name_location
+                .map(|id| body.span(id))
+                .unwrap_or(body.source_at(binding.source).span);
+            if body.source_at(binding.source).file_id != self.file_id
+                || !body.contains_source_span(body.source_at(binding.source), binding_span)
             {
                 continue;
             }
@@ -326,23 +330,25 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         best: &mut BestCursorCandidate,
     ) {
         for call in body.macro_calls() {
-            if call.source.file_id != self.file_id
-                || !(call.source.is_written()
-                    || body.source_map().is_macro_argument(call.name_span))
+            if body.source_at(call.source).file_id != self.file_id
+                || !(body.source_at(call.source).is_written()
+                    || body
+                        .source_map()
+                        .is_macro_argument(body.span(call.name_location)))
             {
                 continue;
             }
-            if !call.name_span.touches(self.offset) {
+            if !body.span(call.name_location).touches(self.offset) {
                 continue;
             }
 
             best.consider(
-                call.name_span,
+                body.span(call.name_location),
                 BodySourceCandidate::MacroCall {
                     body: body_ref,
                     definition: call.definition,
-                    file_id: call.source.file_id,
-                    span: call.name_span,
+                    file_id: body.source_at(call.source).file_id,
+                    span: body.span(call.name_location),
                 },
             );
         }
@@ -374,19 +380,23 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     /// Recognize macro ranges even when they produce no expression, such as type expansions.
     fn macro_source_touches_offset(&self, body: BodyView<'_>) -> bool {
         body.macro_calls().iter().any(|call| {
-            call.source.file_id == self.file_id && call.source.span.touches(self.offset)
+            let source = body.source_at(call.source);
+            source.file_id == self.file_id && source.span.touches(self.offset)
         }) || body.exprs().iter().any(|expr| {
-            !expr.source.is_written()
-                && expr.source.file_id == self.file_id
-                && expr.source.span.touches(self.offset)
+            let source = body.source_at(expr.source);
+            !source.is_written()
+                && source.file_id == self.file_id
+                && source.span.touches(self.offset)
         }) || body.pats().iter().any(|pat| {
-            !pat.source.is_written()
-                && pat.source.file_id == self.file_id
-                && pat.source.span.touches(self.offset)
+            let source = body.source_at(pat.source);
+            !source.is_written()
+                && source.file_id == self.file_id
+                && source.span.touches(self.offset)
         }) || body.bindings().iter().any(|binding| {
-            !binding.source.is_written()
-                && binding.source.file_id == self.file_id
-                && binding.source.span.touches(self.offset)
+            let source = body.source_at(binding.source);
+            !source.is_written()
+                && source.file_id == self.file_id
+                && source.span.touches(self.offset)
         })
     }
 
@@ -411,20 +421,23 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         for field in fields {
             if !field.syntax.is_explicit()
-                || !field.key_span.touches(self.offset)
-                || !body.contains_source_span(expr.source, field.key_span)
+                || !body.span(field.key_location).touches(self.offset)
+                || !body.contains_source_span(
+                    body.source_at(expr.source),
+                    body.span(field.key_location),
+                )
             {
                 continue;
             }
             best.consider_mapped(
-                field.key_span,
+                body.span(field.key_location),
                 BodySourceCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: expr.scope,
                     owner: owner.clone(),
                     key: field.key.clone(),
-                    file_id: expr.source.file_id,
-                    span: field.key_span,
+                    file_id: body.source_at(expr.source).file_id,
+                    span: body.span(field.key_location),
                     surface: RecordFieldKeySurface::Explicit,
                 },
             );
@@ -453,20 +466,23 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
             for field in fields {
                 if !field.syntax.is_explicit()
-                    || !field.key_span.touches(self.offset)
-                    || !body.contains_source_span(site.data.source, field.key_span)
+                    || !body.span(field.key_location).touches(self.offset)
+                    || !body.contains_source_span(
+                        body.source_at(site.data.source),
+                        body.span(field.key_location),
+                    )
                 {
                     continue;
                 }
                 best.consider_mapped(
-                    field.key_span,
+                    body.span(field.key_location),
                     BodySourceCandidate::RecordFieldKey {
                         body: body_ref,
                         scope: site.scope,
                         owner: owner.clone(),
                         key: field.key.clone(),
-                        file_id: site.data.source.file_id,
-                        span: field.key_span,
+                        file_id: body.source_at(site.data.source).file_id,
+                        span: body.span(field.key_location),
                         surface: RecordFieldKeySurface::Explicit,
                     },
                 );
@@ -474,16 +490,17 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         });
     }
 
-    fn expression_reference_span(expr: &ExprData) -> Option<Span> {
+    fn expression_reference_span(body: BodyView<'_>, expr: &ExprData) -> Option<Span> {
         match &expr.kind {
-            ExprKind::Path { path } => path.last_segment_span(),
+            ExprKind::Path { path } => path.last_segment_location().map(|id| body.span(id)),
             ExprKind::MethodCall {
-                method_name_span, ..
-            } => *method_name_span,
-            ExprKind::Field { field_span, .. } => *field_span,
+                method_name_location,
+                ..
+            } => method_name_location.map(|id| body.span(id)),
+            ExprKind::Field { field_location, .. } => field_location.map(|id| body.span(id)),
             ExprKind::Record {
                 path: Some(path), ..
-            } => path.last_segment_span(),
+            } => path.last_segment_location().map(|id| body.span(id)),
             _ => None,
         }
     }

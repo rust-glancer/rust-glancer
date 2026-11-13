@@ -110,16 +110,17 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         for call in body.macro_calls() {
+            let source = body.source_at(call.source);
             rg_std::check_cancel!(self.db, "body occurrence candidates");
-            if !call.source.is_written_in_selected_file(self.file_id) {
+            if !source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
 
             candidates.push(BodySourceCandidate::MacroCall {
                 body: body_ref,
                 definition: call.definition,
-                file_id: call.source.file_id,
-                span: call.name_span,
+                file_id: source.file_id,
+                span: body.span(call.name_location),
             });
         }
         Ok(())
@@ -135,8 +136,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         let record_shorthand_bindings =
             RecordPatShorthandBinding::collect(body, self.file_id, None);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
+            let source = body.source_at(binding.source);
             rg_std::check_cancel!(self.db, "body occurrence candidates");
-            if !binding.source.is_written_in_selected_file(self.file_id) {
+            if !source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let binding_id = BindingId(binding_idx);
@@ -153,7 +155,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             } else {
                 BindingSurface::Plain
             };
-            let span = binding.name_span.unwrap_or(binding.source.span);
+            let span = binding
+                .name_location
+                .map(|id| body.span(id))
+                .unwrap_or(source.span);
             candidates.push(BodySourceCandidate::Binding {
                 body: body_ref,
                 binding: binding_id,
@@ -320,13 +325,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     ) -> anyhow::Result<()> {
         let record_shorthand_values = BodyScanSites::new(body).record_expr_shorthand_value_ids();
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
+            let source = body.source_at(expr.source);
             rg_std::check_cancel!(self.db, "body occurrence candidates");
             let expr_id = ExprId(expr_idx);
-            if self.file_id.is_some_and(|file| expr.source.file_id != file)
-                || !expr.source.is_written()
-                    && !body
-                        .source_map()
-                        .is_format_capture(expr_id, expr.source.span)
+            if self.file_id.is_some_and(|file| source.file_id != file)
+                || !source.is_written()
+                    && !body.source_map().is_format_capture(expr_id, source.span)
             {
                 continue;
             }
@@ -338,20 +342,25 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 ExprKind::Path { path }
                     if path.segment_count() == 1 && path.as_def_map_path().is_some() =>
                 {
-                    path.segment_span(0).unwrap_or(expr.source.span)
+                    path.segment_location(0)
+                        .map(|id| body.span(id))
+                        .unwrap_or(source.span)
                 }
                 ExprKind::MethodCall {
-                    method_name_span: Some(span),
+                    method_name_location: Some(location),
                     ..
                 }
                 | ExprKind::Field {
-                    field_span: Some(span),
+                    field_location: Some(location),
                     ..
-                } => *span,
-                ExprKind::MethodCall { .. } | ExprKind::Field { .. } => expr.source.span,
+                } => body.span(*location),
+                ExprKind::MethodCall { .. } | ExprKind::Field { .. } => source.span,
                 ExprKind::Record {
                     path: Some(path), ..
-                } => path.last_segment_span().unwrap_or(expr.source.span),
+                } => path
+                    .last_segment_location()
+                    .map(|id| body.span(id))
+                    .unwrap_or(source.span),
                 _ => continue,
             };
 
@@ -372,8 +381,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         for expr in body.exprs().iter() {
+            let source = body.source_at(expr.source);
             rg_std::check_cancel!(self.db, "body occurrence candidates");
-            if !expr.source.is_written_in_selected_file(self.file_id) {
+            if !source.is_written_in_selected_file(self.file_id) {
                 continue;
             }
             let ExprKind::Record {
@@ -395,13 +405,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     scope: expr.scope,
                     owner: owner.clone(),
                     key: field.key.clone(),
-                    file_id: expr.source.file_id,
-                    span: field.key_span,
+                    file_id: source.file_id,
+                    span: body.span(field.key_location),
                     surface: if field.syntax.is_explicit() {
                         RecordFieldKeySurface::Explicit
                     } else {
                         RecordFieldKeySurface::RecordExprShorthand {
-                            field_span: field.source_span,
+                            field_span: body.span(field.location),
                         }
                     },
                 });
@@ -428,17 +438,17 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     scope: site.scope,
                     owner: owner.clone(),
                     key: field.key.clone(),
-                    file_id: site.data.source.file_id,
-                    span: field.key_span,
+                    file_id: body.source_at(site.data.source).file_id,
+                    span: body.span(field.key_location),
                     surface: if field.syntax.is_explicit() {
                         RecordFieldKeySurface::Explicit
                     } else {
                         RecordFieldKeySurface::RecordPatShorthand {
-                            field_span: field.source_span,
+                            field_span: body.span(field.location),
                             pat_span: body
                                 .pat(field.pat)
-                                .map(|pat| pat.source.span)
-                                .unwrap_or(field.source_span),
+                                .map(|pat| body.source_at(pat.source).span)
+                                .unwrap_or(body.span(field.location)),
                         }
                     },
                 });

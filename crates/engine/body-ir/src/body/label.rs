@@ -1,4 +1,4 @@
-use rg_ir_model::Span;
+use rg_ir_model::SourceId;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -8,5 +8,5 @@ use wincode::{SchemaRead, SchemaWrite};
 pub struct LabelData {
     pub name: Name,
     #[shrink(skip)]
-    pub span: Span,
+    pub location: SourceId,
 }

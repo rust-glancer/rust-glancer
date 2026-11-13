@@ -100,7 +100,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "body structure");
-                if !expr.source.is_written_in_file(file_id) {
+                if !body.source_at(expr.source).is_written_in_file(file_id) {
                     continue;
                 }
                 if !matches!(expr.kind, ExprKind::MethodCall { .. }) {
@@ -118,8 +118,8 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                 }
 
                 expr_tys.push(MethodChainExprTy {
-                    file_id: expr.source.file_id,
-                    span: expr.source.span,
+                    file_id: body.source_at(expr.source).file_id,
+                    span: body.source_at(expr.source).span,
                     parent_dot_span,
                     ty: IndexedType::new(ty),
                 });
@@ -159,7 +159,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
 
             for expr in body.exprs() {
                 rg_std::check_cancel!(self.db, "body structure");
-                if !expr.source.is_written_in_file(file_id) {
+                if !body.source_at(expr.source).is_written_in_file(file_id) {
                     continue;
                 }
                 let Some(kind) = Self::closing_brace_kind(body, &expr.kind) else {
@@ -167,8 +167,8 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                 };
 
                 blocks.push(BodyClosingBraceBlock {
-                    file_id: expr.source.file_id,
-                    span: expr.source.span,
+                    file_id: body.source_at(expr.source).file_id,
+                    span: body.source_at(expr.source).span,
                     kind,
                 });
             }
@@ -183,14 +183,16 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         for expr in body.exprs() {
             let ExprKind::MethodCall {
                 receiver: Some(receiver),
-                dot_span: Some(dot_span),
+                dot_location: Some(dot_location),
                 ..
             } = &expr.kind
             else {
                 continue;
             };
             let receiver = Self::chain_receiver_base(body, *receiver);
-            parent_dot_by_receiver.entry(receiver).or_insert(*dot_span);
+            parent_dot_by_receiver
+                .entry(receiver)
+                .or_insert(body.span(*dot_location));
         }
 
         parent_dot_by_receiver
@@ -220,18 +222,24 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
     ) -> Option<BodyClosingBraceBlockKind> {
         match expr {
             ExprKind::Match { scrutinee, .. } => Some(BodyClosingBraceBlockKind::Match {
-                scrutinee: scrutinee
-                    .and_then(|scrutinee| body.expr(scrutinee).map(|expr| expr.source.span)),
+                scrutinee: scrutinee.and_then(|scrutinee| {
+                    body.expr(scrutinee)
+                        .map(|expr| body.source_at(expr.source).span)
+                }),
             }),
             ExprKind::Loop { .. } => Some(BodyClosingBraceBlockKind::Loop),
             ExprKind::While { condition, .. } => Some(BodyClosingBraceBlockKind::While {
-                condition: condition
-                    .and_then(|condition| body.expr(condition).map(|expr| expr.source.span)),
+                condition: condition.and_then(|condition| {
+                    body.expr(condition)
+                        .map(|expr| body.source_at(expr.source).span)
+                }),
             }),
             ExprKind::For { pat, iterable, .. } => Some(BodyClosingBraceBlockKind::For {
-                pat: pat.and_then(|pat| body.pat(pat).map(|pat| pat.source.span)),
-                iterable: iterable
-                    .and_then(|iterable| body.expr(iterable).map(|expr| expr.source.span)),
+                pat: pat.and_then(|pat| body.pat(pat).map(|pat| body.source_at(pat.source).span)),
+                iterable: iterable.and_then(|iterable| {
+                    body.expr(iterable)
+                        .map(|expr| body.source_at(expr.source).span)
+                }),
             }),
             _ => None,
         }

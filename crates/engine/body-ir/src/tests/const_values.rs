@@ -54,7 +54,7 @@ impl usize {
             let saved = saved_body(semantic.db(), key).expect("fixture initializer query");
             let body = saved.as_ref().expect("fixture initializer should exist");
             assert_eq!(
-                body.initializer.as_ref(),
+                body.prepared.initializer.as_ref(),
                 Some(&EvaluatedConstValue::UnsignedInt {
                     value,
                     ty: UnsignedIntTy::Usize,

@@ -405,8 +405,12 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             return Ok(false);
         };
         Ok(body.binding(binding.binding).is_some_and(|binding| {
-            body.source_map()
-                .is_macro_argument(binding.name_span.unwrap_or(binding.source.span))
+            body.source_map().is_macro_argument(
+                binding
+                    .name_location
+                    .map(|id| body.span(id))
+                    .unwrap_or(body.source_at(binding.source).span),
+            )
         }))
     }
 
@@ -723,7 +727,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
                 if let Some(body_data) = self.db.body_ir.body(body)?
                     && let Some(data) = body_data.binding(binding)
-                    && !body_data.contains_source_span(data.source, span)
+                    && !body_data.contains_source_span(body_data.source_at(data.source), span)
                 {
                     return Ok(None);
                 }
@@ -739,7 +743,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     } => {
                         let file_id = match self.db.body_ir.body(body)? {
                             Some(body_data) => match body_data.binding(binding) {
-                                Some(data) => data.source.file_id,
+                                Some(data) => body_data.source_at(data.source).file_id,
                                 None => {
                                     let Some(file_id) = fallback_file_id else {
                                         return Ok(None);
@@ -772,8 +776,11 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             BodySourceCandidate::Expr { body, expr, .. } => {
                 let file_id = match self.db.body_ir.body(body)? {
                     Some(body_data) => match body_data.expr(expr) {
-                        Some(data) if body_data.contains_source_span(data.source, span) => {
-                            data.source.file_id
+                        Some(data)
+                            if body_data
+                                .contains_source_span(body_data.source_at(data.source), span) =>
+                        {
+                            body_data.source_at(data.source).file_id
                         }
                         Some(_) => return Ok(None),
                         None => {

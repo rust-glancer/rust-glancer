@@ -960,7 +960,11 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "{}",
-                    self.render_expr_symbol(body.crate_ref.package, expr_data)
+                    self.render_expr_symbol(
+                        body.crate_ref.package,
+                        expr_data,
+                        body_view.source_at(expr_data.source),
+                    )
                 )
                 .expect("string writes should not fail");
             }
@@ -1009,7 +1013,12 @@ impl AnalysisQuerySnapshot<'_, '_> {
         }
     }
 
-    fn render_expr_symbol(&self, package: PackageSlot, expr: &ExprData) -> String {
+    fn render_expr_symbol(
+        &self,
+        package: PackageSlot,
+        expr: &ExprData,
+        source: BodySource,
+    ) -> String {
         let label = match &expr.kind {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
@@ -1084,7 +1093,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
             ExprKind::Literal { kind } => {
                 format!(
                     "literal {kind} {}",
-                    self.render_source_text(package, expr.source)
+                    self.render_source_text(package, source)
                 )
             }
             ExprKind::Underscore => "underscore".to_string(),
@@ -1092,13 +1101,13 @@ impl AnalysisQuerySnapshot<'_, '_> {
             ExprKind::Yeet { .. } => "yeet".to_string(),
             ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
-                format!("unknown {}", self.render_source_text(package, expr.source))
+                format!("unknown {}", self.render_source_text(package, source))
             }
         };
 
         format!(
             "expr {label} @ {}",
-            self.render_source_span(package, expr.source.file_id, expr.source.span)
+            self.render_source_span(package, source.file_id, source.span)
         )
     }
 

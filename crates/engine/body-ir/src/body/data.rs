@@ -1,12 +1,14 @@
 use rg_arena::Arena;
-use rg_ir_model::{BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, Span, StmtId};
+use rg_ir_model::{
+    BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, SourceId, StmtId,
+};
 use rg_item_tree::{ItemNode, ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    BindingData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems, BodySourceMap,
-    ExprData, ExprKind, PatData, PatKind, ScopeData, StmtData, StmtKind,
+    BindingData, BodyMacroCallData, BodyOwner, BodySourceItems, ExprData, ExprKind, PatData,
+    PatKind, ScopeData, StmtData, StmtKind,
 };
 
 /// Frozen structural IR for a function, const, or static initializer.
@@ -23,10 +25,9 @@ pub struct BodyData {
     owner: BodyOwner,
     owner_module: ModuleRef,
     fallback_module: ModuleRef,
-    source: BodySource,
+    source: SourceId,
     source_items: BodySourceItems,
     macro_calls: Vec<BodyMacroCallData>,
-    source_map: BodySourceMap,
     param_scope: ScopeId,
     root_expr: ExprId,
     function_params: Vec<FunctionParamData>,
@@ -36,20 +37,22 @@ pub struct BodyData {
     pats: Arena<PatId, PatData>,
     statements: Arena<StmtId, StmtData>,
     exprs: Arena<ExprId, ExprData>,
+    /// Recovery and unsupported syntax may carry meaning absent from the lowered nodes. Retain
+    /// those fragments verbatim so equal preparation cannot hide a change to unmodeled input.
+    unmodeled_syntax: Vec<String>,
 }
 
 impl BodyData {
     // Lowering naturally produces these independent body fields at the same boundary. A wrapper
     // object would only move the argument list elsewhere without making the invariant clearer.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
         fallback_module: ModuleRef,
-        source: BodySource,
+        source: SourceId,
         source_items: BodySourceItems,
         macro_calls: Vec<BodyMacroCallData>,
-        source_map: BodySourceMap,
         param_scope: ScopeId,
         root_expr: ExprId,
         function_params: Vec<FunctionParamData>,
@@ -58,6 +61,7 @@ impl BodyData {
         pats: Arena<PatId, PatData>,
         statements: Arena<StmtId, StmtData>,
         exprs: Arena<ExprId, ExprData>,
+        unmodeled_syntax: Vec<String>,
     ) -> Self {
         let params = function_params
             .iter()
@@ -71,7 +75,6 @@ impl BodyData {
             source,
             source_items,
             macro_calls,
-            source_map,
             param_scope,
             root_expr,
             function_params,
@@ -81,6 +84,7 @@ impl BodyData {
             pats,
             statements,
             exprs,
+            unmodeled_syntax,
         }
     }
 
@@ -102,7 +106,7 @@ impl BodyData {
         self.fallback_module
     }
 
-    pub fn source(&self) -> BodySource {
+    pub fn source(&self) -> SourceId {
         self.source
     }
 
@@ -112,24 +116,6 @@ impl BodyData {
 
     pub fn macro_calls(&self) -> &[BodyMacroCallData] {
         &self.macro_calls
-    }
-
-    pub fn source_map(&self) -> &BodySourceMap {
-        &self.source_map
-    }
-
-    /// Check whether an IR span refers to written source rather than a generated fallback.
-    ///
-    /// In `let value: make_type!(User) = input;`, the statement is written even though its type
-    /// comes from expansion. The statement's source flag alone cannot tell us which type names
-    /// were copied from input, so spans inside a macro call need proof from the argument map.
-    pub fn contains_source_span(&self, source: BodySource, span: Span) -> bool {
-        self.source_map.is_macro_argument(span)
-            || source.is_written()
-                && !self
-                    .macro_calls
-                    .iter()
-                    .any(|call| call.source.span.contains_span(span))
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -217,13 +203,8 @@ impl BodyData {
         self.source_items.item(item)
     }
 
-    pub fn source_item_source(&self, item: ItemTreeId) -> Option<BodySource> {
+    pub fn source_item_source(&self, item: ItemTreeId) -> Option<SourceId> {
         self.source_items.source(item)
-    }
-
-    pub fn source_item_is_written(&self, item: ItemTreeId) -> bool {
-        self.source_item_source(item)
-            .is_none_or(|source| source.is_written())
     }
 
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
@@ -243,7 +224,7 @@ impl BodyData {
     }
 
     /// Resolves pending binding slots into final bindings and rewrites every dependent reference.
-    pub fn compact_bindings(&mut self, active: &[bool]) {
+    pub(crate) fn compact_bindings(&mut self, active: &[bool]) {
         let pending_count = self.bindings.len();
         let mut old_to_new = vec![None; pending_count];
         let mut new_bindings =
@@ -330,7 +311,7 @@ impl BodyData {
 /// One function parameter pattern and its lowered bindings.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FunctionParamData {
-    pub source: BodySource,
+    pub source: SourceId,
     pub pat: Option<PatId>,
     pub bindings: Vec<BindingId>,
     pub annotation: Option<TypeRef>,
@@ -339,17 +320,14 @@ pub struct FunctionParamData {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::{
-        CrateId, CrateRef, DefMapRef, FileId, FunctionId, FunctionRef, ModuleId, ModuleRef,
-        PackageSlot, Span,
+        CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ModuleId, ModuleRef, PackageSlot,
     };
 
     use super::*;
-    use crate::{
-        BindingKind, BodyData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind,
-    };
+    use crate::{BindingKind, BodyData, BodyOwner, BodySourceItems, ExprData, ExprKind};
 
-    fn source() -> BodySource {
-        BodySource::written(FileId::from_raw(0), Span { start: 0, end: 0 })
+    fn source() -> SourceId {
+        SourceId { owner: 0, local: 0 }
     }
 
     fn module() -> ModuleRef {
@@ -374,7 +352,7 @@ mod tests {
         let mut bindings = Arena::new();
         bindings.alloc(BindingData {
             source: source(),
-            name_span: None,
+            name_location: None,
             scope: param_scope,
             kind: BindingKind::Param,
             name: None,
@@ -382,7 +360,7 @@ mod tests {
         });
         bindings.alloc(BindingData {
             source: source(),
-            name_span: None,
+            name_location: None,
             scope: param_scope,
             kind: BindingKind::Param,
             name: None,
@@ -407,7 +385,6 @@ mod tests {
             source(),
             BodySourceItems::default(),
             Vec::new(),
-            Default::default(),
             param_scope,
             root_expr,
             vec![FunctionParamData {
@@ -421,6 +398,7 @@ mod tests {
             Arena::new(),
             Arena::new(),
             exprs,
+            Vec::new(),
         );
 
         body.compact_bindings(&[false, true]);

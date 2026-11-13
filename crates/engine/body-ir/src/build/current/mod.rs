@@ -24,7 +24,7 @@ pub use self::types::{
 };
 use super::{local_items::LocalItemSource, lower::CurrentDeclarationBuilder};
 use crate::{
-    BodyReader, BodySource, BodySourceItems, CurrentSourceStore, ScopeData,
+    BodyReader, BodySource, BodySourceItems, BodySourceStore, CurrentSourceStore, ScopeData,
     store::current::{CurrentImplData, CurrentImplRole, SelectedImpl},
 };
 
@@ -251,10 +251,12 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         let body_ref = Self::allocate_body(&mut next_body_id, crate_ref)
                             .context("allocate current impl identity")?;
                         let mut items = BodySourceItems::default();
+                        let mut sources = BodySourceStore::default();
                         let root = CurrentDeclarationBuilder {
                             file,
                             cfg,
                             items: &mut items,
+                            sources: &mut sources,
                             cancellation: &self.cancellation,
                         }
                         .impl_(&impl_, None)
@@ -290,7 +292,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                             impl_ref,
                             fallback_module,
                             items,
-                            source_items,
+                            sources,
                             role: if body_owns_cursor {
                                 CurrentImplRole::Members
                             } else {
