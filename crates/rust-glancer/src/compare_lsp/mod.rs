@@ -48,6 +48,7 @@ pub(crate) async fn run(
     let shutdown = servers.shutdown().await;
     let execution = execution?;
     shutdown?;
+    execution.write_raw_results()?;
     let normalized = normalization::NormalizedSummary::from_execution(&fixture, &execution)?;
     let comparison = comparison::ComparisonSummary::from_normalized(&normalized);
     let report = report::LspComparisonReport::build(

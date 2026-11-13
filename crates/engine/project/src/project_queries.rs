@@ -6,10 +6,12 @@ use rg_source::{QueryDatabase, QueryServices};
 use rg_workspace::WorkspaceMetadata;
 
 // Change this epoch when persisted results or their producing semantics change.
-const EPOCH: &str = "rust-glancer-target-analysis-5";
+const EPOCH: &str = "rust-glancer-target-analysis-7";
 const RETENTION: ajika::Retention = ajika::Retention {
     max_entries: 1_000_000,
-    max_bytes: 512 * 1024 * 1024,
+    // This caps durable storage, not resident memory. Large declaration graphs need enough room
+    // to survive startup; otherwise the first body request rebuilds evicted dependency targets.
+    max_bytes: 4 * 1024 * 1024 * 1024,
     max_idle: Duration::from_secs(30 * 24 * 60 * 60),
 };
 

@@ -9,7 +9,6 @@ pub(crate) struct ProjectReport {
     workspace_package_count: usize,
     target_count: usize,
     file_count: usize,
-    prefilled_body_count: usize,
     macro_expansion_limits: Vec<MacroExpansionLimitReport>,
 }
 
@@ -21,7 +20,6 @@ impl ProjectReport {
             workspace_package_count: stats.workspace_package_count,
             target_count: stats.target_count,
             file_count: stats.file_count,
-            prefilled_body_count: stats.prefilled_body_count,
             macro_expansion_limits: project
                 .macro_expansion_limit_reports()
                 .map(Into::into)
@@ -41,12 +39,7 @@ impl ProjectReport {
                     self.workspace_package_count,
                 )
                 .count_as("target_count", "targets", self.target_count)
-                .count_as("file_count", "files across packages", self.file_count)
-                .count_as(
-                    "prefilled_body_count",
-                    "prefilled body owners",
-                    self.prefilled_body_count,
-                );
+                .count_as("file_count", "files across packages", self.file_count);
         });
         if !self.macro_expansion_limits.is_empty() {
             section.fields("macro_expansion_limits", |fields| {

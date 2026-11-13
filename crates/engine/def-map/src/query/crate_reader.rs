@@ -1,6 +1,6 @@
-use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleId, ModuleRef};
 use rg_source::ReadError;
-use rg_std::ExpectedUnique;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::{CrateData, DefMap, DefMapSource, ModuleOrigin};
 
@@ -73,7 +73,7 @@ impl<S: CrateDataSource> CrateDefMapReader<S> {
                 } => false,
             };
             if owns_definition_file {
-                file_module.push(rg_ir_model::ModuleId(module_index));
+                file_module.push(ModuleId(module_index));
             }
         }
         let Some(mut module_id) = file_module.into_option() else {
@@ -161,10 +161,7 @@ impl<S: CrateDataSource> DefMapSource for CrateDefMapReader<S> {
         Ok(self.0.crate_data(krate)?.and_then(CrateData::prelude))
     }
 
-    fn item_lookup_dependencies(
-        &self,
-        krate: CrateRef,
-    ) -> Result<rg_std::UniqueVec<CrateRef>, ReadError> {
+    fn item_lookup_dependencies(&self, krate: CrateRef) -> Result<UniqueVec<CrateRef>, ReadError> {
         Ok(self
             .crate_data(krate)?
             .map(CrateData::item_lookup_dependencies)
