@@ -1,7 +1,7 @@
 //! Compiler identities at crate-local and use-site visibility layers.
 //!
 //! Semantic lowering first records recognized compiler attributes beside the typed item id in
-//! its owning `ItemStore`. Semantic indexing merges those declarations into `ItemLookupFacts` for
+//! its owning `ItemStore`. Semantic indexing merges those declarations into `ItemLookupEnv` for
 //! each crate. Consumers therefore ask for the real declaration identity without relying on a
 //! crate name, module path, or re-export spelling.
 

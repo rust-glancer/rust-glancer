@@ -1,13 +1,13 @@
 //! Visibility and compiler language items selected during semantic indexing.
 //!
 //! A crate's dependency visibility and selected compiler language items stay fixed until its
-//! declarations or dependencies change. These small facts are saved with the crate's lookup index
-//! so later queries can borrow them without walking the dependency graph again.
+//! declarations or dependencies change. This environment is saved separately from candidate shards,
+//! so later queries can read them without loading the candidate tables.
 
 use rg_ir_model::{CrateRef, DefMapRef, SemanticItemRef};
 use rg_item_tree::LangItem;
 use rg_source::ReadError;
-use rg_std::{MemorySize, OperationError, Shrink, UniqueVec};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::lang_item::VisibleLangItems;
@@ -17,23 +17,23 @@ use crate::{ItemReader, ItemStore};
 ///
 /// For example, when `*value` uses a `Deref` impl, lookup needs the trait marked `#[lang = "deref"]`,
 /// regardless of its name or module path. Indexing selects that declaration once, along with the
-/// crates whose impls can participate in lookup. Queries then read these facts without loading
+/// crates whose impls can participate in lookup. Queries then read this environment without loading
 /// every visible crate's declaration store.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub struct ItemLookupFacts {
+pub struct ItemLookupEnv {
     // The use-site crate comes first; dependency order also sets language-item precedence.
     visible_crates: UniqueVec<CrateRef>,
     lang_items: VisibleLangItems,
 }
 
-impl ItemLookupFacts {
+impl ItemLookupEnv {
     /// Select language items in DefMap's lookup order, using the local store before it is published.
     pub fn build(
         crates: UniqueVec<CrateRef>,
         local: &ItemStore,
         dependencies: ItemReader<'_>,
-        mut check_cancelled: impl FnMut() -> Result<(), OperationError<ReadError>>,
-    ) -> Result<Self, OperationError<ReadError>> {
+        mut check_cancelled: impl FnMut() -> Result<(), ReadError>,
+    ) -> Result<Self, ReadError> {
         let mut visible_crates = UniqueVec::new();
         let mut lang_items = VisibleLangItems::default();
 
@@ -48,10 +48,7 @@ impl ItemLookupFacts {
             let index = if krate == local.crate_ref() {
                 local.lang_items()
             } else {
-                let Some(index) = dependencies
-                    .lang_items(krate)
-                    .map_err(OperationError::Source)?
-                else {
+                let Some(index) = dependencies.lang_items(krate)? else {
                     continue;
                 };
                 index
@@ -69,7 +66,7 @@ impl ItemLookupFacts {
         })
     }
 
-    pub(crate) fn visible_crates(&self) -> &UniqueVec<CrateRef> {
+    pub fn visible_crates(&self) -> &UniqueVec<CrateRef> {
         &self.visible_crates
     }
 

@@ -2,9 +2,12 @@
 
 use rg_ir_model::{CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
-use rg_std::{CancellationToken, OperationError};
+use rg_std::CancellationToken;
 
-use crate::{ItemLookupIndex, LangItemIndex, SemanticItemSource, SemanticItemView};
+use crate::{
+    ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion, SemanticItemSource,
+    SemanticItemView, SymbolNameData,
+};
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
 pub trait CrateItemSource: Sync {
@@ -15,7 +18,13 @@ pub trait CrateItemSource: Sync {
     ) -> Result<Option<SemanticItemRef>, ReadError>;
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
-    fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError>;
+    fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError>;
+    fn lookup_candidates(
+        &self,
+        use_site: CrateRef,
+        question: &LookupQuestion,
+    ) -> Result<LookupAnswer, ReadError>;
+    fn symbol_names(&self, krate: CrateRef) -> Result<&[SymbolNameData], ReadError>;
     fn crates(&self) -> Vec<CrateRef>;
 }
 
@@ -48,25 +57,20 @@ impl<'a> ItemReader<'a> {
         self.0.lang_items(krate)
     }
 
+    pub fn symbol_names(&self, krate: CrateRef) -> Result<&'a [SymbolNameData], ReadError> {
+        self.0.symbol_names(krate)
+    }
+
     pub fn included_crates(
         &self,
         cancellation: &CancellationToken,
-    ) -> Result<Vec<CrateRef>, OperationError<ReadError>> {
+    ) -> Result<Vec<CrateRef>, ReadError> {
         rg_std::check_cancel!(cancellation, "enumerate semantic targets");
         Ok(self.0.crates())
-    }
-
-    pub(crate) fn lookup_index(
-        &self,
-        krate: CrateRef,
-    ) -> Result<Option<&'a ItemLookupIndex>, ReadError> {
-        self.0.lookup_index(krate)
     }
 }
 
 impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
-    type Error = ReadError;
-
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         ItemReader::item(self, item)
     }
