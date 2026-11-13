@@ -12,7 +12,7 @@ use rg_ir_model::{BodyKey, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
-    CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemStore, LangItemIndex, LookupAnswer,
+    CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemStore, LangItemIndex, LookupAnswer,
     LookupQuestion, SemanticItemView, SymbolNameData, target_declarations,
 };
 use rg_source::{
@@ -178,7 +178,7 @@ impl PreparedScopes {
 #[derive(Default)]
 pub(crate) struct Declarations {
     definitions: HashMap<CrateRef, CrateData>,
-    items: HashMap<CrateRef, (ItemStore, ItemLookupFacts, ItemLookupIndex)>,
+    items: HashMap<CrateRef, (ItemStore, ItemLookupEnv, ItemLookupIndex)>,
 }
 
 impl CrateDataSource for Declarations {
@@ -226,8 +226,8 @@ impl CrateItemSource for Declarations {
             .map(|(items, _, _)| items.lang_items()))
     }
 
-    fn lookup_facts(&self, krate: CrateRef) -> Result<Option<&ItemLookupFacts>, ReadError> {
-        Ok(self.items.get(&krate).map(|(_, facts, _)| facts))
+    fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
+        Ok(self.items.get(&krate).map(|(_, env, _)| env))
     }
 
     fn lookup_candidates(
@@ -240,7 +240,7 @@ impl CrateItemSource for Declarations {
             .visible_crates()
             .iter()
             .filter_map(|krate| self.items.get(krate).map(|(_, _, index)| index));
-        Ok(question.answer(indexes))
+        Ok(question.answer(indexes.flat_map(|index| index.shards_for(question))))
     }
 
     fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {

@@ -219,7 +219,7 @@ fn comment() { /* Wanted */ let text = "Wanted"; }
 }
 
 #[test]
-fn candidate_absence_tracks_routing_and_payload_groups() {
+fn candidate_absence_tracks_routing_and_payload_shards() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /dep/src/lib.rs crate:dep root:dep
@@ -262,15 +262,15 @@ fn read() { let value = dep::Value; let result = value.get(); let _ = res$result
     assert_eq!(candidates(&project), 0);
     let path = fixture.path("dep/src/lib.rs");
     // Introducing the receiver changes the routing proof. The missing `get` answer is equal,
-    // but it must now observe the selected payload group before that group gains the method.
+    // but it must now observe the selected payload shard before that shard gains the method.
     fs::write(
         &path,
         "pub struct Value;\nimpl Value { pub fn existing(&self) {} }\n",
     )
-    .expect("add a receiver group");
+    .expect("add a receiver shard");
     project
         .apply_changes(vec![SavedFileChange::fs_path(path.clone())])
-        .expect("accept receiver group");
+        .expect("accept receiver shard");
     assert_eq!(candidates(&project), 0);
     fs::write(
         &path,
