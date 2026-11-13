@@ -13,7 +13,7 @@ use rg_ir_model::BodyRef;
 
 pub(crate) use self::lower::LocalItemLowering;
 use self::{def_map::LocalDefMapCollector, item_store::LocalItemStoreCollector};
-use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, ScopeData};
+use crate::{BodyData, BodyLocalItems, BodySource, BodySourceItems, BodySourceStore, ScopeData};
 
 /// Borrow the declaration part of a lowering result for the shared collectors.
 ///
@@ -27,9 +27,9 @@ pub(crate) struct LocalItemSource<'a> {
 }
 
 impl<'a> LocalItemSource<'a> {
-    pub(crate) fn for_body(body: &'a BodyData) -> Self {
+    pub(crate) fn for_body(body: &'a BodyData, sources: &'a BodySourceStore) -> Self {
         Self {
-            source: body.source(),
+            source: sources.source(body.source()),
             scopes: body.scopes(),
             items: body.source_items(),
         }

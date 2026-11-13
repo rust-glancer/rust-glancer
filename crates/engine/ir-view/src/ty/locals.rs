@@ -467,7 +467,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             }
             for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "local declaration candidates");
-                if !binding.source.is_written_in_file(file_id) {
+                if !body.source_at(binding.source).is_written_in_file(file_id) {
                     continue;
                 }
                 let binding_id = BindingId(binding_idx);
@@ -483,13 +483,15 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if matches!(ty, Ty::Unknown) {
                     continue;
                 }
-                if range.is_some_and(|range| !range.touches(binding.source.span.end)) {
+                if range
+                    .is_some_and(|range| !range.touches(body.source_at(binding.source).span.end))
+                {
                     continue;
                 }
 
                 bindings.push(InferredBindingTy {
-                    file_id: binding.source.file_id,
-                    span: binding.source.span,
+                    file_id: body.source_at(binding.source).file_id,
+                    span: body.source_at(binding.source).span,
                     ty: IndexedType::new(ty),
                 });
             }
@@ -516,7 +518,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
                 rg_std::check_cancel!(self.db, "local declaration candidates");
-                if !expr.source.is_written_in_file(file_id) {
+                if !body.source_at(expr.source).is_written_in_file(file_id) {
                     continue;
                 }
 
@@ -532,7 +534,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                             continue;
                         };
                         calls.push(ResolvedFunctionCall {
-                            file_id: expr.source.file_id,
+                            file_id: body.source_at(expr.source).file_id,
                             function,
                             param_offset: 0,
                             args: Self::resolved_call_args(body, args),
@@ -546,7 +548,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                             continue;
                         };
                         calls.push(ResolvedFunctionCall {
-                            file_id: expr.source.file_id,
+                            file_id: body.source_at(expr.source).file_id,
                             function,
                             param_offset: 1,
                             args: Self::resolved_call_args(body, args),
@@ -672,7 +674,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         args.iter()
             .filter_map(|arg| {
                 body.expr(*arg).map(|expr| ResolvedCallArg {
-                    span: expr.source.span,
+                    span: body.source_at(expr.source).span,
                 })
             })
             .collect()

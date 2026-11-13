@@ -15,7 +15,7 @@
 
 use std::fmt;
 
-use rg_ir_model::{CrateRef, Path, PathRoot, Span};
+use rg_ir_model::{CrateRef, Path, PathRoot, SourceId};
 use rg_item_tree::{GenericArg, TypePath, TypePathAnchor, TypePathSegment, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -27,28 +27,28 @@ use wincode::{SchemaRead, SchemaWrite};
 /// and expose a DefMap projection so existing resolution can keep using DefMap paths.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyPath {
-    /// Full source range of the path expression or pattern.
-    pub source_span: Span,
+    /// Occurrence of the full path expression or pattern.
+    pub location: SourceId,
     absolute: bool,
     segments: Vec<BodyPathSegment>,
 }
 
 impl BodyPath {
-    pub fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
+    pub fn new(location: SourceId, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
         Self {
-            source_span,
+            location,
             absolute,
             segments,
         }
     }
 
-    pub fn unqualified_name(name: Name, span: Span) -> Self {
+    pub fn unqualified_name(name: Name, location: SourceId) -> Self {
         Self::new(
-            span,
+            location,
             false,
             vec![BodyPathSegment::new(
                 BodyPathSegmentKind::Name(name),
-                span,
+                location,
                 None,
             )],
         )
@@ -224,13 +224,15 @@ impl BodyPath {
         (!segments.is_empty() || !root.is_relative()).then_some(Path::new(root, segments))
     }
 
-    pub fn segment_span(&self, segment_idx: usize) -> Option<Span> {
-        self.segments.get(segment_idx).map(BodyPathSegment::span)
+    pub fn segment_location(&self, segment_idx: usize) -> Option<SourceId> {
+        self.segments
+            .get(segment_idx)
+            .map(BodyPathSegment::location)
     }
 
-    /// Returns the source span of the final segment, such as `User` in `model::User`.
-    pub fn last_segment_span(&self) -> Option<Span> {
-        self.segments.last().map(BodyPathSegment::span)
+    /// Returns the source location of the final segment, such as `User` in `model::User`.
+    pub fn last_segment_location(&self) -> Option<SourceId> {
+        self.segments.last().map(BodyPathSegment::location)
     }
 
     pub fn segment_count(&self) -> usize {
@@ -269,21 +271,29 @@ impl fmt::Display for BodyPath {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyPathSegment {
     kind: BodyPathSegmentKind,
-    span: Span,
+    location: SourceId,
     args: Option<BodyPathSegmentArgs>,
 }
 
 impl BodyPathSegment {
-    pub fn new(kind: BodyPathSegmentKind, span: Span, args: Option<BodyPathSegmentArgs>) -> Self {
-        Self { kind, span, args }
+    pub fn new(
+        kind: BodyPathSegmentKind,
+        location: SourceId,
+        args: Option<BodyPathSegmentArgs>,
+    ) -> Self {
+        Self {
+            kind,
+            location,
+            args,
+        }
     }
 
     pub fn kind(&self) -> &BodyPathSegmentKind {
         &self.kind
     }
 
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn location(&self) -> SourceId {
+        self.location
     }
 
     pub fn args(&self) -> Option<&BodyPathSegmentArgs> {
@@ -437,7 +447,7 @@ impl BodyAssociatedPathPrefix {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::Span;
+    use rg_ir_model::SourceId;
     use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};
     use rg_text::Name;
 
@@ -546,15 +556,15 @@ mod tests {
     }
 
     fn body_path(absolute: bool, segments: Vec<BodyPathSegment>) -> BodyPath {
-        BodyPath::new(span(), absolute, segments)
+        BodyPath::new(location(), absolute, segments)
     }
 
     fn name(name: &str, args: Option<BodyPathSegmentArgs>) -> BodyPathSegment {
-        BodyPathSegment::new(BodyPathSegmentKind::Name(Name::new(name)), span(), args)
+        BodyPathSegment::new(BodyPathSegmentKind::Name(Name::new(name)), location(), args)
     }
 
     fn segment(kind: BodyPathSegmentKind) -> BodyPathSegment {
-        BodyPathSegment::new(kind, span(), None)
+        BodyPathSegment::new(kind, location(), None)
     }
 
     fn type_path_ref(name: &str) -> TypeRef {
@@ -570,7 +580,7 @@ mod tests {
         })
     }
 
-    fn span() -> Span {
-        Span { start: 0, end: 0 }
+    fn location() -> SourceId {
+        SourceId { owner: 0, local: 0 }
     }
 }

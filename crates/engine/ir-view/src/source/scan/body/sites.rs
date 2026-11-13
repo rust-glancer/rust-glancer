@@ -139,9 +139,14 @@ impl<'body> BodyScanSites<'body> {
             }
 
             walk_pat(self.body, site.scope, site.pat, &mut |walk_site| {
-                if walk_site.data.source.is_written_in_selected_file(file_id)
+                if self
+                    .body
+                    .source_at(walk_site.data.source)
+                    .is_written_in_selected_file(file_id)
                     || include_macro_arguments
-                        && file_id.is_none_or(|file| walk_site.data.source.file_id == file)
+                        && file_id.is_none_or(|file| {
+                            self.body.source_at(walk_site.data.source).file_id == file
+                        })
                 {
                     visit(walk_site);
                 }
@@ -267,7 +272,7 @@ impl<'body> BodyScanSites<'body> {
         visit(PatternSite {
             scope,
             pat,
-            source: data.source,
+            source: self.body.source_at(data.source),
         });
     }
 }
@@ -318,7 +323,11 @@ where
                 continue;
             };
 
-            let context = TypeRefContext::new(*scope, self.body_visible_bindings, statement.source);
+            let context = TypeRefContext::new(
+                *scope,
+                self.body_visible_bindings,
+                body.source_at(statement.source),
+            );
             self.emit_type_ref(context, annotation);
         }
     }
@@ -344,21 +353,30 @@ where
                 } => {
                     for param in params {
                         if let Some(annotation) = &param.annotation {
-                            let context =
-                                TypeRefContext::new(*scope, expr.visible_bindings, param.source);
+                            let context = TypeRefContext::new(
+                                *scope,
+                                expr.visible_bindings,
+                                body.source_at(param.source),
+                            );
                             self.emit_type_ref(context, annotation);
                         }
                     }
 
                     if let Some(ret_ty) = ret_ty {
-                        let context =
-                            TypeRefContext::new(*scope, expr.visible_bindings, expr.source);
+                        let context = TypeRefContext::new(
+                            *scope,
+                            expr.visible_bindings,
+                            body.source_at(expr.source),
+                        );
                         self.emit_type_ref(context, ret_ty);
                     }
                 }
                 ExprKind::Cast { ty: Some(ty), .. } => {
-                    let context =
-                        TypeRefContext::new(expr.scope, expr.visible_bindings, expr.source);
+                    let context = TypeRefContext::new(
+                        expr.scope,
+                        expr.visible_bindings,
+                        body.source_at(expr.source),
+                    );
                     self.emit_type_ref(context, ty);
                 }
                 ExprKind::Path { path } => {
@@ -366,7 +384,7 @@ where
                         path,
                         expr.scope,
                         expr.visible_bindings,
-                        expr.source,
+                        body.source_at(expr.source),
                     );
                 }
                 ExprKind::Record {
@@ -376,12 +394,15 @@ where
                         path,
                         expr.scope,
                         expr.visible_bindings,
-                        expr.source,
+                        body.source_at(expr.source),
                     );
                 }
                 ExprKind::MethodCall { generic_args, .. } => {
-                    let context =
-                        TypeRefContext::new(expr.scope, expr.visible_bindings, expr.source);
+                    let context = TypeRefContext::new(
+                        expr.scope,
+                        expr.visible_bindings,
+                        body.source_at(expr.source),
+                    );
                     walk_generic_args_type_refs(generic_args, &mut |ty| {
                         self.emit_type_ref(context, ty);
                     });
@@ -399,7 +420,7 @@ where
                     self.walk_decl_body_path_type_refs(
                         path,
                         walk_site.scope,
-                        walk_site.data.source,
+                        sites.body.source_at(walk_site.data.source),
                     );
                 }
             });

@@ -1,13 +1,13 @@
 use std::fmt;
 
-use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, Span, StmtId};
+use rg_ir_model::{BindingId, ExprId, FieldKey, Mutability, PatId, ScopeId, SourceId, StmtId};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    BodyPath, BodySource, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LabelData, LiteralKind,
+    BodyPath, BuiltinMacroExprKind, ExprBinaryOp, ExprUnaryOp, LabelData, LiteralKind,
     RecordFieldSyntax,
 };
 
@@ -122,7 +122,7 @@ pub enum ExprRangeKind {
 /// One lowered expression.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ExprData {
-    pub source: BodySource,
+    pub source: SourceId,
     pub scope: ScopeId,
     /// Number of body-wide bindings that were visible at this expression's source location.
     ///
@@ -320,9 +320,9 @@ pub enum ExprKind {
     /// `<receiver>.<method>(<arg>, ...)`.
     MethodCall {
         receiver: Option<ExprId>,
-        dot_span: Option<Span>,
+        dot_location: Option<SourceId>,
         method_name: Name,
-        method_name_span: Option<Span>,
+        method_name_location: Option<SourceId>,
         /// Explicit method generic arguments written after the method name, such as
         /// `receiver.get::<User>()`.
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
@@ -332,14 +332,14 @@ pub enum ExprKind {
     /// `<base>.field` or `<base>.0`.
     Field {
         base: Option<ExprId>,
-        dot_span: Option<Span>,
+        dot_location: Option<SourceId>,
         field: Option<FieldKey>,
-        field_span: Option<Span>,
+        field_location: Option<SourceId>,
     },
     /// `Path { field, other: <expr>, ..base }` or `Path { .. }`.
     Record {
         path: Option<BodyPath>,
-        field_list_span: Option<Span>,
+        field_list_location: Option<SourceId>,
         fields: Vec<RecordExprField>,
         spread: Option<RecordExprSpread>,
     },
@@ -414,7 +414,7 @@ pub struct MatchArmData {
 /// One closure parameter pattern and its lowered bindings.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureParamData {
-    pub source: BodySource,
+    pub source: SourceId,
     pub pat: Option<PatId>,
     pub bindings: Vec<BindingId>,
     pub annotation: Option<TypeRef>,
@@ -424,8 +424,8 @@ pub struct ClosureParamData {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordExprField {
     pub key: FieldKey,
-    pub key_span: Span,
-    pub source_span: Span,
+    pub key_location: SourceId,
+    pub location: SourceId,
     pub syntax: RecordFieldSyntax,
     pub value: Option<ExprId>,
 }
@@ -433,6 +433,6 @@ pub struct RecordExprField {
 /// `..` or `..base` written after record fields.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordExprSpread {
-    pub source_span: Span,
+    pub location: SourceId,
     pub expr: Option<ExprId>,
 }

@@ -8,9 +8,9 @@ use wincode::{SchemaRead, SchemaWrite};
 /// before the function moves those positions without changing the signature or its IDs.
 ///
 /// Both numbers are table indices, never text offsets. `owner` selects a group of occurrences;
-/// `local` selects an entry within that group. Declaration lowering starts a group for each item,
-/// while body lowering also starts groups for individual type-lowering operations. The owner
-/// index is separate from item IDs and semantic declaration identities.
+/// `local` selects an entry within that group. A file's declaration table starts a group for each
+/// item. A body has its own table and uses one group for all its occurrences. The owner index is
+/// separate from item IDs and semantic declaration identities.
 ///
 /// The containing file, expansion, or body supplies the table. An ID carries neither that table's
 /// identity nor a source revision: it must travel with its source context. The same numbers in
@@ -20,8 +20,8 @@ use wincode::{SchemaRead, SchemaWrite};
 #[memsize(leaf)]
 #[shrink(leaf)]
 pub struct SourceId {
-    /// Group allocated before recording its syntax or descending into nested declarations.
+    /// Occurrence group within the containing source table.
     pub owner: u32,
-    /// Recording order within that group, independent of how many entries its children have.
+    /// Recording order within that group.
     pub local: u32,
 }

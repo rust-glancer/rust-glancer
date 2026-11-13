@@ -1,14 +1,12 @@
-use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, SourceId};
 use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::BodySource;
-
 /// One lowered statement.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StmtData {
-    pub source: BodySource,
+    pub source: SourceId,
     pub kind: StmtKind,
 }
 

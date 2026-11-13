@@ -1,12 +1,12 @@
 //! Build-only body storage between syntax lowering and binding materialization.
 
 use rg_arena::Arena;
-use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, StmtId};
+use rg_ir_model::{BindingId, ExprId, ModuleRef, PatId, ScopeId, SourceId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 
 use crate::body::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
-    BodySourceMap, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
+    BodySourceStore, ExprData, FunctionParamData, PatData, ScopeData, StmtData,
 };
 
 /// Body shape plus the source ambiguity that must be settled before the shape is frozen.
@@ -18,6 +18,7 @@ use crate::body::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LoweredBodyData {
     body: BodyData,
+    pub(crate) sources: BodySourceStore,
     pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     /// Numeric payloads are needed while evaluating initializers, but persisted bodies only need
     /// literal categories for type queries. Drop these inputs when finalizing the body.
@@ -57,12 +58,12 @@ impl LoweredBodyData {
         self.pending_binding_resolutions.clear();
     }
 
-    pub(crate) fn into_body(self) -> BodyData {
+    pub(crate) fn into_parts(self) -> (BodyData, BodySourceStore) {
         debug_assert!(
             self.pending_binding_resolutions.is_empty(),
             "pending binding candidates should be materialized before BodyData is frozen",
         );
-        self.body
+        (self.body, self.sources)
     }
 }
 
@@ -81,7 +82,7 @@ pub(crate) enum PendingBindingResolution {
 pub(super) struct BodyBuilder {
     pub(super) source_items: BodySourceItems,
     pub(super) macro_calls: Vec<BodyMacroCallData>,
-    pub(super) source_map: BodySourceMap,
+    pub(super) sources: BodySourceStore,
     pub(super) scopes: Arena<ScopeId, ScopeData>,
     pub(super) bindings: Arena<BindingId, BindingData>,
     pub(super) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
@@ -89,6 +90,7 @@ pub(super) struct BodyBuilder {
     pub(super) statements: Arena<StmtId, StmtData>,
     pub(super) exprs: Arena<ExprId, ExprData>,
     pub(super) integer_literals: Vec<(ExprId, u128)>,
+    pub(super) unmodeled_syntax: Vec<String>,
 }
 
 impl BodyBuilder {
@@ -106,7 +108,7 @@ impl BodyBuilder {
         let Self {
             source_items,
             macro_calls,
-            mut source_map,
+            mut sources,
             scopes,
             bindings,
             pending_binding_resolutions,
@@ -114,9 +116,11 @@ impl BodyBuilder {
             statements,
             exprs,
             integer_literals,
+            unmodeled_syntax,
         } = self;
 
-        source_map.finish();
+        sources.provenance.finish();
+        let source = sources.record(source);
         LoweredBodyData {
             body: BodyData::new(
                 owner,
@@ -125,7 +129,6 @@ impl BodyBuilder {
                 source,
                 source_items,
                 macro_calls,
-                source_map,
                 param_scope,
                 root_expr,
                 function_params,
@@ -134,7 +137,9 @@ impl BodyBuilder {
                 pats,
                 statements,
                 exprs,
+                unmodeled_syntax,
             ),
+            sources,
             pending_binding_resolutions,
             integer_literals,
         }
@@ -157,7 +162,7 @@ impl BodyBuilder {
     pub(super) fn alloc_scopeless_source_item(
         &mut self,
         data: ItemNode,
-        source: BodySource,
+        source: SourceId,
     ) -> ItemTreeId {
         self.source_items.alloc(data, source)
     }
@@ -167,7 +172,7 @@ impl BodyBuilder {
         &mut self,
         scope: ScopeId,
         data: ItemNode,
-        source: BodySource,
+        source: SourceId,
     ) -> ItemTreeId {
         let item = self.alloc_scopeless_source_item(data, source);
         self.scopes

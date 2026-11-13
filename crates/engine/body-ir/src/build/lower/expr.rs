@@ -1,9 +1,9 @@
 //! Expression lowering for syntax that Body IR models directly.
 
-use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, PrimitiveTy, ScopeId, Span};
+use rg_ir_model::{ExprBinaryOp, ExprId, FieldKey, Mutability, PrimitiveTy, ScopeId};
 use rg_item_tree::MaybeFromAst as _;
 use rg_syntax::{
-    AstNode as _,
+    AstNode as _, TextRange,
     ast::{
         self, ArrayExprKind, BinaryOp, ElseBranch, HasArgList as _, HasGenericArgs as _,
         HasLoopBody as _, LogicOp, RangeItem as _,
@@ -283,14 +283,14 @@ impl BodyLowering<'_> {
 
     fn lower_closure_param(&mut self, param: ast::Param, scope: ScopeId) -> ClosureParamData {
         // Closure parameters introduce bindings only inside the closure-owned scope.
-        let source = self.source(param.syntax());
+        let source = self.source_id(param.syntax());
         let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
             None => {
                 let binding = self.builder.alloc_binding(BindingData {
                     source,
-                    name_span: None,
+                    name_location: None,
                     scope,
                     kind: BindingKind::Param,
                     name: None,
@@ -525,17 +525,17 @@ impl BodyLowering<'_> {
         let receiver = method_call
             .receiver()
             .map(|receiver| self.lower_expr(receiver, scope));
-        let dot_span = method_call
+        let dot_location = method_call
             .dot_token()
-            .map(|dot| self.source_span(dot.text_range()));
+            .map(|dot| self.source_location(dot.text_range()));
         let name_ref = method_call.name_ref();
         let method_name = name_ref
             .clone()
             .map(|name| Name::new(name.text()))
             .unwrap_or_else(Name::missing);
-        let method_name_span = name_ref
+        let method_name_location = name_ref
             .as_ref()
-            .map(|name| self.source(name.syntax()).span);
+            .map(|name| self.source_location(name.syntax().text_range()));
         let generic_args = method_call
             .generic_arg_list()
             .into_iter()
@@ -559,9 +559,9 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::MethodCall {
                 receiver,
-                dot_span,
+                dot_location,
                 method_name,
-                method_name_span,
+                method_name_location,
                 generic_args,
                 args,
             },
@@ -570,20 +570,23 @@ impl BodyLowering<'_> {
 
     fn lower_field_expr(&mut self, field: ast::FieldExpr, scope: ScopeId) -> ExprId {
         let base = field.expr().map(|base| self.lower_expr(base, scope));
-        let dot_span = field
+        let dot_location = field
             .dot_token()
-            .map(|dot| self.source_span(dot.text_range()));
-        let (field_key, field_span) = if let Some(index) = field.index_token() {
+            .map(|dot| self.source_location(dot.text_range()));
+        let (field_key, field_location) = if let Some(index) = field.index_token() {
             (
                 index.text().parse::<usize>().ok().map(FieldKey::Tuple),
-                Some(self.source_span(index.text_range())),
+                Some(self.source_location(index.text_range())),
             )
         } else if let Some(name) = field.name_ref() {
             let field_key = name
                 .as_tuple_field()
                 .map(FieldKey::Tuple)
                 .unwrap_or_else(|| FieldKey::Named(Name::new(name.text())));
-            (Some(field_key), Some(self.source(name.syntax()).span))
+            (
+                Some(field_key),
+                Some(self.source_location(name.syntax().text_range())),
+            )
         } else {
             (None, None)
         };
@@ -593,9 +596,9 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::Field {
                 base,
-                dot_span,
+                dot_location,
                 field: field_key,
-                field_span,
+                field_location,
             },
         )
     }
@@ -603,9 +606,9 @@ impl BodyLowering<'_> {
     fn lower_record_expr(&mut self, record: ast::RecordExpr, scope: ScopeId) -> ExprId {
         let mut fields = Vec::new();
         let field_list = record.record_expr_field_list();
-        let field_list_span = field_list
+        let field_list_location = field_list
             .as_ref()
-            .map(|field_list| self.source(field_list.syntax()).span);
+            .map(|field_list| self.source_location(field_list.syntax().text_range()));
 
         if let Some(field_list) = &field_list {
             for field in field_list.fields() {
@@ -627,7 +630,7 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::Record {
                 path,
-                field_list_span,
+                field_list_location,
                 fields,
                 spread,
             },
@@ -640,16 +643,16 @@ impl BodyLowering<'_> {
         scope: ScopeId,
     ) -> Option<RecordExprField> {
         let field_name = field.field_name()?;
-        let key_span = self.source(field_name.syntax()).span;
+        let key_location = self.source_location(field_name.syntax().text_range());
         let key = FieldKey::Named(Name::new(field_name.text()));
-        let source_span = self.source(field.syntax()).span;
+        let location = self.source_location(field.syntax().text_range());
         let syntax = Self::record_expr_field_syntax(&field);
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprField {
             key,
-            key_span,
-            source_span,
+            key_location,
+            location,
             syntax,
             value,
         })
@@ -674,10 +677,7 @@ impl BodyLowering<'_> {
         let expr = spread_expr.map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprSpread {
-            source_span: Span {
-                start: u32::from(dotdot_range.start()),
-                end: source_end,
-            },
+            location: self.source_location(TextRange::new(dotdot_range.start(), source_end.into())),
             expr,
         })
     }
@@ -738,6 +738,7 @@ impl BodyLowering<'_> {
         syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
     ) -> ExprId {
+        self.record_unmodeled_syntax(syntax);
         let mut children = Vec::new();
         for child in syntax.children().filter_map(ast::Expr::cast) {
             let Some(child) = self.cfg.enabled_syntax(child) else {
@@ -750,6 +751,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_unknown_expr(&mut self, syntax: &rg_syntax::SyntaxNode, scope: ScopeId) -> ExprId {
+        self.record_unmodeled_syntax(syntax);
         self.alloc_expr(
             syntax,
             scope,

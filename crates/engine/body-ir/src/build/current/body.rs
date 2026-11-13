@@ -14,7 +14,10 @@
 //! discover the unsaved members. If a root cannot be identified safely, we skip it rather than
 //! attach current code to an unrelated declaration.
 
-use std::time::Instant;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
@@ -35,13 +38,13 @@ use super::{
     syntax_owner::SyntaxBodyOwner,
 };
 use crate::{
-    BodyOwner, BodyReader, BodySource, CurrentBody,
+    BodyOwner, BodyReader, BodySource, BodyStore, CurrentBody,
     build::{
         lower::{
             BodyLoweringTask, BodyMacroExpansion, BodyTaskLowering, BodyTaskSource,
-            CurrentRootItems, LoweredCrateBodies,
+            CurrentRootItems, LoweredBodies,
         },
-        state::{BodySemanticStage, CrateBodyBuildState},
+        state::{BodySemanticStage, BodySemanticTimings, BodyStoreBuilder},
     },
     store::current::SelectedImpl,
 };
@@ -124,14 +127,14 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // declaration, if any, owns each body.
         let parse_started = Instant::now();
         let current_parse = self.current_source.parse();
-        let syntax_errors = current_parse.errors();
+        let syntax_errors = current_parse.parse_errors();
         let syntax = current_parse.tree();
         checkpoint(CurrentSourceBuildCheckpoint::SourceParsed)
             .context("check current-body work after source parsing")?;
         let current_owners = SyntaxBodyOwner::select(
             &syntax,
             self.current_source.text(),
-            syntax_errors.as_slice(),
+            syntax_errors,
             self.selection,
             &cancellation,
         )
@@ -277,7 +280,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // saved project rather than publishing request-local items globally.
         let saved_bodies =
             self.saved_body_ir
-                .bodies_matching(self.crate_ref, Some(self.file), &|owner| {
+                .saved_prepared_bodies(self.crate_ref, self.file, &|owner| {
                     roots
                         .iter()
                         .any(|root| root.body_ref.root.owner() == Some(owner.owner))
@@ -298,94 +301,104 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             file: self.file,
             source: self.current_source,
         };
-        let tasks = roots
-            .iter()
-            .map(|root| root.lowering_task(self.file))
-            .collect::<Vec<_>>();
+        // Each selected outer owner has its own arena, just as it does in saved preparation.
+        // Selecting a neighboring function must not renumber this owner's nested bodies.
+        let mut bodies = Vec::new();
+        let mut lowering_us = 0;
+        let mut local_items_us = 0;
+        let mut semantic_timings = BodySemanticTimings::default();
+        let mut inference_time = Duration::ZERO;
+        for root in &roots {
+            let lowering_started = Instant::now();
+            let mut lowered = LoweredBodies::default();
+            let mut macro_expansion = BodyMacroExpansion::new(
+                self.parse_package.edition(),
+                self.def_map,
+                self.cfg,
+                cancellation.clone(),
+            );
+            let lowered_roots =
+                BodyTaskLowering::new(task_source, &mut lowered, self.cfg, &cancellation)
+                    .lower_tasks(&[root.lowering_task(self.file)], &mut macro_expansion)?;
+            anyhow::ensure!(
+                lowered_roots.len() == 1,
+                "associated current body could not be lowered"
+            );
+            lowering_us += lowering_started.elapsed().as_micros();
+            checkpoint(CurrentSourceBuildCheckpoint::BodyLowered)?;
 
-        // 4. Lower the chosen roots from editor syntax. This is the ordinary mechanical body
-        // lowerer: it records expressions, patterns, and lexical scopes but does not resolve their
-        // meaning yet.
-        let lowering_started = Instant::now();
-        let mut lowered = LoweredCrateBodies::default();
-        let mut macro_expansion = BodyMacroExpansion::new(
-            self.parse_package.edition(),
-            self.def_map,
-            self.cfg,
-            cancellation.clone(),
-        );
-        let lowered_roots =
-            BodyTaskLowering::new(task_source, &mut lowered, self.cfg, &cancellation)
-                .lower_tasks(&tasks, &mut macro_expansion)?;
-        anyhow::ensure!(
-            lowered_roots.len() == roots.len(),
-            "an associated current body could not be lowered from its captured syntax",
-        );
-        let root_body_refs = lowered_roots
-            .iter()
-            .map(|lowered| {
-                roots
-                    .iter()
-                    .find(|root| root.current_span == lowered.task.span)
-                    .map(|root| root.body_ref)
-                    .context("lowered current root has no associated body identity")
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let lowering_us = lowering_started.elapsed().as_micros();
-        checkpoint(CurrentSourceBuildCheckpoint::BodyLowered)
-            .context("check current-body work after root lowering")?;
-
-        // 5. Collect declarations inside the lowered roots. This extends the same worklist with
-        // nested functions and initializers. A uniquely associated nested declaration keeps its
-        // saved identity; new or ambiguous declarations receive request-only identities.
-        let local_items_started = Instant::now();
-        let mut build = CrateBodyBuildState::for_current(
-            self.crate_ref,
-            self.parse_package,
-            lowered,
-            root_body_refs,
-            cancellation.clone(),
-        )?;
-        build.materialize_body_local_items(
-            self.def_map,
-            self.semantic_ir,
-            task_source,
-            self.cfg,
-            |lowered| {
-                if let Some(saved_body) = self
-                    .associations
-                    .saved_declaration_for_current_span(lowered.task.span)
-                    .and_then(|saved| saved_nested_bodies.body_ref_at(saved))
-                {
-                    return Ok(saved_body);
-                }
-                synthetic_body_ref().context("allocate request-only nested body identity")
-            },
-        )?;
-        let local_items_us = local_items_started.elapsed().as_micros();
-        checkpoint(CurrentSourceBuildCheckpoint::BodyLocalItemsCollected)
-            .context("check current-body work after collecting body-local items")?;
-
-        // 6. Run the normal semantic stages over the completed request-local worklist. Only after
-        // impl headers, pattern bindings, and body names are resolved do we expose these bodies to
-        // the analysis request.
-        let semantic_timings = build.resolve_semantics(
-            self.def_map,
-            self.semantic_ir,
-            &item_lookup_query,
-            |stage| {
-                checkpoint(match stage {
-                    BodySemanticStage::ImplHeaders => {
-                        CurrentSourceBuildCheckpoint::ImplHeadersResolved
+            let local_items_started = Instant::now();
+            let mut build =
+                BodyStoreBuilder::new(root.body_ref, task_source, lowered, cancellation.clone());
+            build.materialize_body_local_items(
+                self.def_map,
+                self.semantic_ir,
+                self.cfg,
+                |lowered| {
+                    if let Some(saved_body) = self
+                        .associations
+                        .saved_declaration_for_current_span(lowered.task.span)
+                        .and_then(|saved| saved_nested_bodies.body_ref_at(saved))
+                    {
+                        return Ok(saved_body);
                     }
-                    BodySemanticStage::PatternBindings => {
-                        CurrentSourceBuildCheckpoint::PatternBindingsMaterialized
-                    }
-                    BodySemanticStage::Bodies => CurrentSourceBuildCheckpoint::BodyResolved,
-                })
-            },
-        )?;
-        let bodies = build.finish_current()?;
+                    synthetic_body_ref().context("allocate request-only nested body identity")
+                },
+            )?;
+            local_items_us += local_items_started.elapsed().as_micros();
+            checkpoint(CurrentSourceBuildCheckpoint::BodyLocalItemsCollected)?;
+            let timings = build.prepare_semantics(
+                self.def_map,
+                self.semantic_ir,
+                &item_lookup_query,
+                |stage| {
+                    checkpoint(match stage {
+                        BodySemanticStage::ImplHeaders => {
+                            CurrentSourceBuildCheckpoint::ImplHeadersResolved
+                        }
+                        BodySemanticStage::PatternBindings => {
+                            CurrentSourceBuildCheckpoint::PatternBindingsMaterialized
+                        }
+                    })
+                },
+            )?;
+            semantic_timings.impl_headers += timings.impl_headers;
+            semantic_timings.initializer_values += timings.initializer_values;
+            semantic_timings.pattern_bindings += timings.pattern_bindings;
+            let (prepared, sources) = build.finish();
+
+            // Compare the complete prepared owner, including its local declarations and nested
+            // contexts. Matching only the selected expression tree could attach facts to other IDs.
+            let saved_key = root.body_ref.root.owner().map(|owner| BodyKey {
+                krate: self.crate_ref,
+                owner,
+            });
+            let saved = saved_key
+                .map(|key| self.saved_body_ir.saved_prepared_owner(key))
+                .transpose()?
+                .flatten();
+            let (prepared, facts) = if let (Some(key), Some(saved)) = (saved_key, saved)
+                && *saved == prepared
+            {
+                (saved, self.saved_body_ir.saved_facts(key)?)
+            } else {
+                let started = Instant::now();
+                let facts = prepared.infer(
+                    self.def_map,
+                    self.semantic_ir,
+                    &item_lookup_query,
+                    &cancellation,
+                )?;
+                inference_time += started.elapsed();
+                (Arc::new(prepared), Arc::new(facts))
+            };
+            checkpoint(CurrentSourceBuildCheckpoint::BodyResolved)?;
+            bodies.extend(CurrentBody::for_owner(BodyStore::new(
+                prepared,
+                facts,
+                Arc::new(sources),
+            )));
+        }
 
         // A body-local impl is complete unless it is the copied enclosing context that omits
         // this root's saved member. Keep that distinction with construction, so later queries
@@ -402,7 +415,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                     .context("collected impl has no local definition")?;
                 let span = body
                     .view()
-                    .source_items()
+                    .sources()
                     .location(local.location)
                     .context("current impl occurrence is absent")?
                     .span;
@@ -438,7 +451,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             impl_headers_us = semantic_timings.impl_headers.as_micros(),
             initializer_values_us = semantic_timings.initializer_values.as_micros(),
             pattern_bindings_us = semantic_timings.pattern_bindings.as_micros(),
-            resolution_us = semantic_timings.bodies.as_micros(),
+            resolution_us = inference_time.as_micros(),
             total_us = started.elapsed().as_micros(),
             "current body selection finished"
         );

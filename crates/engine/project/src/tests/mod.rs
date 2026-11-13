@@ -1,3 +1,4 @@
+mod body_locations;
 mod cargo_build_outputs;
 mod current_source;
 mod declaration_locations;

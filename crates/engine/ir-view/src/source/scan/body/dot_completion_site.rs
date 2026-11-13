@@ -59,7 +59,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
             }
 
             for expr in body.exprs().iter() {
-                if !expr.source.is_written_in_file(self.file_id) {
+                if !body.source_at(expr.source).is_written_in_file(self.file_id) {
                     continue;
                 }
                 // Then ask the expression-level matcher whether this dot access accepts
@@ -76,10 +76,13 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                 let Some(receiver_data) = body.expr(receiver) else {
                     continue;
                 };
-                if !receiver_data.source.is_written_in_file(self.file_id) {
+                if !body
+                    .source_at(receiver_data.source)
+                    .is_written_in_file(self.file_id)
+                {
                     continue;
                 }
-                let len = expr.source.span.len();
+                let len = body.source_at(expr.source).span.len();
                 // Nested accesses can both contain the offset. The shortest expression is the
                 // one the user is completing.
                 best.consider(
@@ -87,7 +90,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                         body: body_ref,
                         receiver,
                         scope: expr.scope,
-                        receiver_span: receiver_data.source.span,
+                        receiver_span: body.source_at(receiver_data.source).span,
                         member_prefix_span,
                     },
                     len,
@@ -111,16 +114,16 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
         // expressions simply do not participate.
         let receiver = Self::receiver_expr(expr)?;
         let receiver_data = body.expr(receiver)?;
-        let dot_span = Self::dot_span(expr)?;
+        let dot_span = Self::dot_span(expr, body)?;
 
         // Accept offsets from just after the dot through the currently typed member name.
         // This covers both `user.$0` and `user.na$0`.
-        let member_span = Self::member_name_span(expr);
+        let member_span = Self::member_name_span(expr, body);
         let completion_end = member_span
             .map(|span| span.end)
-            .unwrap_or(expr.source.span.end);
+            .unwrap_or(body.source_at(expr.source).span.end);
 
-        let offset_matches = receiver_data.source.span.end <= dot_span.start
+        let offset_matches = body.source_at(receiver_data.source).span.end <= dot_span.start
             && dot_span.end <= offset
             && offset <= completion_end;
         if !offset_matches {
@@ -158,21 +161,22 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     }
 
     /// Returns the visible member name, if this dot expression already has one.
-    fn member_name_span(expr: &ExprData) -> Option<Span> {
+    fn member_name_span(expr: &ExprData, body: BodyView<'_>) -> Option<Span> {
         match &expr.kind {
             ExprKind::MethodCall {
-                method_name_span, ..
-            } => *method_name_span,
-            ExprKind::Field { field_span, .. } => *field_span,
+                method_name_location,
+                ..
+            } => method_name_location.map(|id| body.span(id)),
+            ExprKind::Field { field_location, .. } => field_location.map(|id| body.span(id)),
             _ => None,
         }
     }
 
     /// Returns the source span of the dot token for supported dot-access expressions.
-    fn dot_span(expr: &ExprData) -> Option<Span> {
+    fn dot_span(expr: &ExprData, body: BodyView<'_>) -> Option<Span> {
         match &expr.kind {
-            ExprKind::MethodCall { dot_span, .. } => *dot_span,
-            ExprKind::Field { dot_span, .. } => *dot_span,
+            ExprKind::MethodCall { dot_location, .. } => dot_location.map(|id| body.span(id)),
+            ExprKind::Field { dot_location, .. } => dot_location.map(|id| body.span(id)),
             _ => None,
         }
     }
