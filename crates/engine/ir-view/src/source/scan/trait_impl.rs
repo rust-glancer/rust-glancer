@@ -90,7 +90,13 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
             let Some(source) = self.db.local_impl_data(data.local_impl)? else {
                 continue;
             };
-            if source.file_id != self.file_id || !source.span.touches(self.offset) {
+            if source.file_id != self.file_id {
+                continue;
+            }
+            let span = self
+                .db
+                .source_span(impl_ref.origin, source.source, source.location)?;
+            if !span.touches(self.offset) {
                 continue;
             }
             best.consider(
@@ -98,7 +104,7 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
                     impl_ref,
                     trait_ref,
                 },
-                source.span.len(),
+                span.len(),
             );
         }
         Ok(())

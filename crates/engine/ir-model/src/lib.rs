@@ -14,6 +14,8 @@ mod mutability;
 mod operator;
 pub mod path;
 mod primitive;
+mod source_id;
+mod source_location;
 mod span;
 
 pub use self::{
@@ -48,6 +50,8 @@ pub use self::{
     operator::{ExprBinaryOp, ExprUnaryOp},
     path::{Path, PathRoot},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
+    source_id::SourceId,
+    source_location::SourceLocation,
     span::Span,
 };
 

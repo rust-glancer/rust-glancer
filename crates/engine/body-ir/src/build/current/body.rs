@@ -24,6 +24,7 @@ use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, ModuleRef, SavedBodyOwner, Span, StaticId, StaticRef,
     TraitDefRef,
 };
+use rg_item_tree::SourceLocations as _;
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, Package};
 use rg_semantic_ir::{ItemLookupQuery, ItemReader, ItemStoreQuery};
 use rg_std::{CancellationToken, ExpectedUnique};
@@ -155,7 +156,7 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         let saved_items = self
             .semantic_ir
             .all_items(DefMapRef::Crate(self.crate_ref))?;
-        let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file);
+        let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file, self.saved_body_ir)?;
         let mut roots = Vec::<PreparedCurrentRoot>::new();
         let mut unavailable = Vec::new();
         let mut association_us = 0;
@@ -399,6 +400,12 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                     .def_map()
                     .local_impl(impl_.local_impl.local_impl)
                     .context("collected impl has no local definition")?;
+                let span = body
+                    .view()
+                    .source_items()
+                    .location(local.location)
+                    .context("current impl occurrence is absent")?
+                    .span;
                 let is_context = roots.iter().any(|root| {
                     root.body_ref == body.body_ref()
                         && matches!(
@@ -407,11 +414,11 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
                                 include_selected: false
                             }
                         )
-                        && local.span.contains_span(root.current_span)
+                        && span.contains_span(root.current_span)
                 });
                 if !is_context {
                     complete_impls.push(SelectedImpl {
-                        source: BodySource::written(local.file_id, local.span),
+                        source: BodySource::written(local.file_id, span),
                         impl_ref,
                     });
                 }

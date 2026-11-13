@@ -29,6 +29,14 @@ impl Span {
         self.start <= other.start && other.end <= self.end
     }
 
+    /// Cover two byte ranges from the same source file.
+    pub fn cover(self, other: Self) -> Self {
+        Self {
+            start: self.start.min(other.start),
+            end: self.end.max(other.end),
+        }
+    }
+
     /// Returns the shared byte range, excluding empty intersections.
     pub fn intersection(self, other: Self) -> Option<Self> {
         let span = Self {

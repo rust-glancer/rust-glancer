@@ -1,7 +1,9 @@
 use std::time::Duration;
+#[cfg(test)]
+use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)]
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot, Span};
 #[cfg(test)]
 use rg_parse::{ParseDb, TargetFileManifest};
 #[cfg(test)]
@@ -11,7 +13,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
 #[cfg(test)]
-use crate::{ItemTrees, file_declarations, target_sources};
+use crate::{DeclarationSourceStore, ItemTrees, file_declarations, target_sources};
 
 pub fn fixture_database(workspace: &WorkspaceMetadata) -> rg_source::QueryDatabase {
     let inputs = ajika::Inputs::default()
@@ -35,6 +37,7 @@ pub(crate) struct ItemTreeFixture {
     _fixture: CrateFixture,
     parse: ParseDb,
     trees: Vec<ItemTrees>,
+    locations: Vec<HashMap<FileId, Arc<DeclarationSourceStore<Span>>>>,
 }
 
 #[cfg(test)]
@@ -54,12 +57,14 @@ impl ItemTreeFixture {
     fn build_from_crate(fixture: CrateFixture, workspace: &WorkspaceMetadata) -> Self {
         let mut database = fixture_database(workspace);
         let inputs = database.inputs().clone();
-        let (parse, trees) = database
+        let (parse, trees, locations) = database
             .run(|db| {
                 let mut manifests = Vec::new();
                 let mut trees = Vec::new();
+                let mut locations = Vec::new();
                 for (slot, package) in workspace.packages().iter().enumerate() {
                     let mut item_trees = ItemTrees::default();
+                    let mut file_locations = HashMap::new();
                     for (id, _) in package.analyzed_targets().enumerate() {
                         let krate = CrateRef {
                             package: PackageSlot(slot),
@@ -67,7 +72,9 @@ impl ItemTreeFixture {
                         };
                         let sources = target_sources(db, krate)?;
                         for &file in &sources.files {
-                            item_trees.extend_files([file_declarations(db, krate.package, file)?]);
+                            let declarations = file_declarations(db, krate.package, file)?;
+                            item_trees.extend_files([declarations.items.value(db)?]);
+                            file_locations.insert(file, declarations.locations.value(db)?);
                         }
                         manifests.push((
                             krate,
@@ -78,24 +85,30 @@ impl ItemTreeFixture {
                         ));
                     }
                     trees.push(item_trees);
+                    locations.push(file_locations);
                 }
                 let parse = ParseDb::from_target_manifests(
                     workspace,
                     &inputs,
                     manifests.iter().map(|(krate, manifest)| (*krate, manifest)),
                 )?;
-                Ok((parse, trees))
+                Ok((parse, trees, locations))
             })
             .expect("fixture sources and declarations should build");
         Self {
             _fixture: fixture,
             parse,
             trees,
+            locations,
         }
     }
 
     pub fn parse_db(&self) -> &ParseDb {
         &self.parse
+    }
+
+    pub fn locations(&self, package: usize, file: FileId) -> &DeclarationSourceStore<Span> {
+        &self.locations[package][&file]
     }
 
     pub fn item_trees(&self, package: usize) -> &ItemTrees {

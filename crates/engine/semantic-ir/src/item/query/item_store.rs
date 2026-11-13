@@ -272,7 +272,7 @@ where
                     id: TypeDefId::Enum(variant_ref.enum_id),
                 },
                 owner_module: data.owner,
-                file_id: data.source.file_id,
+                source: data.source,
                 variant,
             }))
         } else {
@@ -309,7 +309,7 @@ where
         };
         Ok(Some(FieldData {
             owner_module: data.owner_module,
-            file_id: data.file_id,
+            source: data.source,
             field,
         }))
     }
@@ -378,16 +378,16 @@ where
         let Some(item) = self.source.item(field_ref.owner.into())? else {
             return Ok(None);
         };
-        let (owner_module, file_id, fields) = if let Some(data) = item.struct_data() {
-            (data.owner, data.source.file_id, data.fields.fields())
+        let (owner_module, source, fields) = if let Some(data) = item.struct_data() {
+            (data.owner, data.source, data.fields.fields())
         } else if let Some(data) = item.union_data() {
-            (data.owner, data.source.file_id, data.fields.as_slice())
+            (data.owner, data.source, data.fields.as_slice())
         } else {
             return Ok(None);
         };
         Ok(fields.get(field_ref.index).map(|field| FieldData {
             owner_module,
-            file_id,
+            source,
             field,
         }))
     }

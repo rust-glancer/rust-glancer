@@ -1,4 +1,4 @@
-use rg_ir_model::{CrateRef, Mutability, Span};
+use rg_ir_model::{CrateRef, Mutability};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasAttrs, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
@@ -6,19 +6,23 @@ use rg_syntax::{
 use rg_text::Name;
 
 use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
-use crate::item::{
-    ConstExpr, ConstItem, ConstParamData, DeriveAttrs, Documentation, EnumItem, EnumVariantItem,
-    ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
-    GenericParams, ImplItem, ImplPolarity, ItemTreeId, LifetimeParamData, ParamItem, ParamKind,
-    ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
-    TypeParamData, TypeRef, UnionItem, UserFacingAttrs, VisibilityLevel, WherePredicate,
+use crate::{
+    RecordSource, SourceRole,
+    item::{
+        ConstExpr, ConstItem, ConstParamData, DeriveAttrs, Documentation, EnumItem,
+        EnumVariantItem, ExternBlockItem, FieldItem, FieldKey, FieldList, FunctionItem,
+        FunctionQualifiers, GenericParams, ImplItem, ImplPolarity, ItemTreeId, LifetimeParamData,
+        ParamItem, ParamKind, ProcMacroDefinition, ProcMacroKind, StaticItem, StructItem,
+        TraitItem, TypeAliasItem, TypeParamData, TypeRef, UnionItem, UserFacingAttrs,
+        VisibilityLevel, WherePredicate,
+    },
 };
 
 impl FromAst for GenericParams {
     type AstNode = dyn HasGenericParams;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         let mut params = Self::default();
 
         if let Some(param_list) = item.generic_param_list() {
@@ -30,11 +34,11 @@ impl FromAst for GenericParams {
                                 .name()
                                 .map(|name| Name::new(name.text()))
                                 .unwrap_or_else(Name::missing),
-                            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, ())),
+                            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, source)),
                             default: param.default_val().map(|value| {
                                 ConstExpr::new(
                                     normalized_syntax(&value),
-                                    Span::from_text_range(value.syntax().text_range()),
+                                    Some(source.record(value.syntax().text_range())),
                                 )
                             }),
                         });
@@ -54,8 +58,10 @@ impl FromAst for GenericParams {
                                 .name()
                                 .map(|name| Name::new(name.text()))
                                 .unwrap_or_else(Name::missing),
-                            bounds: type_bound_list_from_ast(param.type_bound_list()),
-                            default: param.default_type().map(|ty| TypeRef::from_ast(&ty, ())),
+                            bounds: type_bound_list_from_ast(param.type_bound_list(), source),
+                            default: param
+                                .default_type()
+                                .map(|ty| TypeRef::from_ast(&ty, source)),
                         });
                     }
                 }
@@ -65,7 +71,7 @@ impl FromAst for GenericParams {
         if let Some(where_clause) = item.where_clause() {
             params.where_predicates = where_clause
                 .predicates()
-                .map(|predicate| WherePredicate::from_ast(&predicate, ()))
+                .map(|predicate| WherePredicate::from_ast(&predicate, source))
                 .collect();
         }
 
@@ -75,9 +81,9 @@ impl FromAst for GenericParams {
 
 impl FromAst for WherePredicate {
     type AstNode = ast::WherePred;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(predicate: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(predicate: &Self::AstNode, source: Self::Context<'_>) -> Self {
         if let Some(lifetime) = predicate.lifetime() {
             return Self::Lifetime {
                 lifetime: Name::new(lifetime.text()),
@@ -87,8 +93,8 @@ impl FromAst for WherePredicate {
 
         if let Some(ty) = predicate.ty() {
             return Self::Type {
-                ty: TypeRef::from_ast(&ty, ()),
-                bounds: type_bound_list_from_ast(predicate.type_bound_list()),
+                ty: TypeRef::from_ast(&ty, source),
+                bounds: type_bound_list_from_ast(predicate.type_bound_list(), source),
             };
         }
 
@@ -98,9 +104,9 @@ impl FromAst for WherePredicate {
 
 impl FromAst for FunctionItem {
     type AstNode = ast::Fn;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         // Proc macros are functions syntactically, but their exported name lives in the macro
         // namespace. Retain that identity here so DefMap does not need the original attribute AST.
         let mut proc_macro = None;
@@ -148,12 +154,12 @@ impl FromAst for FunctionItem {
         }
 
         Self {
-            generics: GenericParams::from_ast(item, ()),
-            params: param_list_from_ast(item.param_list()),
+            generics: GenericParams::from_ast(item, source),
+            params: param_list_from_ast(item.param_list(), source),
             ret_ty: item
                 .ret_type()
                 .and_then(|ret_ty| ret_ty.ty())
-                .map(|ty| TypeRef::from_ast(&ty, ())),
+                .map(|ty| TypeRef::from_ast(&ty, source)),
             qualifiers: FunctionQualifiers {
                 is_async: item.async_token().is_some(),
                 is_const: item.const_token().is_some(),
@@ -183,27 +189,27 @@ impl FromAst for ExternBlockItem {
 
 impl FromAst for StructItem {
     type AstNode = ast::Struct;
-    type Context<'a> = Option<CrateRef>;
+    type Context<'a> = (Option<CrateRef>, &'a mut dyn RecordSource);
 
-    fn from_ast(item: &Self::AstNode, dollar_crate: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (dollar_crate, source): Self::Context<'_>) -> Self {
         Self {
-            derives: DeriveAttrs::from_struct(item, dollar_crate),
-            generics: GenericParams::from_ast(item, ()),
-            fields: FieldList::from_ast(&item.field_list(), ()),
+            derives: DeriveAttrs::from_struct(item, dollar_crate, source),
+            generics: GenericParams::from_ast(item, source),
+            fields: FieldList::from_ast(&item.field_list(), source),
         }
     }
 }
 
 impl FromAst for UnionItem {
     type AstNode = ast::Union;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, ()),
+            generics: GenericParams::from_ast(item, source),
             fields: item
                 .record_field_list()
-                .map(|fields| record_field_list_from_ast(&fields))
+                .map(|fields| record_field_list_from_ast(&fields, source))
                 .unwrap_or_default(),
         }
     }
@@ -211,18 +217,18 @@ impl FromAst for UnionItem {
 
 impl FromAst for EnumItem {
     type AstNode = ast::Enum;
-    type Context<'a> = Option<CrateRef>;
+    type Context<'a> = (Option<CrateRef>, &'a mut dyn RecordSource);
 
-    fn from_ast(item: &Self::AstNode, dollar_crate: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (dollar_crate, source): Self::Context<'_>) -> Self {
         Self {
-            derives: DeriveAttrs::from_enum(item, dollar_crate),
-            generics: GenericParams::from_ast(item, ()),
+            derives: DeriveAttrs::from_enum(item, dollar_crate, source),
+            generics: GenericParams::from_ast(item, source),
             variants: item
                 .variant_list()
                 .map(|variant_list| {
                     variant_list
                         .variants()
-                        .map(|variant| EnumVariantItem::from_ast(&variant, ()))
+                        .map(|variant| EnumVariantItem::from_ast(&variant, source))
                         .collect()
                 })
                 .unwrap_or_default(),
@@ -232,40 +238,40 @@ impl FromAst for EnumItem {
 
 impl FromAst for EnumVariantItem {
     type AstNode = ast::Variant;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(variant: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(variant: &Self::AstNode, source: Self::Context<'_>) -> Self {
         let name = variant.name();
-        let span = Span::from_text_range(variant.syntax().text_range());
-        let name_span = name
+        let location = source.record(variant.syntax().text_range());
+        let name_location = name
             .as_ref()
-            .map(|name| Span::from_text_range(name.syntax().text_range()))
-            .unwrap_or(span);
+            .map(|name| source.record(name.syntax().text_range()))
+            .unwrap_or(location);
 
         Self {
             name: name
                 .map(|name| Name::new(name.text()))
                 .unwrap_or_else(Name::missing),
-            span,
-            name_span,
+            location,
+            name_location,
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(variant, OuterDocs),
             user_facing_attrs: UserFacingAttrs::from_ast(variant),
-            fields: FieldList::from_ast(&variant.field_list(), ()),
+            fields: FieldList::from_ast(&variant.field_list(), source),
         }
     }
 }
 
 impl FromAst for FieldList {
     type AstNode = Option<ast::FieldList>;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(field_list: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(field_list: &Self::AstNode, source: Self::Context<'_>) -> Self {
         match field_list {
             Some(ast::FieldList::RecordFieldList(fields)) => {
-                Self::Named(record_field_list_from_ast(fields))
+                Self::Named(record_field_list_from_ast(fields, source))
             }
             Some(ast::FieldList::TupleFieldList(fields)) => {
-                Self::Tuple(tuple_field_list_from_ast(fields))
+                Self::Tuple(tuple_field_list_from_ast(fields, source))
             }
             None => Self::Unit,
         }
@@ -274,12 +280,12 @@ impl FromAst for FieldList {
 
 impl FromAst for TraitItem {
     type AstNode = ast::Trait;
-    type Context<'a> = Vec<ItemTreeId>;
+    type Context<'a> = (Vec<ItemTreeId>, &'a mut dyn RecordSource);
 
-    fn from_ast(item: &Self::AstNode, items: Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, (items, source): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, ()),
-            super_traits: type_bound_list_from_ast(item.type_bound_list()),
+            generics: GenericParams::from_ast(item, source),
+            super_traits: type_bound_list_from_ast(item.type_bound_list(), source),
             items,
             is_unsafe: item.unsafe_token().is_some(),
             is_auto: item.auto_token().is_some(),
@@ -289,13 +295,13 @@ impl FromAst for TraitItem {
 
 impl FromAst for ImplItem {
     type AstNode = ast::Impl;
-    type Context<'a> = Vec<ItemTreeId>;
+    type Context<'a> = (Vec<ItemTreeId>, &'a mut dyn RecordSource);
 
-    fn from_ast(item: &Self::AstNode, items: Self::Context<'_>) -> Self {
-        let (trait_ref, self_ty) = impl_header_from_ast(item);
+    fn from_ast(item: &Self::AstNode, (items, source): Self::Context<'_>) -> Self {
+        let (trait_ref, self_ty) = impl_header_from_ast(item, source);
 
         Self {
-            generics: GenericParams::from_ast(item, ()),
+            generics: GenericParams::from_ast(item, source),
             trait_ref,
             self_ty,
             items,
@@ -311,25 +317,25 @@ impl FromAst for ImplItem {
 
 impl FromAst for TypeAliasItem {
     type AstNode = ast::TypeAlias;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, ()),
-            bounds: type_bound_list_from_ast(item.type_bound_list()),
-            aliased_ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
+            generics: GenericParams::from_ast(item, source),
+            bounds: type_bound_list_from_ast(item.type_bound_list(), source),
+            aliased_ty: item.ty().map(|ty| TypeRef::from_ast(&ty, source)),
         }
     }
 }
 
 impl FromAst for ConstItem {
     type AstNode = ast::Const;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, ()),
-            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
+            generics: GenericParams::from_ast(item, source),
+            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             has_value: item.eq_token().is_some(),
             initializer_preview: item.body().and_then(initializer_preview),
         }
@@ -338,11 +344,11 @@ impl FromAst for ConstItem {
 
 impl FromAst for StaticItem {
     type AstNode = ast::Static;
-    type Context<'a> = ();
+    type Context<'a> = &'a mut dyn RecordSource;
 
-    fn from_ast(item: &Self::AstNode, (): Self::Context<'_>) -> Self {
+    fn from_ast(item: &Self::AstNode, source: Self::Context<'_>) -> Self {
         Self {
-            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, ())),
+            ty: item.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
             initializer_preview: item.body().and_then(initializer_preview),
         }
@@ -361,7 +367,10 @@ fn initializer_preview(body: ast::Expr) -> Option<String> {
     (text.lines().count() <= MAX_LINES).then_some(text)
 }
 
-fn param_list_from_ast(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
+fn param_list_from_ast(
+    param_list: Option<ast::ParamList>,
+    source: &mut dyn RecordSource,
+) -> Vec<ParamItem> {
     let Some(param_list) = param_list else {
         return Vec::new();
     };
@@ -369,7 +378,7 @@ fn param_list_from_ast(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
     let mut params = Vec::new();
 
     if let Some(self_param) = param_list.self_param() {
-        let ty = self_param.ty().map(|ty| TypeRef::from_ast(&ty, ()));
+        let ty = self_param.ty().map(|ty| TypeRef::from_ast(&ty, source));
         let self_kind = if ty.is_some() {
             crate::item::SelfParamKind::Explicit
         } else if self_param.amp_token().is_some() {
@@ -394,7 +403,7 @@ fn param_list_from_ast(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
                 .pat()
                 .map(|pat| normalized_syntax(&pat))
                 .unwrap_or_else(|| "<missing>".to_string()),
-            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, ())),
+            ty: param.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             kind: ParamKind::Normal,
         });
     }
@@ -402,7 +411,10 @@ fn param_list_from_ast(param_list: Option<ast::ParamList>) -> Vec<ParamItem> {
     params
 }
 
-fn record_field_list_from_ast(fields: &ast::RecordFieldList) -> Vec<FieldItem> {
+fn record_field_list_from_ast(
+    fields: &ast::RecordFieldList,
+    source: &mut dyn RecordSource,
+) -> Vec<FieldItem> {
     fields
         .fields()
         .map(|field| {
@@ -417,16 +429,19 @@ fn record_field_list_from_ast(fields: &ast::RecordFieldList) -> Vec<FieldItem> {
                 visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
                 ty: field
                     .ty()
-                    .map(|ty| TypeRef::from_ast(&ty, ()))
+                    .map(|ty| TypeRef::from_ast(&ty, source))
                     .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-                span: Span::from_text_range(span),
+                location: source.record(span),
                 docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
             }
         })
         .collect()
 }
 
-fn tuple_field_list_from_ast(fields: &ast::TupleFieldList) -> Vec<FieldItem> {
+fn tuple_field_list_from_ast(
+    fields: &ast::TupleFieldList,
+    source: &mut dyn RecordSource,
+) -> Vec<FieldItem> {
     fields
         .fields()
         .enumerate()
@@ -435,15 +450,18 @@ fn tuple_field_list_from_ast(fields: &ast::TupleFieldList) -> Vec<FieldItem> {
             visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
             ty: field
                 .ty()
-                .map(|ty| TypeRef::from_ast(&ty, ()))
+                .map(|ty| TypeRef::from_ast(&ty, source))
                 .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-            span: Span::from_text_range(field.syntax().text_range()),
+            location: source.record_as(field.syntax().text_range(), SourceRole::UnnamedField),
             docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
         })
         .collect()
 }
 
-fn impl_header_from_ast(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
+fn impl_header_from_ast(
+    item: &ast::Impl,
+    source: &mut dyn RecordSource,
+) -> (Option<TypeRef>, TypeRef) {
     // `rg_syntax` exposes impl headers as child type nodes. The presence of `for` decides whether
     // the first type is a trait path or the inherent self type.
     let types = item
@@ -453,11 +471,14 @@ fn impl_header_from_ast(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
         .collect::<Vec<_>>();
 
     if item.for_token().is_some() {
-        let trait_ref = types.first().cloned().map(|ty| TypeRef::from_ast(&ty, ()));
+        let trait_ref = types
+            .first()
+            .cloned()
+            .map(|ty| TypeRef::from_ast(&ty, source));
         let self_ty = types
             .get(1)
             .cloned()
-            .map(|ty| TypeRef::from_ast(&ty, ()))
+            .map(|ty| TypeRef::from_ast(&ty, source))
             .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
         return (trait_ref, self_ty);
     }
@@ -465,7 +486,7 @@ fn impl_header_from_ast(item: &ast::Impl) -> (Option<TypeRef>, TypeRef) {
     let self_ty = types
         .first()
         .cloned()
-        .map(|ty| TypeRef::from_ast(&ty, ()))
+        .map(|ty| TypeRef::from_ast(&ty, source))
         .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
     (None, self_ty)
 }

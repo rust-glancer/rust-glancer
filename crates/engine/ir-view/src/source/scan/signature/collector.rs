@@ -7,7 +7,7 @@
 //! separate leaves the walker independent of a runtime scan mode.
 
 use rg_ir_model::{FileId, Span};
-use rg_item_tree::TypePath;
+use rg_item_tree::{SourceLocations, TypePath};
 
 use super::{SignatureCompletionSite, SignatureSourceCandidate, SignatureTypePathScope};
 use crate::source::scan::{
@@ -30,6 +30,7 @@ pub(super) trait SignatureScanCollector {
         path: &TypePath,
         file_id: FileId,
         position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     );
 }
 
@@ -79,13 +80,17 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
         path: &TypePath,
         file_id: FileId,
         _position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     ) {
         if path.anchor.is_some() {
             return;
         }
 
         for (idx, segment) in path.segments.iter().enumerate() {
-            if !self.offset_matches(segment.span) {
+            let Some(span) = locations.editable_span(segment.location) else {
+                continue;
+            };
+            if !self.offset_matches(span) {
                 continue;
             }
             let Some(def_map_path) = path.as_def_map_path_prefix(idx) else {
@@ -96,14 +101,14 @@ impl SignatureScanCollector for SignatureOccurrenceCollector {
                 path: def_map_path,
                 type_ref: self.offset.map(|_| {
                     rg_item_tree::TypeRef::Path(TypePath {
-                        source_span: path.source_span,
+                        location: path.location,
                         absolute: path.absolute,
                         anchor: path.anchor.clone(),
                         segments: path.segments[..=idx].to_vec(),
                     })
                 }),
                 file_id,
-                span: segment.span,
+                span,
             });
         }
     }
@@ -143,8 +148,11 @@ impl SignatureScanCollector for SignatureCompletionCollector {
         path: &TypePath,
         _file_id: FileId,
         position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     ) {
-        if let Some(binding) = AssociatedTypeBindingSyntax::explicit_at(path, self.offset) {
+        if let Some(binding) =
+            AssociatedTypeBindingSyntax::explicit_at(path, self.offset, locations)
+        {
             self.best.consider(
                 SignatureCompletionSite::AssociatedTypeBinding {
                     scope,
@@ -152,12 +160,12 @@ impl SignatureScanCollector for SignatureCompletionCollector {
                     member_prefix_span: binding.member_prefix_span,
                     existing_bindings: binding.existing_bindings,
                 },
-                path.source_span.len(),
+                locations.editable_span(path.location).map_or(0, Span::len),
             );
             return;
         }
 
-        let Some(site) = TypePathCompletionSite::at(path, self.offset, position) else {
+        let Some(site) = TypePathCompletionSite::at(path, self.offset, position, locations) else {
             return;
         };
         let site = match site {
@@ -182,7 +190,10 @@ impl SignatureScanCollector for SignatureCompletionCollector {
                 position,
             },
         };
-        self.best.consider(site, path.source_span.len());
+        self.best.consider(
+            site,
+            locations.editable_span(path.location).map_or(0, Span::len),
+        );
     }
 }
 
@@ -224,8 +235,10 @@ impl SignatureScanCollector for ImplicitAssociatedTypeBindingCollector {
         path: &TypePath,
         _file_id: FileId,
         _position: TypeNamePosition,
+        locations: &dyn SourceLocations,
     ) {
-        let Some(binding) = AssociatedTypeBindingSyntax::implicit_at(path, self.offset) else {
+        let Some(binding) = AssociatedTypeBindingSyntax::implicit_at(path, self.offset, locations)
+        else {
             return;
         };
         self.best.consider(
@@ -235,7 +248,7 @@ impl SignatureScanCollector for ImplicitAssociatedTypeBindingCollector {
                 member_prefix_span: binding.member_prefix_span,
                 existing_bindings: binding.existing_bindings,
             },
-            path.source_span.len(),
+            locations.editable_span(path.location).map_or(0, Span::len),
         );
     }
 }

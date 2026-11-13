@@ -2,9 +2,13 @@
 //!
 //! Lowering records these payloads mechanically; the build pipeline later turns them into
 //! body-local DefMap and ItemStore facts.
+//!
+//! The same store owns occurrence locations for declaration and type syntax inside the body,
+//! including type annotations that do not introduce a local item.
 
 use rg_arena::Arena;
-use rg_item_tree::{ItemNode, ItemTreeId};
+use rg_ir_model::{SourceId, SourceLocation};
+use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, SourceLocations};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -31,10 +35,19 @@ impl BodySourceItem {
     }
 }
 
-/// Item-tree-shaped source payloads declared inside one lowered body.
+/// Item-tree-shaped source payloads and occurrence locations owned by one lowered body.
+///
+/// `items` is addressed by [`ItemTreeId`]; `locations` is addressed by [`SourceId`]. Their indices
+/// are unrelated. For example, `let value: User` records the `User` occurrence without allocating
+/// an item node, while `struct Local;` records both an item and its declaration occurrences.
+///
+/// Body lowering resolves locations while it still has the syntax and macro input maps. The
+/// stored [`SourceLocation`] values therefore already belong to this body's source snapshot,
+/// whether it was built from saved text or from a current editor document.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySourceItems {
     items: Arena<ItemTreeId, BodySourceItem>,
+    pub(crate) locations: DeclarationSourceStore<SourceLocation>,
 }
 
 impl BodySourceItems {
@@ -52,5 +65,11 @@ impl BodySourceItems {
 
     pub fn alloc(&mut self, item: ItemNode, source: BodySource) -> ItemTreeId {
         self.items.alloc(BodySourceItem::new(item, source))
+    }
+}
+
+impl SourceLocations for BodySourceItems {
+    fn location(&self, occurrence: SourceId) -> Option<SourceLocation> {
+        self.locations.get(occurrence).copied()
     }
 }

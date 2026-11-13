@@ -10,6 +10,7 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
+use rg_source::ReadError;
 
 use crate::{
     IndexedViewDb,
@@ -289,13 +290,14 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
                 .fields()
                 .iter()
                 .map(|field| {
-                    IndexedItemChild::Syntax(IndexedSyntaxChild::field(
-                        variant.file_id,
+                    Ok(IndexedItemChild::Syntax(IndexedSyntaxChild::field(
+                        variant.source.file_id,
                         Self::field_label(syntax, field.key.as_ref()),
-                        field.span,
-                    ))
+                        self.db
+                            .source_span(ty.origin, variant.source, field.location)?,
+                    )))
                 })
-                .collect();
+                .collect::<Result<Vec<_>, ReadError>>()?;
             children.push(IndexedItemChild::Declaration(IndexedItem::with_children(
                 DeclarationRef::from(variant_ref),
                 fields,

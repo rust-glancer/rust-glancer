@@ -3,7 +3,7 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
     AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
-    SemanticItemRef, Span, TypeDefRef,
+    SemanticItemRef, SourceId, TypeDefRef,
 };
 use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_text::Name;
@@ -266,12 +266,12 @@ impl<'a> SemanticItemView<'a> {
         }
     }
 
-    pub fn span(self) -> Option<Span> {
+    pub fn location(self) -> Option<SourceId> {
         match self.data {
-            SemanticItemData::Function(data) => Some(data.span),
-            SemanticItemData::TypeAlias(data) => Some(data.span),
-            SemanticItemData::Const(data) => Some(data.span),
-            SemanticItemData::Static(data) => Some(data.span),
+            SemanticItemData::Function(data) => Some(data.location),
+            SemanticItemData::TypeAlias(data) => Some(data.location),
+            SemanticItemData::Const(data) => Some(data.location),
+            SemanticItemData::Static(data) => Some(data.location),
             SemanticItemData::Struct(_)
             | SemanticItemData::Union(_)
             | SemanticItemData::Enum(_)
@@ -280,12 +280,12 @@ impl<'a> SemanticItemView<'a> {
         }
     }
 
-    pub fn name_span(self) -> Option<Span> {
+    pub fn name_location(self) -> Option<SourceId> {
         match self.data {
-            SemanticItemData::Function(data) => data.name_span,
-            SemanticItemData::TypeAlias(data) => data.name_span,
-            SemanticItemData::Const(data) => data.name_span,
-            SemanticItemData::Static(data) => data.name_span,
+            SemanticItemData::Function(data) => data.name_location,
+            SemanticItemData::TypeAlias(data) => data.name_location,
+            SemanticItemData::Const(data) => data.name_location,
+            SemanticItemData::Static(data) => data.name_location,
             SemanticItemData::Struct(_)
             | SemanticItemData::Union(_)
             | SemanticItemData::Enum(_)

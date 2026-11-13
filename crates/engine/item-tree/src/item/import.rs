@@ -1,6 +1,6 @@
 use std::fmt;
 
-use rg_ir_model::Span;
+use rg_ir_model::SourceId;
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -57,7 +57,7 @@ pub enum UseImportKind {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ImportAlias {
     Inferred,
-    Explicit { name: Name, span: Span },
+    Explicit { name: Name, location: SourceId },
     Hidden,
 }
 
@@ -74,39 +74,12 @@ impl fmt::Display for ImportAlias {
 /// Structured path used before semantic resolution.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UsePath {
-    pub source_span: Option<Span>,
+    pub location: Option<SourceId>,
     pub absolute: bool,
     pub segments: Vec<UsePathSegment>,
 }
 
 impl UsePath {
-    pub fn empty() -> Self {
-        Self {
-            source_span: None,
-            absolute: false,
-            segments: Vec::new(),
-        }
-    }
-
-    pub fn joined(&self, suffix: &Self) -> Self {
-        let mut segments = self.segments.clone();
-        segments.extend(suffix.segments.clone());
-        let source_span = match (self.source_span, suffix.source_span) {
-            (Some(left), Some(right)) => Some(Span {
-                start: left.start.min(right.start),
-                end: left.end.max(right.end),
-            }),
-            (Some(span), None) | (None, Some(span)) => Some(span),
-            (None, None) => None,
-        };
-
-        Self {
-            source_span,
-            absolute: self.absolute || suffix.absolute,
-            segments,
-        }
-    }
-
     pub fn without_trailing_self(&self) -> Self {
         let mut segments = self.segments.clone();
         if matches!(
@@ -116,7 +89,7 @@ impl UsePath {
             segments.pop();
         }
         Self {
-            source_span: self.source_span,
+            location: self.location,
             absolute: self.absolute,
             segments,
         }
@@ -151,7 +124,7 @@ impl fmt::Display for UsePath {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UsePathSegment {
     pub kind: UsePathSegmentKind,
-    pub span: Span,
+    pub location: SourceId,
 }
 
 impl fmt::Display for UsePathSegment {

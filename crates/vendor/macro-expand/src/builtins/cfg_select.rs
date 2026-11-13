@@ -202,8 +202,8 @@ mod tests {
     use rg_cfg_eval::{CfgEvaluator, CfgOptions};
     use rg_syntax::{AstNode as _, ast};
     use rg_tt::{
-        TopSubtree,
-        syntax_bridge::{SpanFactory, syntax_node_to_token_tree},
+        TokenOwner, TopSubtree,
+        syntax_bridge::{SpanFactory, TokenSourceMap, syntax_node_to_token_tree},
     };
 
     use crate::Edition;
@@ -281,6 +281,10 @@ cfg_select! {
         let args = call
             .token_tree()
             .expect("macro call fixture should have arguments");
-        syntax_node_to_token_tree(&args, SpanFactory::new(0, 0, Edition::CURRENT))
+        syntax_node_to_token_tree(
+            &args,
+            SpanFactory::new(0, 0, TokenOwner::Body, Edition::CURRENT),
+            &mut TokenSourceMap::default(),
+        )
     }
 }

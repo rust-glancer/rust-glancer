@@ -11,11 +11,13 @@
 //! use $0;          request-local empty name in the importing module
 //! ```
 
-use rg_def_map::{DefMap, DefinitionReader, ImportPath, ModuleOrigin};
+use rg_def_map::{DefMap, ImportPath, ModuleOrigin};
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleRef, Path, PathRoot, Span};
+use rg_item_tree::SourceLocations;
 use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
+use crate::IndexedViewDb;
 
 /// Source site selected for a qualified import-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +44,7 @@ pub(crate) struct ImportUnqualifiedNameSite {
 /// This scanner reports the module containing the `use`, because import lookup starts from that
 /// module even when the written path itself is relative or incomplete.
 pub(crate) struct ImportPathCompletionSiteScanner<'txn, 'db> {
-    def_map: &'txn DefinitionReader<'db>,
+    db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -50,13 +52,13 @@ pub(crate) struct ImportPathCompletionSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        def_map: &'txn DefinitionReader<'db>,
+        db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
-            def_map,
+            db,
             crate_ref,
             file_id,
             offset,
@@ -65,18 +67,18 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
 
     /// Finds a qualified segment such as `mo$0` or the empty segment in `crate::$0`.
     pub(crate) fn qualified_site(&self) -> Result<Option<ImportQualifiedPathSite>, ReadError> {
-        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
 
-        self.scan_import_paths(def_map, &mut best);
+        self.scan_import_paths(def_map, &mut best)?;
         Ok(best.finish())
     }
 
     /// Finds a single relative import name such as `use cr$0;`.
     pub(crate) fn unqualified_site(&self) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
-        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
@@ -89,9 +91,11 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
-            let Some((site, source_len)) =
-                self.unqualified_site_for_import_path(module, &import.path)
-            else {
+            let Some((site, source_len)) = self.unqualified_site_for_import_path(
+                module,
+                &import.path,
+                &self.db.declaration_source(module.origin, import.source)?,
+            ) else {
                 continue;
             };
 
@@ -105,7 +109,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn empty_unqualified_site(
         &self,
     ) -> Result<Option<ImportUnqualifiedNameSite>, ReadError> {
-        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
@@ -113,10 +117,18 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
             let source_len = match module.origin {
                 ModuleOrigin::Root { file_id } if file_id == self.file_id => u32::MAX,
                 ModuleOrigin::Inline {
-                    declaration_file,
-                    declaration_span,
-                } if declaration_file == self.file_id && declaration_span.touches(self.offset) => {
-                    declaration_span.len()
+                    declaration_source,
+                    declaration_location,
+                } if declaration_source.file_id == self.file_id => {
+                    let span = self.db.source_span(
+                        DefMapRef::Crate(self.crate_ref),
+                        declaration_source,
+                        declaration_location,
+                    )?;
+                    if !span.touches(self.offset) {
+                        continue;
+                    }
+                    span.len()
                 }
                 ModuleOrigin::OutOfLine {
                     definition_file: Some(definition_file),
@@ -149,7 +161,7 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         &self,
         def_map: &DefMap,
         best: &mut NarrowestSourceSite<ImportQualifiedPathSite>,
-    ) {
+    ) -> Result<(), ReadError> {
         for import in def_map.imports() {
             if import.source.file_id != self.file_id {
                 continue;
@@ -158,12 +170,17 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
-            let Some((site, source_len)) = self.site_for_import_path(module, &import.path) else {
+            let Some((site, source_len)) = self.site_for_import_path(
+                module,
+                &import.path,
+                &self.db.declaration_source(module.origin, import.source)?,
+            ) else {
                 continue;
             };
 
             best.consider(site, source_len);
         }
+        Ok(())
     }
 
     /// Finds either a partially typed path segment or an empty segment after a trailing `::`.
@@ -171,9 +188,13 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         &self,
         module: ModuleRef,
         path: &ImportPath,
+        locations: &dyn SourceLocations,
     ) -> Option<(ImportQualifiedPathSite, u32)> {
-        let prefixes = path.prefixes_with_spans()?;
-        for (idx, (current, span)) in prefixes.iter().enumerate() {
+        let prefixes = path.prefixes_with_locations()?;
+        for (idx, (current, location)) in prefixes.iter().enumerate() {
+            let Some(span) = locations.editable_span(Some(*location)) else {
+                continue;
+            };
             if !span.touches(self.offset) {
                 continue;
             }
@@ -192,18 +213,23 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                 continue;
             };
 
+            // Only the replacement needs editable provenance. The enclosing path can also
+            // contain generated segments, so use the copied segment's length in that case.
+            let source_len = locations
+                .editable_span(path.location())
+                .map_or(span.len(), Span::len);
             return Some((
                 ImportQualifiedPathSite {
                     module,
                     qualifier,
-                    member_prefix_span: *span,
+                    member_prefix_span: span,
                 },
-                path.source_span().unwrap_or(*span).len(),
+                source_len,
             ));
         }
 
-        let source_span = path.source_span()?;
-        let last_segment_span = path.last_component_span()?;
+        let source_span = locations.editable_span(path.location())?;
+        let last_segment_span = locations.editable_span(path.last_component_location())?;
         let offset_after_last_segment =
             last_segment_span.end <= self.offset && self.offset <= source_span.end;
         if source_span.end <= last_segment_span.end || !offset_after_last_segment {
@@ -228,12 +254,14 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
         &self,
         module: ModuleRef,
         path: &ImportPath,
+        locations: &dyn SourceLocations,
     ) -> Option<(ImportUnqualifiedNameSite, u32)> {
         let semantic = path.semantic();
         if !semantic.is_relative() || semantic.segments().len() != 1 {
             return None;
         }
-        let segment_span = path.prefixes_with_spans()?.into_iter().next()?.1;
+        let segment_location = path.prefixes_with_locations()?.into_iter().next()?.1;
+        let segment_span = locations.editable_span(Some(segment_location))?;
         if !segment_span.touches(self.offset) {
             return None;
         }
@@ -248,7 +276,9 @@ impl<'txn, 'db> ImportPathCompletionSiteScanner<'txn, 'db> {
                     self.offset,
                 ),
             },
-            path.source_span().unwrap_or(segment_span).len(),
+            locations
+                .editable_span(path.location().or(Some(segment_location)))?
+                .len(),
         ))
     }
 }

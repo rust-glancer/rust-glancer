@@ -3,6 +3,9 @@
 //! A macro definition can be called many times, and identical calls can also appear across targets.
 //! The cache keeps the expensive macro parser and expander work out of fixed-point collectors while
 //! returning small records that callers can fold into their own accounting.
+//!
+//! Expansion caching stays transient: saved declarations retain the lowered result, while
+//! intermediate token streams would duplicate much of that data.
 
 use std::{
     collections::HashMap,
@@ -104,14 +107,14 @@ impl MacroExpansionCache {
         }
 
         CachedMacroExpansionPreparation {
-            expansion: CachedPreparedMacroExpansion::Work(MacroExpansionWork {
+            expansion: CachedPreparedMacroExpansion::Work(Box::new(MacroExpansionWork {
                 key,
                 macro_name: path_text.to_string(),
                 macro_,
                 args: args.clone(),
                 call_site,
                 parse_kind,
-            }),
+            })),
             record: MacroExpandRecord::Attempt,
         }
     }
@@ -172,7 +175,7 @@ pub(crate) struct CachedMacroExpansionPreparation {
 pub(crate) enum CachedPreparedMacroExpansion {
     Syntax(ExpansionSyntax),
     Failed,
-    Work(MacroExpansionWork),
+    Work(Box<MacroExpansionWork>),
 }
 
 /// Stats event for one macro-call expansion lookup.

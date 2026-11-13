@@ -1,9 +1,8 @@
 //! Signature lowering shared by body-local items and selected current declarations.
 
-use rg_ir_model::Span;
 use rg_item_tree::{
     ConstItem, Documentation, FromAst as _, FunctionItem, ItemKind, ItemNode, MaybeFromAst,
-    OuterDocs, StaticItem, TypeAliasItem, VisibilityLevel,
+    OuterDocs, RecordSource, SourceRole, StaticItem, TypeAliasItem, VisibilityLevel,
 };
 use rg_syntax::{
     AstNode as _,
@@ -20,42 +19,45 @@ impl LocalItemLowering {
     pub(crate) fn declaration(
         item: &ast::Item,
         source: BodySource,
-        name_span: Option<Span>,
+        locations: &mut dyn RecordSource,
     ) -> Option<ItemNode> {
         let (kind, name, visibility, docs) = match item {
             ast::Item::Fn(item) => (
-                ItemKind::Function(FunctionItem::from_ast(item, ())),
+                ItemKind::Function(FunctionItem::from_ast(item, &mut *locations)),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::Const(item) => (
-                ItemKind::Const(ConstItem::from_ast(item, ())),
+                ItemKind::Const(ConstItem::from_ast(item, &mut *locations)),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::Static(item) => (
-                ItemKind::Static(StaticItem::from_ast(item, ())),
+                ItemKind::Static(StaticItem::from_ast(item, &mut *locations)),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             ast::Item::TypeAlias(item) => (
-                ItemKind::TypeAlias(TypeAliasItem::from_ast(item, ())),
+                ItemKind::TypeAlias(TypeAliasItem::from_ast(item, &mut *locations)),
                 item.name(),
                 VisibilityLevel::from_ast(&item.visibility(), ()),
                 <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
             ),
             _ => return None,
         };
-        Some(ItemNode::source(
+        let name_location = name
+            .as_ref()
+            .map(|name| locations.record(name.syntax().text_range()));
+        Some(ItemNode::new(
             kind,
             name.map(|name| Name::new(name.text())),
-            name_span,
+            name_location,
             visibility,
             docs,
-            source.span,
+            locations.record_as(item.syntax().text_range(), SourceRole::Declaration),
             source.file_id,
         ))
     }

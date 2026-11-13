@@ -8,11 +8,13 @@
 
 use std::collections::HashMap;
 
-use rg_ir_model::{BodyRef, CrateRef, DefMapRef, FileId, SemanticItemRef, Span};
+use rg_ir_model::{
+    BodyRef, CrateRef, DefMapRef, FileId, SemanticItemRef, Span, identity::DeclarationRef,
+};
 use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_std::{ExpectedUnique, UniqueVec};
 
-use crate::BodyOwner;
+use crate::{BodyOwner, BodyReader, BodyView};
 
 /// Finds the saved crate-level owner associated with a current body root.
 ///
@@ -25,7 +27,11 @@ pub(super) struct SavedRootOwnerIndex {
 }
 
 impl SavedRootOwnerIndex {
-    pub(super) fn new(items: &[SemanticItemView<'_>], file: FileId) -> Self {
+    pub(super) fn new(
+        items: &[SemanticItemView<'_>],
+        file: FileId,
+        bodies: &BodyReader<'_>,
+    ) -> anyhow::Result<Self> {
         let mut owners = HashMap::<Span, ExpectedUnique<BodyOwner>>::new();
         for item in items {
             if item.source().file_id != file {
@@ -37,11 +43,18 @@ impl SavedRootOwnerIndex {
                 SemanticItemRef::Static(static_ref) => BodyOwner::Static(static_ref),
                 _ => continue,
             };
-            if let Some(span) = item.span() {
-                owners.entry(span).or_default().push(owner);
+            if let Some(occurrence) = item.location() {
+                let location = bodies.declaration_location(
+                    item.item().origin().origin_crate(),
+                    item.source(),
+                    occurrence,
+                )?;
+                if location.editable {
+                    owners.entry(location.span).or_default().push(owner);
+                }
             }
         }
-        Self { owners }
+        Ok(Self { owners })
     }
 
     pub(super) fn owner_at(&self, span: Span) -> ExpectedUnique<BodyOwner> {
@@ -62,10 +75,10 @@ pub(super) struct SavedNestedBodyIndex {
 
 impl SavedNestedBodyIndex {
     pub(super) fn new(
-        saved_body_ir: &crate::BodyReader<'_>,
+        saved_body_ir: &BodyReader<'_>,
         crate_ref: CrateRef,
         file: FileId,
-        saved_bodies: &[(BodyRef, crate::BodyView<'_>)],
+        saved_bodies: &[(BodyRef, BodyView<'_>)],
         roots: impl IntoIterator<Item = BodyRef>,
     ) -> anyhow::Result<Self> {
         let mut index = Self {
@@ -75,8 +88,7 @@ impl SavedNestedBodyIndex {
         // Stored Body IR is keyed by `BodyRef`, while body-local item stores point at their nested
         // bodies through declaration identities. This lookup connects the two before we start the
         // selected-root walk below.
-        let mut bodies_by_owner =
-            HashMap::<rg_ir_model::identity::DeclarationRef, ExpectedUnique<BodyRef>>::new();
+        let mut bodies_by_owner = HashMap::<DeclarationRef, ExpectedUnique<BodyRef>>::new();
         for (body_ref, body) in saved_bodies {
             anyhow::ensure!(
                 body_ref.crate_ref == crate_ref,
@@ -102,7 +114,13 @@ impl SavedNestedBodyIndex {
         while let Some(body_ref) = worklist.as_slice().get(next).copied() {
             next += 1;
             let items = saved_body_ir.all_items(DefMapRef::Body(body_ref))?;
-            index.record_body_local_items(&items, file, &bodies_by_owner, &mut worklist);
+            index.record_body_local_items(
+                &items,
+                file,
+                &bodies_by_owner,
+                &mut worklist,
+                saved_body_ir,
+            )?;
         }
 
         Ok(index)
@@ -112,9 +130,10 @@ impl SavedNestedBodyIndex {
         &mut self,
         items: &[SemanticItemView<'_>],
         file: FileId,
-        bodies_by_owner: &HashMap<rg_ir_model::identity::DeclarationRef, ExpectedUnique<BodyRef>>,
+        bodies_by_owner: &HashMap<DeclarationRef, ExpectedUnique<BodyRef>>,
         worklist: &mut UniqueVec<BodyRef>,
-    ) {
+        bodies: &BodyReader<'_>,
+    ) -> anyhow::Result<()> {
         for item in items {
             if item.source().file_id != file {
                 continue;
@@ -125,17 +144,29 @@ impl SavedNestedBodyIndex {
                 SemanticItemRef::Static(static_ref) => BodyOwner::Static(static_ref),
                 _ => continue,
             };
-            if let Some(span) = item.span() {
-                self.record_body_owner(span, owner, bodies_by_owner, worklist);
+            if let Some(span) = item.location() {
+                self.record_body_owner(
+                    bodies
+                        .declaration_location(
+                            item.item().origin().origin_crate(),
+                            item.source(),
+                            span,
+                        )?
+                        .span,
+                    owner,
+                    bodies_by_owner,
+                    worklist,
+                );
             }
         }
+        Ok(())
     }
 
     fn record_body_owner(
         &mut self,
         span: Span,
         owner: BodyOwner,
-        bodies_by_owner: &HashMap<rg_ir_model::identity::DeclarationRef, ExpectedUnique<BodyRef>>,
+        bodies_by_owner: &HashMap<DeclarationRef, ExpectedUnique<BodyRef>>,
         worklist: &mut UniqueVec<BodyRef>,
     ) {
         let Some(body_ref) = bodies_by_owner

@@ -5,8 +5,10 @@
 //! and uses only the enclosing module path to select the matching saved module.
 
 use rg_def_map::{DefinitionReader, ImportPath};
-use rg_ir_model::{CrateRef, FileId};
-use rg_item_tree::{FromAst as _, ImportAlias, UseItem};
+use rg_ir_model::{CrateRef, FileId, Span};
+use rg_item_tree::{
+    DeclarationSourceStore, FromAst as _, ImportAlias, SourceLocations as _, UseItem,
+};
 use rg_parse::enclosing_inline_module_path;
 use rg_source::ReadError;
 use rg_syntax::{AstNode as _, AstToken as _, SourceFile, TextSize, ast};
@@ -61,14 +63,20 @@ impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
         // Reuse ordinary item-tree import lowering so roots, nested use trees, `self`, and aliases
         // have exactly the same semantic path shape as saved imports. Only the source tree and
         // selected module differ here.
-        let item = UseItem::from_ast(&use_item, ());
+        let mut locations = DeclarationSourceStore::default();
+
+        let mut map = |range, _| Span::from_text_range(range);
+        let mut sources = locations.start_owner(&mut map);
+        let item = UseItem::from_ast(&use_item, &mut sources);
+        locations.finish_owner(sources);
         let mut candidates = Vec::new();
         for import in item.imports {
             let Some(path) = ImportPath::from_use_path(&import.path, None) else {
                 continue;
             };
 
-            if let ImportAlias::Explicit { span, .. } = import.alias
+            if let ImportAlias::Explicit { location, .. } = import.alias
+                && let Some(span) = locations.span(location)
                 && span.touches(self.offset)
             {
                 let candidate = DefinitionSourceCandidate::ImportAlias {
@@ -82,10 +90,13 @@ impl<'source, 'txn, 'db> CurrentUsePathScanner<'source, 'txn, 'db> {
                 }
             }
 
-            let Some(prefixes) = path.prefixes_with_spans() else {
+            let Some(prefixes) = path.prefixes_with_locations() else {
                 continue;
             };
-            for (path, span) in prefixes {
+            for (path, location) in prefixes {
+                let Some(span) = locations.span(location) else {
+                    continue;
+                };
                 if !span.touches(self.offset) {
                     continue;
                 }

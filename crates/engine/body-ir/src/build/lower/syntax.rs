@@ -67,22 +67,12 @@ impl BodyLowering<'_> {
             return expanded;
         }
 
-        let mut ty = TypeRef::from_ast(&ty, ());
-        // Item-tree lowering sees offsets in the parsed expansion. Translate every retained type
-        // name before that temporary syntax tree is dropped, including names inside generic args.
-        if self.macro_call_is_generated() {
-            ty.map_spans(&mut |span| self.remap_span(span));
-        }
-        ty
+        self.with_sources(|sources| TypeRef::from_ast(&ty, sources))
     }
 
     /// Turbofish arguments need the same source mapping as body type annotations.
     pub(super) fn lower_generic_arg(&mut self, arg: &ast::GenericArg) -> GenericArg {
-        let mut arg = GenericArg::from_ast(arg, ());
-        if self.macro_call_is_generated() {
-            arg.map_spans(&mut |span| self.remap_span(span));
-        }
-        arg
+        self.with_sources(|sources| GenericArg::from_ast(arg, sources))
     }
 
     fn expand_macro_type(&mut self, ty: &ast::MacroType) -> Option<TypeRef> {
@@ -189,11 +179,9 @@ impl BodyLowering<'_> {
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {
-                        let mut ty = TypeRef::Path(TypePath::from_ast(&path, ()));
-                        if self.macro_call_is_generated() {
-                            ty.map_spans(&mut |span| self.remap_span(span));
-                        }
-                        ty
+                        self.with_sources(|sources| {
+                            TypeRef::Path(TypePath::from_ast(&path, sources))
+                        })
                     });
                 let span = segment
                     .type_anchor()

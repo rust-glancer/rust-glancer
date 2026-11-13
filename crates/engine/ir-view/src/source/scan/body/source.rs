@@ -17,6 +17,7 @@ use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
     SemanticItemRef, TypeDefId, TypeDefRef,
 };
+use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use super::{
@@ -178,23 +179,27 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 continue;
             }
 
-            let declaration_span = match item.source().kind {
+            let locations = self
+                .db
+                .declaration_source(item.item().origin(), item.source())?;
+            let occurrence = match item.source().kind {
                 ItemSourceKind::Body(source) if source.body == body_ref => body
                     .source_item(source.item)
-                    .and_then(|item| item.name_span)
-                    .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
-                _ => item.span().unwrap_or(body.source().span),
+                    .and_then(|node| node.name_location),
+                _ => item.name_location(),
             };
-
+            let Some(declaration_span) = locations.editable_span(occurrence) else {
+                continue;
+            };
             match item.item() {
                 SemanticItemRef::TypeDef(ty) => {
                     candidates.push(BodySourceCandidate::LocalItem {
                         item: item.item(),
                         span: declaration_span,
                     });
-                    self.push_field_candidates(item, ty, candidates)
+                    self.push_field_candidates(item, ty, &locations, candidates)
                         .context("collect body occurrences")?;
-                    self.push_variant_candidates(item, ty, candidates)
+                    self.push_variant_candidates(item, ty, &locations, candidates)
                         .context("collect body occurrences")?;
                 }
                 SemanticItemRef::Trait(_) | SemanticItemRef::TypeAlias(_) => {
@@ -225,6 +230,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         item: SemanticItemView<'_>,
         ty: TypeDefRef,
+        locations: &dyn SourceLocations,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         match ty.id {
@@ -237,9 +243,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 }
                 for (index, field) in data.fields.fields().iter().enumerate() {
                     rg_std::check_cancel!(self.db, "body occurrence candidates");
+                    let Some(span) = locations.editable_span(Some(field.location)) else {
+                        continue;
+                    };
                     candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
-                        span: field.span,
+                        span,
                     });
                 }
             }
@@ -252,9 +261,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 }
                 for (index, field) in data.fields.iter().enumerate() {
                     rg_std::check_cancel!(self.db, "body occurrence candidates");
+                    let Some(span) = locations.editable_span(Some(field.location)) else {
+                        continue;
+                    };
                     candidates.push(BodySourceCandidate::LocalField {
                         field: FieldRef { owner: ty, index },
-                        span: field.span,
+                        span,
                     });
                 }
             }
@@ -267,6 +279,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         item: SemanticItemView<'_>,
         ty: TypeDefRef,
+        locations: &dyn SourceLocations,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         let TypeDefId::Enum(enum_id) = ty.id else {
@@ -280,13 +293,16 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
+            let Some(span) = locations.editable_span(Some(variant.name_location)) else {
+                continue;
+            };
             candidates.push(BodySourceCandidate::LocalEnumVariant {
                 variant: EnumVariantRef {
                     origin: ty.origin,
                     enum_id,
                     index,
                 },
-                span: variant.name_span,
+                span,
             });
         }
         Ok(())

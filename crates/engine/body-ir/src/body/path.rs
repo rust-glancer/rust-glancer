@@ -81,7 +81,7 @@ impl BodyPath {
             .collect::<Option<Vec<_>>>()?;
         Some((
             TypeRef::Path(TypePath {
-                source_span: self.source_span,
+                location: None,
                 absolute: self.absolute,
                 anchor: None,
                 segments: prefix_segments,
@@ -156,7 +156,7 @@ impl BodyPath {
             .collect::<Option<Vec<_>>>()?;
         (!segments.is_empty()).then_some({
             BodyAssociatedPathPrefix::Type(TypeRef::Path(TypePath {
-                source_span: self.source_span,
+                location: None,
                 absolute: self.absolute,
                 anchor,
                 segments,
@@ -290,6 +290,7 @@ impl BodyPathSegment {
         self.args.as_ref()
     }
 
+    // This is a semantic projection. Source queries use the original BodyPath occurrences.
     fn as_type_path_segment(&self) -> Option<TypePathSegment> {
         let name = match &self.kind {
             BodyPathSegmentKind::Name(name) => name.clone(),
@@ -310,7 +311,7 @@ impl BodyPathSegment {
         Some(TypePathSegment {
             name,
             args,
-            span: self.span,
+            location: None,
         })
     }
 }
@@ -558,13 +559,13 @@ mod tests {
 
     fn type_path_ref(name: &str) -> TypeRef {
         TypeRef::Path(TypePath {
-            source_span: span(),
+            location: None,
             absolute: false,
             anchor: None,
             segments: vec![TypePathSegment {
                 name: Name::new(name),
                 args: Vec::new(),
-                span: span(),
+                location: None,
             }],
         })
     }

@@ -15,6 +15,7 @@ use rg_def_map::{DefMap, ModuleOrigin};
 use rg_ir_model::{
     CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, Path, Span,
 };
+use rg_item_tree::SourceLocations as _;
 
 use crate::IndexedViewDb;
 
@@ -111,26 +112,32 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: ModuleId(module_idx),
             };
-            let declaration_file = match module.origin {
+            let declaration_source = match module.origin {
                 ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => continue,
                 ModuleOrigin::Inline {
-                    declaration_file, ..
+                    declaration_source, ..
                 }
                 | ModuleOrigin::OutOfLine {
-                    declaration_file, ..
-                } => declaration_file,
+                    declaration_source, ..
+                } => declaration_source,
             };
-            if !self.file_matches(declaration_file) {
+            if !self.file_matches(declaration_source.file_id) {
                 continue;
             }
 
-            let Some(span) = module.name_span else {
+            let Some(span) = module.name_location else {
+                continue;
+            };
+            let locations = self
+                .db
+                .declaration_source(module_ref.origin, declaration_source)?;
+            let Some(span) = locations.editable_span(Some(span)) else {
                 continue;
             };
             if self.offset_matches(span) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Module(module_ref),
-                    file_id: declaration_file,
+                    file_id: declaration_source.file_id,
                     span,
                 });
             }
@@ -153,7 +160,12 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 continue;
             }
 
-            let span = local_def.name_span.unwrap_or(local_def.span);
+            let locations = self
+                .db
+                .declaration_source(local_def_ref.origin, local_def.source)?;
+            let Some(span) = locations.editable_span(local_def.name_location) else {
+                continue;
+            };
             if self.offset_matches(span) {
                 candidates.push(DefinitionSourceCandidate::Def {
                     def: DefId::Local(local_def_ref),
@@ -180,10 +192,14 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 origin: DefMapRef::Crate(self.crate_ref),
                 module: import.module,
             };
-            let Some(prefixes) = import.path.prefixes_with_spans() else {
+            let Some(prefixes) = import.path.prefixes_with_locations() else {
                 continue;
             };
+            let locations = self.db.declaration_source(module.origin, import.source)?;
             for (path, span) in prefixes {
+                let Some(span) = locations.editable_span(Some(span)) else {
+                    continue;
+                };
                 if self.offset_matches(span) {
                     candidates.push(DefinitionSourceCandidate::UsePath {
                         module,
@@ -194,7 +210,8 @@ impl<'txn, 'db> DefinitionSourceScanner<'txn, 'db> {
                 }
             }
 
-            if let Some(alias_span) = import.alias_span
+            let alias_span = locations.editable_span(import.alias_location);
+            if let Some(alias_span) = alias_span
                 && self.offset_matches(alias_span)
             {
                 candidates.push(DefinitionSourceCandidate::ImportAlias {

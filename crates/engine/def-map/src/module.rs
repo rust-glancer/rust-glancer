@@ -4,19 +4,19 @@
 //! Freezing produces `ModuleData`; both expose the same metadata view for name lookup. The item
 //! scope is read separately because import collection can temporarily own its mutable buffer.
 
-use rg_ir_model::{FileId, ImportId, LocalDefId, LocalImplId, ModuleId, Span};
+use rg_ir_model::{FileId, ImportId, LocalDefId, LocalImplId, ModuleId, SourceId};
 use rg_item_tree::{Documentation, UserFacingAttrs};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{ItemScope, ItemScopeBuilder, Visibility};
+use crate::{ItemScope, ItemScopeBuilder, ItemSource, Visibility};
 
 /// One module in the frozen namespace graph.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ModuleData {
     pub name: Option<Name>,
-    pub name_span: Option<Span>,
+    pub name_location: Option<SourceId>,
     pub docs: Option<ModuleDocumentation>,
     pub user_facing_attrs: UserFacingAttrs,
     /// Visibility of the declaration that introduced this module identity.
@@ -58,7 +58,7 @@ impl ModuleData {
 #[derive(Debug)]
 pub struct ModuleBuilder {
     pub name: Option<Name>,
-    pub name_span: Option<Span>,
+    pub name_location: Option<SourceId>,
     pub docs: Option<ModuleDocumentation>,
     pub user_facing_attrs: UserFacingAttrs,
     pub visibility: Visibility,
@@ -76,7 +76,7 @@ impl ModuleBuilder {
     pub fn new(origin: ModuleOrigin, visibility: Visibility, parent: Option<ModuleId>) -> Self {
         Self {
             name: None,
-            name_span: None,
+            name_location: None,
             docs: None,
             user_facing_attrs: UserFacingAttrs::default(),
             visibility,
@@ -102,7 +102,7 @@ impl ModuleBuilder {
     pub(crate) fn freeze(self) -> ModuleData {
         ModuleData {
             name: self.name,
-            name_span: self.name_span,
+            name_location: self.name_location,
             docs: self.docs,
             user_facing_attrs: self.user_facing_attrs,
             visibility: self.visibility,
@@ -180,16 +180,16 @@ pub enum ModuleOrigin {
     /// This kind of module is used to create def maps for bodies, where we have a
     /// hierarchical structure, but can't use "real" module semantics, since the rules
     /// for items in body scopes are different from the normal module rules.
-    Synthetic { file_id: FileId, span: Span },
+    Synthetic { file_id: FileId },
     /// Inline module, like `mod foo { ...  }`;
     Inline {
-        declaration_file: FileId,
-        declaration_span: Span,
+        declaration_source: ItemSource,
+        declaration_location: SourceId,
     },
     /// Out-of-line module, like `mod foo;`.
     OutOfLine {
-        declaration_file: FileId,
-        declaration_span: Span,
+        declaration_source: ItemSource,
+        declaration_location: SourceId,
         definition_file: Option<FileId>,
         /// How the definition file was selected.
         ///
@@ -209,13 +209,13 @@ impl ModuleOrigin {
         let files = match self {
             Self::Root { file_id } | Self::Synthetic { file_id, .. } => [Some(*file_id), None],
             Self::Inline {
-                declaration_file, ..
-            } => [Some(*declaration_file), None],
+                declaration_source, ..
+            } => [Some(declaration_source.file_id), None],
             Self::OutOfLine {
-                declaration_file,
+                declaration_source,
                 definition_file,
                 ..
-            } => [Some(*declaration_file), *definition_file],
+            } => [Some(declaration_source.file_id), *definition_file],
         };
         files.into_iter().flatten()
     }

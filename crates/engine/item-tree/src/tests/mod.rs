@@ -6,9 +6,62 @@ use rg_parse::{LineColumnSpan, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
 use crate::{
-    FromAst, GenericArg, GenericParams, ItemKind, TraitBoundModifier, TypeBound, TypePathAnchor,
-    TypeRef,
+    DeclarationSourceStore, FromAst, GenericArg, GenericParams, ItemKind, NoSource,
+    SourceLocations as _, TraitBoundModifier, TypeBound, TypePathAnchor, TypeRef, UseImportKind,
+    UseItem,
 };
+
+#[test]
+fn nested_imports_keep_their_written_path_ranges() {
+    let source = "use ::root::{branch::{First, Second as Alias}, other::Third, self, *};";
+    let file = SourceFile::parse(source, Edition::CURRENT)
+        .ok()
+        .expect("fixture should parse");
+    let syntax = file
+        .syntax()
+        .descendants()
+        .find_map(ast::Use::cast)
+        .expect("fixture has an import");
+    let mut locations = DeclarationSourceStore::default();
+    let mut map = |range, _| Span::from_text_range(range);
+    let mut sources = locations.start_owner(&mut map);
+    let item = UseItem::from_ast(&syntax, &mut sources);
+    locations.finish_owner(sources);
+    let expected = [
+        ("::root::branch::First", UseImportKind::Named, "First"),
+        ("::root::branch::Second", UseImportKind::Named, "Second"),
+        ("::root::other::Third", UseImportKind::Named, "Third"),
+        ("::root", UseImportKind::SelfImport, "self"),
+        ("::root", UseImportKind::Glob, "::root::"),
+    ];
+    assert_eq!(item.imports.len(), expected.len());
+    for (import, (path, kind, last)) in item.imports.iter().zip(expected) {
+        assert_eq!(import.path.to_string(), path);
+        assert_eq!(import.kind, kind, "{path}");
+        let span = locations
+            .span(import.path.location.expect("path location"))
+            .expect("written path");
+        assert_eq!(
+            span,
+            Span {
+                start: source.find("::root").expect("absolute root") as u32,
+                end: (source.find(last).expect("path end") + last.len()) as u32,
+            },
+            "{path}"
+        );
+        for segment in &import.path.segments {
+            let span = locations
+                .span(segment.location)
+                .expect("written path segment");
+            assert_eq!(
+                &source[span.start as usize..span.end as usize],
+                segment.kind.to_string(),
+                "{path}"
+            );
+        }
+    }
+    assert_eq!(item.imports[1].alias.to_string(), " as Alias");
+}
 
 #[test]
 fn preserves_relaxed_trait_bound_modifier() {
@@ -21,7 +74,11 @@ fn preserves_relaxed_trait_bound_modifier() {
         .descendants()
         .find_map(ast::Struct::cast)
         .expect("fixture should contain a struct");
-    let generics = GenericParams::from_ast(&item, ());
+    let mut map = |range, _| Span::from_text_range(range);
+    let mut locations = DeclarationSourceStore::default();
+    let mut sources = locations.start_owner(&mut map);
+    let generics = GenericParams::from_ast(&item, &mut sources);
+    locations.finish_owner(sources);
     let param = generics
         .types()
         .next()
@@ -117,7 +174,7 @@ fn lower_alias_ty(source: &str) -> TypeRef {
         .expect("fixture should contain a type alias");
     let ty = alias.ty().expect("fixture type alias should have a value");
 
-    TypeRef::from_ast(&ty, ())
+    TypeRef::from_ast(&ty, &mut NoSource)
 }
 
 #[test]
@@ -669,16 +726,20 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
         .expect("fixture function should be lowered");
 
     assert!(matches!(function.kind, ItemKind::Function(_)));
-    assert_eq!(function.span, Span { start: 0, end: 73 });
 
     let parsed_file = db.parse_db().packages()[0]
         .parsed_file(file_tree.file)
         .expect("fixture source should be parsed");
+    let locations = db.locations(0, file_tree.file);
+    let span = locations
+        .span(function.location)
+        .expect("function location");
+    assert_eq!(span, Span { start: 0, end: 73 });
     let line_index = parsed_file
         .line_index()
         .expect("fixture line index should load");
     assert_eq!(
-        line_index.line_column_span(function.span),
+        line_index.line_column_span(span),
         LineColumnSpan {
             start: Position { line: 0, column: 0 },
             end: Position { line: 2, column: 1 },

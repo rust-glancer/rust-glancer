@@ -1,12 +1,12 @@
 //! Lowered import facts used by both name resolution and source-site queries.
 //!
 //! Resolution needs a semantic `Path`, while cursor and completion queries need the exact source
-//! span for each segment. `ImportPath` keeps both views together so macro expansion cannot rewrite
+//! location for each segment. `ImportPath` keeps both views together so macro expansion cannot rewrite
 //! one path representation and leave another one stale.
 
 use std::fmt;
 
-use rg_ir_model::{CrateRef, ModuleId, Path, PathRoot, Span};
+use rg_ir_model::{CrateRef, ModuleId, Path, PathRoot, SourceId};
 use rg_item_tree::{ImportAlias, UseImportKind, UsePath, UsePathSegmentKind, UserFacingAttrs};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -28,7 +28,7 @@ pub struct ImportData {
     pub kind: ImportKind,
     pub path: ImportPath,
     pub binding: ImportBinding,
-    pub alias_span: Option<Span>,
+    pub alias_location: Option<SourceId>,
     pub source: ItemSource,
     pub import_index: usize,
     /// Presentation attributes on the outer `use` item that exposed this route.
@@ -116,14 +116,14 @@ impl ImportKind {
 
 /// One semantic import path paired with source spans for its root and ordinary segments.
 ///
-/// The resolver reads `semantic`; source queries use `prefixes_with_spans`. Both projections stay
+/// The resolver reads `semantic`; source queries use `prefixes_with_locations`. Both projections stay
 /// private so macro rebasing cannot accidentally make them disagree.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportPath {
     semantic: Path,
-    source_span: Option<Span>,
-    root_spans: Vec<Span>,
-    segment_spans: Vec<Span>,
+    location: Option<SourceId>,
+    root_locations: Vec<SourceId>,
+    segment_locations: Vec<SourceId>,
 }
 
 impl ImportPath {
@@ -154,12 +154,12 @@ impl ImportPath {
             }
         };
 
-        let root_spans = path.segments[..root_segment_count]
+        let root_locations = path.segments[..root_segment_count]
             .iter()
-            .map(|segment| segment.span)
+            .map(|segment| segment.location)
             .collect();
         let mut segments = Vec::new();
-        let mut segment_spans = Vec::new();
+        let mut segment_locations = Vec::new();
         for segment in &path.segments[root_segment_count..] {
             let UsePathSegmentKind::Name(name) = &segment.kind else {
                 // Root keywords are grammatical only at the beginning. Refuse to encode recovered
@@ -167,14 +167,14 @@ impl ImportPath {
                 return None;
             };
             segments.push(name.clone());
-            segment_spans.push(segment.span);
+            segment_locations.push(segment.location);
         }
 
         Some(Self {
             semantic: Path::new(root, segments),
-            source_span: path.source_span,
-            root_spans,
-            segment_spans,
+            location: path.location,
+            root_locations,
+            segment_locations,
         })
     }
 
@@ -182,8 +182,8 @@ impl ImportPath {
         &self.semantic
     }
 
-    pub fn source_span(&self) -> Option<Span> {
-        self.source_span
+    pub fn location(&self) -> Option<SourceId> {
+        self.location
     }
 
     /// Return every written root/name component as the semantic prefix ending at that component.
@@ -191,53 +191,47 @@ impl ImportPath {
     /// For `super::super::api`, the two root tokens produce `super` and `super::super`; `api`
     /// produces the full path. Point queries can therefore navigate and complete rooted paths
     /// without pretending those tokens are ordinary name segments.
-    pub fn prefixes_with_spans(&self) -> Option<Vec<(Path, Span)>> {
-        if self.semantic.segments().len() != self.segment_spans.len() {
+    pub fn prefixes_with_locations(&self) -> Option<Vec<(Path, SourceId)>> {
+        if self.semantic.segments().len() != self.segment_locations.len() {
             return None;
         }
 
         let expected_root_spans = self.semantic.root().written_component_count();
-        if self.root_spans.len() != expected_root_spans {
+        if self.root_locations.len() != expected_root_spans {
             return None;
         }
 
-        let mut prefixes = Vec::with_capacity(self.root_spans.len() + self.segment_spans.len());
+        let mut prefixes =
+            Vec::with_capacity(self.root_locations.len() + self.segment_locations.len());
         match self.semantic.root() {
             PathRoot::Relative | PathRoot::Absolute => {}
             PathRoot::Crate | PathRoot::SelfModule | PathRoot::DollarCrate(_) => {
                 prefixes.push((
                     Path::new(self.semantic.root(), Vec::new()),
-                    self.root_spans[0],
+                    self.root_locations[0],
                 ));
             }
             PathRoot::Super(depth) => {
                 for current_depth in 1..=depth {
                     prefixes.push((
                         Path::new(PathRoot::Super(current_depth), Vec::new()),
-                        self.root_spans[usize::from(current_depth - 1)],
+                        self.root_locations[usize::from(current_depth - 1)],
                     ));
                 }
             }
         }
 
-        for (index, span) in self.segment_spans.iter().copied().enumerate() {
-            prefixes.push((self.semantic.prefix(index + 1)?, span));
+        for (index, location) in self.segment_locations.iter().copied().enumerate() {
+            prefixes.push((self.semantic.prefix(index + 1)?, location));
         }
         Some(prefixes)
     }
 
-    pub fn last_component_span(&self) -> Option<Span> {
-        self.segment_spans
+    pub fn last_component_location(&self) -> Option<SourceId> {
+        self.segment_locations
             .last()
             .copied()
-            .or_else(|| self.root_spans.last().copied())
-    }
-
-    /// Generated imports point back to the macro call rather than synthetic token-tree spans.
-    pub fn rebase(&mut self, span: Span) {
-        self.source_span = Some(span);
-        self.root_spans.fill(span);
-        self.segment_spans.fill(span);
+            .or_else(|| self.root_locations.last().copied())
     }
 }
 
@@ -249,7 +243,7 @@ impl fmt::Display for ImportPath {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::Span;
+    use rg_ir_model::SourceId;
     use rg_item_tree::{UsePath, UsePathSegment, UsePathSegmentKind};
     use rg_text::Name;
 
@@ -308,17 +302,20 @@ mod tests {
 
     fn use_path(absolute: bool, kinds: &[UsePathSegmentKind]) -> UsePath {
         UsePath {
-            source_span: Some(span()),
+            location: Some(location()),
             absolute,
             segments: kinds
                 .iter()
                 .cloned()
-                .map(|kind| UsePathSegment { kind, span: span() })
+                .map(|kind| UsePathSegment {
+                    kind,
+                    location: location(),
+                })
                 .collect(),
         }
     }
 
-    fn span() -> Span {
-        Span { start: 0, end: 0 }
+    fn location() -> SourceId {
+        SourceId { owner: 0, local: 0 }
     }
 }
