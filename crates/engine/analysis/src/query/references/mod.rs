@@ -1,6 +1,6 @@
-//! Reference searches over the facts already held by the analysis graph.
+//! Reference searches discover plausible source owners before demanding semantic facts.
 //!
-//! Reference lookup intentionally scans known source facts instead of building a separate index.
+//! The existing source scanners prove each candidate without a separate reference index.
 //! The query owns the search surface, declaration-inclusion policy, and declaration projection.
 
 use std::collections::HashSet;
@@ -286,6 +286,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
         let source_symbols = SourceSymbolIndex::new(self.analysis.view_db());
+        let selection = hints.source_selection(matcher.subject);
         let candidates = match scan.file_id {
             Some(file_id)
                 if self
@@ -293,9 +294,11 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     .current_source_relationship(scan.crate_ref.package, file_id)
                     == Some(SavedSourceRelationship::Different) =>
             {
-                source_symbols.body_symbols_in_crate(scan.crate_ref, Some(file_id))?
+                source_symbols.body_symbols_in_crate(scan.crate_ref, Some(file_id), &selection)?
             }
-            Some(_) | None => source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id)?,
+            Some(_) | None => {
+                source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id, &selection)?
+            }
         };
 
         for candidate in candidates {
@@ -326,13 +329,15 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 struct ReferenceDeclarationMatcher<'a, 'db> {
     resolver: SourceSymbolResolver<'a, 'db>,
     declarations: HashSet<DeclarationRef>,
+    subject: &'a ReferenceSubject,
 }
 
 impl<'a, 'db> ReferenceDeclarationMatcher<'a, 'db> {
-    fn new(db: &'a IndexedViewDb<'db>, subject: &ReferenceSubject) -> Self {
+    fn new(db: &'a IndexedViewDb<'db>, subject: &'a ReferenceSubject) -> Self {
         Self {
             resolver: SourceSymbolResolver::new(db),
             declarations: subject.declarations().clone(),
+            subject,
         }
     }
 

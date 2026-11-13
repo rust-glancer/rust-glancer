@@ -60,7 +60,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     pub(crate) fn site_at_name(&self) -> Result<Option<UnqualifiedCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             if !body.source().span.touches(self.offset) {
                 continue;
             }
@@ -92,7 +95,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     ) -> Result<Option<UnqualifiedCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, body_owner_start)?
+        {
             if !body.source().span.touches(self.offset)
                 && body_owner_start
                     .is_none_or(|owner_start| body.source().span.start != owner_start)

@@ -134,8 +134,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
     /// Resolve one lowered crate through a visibility-scoped semantic lookup query.
     ///
-    /// The crate gets its own use-site visibility and solver answers. Candidate answers, their visible directory, and canonical declarations are shared
-    /// by the active query operation.
+    /// The crate gets its own use-site visibility and solver answers. Candidate answers, lookup
+    /// preparation, and canonical declarations are shared by the active query operation.
     pub(super) fn resolve(
         mut self,
         def_map: &DefinitionReader<'_>,
