@@ -1,5 +1,5 @@
-use rg_def_map::{DefMap, ItemSourceKind};
-use rg_ir_model::{FileId, ItemOwner, ModuleRef, SavedBodyOwner, Span};
+use rg_def_map::{DefMap, ItemSource};
+use rg_ir_model::{FileId, ItemOwner, ModuleRef, SavedBodyOwner, SourceId};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ItemStore;
@@ -10,8 +10,8 @@ pub struct BodyOwnerData {
     pub owner: SavedBodyOwner,
     pub module: ModuleRef,
     pub file: FileId,
-    pub span: Span,
-    pub written: bool,
+    pub location: SourceId,
+    pub source: ItemSource,
 }
 
 impl BodyOwnerData {
@@ -37,8 +37,8 @@ impl BodyOwnerData {
                     owner: SavedBodyOwner::Function(id),
                     module: module_for(data.owner)?,
                     file: data.source.file_id,
-                    span: data.span,
-                    written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
+                    location: data.location,
+                    source: data.source,
                 })
             });
         let consts = items
@@ -52,8 +52,8 @@ impl BodyOwnerData {
                     owner: SavedBodyOwner::Const(id),
                     module: module_for(data.owner)?,
                     file: data.source.file_id,
-                    span: data.span,
-                    written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
+                    location: data.location,
+                    source: data.source,
                 })
             });
         let statics = items
@@ -69,8 +69,8 @@ impl BodyOwnerData {
                         owner: SavedBodyOwner::Static(id),
                         module: data.owner,
                         file: data.source.file_id,
-                        span: data.span,
-                        written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
+                        location: data.location,
+                        source: data.source,
                     })
             });
         functions.chain(consts).chain(statics)

@@ -10,7 +10,7 @@ use rg_ir_model::{
     AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
     GenericDefRef, GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
     LocalImplId, LocalImplRef, ModuleId, ModuleRef, Mutability, PackageSlot, SemanticItemRef,
-    SignedIntTy, Span, StructId, TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId,
+    SignedIntTy, SourceId, StructId, TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId,
     TypeDefRef, TypeParamRef, UnsignedIntTy,
 };
 use rg_item_tree::{
@@ -329,18 +329,17 @@ fn dummy_source() -> ItemSource {
     }
 }
 
-fn fixture_span() -> Span {
-    Span { start: 0, end: 0 }
+fn fixture_location() -> SourceId {
+    SourceId { owner: 0, local: 0 }
 }
 
 pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
-    let span = fixture_span();
     let mut segments = path
         .split("::")
         .map(|name| TypePathSegment {
             name: Name::new(name),
             args: Vec::new(),
-            span,
+            location: None,
         })
         .collect::<Vec<_>>();
     let final_segment = segments
@@ -349,7 +348,7 @@ pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
     final_segment.args = args;
 
     TypeRef::Path(TypePath {
-        source_span: span,
+        location: None,
         absolute: false,
         anchor: None,
         segments,
@@ -357,9 +356,8 @@ pub(super) fn path_ty(path: &str, args: Vec<ItemGenericArg>) -> TypeRef {
 }
 
 pub(super) fn qualified_assoc_ty(self_ty: TypeRef, trait_ty: TypeRef, assoc_name: &str) -> TypeRef {
-    let span = fixture_span();
     TypeRef::Path(TypePath {
-        source_span: span,
+        location: None,
         absolute: false,
         anchor: Some(TypePathAnchor::QualifiedTrait {
             self_ty: Box::new(self_ty),
@@ -368,7 +366,7 @@ pub(super) fn qualified_assoc_ty(self_ty: TypeRef, trait_ty: TypeRef, assoc_name
         segments: vec![TypePathSegment {
             name: Name::new(assoc_name),
             args: Vec::new(),
-            span,
+            location: None,
         }],
     })
 }
@@ -447,8 +445,8 @@ pub(super) fn type_alias_data(
     TypeAliasData {
         local_def: None,
         source: dummy_source(),
-        span: Span { start: 0, end: 0 },
-        name_span: None,
+        location: fixture_location(),
+        name_location: None,
         owner,
         name: Name::new(name),
         visibility: VisibilityLevel::Public,
@@ -672,8 +670,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         self.functions.push(FunctionData {
             local_def: None,
             source: dummy_source(),
-            span: fixture_span(),
-            name_span: None,
+            location: fixture_location(),
+            name_location: None,
             owner,
             name: Name::new(name),
             visibility: VisibilityLevel::Public,
@@ -793,8 +791,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 visibility: VisibilityLevel::Public,
                 source: struct_data.source,
                 file_id: FileId::from_raw(0),
-                name_span: None,
-                span: fixture_span(),
+                name_location: None,
+                location: fixture_location(),
                 user_facing_attrs: Default::default(),
             });
             let local_def_ref = LocalDefRef {
@@ -824,8 +822,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 visibility: VisibilityLevel::Public,
                 source: trait_data.source,
                 file_id: FileId::from_raw(0),
-                name_span: None,
-                span: fixture_span(),
+                name_location: None,
+                location: fixture_location(),
                 user_facing_attrs: Default::default(),
             });
             let local_def_ref = LocalDefRef {
@@ -1087,7 +1085,7 @@ fn parse_type_ref(text: &str) -> TypeRef {
             ParsedBracketTy::Slice(inner) => TypeRef::Slice(Box::new(parse_type_ref(inner))),
             ParsedBracketTy::Array { inner, len } => TypeRef::Array {
                 inner: Box::new(parse_type_ref(inner)),
-                len: len.map(|text| ConstExpr::new(text, fixture_span())),
+                len: len.map(|text| ConstExpr::new(text, None)),
             },
         };
     }
@@ -1113,7 +1111,7 @@ fn parse_item_generic_arg(text: &str) -> ItemGenericArg {
     if let Some((name, ty)) = split_top_level_keyword(text, " = ") {
         return ItemGenericArg::AssocType {
             name: Name::new(name),
-            name_span: fixture_span(),
+            name_location: None,
             ty: Some(parse_type_ref(ty)),
         };
     }

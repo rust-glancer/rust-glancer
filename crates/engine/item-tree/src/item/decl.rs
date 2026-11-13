@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use rg_ir_model::{FieldKey, Mutability, Span};
+use rg_ir_model::{FieldKey, Mutability, SourceId};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -323,8 +323,8 @@ pub struct EnumItem {
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct EnumVariantItem {
     pub name: Name,
-    pub span: Span,
-    pub name_span: Span,
+    pub location: SourceId,
+    pub name_location: SourceId,
     pub docs: Option<Documentation>,
     pub user_facing_attrs: UserFacingAttrs,
     pub fields: FieldList,
@@ -360,7 +360,7 @@ pub struct FieldItem {
     pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
     pub ty: TypeRef,
-    pub span: Span,
+    pub location: SourceId,
     pub docs: Option<Documentation>,
 }
 

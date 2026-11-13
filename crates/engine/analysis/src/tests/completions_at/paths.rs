@@ -1,6 +1,43 @@
 use expect_test::expect;
 
 use crate::tests::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
+
+#[test]
+fn completes_copied_names_after_generated_path_parts() {
+    check_analysis(
+        r#"
+//- /src/lib.rs crate:analysis_generated_type_completion
+mod model {
+    pub struct Record;
+}
+macro_rules! declare {
+    ($ty:ident) => { fn generated(_: model::$ty) {} };
+}
+declare!(Rec$0); // complete_with_source("copied type").matching("Record")
+
+mod imports {
+    macro_rules! import {
+        ($name:ident) => { use crate::model::$name; };
+    }
+    import!(Rec$0); // complete_with_source("copied import").matching("Record")
+}
+
+pub trait Parameterized<T> {
+    type Output;
+}
+macro_rules! bound {
+    ($name:ident) => { fn bound<T: Parameterized<u8, $name>>() {} };
+}
+bound!(Out$0); // complete_with_source("copied binding").matching("Output")
+"#,
+        expect![[r#"
+            st Record // copied type
+            st Record // copied import
+            ta Output // copied binding
+        "#]],
+    );
+}
+
 #[test]
 fn completes_explicit_empty_import_type_expression_argument_and_generic_argument_paths() {
     check_analysis(

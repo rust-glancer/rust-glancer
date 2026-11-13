@@ -3,7 +3,8 @@
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
-use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, Span};
+use rg_ir_model::{CrateRef, ExprId, LocalDefRef, ModuleRef, ScopeId, SourceLocation, Span};
+use rg_item_tree::{RecordSource, SourceRole};
 use rg_std::CancellationToken;
 use rg_syntax::{AstNode, SyntaxNode, TextRange, ast};
 
@@ -197,31 +198,48 @@ impl BodyLowering<'_> {
     /// Path segments and member names store spans without a separate `BodySource`. They need
     /// the same copied-token check as expression sources; template tokens get the whole call span.
     pub(super) fn source_span(&self, range: TextRange) -> Span {
-        self.remap_span(Span::from_text_range(range))
-    }
-
-    /// Remap a span retained by item-tree lowering using the active expansion.
-    pub(super) fn remap_span(&self, span: Span) -> Span {
         match &self.generated_context {
             Some(context) => context
                 .expanded
-                .source_for_range(
-                    context.source,
-                    TextRange::new(span.start.into(), span.end.into()),
-                )
+                .source_for_range(context.source, range)
                 .unwrap_or(context.source.span),
-            None => span,
+            None => Span::from_text_range(range),
         }
+    }
+
+    /// Record the physical interpretation while syntax and macro provenance are available.
+    /// Type and declaration lowering receive the same recorder in ordinary and generated bodies.
+    ///
+    /// A call creates one occurrence owner, which can cover just a type annotation rather than
+    /// an entire item. Body locations are resolved here and stored with the body; they do not need
+    /// the saved generated-source reader to replay token origins later.
+    pub(super) fn with_sources<T>(&mut self, lower: impl FnOnce(&mut dyn RecordSource) -> T) -> T {
+        let context = self.generated_context.as_ref();
+        let mut map = |range, role| match context {
+            Some(context) => {
+                let copied = matches!(role, SourceRole::Syntax)
+                    .then(|| context.expanded.source_for_range(context.source, range))
+                    .flatten();
+                SourceLocation {
+                    span: copied.unwrap_or(context.source.span),
+                    editable: copied.is_some(),
+                }
+            }
+            None => SourceLocation {
+                span: Span::from_text_range(range),
+                editable: true,
+            },
+        };
+        let mut sources = self.builder.source_items.locations.start_owner(&mut map);
+        let result = lower(&mut sources);
+        self.builder.source_items.locations.finish_owner(sources);
+        result
     }
 
     pub(super) fn dollar_crate(&self) -> Option<CrateRef> {
         self.generated_context
             .as_ref()
             .map(|context| context.expanded.dollar_crate())
-    }
-
-    pub(super) fn macro_call_is_generated(&self) -> bool {
-        self.generated_context.is_some()
     }
 
     /// Classify the macro call syntax that is about to be expanded.
@@ -233,6 +251,8 @@ impl BodyLowering<'_> {
             Some(context) => BodyMacroCallOrigin::Generated {
                 dollar_crate: context.expanded.dollar_crate(),
                 source_map: context.expanded.source_map(),
+                input_sources: context.expanded.input_sources(),
+                call_site: context.expanded.call_site(),
             },
             None => BodyMacroCallOrigin::Source,
         }

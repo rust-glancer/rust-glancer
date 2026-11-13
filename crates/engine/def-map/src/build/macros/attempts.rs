@@ -336,7 +336,7 @@ impl MacroExpansionAttempt {
                 module: call.module,
                 source: call.source,
                 file_id: call.file_id,
-                span: call.span,
+                call_site: call.call_site,
                 order: call.order.clone(),
                 placement: call.placement,
                 dollar_crate: None,
@@ -429,10 +429,7 @@ impl MacroExpansionAttempt {
                 .expect("non-declarative macro returned after explicit dispatch"),
             path_text,
             args,
-            call_package: state.crate_ref.package,
-            call_file_id: call.file_id,
-            call_span: call.span,
-            call_edition: state.edition,
+            call_site: call.call_site,
             parse_kind: ExpansionParseKind::Items,
         });
         let outcome = match prepared_expansion.expansion {

@@ -3,6 +3,7 @@ mod file_tree;
 mod item;
 mod lower;
 mod query;
+mod source;
 
 #[doc(hidden)]
 pub mod testonly;
@@ -34,5 +35,9 @@ pub use self::{
         UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, UserFacingAttrs,
         VisibilityLevel, WherePredicate,
     },
-    query::file_declarations,
+    query::{FileDeclarations, file_declaration_sources, file_declarations},
+    source::{
+        DeclarationSourceBuilder, DeclarationSourceStore, NoSource, RecordSource, SourceLocations,
+        SourceRole, TypeSource,
+    },
 };

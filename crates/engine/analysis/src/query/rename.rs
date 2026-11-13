@@ -392,12 +392,16 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
 
         symbol.crate_ref() == declaration.crate_ref()
             && symbol.file_id() == declaration.file_id()
-            && symbol.span() == declaration.selection_span()
+            && Some(symbol.span()) == declaration.editable_span()
     }
 
     /// Returns whether the declaration kind and canonical name can safely be renamed.
     fn is_renameable_declaration(declaration: &Declaration) -> bool {
-        if matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module) {
+        // A template-generated name has a navigation destination but no editable declaration.
+        // Renaming only its references would leave the declared name unchanged.
+        if declaration.editable_span().is_none()
+            || matches!(declaration.kind(), SymbolKind::Impl | SymbolKind::Module)
+        {
             return false;
         }
 

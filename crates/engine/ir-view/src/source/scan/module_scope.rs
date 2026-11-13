@@ -9,6 +9,7 @@ use rg_ir_model::{CrateRef, DefMapRef, FileId, ModuleId, ModuleRef};
 use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
+use crate::IndexedViewDb;
 
 /// The semantic module containing a source offset plus facts needed by `mod` completion.
 ///
@@ -37,7 +38,7 @@ pub(crate) enum ModuleFileBase {
 /// file as its source. The scanner normalizes both forms and then derives filesystem descent from
 /// the selected module's ancestry.
 pub(crate) struct ModuleSourceSiteScanner<'txn, 'db> {
-    def_map: &'txn DefinitionReader<'db>,
+    db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
     offset: u32,
@@ -45,13 +46,13 @@ pub(crate) struct ModuleSourceSiteScanner<'txn, 'db> {
 
 impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
     pub(crate) fn new(
-        def_map: &'txn DefinitionReader<'db>,
+        db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
         offset: u32,
     ) -> Self {
         Self {
-            def_map,
+            db,
             crate_ref,
             file_id,
             offset,
@@ -60,7 +61,7 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
 
     /// Return source ownership and already-declared child names for the selected module.
     pub(crate) fn site(&self) -> Result<Option<ModuleSourceSite>, ReadError> {
-        let Some(def_map) = self.def_map.def_map(self.crate_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(self.crate_ref)? else {
             return Ok(None);
         };
         let mut best = NarrowestSourceSite::new();
@@ -68,10 +69,18 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
             let source_len = match module.origin {
                 ModuleOrigin::Root { file_id } if file_id == self.file_id => u32::MAX,
                 ModuleOrigin::Inline {
-                    declaration_file,
-                    declaration_span,
-                } if declaration_file == self.file_id && declaration_span.touches(self.offset) => {
-                    declaration_span.len()
+                    declaration_source,
+                    declaration_location,
+                } if declaration_source.file_id == self.file_id => {
+                    let span = self.db.source_span(
+                        DefMapRef::Crate(self.crate_ref),
+                        declaration_source,
+                        declaration_location,
+                    )?;
+                    if !span.touches(self.offset) {
+                        continue;
+                    }
+                    span.len()
                 }
                 ModuleOrigin::OutOfLine {
                     definition_file: Some(definition_file),
@@ -96,27 +105,41 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
 
         // A declaration being edited is not a duplicate of itself. Other declared children are
         // excluded before filesystem candidates are rendered.
-        let declared_children = def_map
+        let mut declared_children = Vec::new();
+        for (name, child) in def_map
             .module(module_id)
             .into_iter()
             .flat_map(|module| &module.children)
-            .filter_map(|(name, child)| {
-                let child = def_map.module(*child)?;
-                let is_current_declaration = match child.origin {
-                    ModuleOrigin::Inline {
-                        declaration_file,
-                        declaration_span,
-                    }
-                    | ModuleOrigin::OutOfLine {
-                        declaration_file,
-                        declaration_span,
-                        ..
-                    } => declaration_file == self.file_id && declaration_span.touches(self.offset),
-                    ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => false,
-                };
-                (!is_current_declaration).then(|| name.to_string())
-            })
-            .collect();
+        {
+            let Some(child) = def_map.module(*child) else {
+                continue;
+            };
+            let is_current_declaration = match child.origin {
+                ModuleOrigin::Inline {
+                    declaration_source,
+                    declaration_location,
+                }
+                | ModuleOrigin::OutOfLine {
+                    declaration_source,
+                    declaration_location,
+                    ..
+                } => {
+                    declaration_source.file_id == self.file_id
+                        && self
+                            .db
+                            .source_span(
+                                DefMapRef::Crate(self.crate_ref),
+                                declaration_source,
+                                declaration_location,
+                            )?
+                            .touches(self.offset)
+                }
+                ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => false,
+            };
+            if !is_current_declaration {
+                declared_children.push(name.to_string());
+            }
+        }
 
         Ok(Some(ModuleSourceSite {
             module: ModuleRef {
@@ -191,8 +214,8 @@ impl<'txn, 'db> ModuleSourceSiteScanner<'txn, 'db> {
             let module = def_map.module(ancestor?)?;
             match module.origin {
                 ModuleOrigin::Inline {
-                    declaration_file, ..
-                } if declaration_file == file_id => {
+                    declaration_source, ..
+                } if declaration_source.file_id == file_id => {
                     inline_module_path.push(module.name.as_ref()?.to_string());
                 }
                 ModuleOrigin::Root { file_id: root_file } if root_file == file_id => {

@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Span};
+use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef};
 use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_parse::ModuleFileContext;
 use rg_text::Name;
@@ -142,7 +142,7 @@ pub(super) struct MacroCallSite {
     pub(super) builtin: Option<BuiltinMacroItem>,
     pub(super) dollar_crate: Option<CrateRef>,
     pub(super) file_id: FileId,
-    pub(super) span: Span,
+    pub(super) call_site: rg_tt::Span,
     pub(super) order: ItemOrder,
     /// Destination retained by nested calls and pending source collection.
     pub(super) placement: MacroCallPlacement,

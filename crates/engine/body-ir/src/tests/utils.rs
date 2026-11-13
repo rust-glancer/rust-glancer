@@ -7,7 +7,7 @@ use rg_ir_model::{
     GenericParamRef, ImplRef, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PackageSlot, PatId,
     SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_item_tree::FieldItem;
+use rg_item_tree::{FieldItem, SourceLocations as _};
 use rg_parse::{CargoTarget, Package, ParseDb};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
@@ -1487,7 +1487,16 @@ impl CrateBodyIrSnapshot<'_> {
 
         format!(
             " @ {}",
-            self.render_source(BodySource::written(data.file_id, data.span))
+            self.render_source(BodySource::written(
+                data.file_id,
+                self.project
+                    .body(body_ref)
+                    .expect("fixture body")
+                    .source_items()
+                    .location(data.location)
+                    .expect("fixture declaration location")
+                    .span
+            ))
         )
     }
 

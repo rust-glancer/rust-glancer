@@ -1,6 +1,48 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis, check_analysis_queries};
+use super::utils::{AnalysisQuery, ReferenceQuery, check_analysis, check_analysis_queries};
+
+#[test]
+fn generated_declaration_destinations_stay_navigation_only() {
+    check_analysis_queries(
+        r#"
+//- /src/lib.rs crate:analysis_generated_rename
+macro_rules! declare {
+    ($name:ident) => { pub struct Generated { pub field: u8 } pub struct $name; };
+}
+declare!(Copied);
+pub fn inspect(value: Gen$type$erated) -> u8 { value.fi$field$eld }
+pub fn copied(value: Co$copied$pied) {}
+"#,
+        &[
+            AnalysisQuery::goto("generated type navigation", "type"),
+            AnalysisQuery::goto("generated field navigation", "field"),
+            AnalysisQuery::references("type references", "type", ReferenceQuery::all()),
+            AnalysisQuery::references("field references", "field", ReferenceQuery::all()),
+            AnalysisQuery::prepare_rename("generated type has no editable declaration", "type"),
+            AnalysisQuery::rename("generated type rename", "type", "Renamed"),
+            AnalysisQuery::prepare_rename("generated field has no editable declaration", "field"),
+            AnalysisQuery::rename("generated field rename", "field", "renamed"),
+            AnalysisQuery::goto("copied name navigation", "copied"),
+            AnalysisQuery::references("copied name references", "copied", ReferenceQuery::all()),
+        ],
+        expect![[r#"
+            struct Generated @ 4:1-4:18 // generated type navigation
+            field field @ 4:1-4:18 // generated field navigation
+            `Generated` @ src/lib.rs:5:23-5:32 // type references
+            `field` @ src/lib.rs:5:48-5:53 // field references
+            <none> // generated type has no editable declaration
+            <none> // generated type rename
+            <none> // generated field has no editable declaration
+            <none> // generated field rename
+            struct Copied @ 4:10-4:16 // copied name navigation
+
+            // copied name references
+            `Copied` @ src/lib.rs:4:10-4:16
+            `Copied` @ src/lib.rs:6:22-6:28
+        "#]],
+    );
+}
 
 #[test]
 fn prepares_and_renames_common_symbol_subjects() {

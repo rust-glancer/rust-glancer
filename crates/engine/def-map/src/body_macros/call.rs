@@ -8,8 +8,10 @@ use rg_parse::syntax_edition;
 use rg_syntax::{TextRange, ast, utils::normalized_syntax_text};
 use rg_text::RustEdition;
 use rg_tt::{
-    TopSubtree,
-    syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
+    Span as TtSpan, TokenOwner, TopSubtree,
+    syntax_bridge::{
+        ExpansionSpanMap, SpanFactory, TokenSourceMap, syntax_node_to_token_tree_with_span,
+    },
 };
 
 use super::ExpandedBodyMacro;
@@ -28,6 +30,8 @@ pub enum BodyMacroCallOrigin {
         dollar_crate: CrateRef,
         /// Maps offsets in the parent expansion's text back to original token spans.
         source_map: Arc<ExpansionSpanMap>,
+        input_sources: Arc<TokenSourceMap>,
+        call_site: TtSpan,
     },
 }
 
@@ -104,6 +108,8 @@ impl<'cfg> BodyMacroCallSite<'cfg> {
             origin: BodyMacroCallOrigin::Generated {
                 dollar_crate: expanded.dollar_crate(),
                 source_map: expanded.source_map(),
+                input_sources: expanded.input_sources(),
+                call_site: expanded.call_site(),
             },
             ..self.clone()
         }
@@ -193,9 +199,8 @@ pub(super) struct BodyMacroInvocation {
     path_text: String,
     args: TopSubtree,
     call_package: PackageSlot,
-    call_file_id: FileId,
-    call_span: Span,
-    call_edition: RustEdition,
+    call_site: TtSpan,
+    input_sources: Arc<TokenSourceMap>,
 }
 
 impl BodyMacroInvocation {
@@ -211,33 +216,55 @@ impl BodyMacroInvocation {
         let args = call.token_tree()?;
 
         let span_factory = SpanFactory::new(
-            u32::try_from(package.0).expect("package slot should fit macro span storage"),
+            u32::try_from(package.0).expect("package slot fits macro origins"),
             file_id.as_raw(),
+            TokenOwner::Body,
             syntax_edition(edition),
         );
-        // Nested calls live in expanded text. Reuse the parent spans so tokens keep their original
-        // package, file, and range, whether they came from invocation input or a macro definition.
-        let args = syntax_node_to_token_tree_with_span(&args, &mut |range| match origin {
-            BodyMacroCallOrigin::Source => span_factory.span_for(range),
-            BodyMacroCallOrigin::Generated { source_map, .. } => {
-                source_map.span_for_range(range).unwrap_or_else(|| {
-                    span_factory.span_for(TextRange::new(span.start.into(), span.end.into()))
-                })
+        let (args, input_sources, call_site) = match origin {
+            BodyMacroCallOrigin::Source => {
+                let mut sources = TokenSourceMap::default();
+                let call_site = sources.record(
+                    span_factory,
+                    TextRange::new(span.start.into(), span.end.into()),
+                );
+                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                    sources.record(span_factory, range)
+                });
+                (args, Arc::new(sources), call_site)
             }
-        });
+            BodyMacroCallOrigin::Generated {
+                source_map,
+                input_sources,
+                call_site,
+                ..
+            } => {
+                let args = syntax_node_to_token_tree_with_span(&args, &mut |range| {
+                    source_map.span_for_range(range).unwrap_or(*call_site)
+                });
+                (args, Arc::clone(input_sources), *call_site)
+            }
+        };
 
         Some(Self {
             path_text,
             args,
             call_package: package,
-            call_file_id: file_id,
-            call_span: span,
-            call_edition: edition,
+            call_site,
+            input_sources,
         })
+    }
+
+    pub(super) fn call_site(&self) -> TtSpan {
+        self.call_site
     }
 
     pub(super) fn args(&self) -> &TopSubtree {
         &self.args
+    }
+
+    pub(super) fn input_sources(&self) -> Arc<TokenSourceMap> {
+        Arc::clone(&self.input_sources)
     }
 
     pub(super) fn call_package(&self) -> PackageSlot {
@@ -255,10 +282,7 @@ impl BodyMacroInvocation {
             definition,
             path_text: &self.path_text,
             args: &self.args,
-            call_package: self.call_package,
-            call_file_id: self.call_file_id,
-            call_span: self.call_span,
-            call_edition: self.call_edition,
+            call_site: self.call_site,
             parse_kind,
         }
     }

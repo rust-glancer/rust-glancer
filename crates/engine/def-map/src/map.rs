@@ -2,7 +2,7 @@ use std::{collections::HashMap, convert::Infallible, mem};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    DefMapRef, FileId, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
+    DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
     LocalImplId, LocalImplRef, ModuleId, ModuleRef,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
@@ -171,7 +171,6 @@ impl DefMapBuilder {
         enum_def: LocalDefId,
         enum_item: &EnumItem,
         visibility: Visibility,
-        file_id: FileId,
     ) {
         for (index, variant) in enum_item.variants.iter().enumerate() {
             self.alloc_local_enum_variant(LocalEnumVariantData {
@@ -181,9 +180,6 @@ impl DefMapBuilder {
                 index,
                 namespaces: NamespaceSet::for_field_list(&variant.fields),
                 visibility,
-                file_id,
-                name_span: variant.name_span,
-                span: variant.span,
                 user_facing_attrs: variant.user_facing_attrs,
             });
         }

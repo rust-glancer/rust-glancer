@@ -123,6 +123,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                             ExpandedBodyMacro::new(
                                 parse,
                                 span_map,
+                                invocation.input_sources(),
+                                invocation.call_site(),
                                 invocation.call_package(),
                                 site.dollar_crate_for_expansion()?,
                             )
@@ -315,6 +317,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Some(ExpandedBodyMacro::new(
             parse,
             span_map,
+            invocation.input_sources(),
+            invocation.call_site(),
             invocation.call_package(),
             site.dollar_crate_for_expansion()?,
         ))
@@ -336,6 +340,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Some(ExpandedBodyMacro::new(
             parse,
             span_map,
+            invocation.input_sources(),
+            invocation.call_site(),
             invocation.call_package(),
             resolved.data.dollar_crate,
         ))

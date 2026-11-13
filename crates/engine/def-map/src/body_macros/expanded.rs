@@ -2,15 +2,25 @@ use std::sync::Arc;
 
 use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, LocalDefRef, PackageSlot, Span};
 use rg_syntax::{AstNode, Parse, SyntaxNode, TextRange, ast};
-use rg_tt::syntax_bridge::ExpansionSpanMap;
+use rg_tt::{
+    Span as TtSpan, TokenOwner,
+    syntax_bridge::{ExpansionSpanMap, TokenSourceMap},
+};
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 ///
 /// Output tokens can come from invocation arguments or from the macro definition. Keep the full
 /// token map while lowering this syntax; Body IR only needs the proven argument spans afterward.
+///
+/// `source_map` goes from expanded syntax offsets to token origins. `input_sources` goes from
+/// this invocation's token IDs to physical ranges. A source lookup follows both maps and checks
+/// the call's ownership, so a template token cannot borrow an argument's range merely because
+/// their numeric IDs happen to match.
 pub struct ExpandedBodyMacro<T> {
     syntax: T,
     source_map: Arc<ExpansionSpanMap>,
+    input_sources: Arc<TokenSourceMap>,
+    call_site: TtSpan,
     call_package: PackageSlot,
     dollar_crate: CrateRef,
 }
@@ -19,15 +29,27 @@ impl<T> ExpandedBodyMacro<T> {
     pub(super) fn new(
         syntax: T,
         source_map: ExpansionSpanMap,
+        input_sources: Arc<TokenSourceMap>,
+        call_site: TtSpan,
         call_package: PackageSlot,
         dollar_crate: CrateRef,
     ) -> Self {
         Self {
             syntax,
             source_map: Arc::new(source_map),
+            input_sources,
+            call_site,
             call_package,
             dollar_crate,
         }
+    }
+
+    pub fn call_site(&self) -> TtSpan {
+        self.call_site
+    }
+
+    pub fn input_sources(&self) -> Arc<TokenSourceMap> {
+        Arc::clone(&self.input_sources)
     }
 
     pub fn source_map(&self) -> Arc<ExpansionSpanMap> {
@@ -82,7 +104,10 @@ impl<T> ExpandedBodyMacro<T> {
             self.call_package.0,
             call_source.file_id.as_raw(),
         )?;
-        let span = Span::from_text_range(span.range);
+        if span.anchor.owner != TokenOwner::Body {
+            return None;
+        }
+        let span = Span::from_text_range(self.input_sources.resolve(span.origins)?);
         (call_source.span.contains_span(span) && span.len() == u32::from(range.len()))
             .then_some(span)
     }
@@ -99,6 +124,8 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
         let Self {
             syntax,
             source_map,
+            input_sources,
+            call_site,
             call_package,
             dollar_crate,
         } = self;
@@ -108,6 +135,8 @@ impl<T: AstNode> ExpandedBodyMacro<T> {
             ExpandedBodyMacro {
                 syntax: context_syntax,
                 source_map,
+                input_sources,
+                call_site,
                 call_package,
                 dollar_crate,
             },
@@ -156,6 +185,8 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
         let Self {
             syntax: parse,
             source_map,
+            input_sources,
+            call_site,
             call_package,
             dollar_crate,
         } = self;
@@ -164,6 +195,8 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
         Some(ExpandedBodyMacro {
             syntax,
             source_map,
+            input_sources,
+            call_site,
             call_package,
             dollar_crate,
         })

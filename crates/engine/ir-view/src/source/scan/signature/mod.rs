@@ -260,17 +260,20 @@ impl<'view, 'db> SignatureSourceScanner<'view, 'db> {
                 continue;
             }
             let span = item
-                .span()
+                .location()
                 .or_else(|| {
                     item.local_def()
                         .and_then(|local| def_map.local_def(local.local_def))
-                        .map(|data| data.span)
+                        .map(|data| data.location)
                 })
                 .or_else(|| {
                     item.local_impl()
                         .and_then(|local| def_map.local_impl(local.local_impl))
-                        .map(|data| data.span)
+                        .map(|data| data.location)
                 });
+            let span = span
+                .map(|span| db.source_span(origin, item.source(), span))
+                .transpose()?;
             let Some(span) = span.filter(|span| span.touches(offset)) else {
                 continue;
             };

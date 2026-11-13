@@ -15,20 +15,29 @@ use rg_syntax::{
 use smol_str::SmolStr;
 
 use crate::{
-    span::{EditionedFileId, Span, SpanAnchor, SyntaxContext},
+    span::{EditionedFileId, Span, SpanAnchor, SyntaxContext, TokenOrigins, TokenOwner},
     tt::{
         self, DelimiterKind, Leaf, Spacing, TokenTree, TokenTreesView, buffer::Cursor,
         symbol::Symbol,
     },
 };
 
-/// Mapping from offsets in generated syntax back to token-tree spans.
+/// Mapping from offsets in generated syntax back to input-token provenance.
+///
+/// There are two coordinate systems here. The parser assigns byte offsets in its temporary
+/// expanded tree; each token's [`Span`] still contains occurrence IDs from its input. This map
+/// connects them without treating an occurrence ID as an offset. Resolving the resulting token
+/// origin to a physical source range is a separate step.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ExpansionSpanMap {
     spans: Vec<(TextSize, Span)>,
 }
 
 impl ExpansionSpanMap {
+    pub fn entries(&self) -> impl Iterator<Item = (TextSize, Span)> + '_ {
+        self.spans.iter().copied()
+    }
+
     pub fn span_at(&self, offset: TextSize) -> Option<Span> {
         let index = self.spans.partition_point(|(end, _)| *end <= offset);
         self.spans
@@ -37,8 +46,23 @@ impl ExpansionSpanMap {
             .map(|(_, span)| *span)
     }
 
+    /// Attribute a generated range to one input owner and syntax context. A range such as
+    /// `module::$name` can mix a template qualifier with an argument, so it has no single origin
+    /// even when `$name` alone does. A returned origin can still be synthetic; it does not by
+    /// itself prove that the range is an editable occurrence in the invocation.
     pub fn span_for_range(&self, range: TextRange) -> Option<Span> {
-        self.span_at(range.start())
+        let first = self.spans.partition_point(|(end, _)| *end <= range.start());
+        let last = self.spans.partition_point(|(end, _)| *end < range.end());
+        let mut origin = self.spans.get(first)?.1;
+        // A compound range is attributable only when all of its tokens share an input owner
+        // and syntax context. A template prefix cannot borrow a substituted name's location.
+        for &(_, token) in self.spans.get(first..=last.max(first))? {
+            if token.anchor != origin.anchor || token.ctx != origin.ctx {
+                return None;
+            }
+            origin.origins = origin.origins.join(token.origins);
+        }
+        Some(origin)
     }
 
     /// Returns the mapped span only when it points into the requested source file.
@@ -59,7 +83,11 @@ impl ExpansionSpanMap {
     }
 }
 
-/// Produces coarse spans for syntax converted into token trees.
+/// Attaches source ownership and syntax context to occurrence IDs allocated by the caller.
+///
+/// The factory does not allocate IDs or record byte positions. File lowering supplies IDs from
+/// its declaration owner; transient macro inputs use [`TokenSourceMap`]. Keeping the anchor fixed
+/// means every token produced by this factory refers to the same input table.
 #[derive(Clone, Copy)]
 pub struct SpanFactory {
     anchor: SpanAnchor,
@@ -67,9 +95,10 @@ pub struct SpanFactory {
 }
 
 impl SpanFactory {
-    pub fn new(package: u32, file_id: u32, edition: Edition) -> Self {
+    pub fn new(package: u32, file_id: u32, owner: TokenOwner, edition: Edition) -> Self {
         Self {
             anchor: SpanAnchor {
+                owner,
                 package,
                 file_id: EditionedFileId::new(file_id, edition),
             },
@@ -77,12 +106,40 @@ impl SpanFactory {
         }
     }
 
-    pub fn span_for(self, range: TextRange) -> Span {
+    pub fn span_for(self, source: u32) -> Span {
         Span {
-            range,
+            origins: TokenOrigins::single(source),
             anchor: self.anchor,
             ctx: self.ctx,
         }
+    }
+}
+
+/// Physical positions of one transient macro input. Expanded syntax carries only references
+/// into this table; a cache hit can therefore be paired with the requesting call's positions.
+///
+/// For a body invocation such as `identity!(value)`, recording assigns IDs to the call and its
+/// input tokens in order. Moving the call changes these ranges, while unchanged token structure
+/// can keep the same IDs in a cached expansion. This map belongs to that particular input capture;
+/// it is not a global table for all tokens marked [`TokenOwner::Body`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TokenSourceMap {
+    sources: Vec<TextRange>,
+}
+
+impl TokenSourceMap {
+    pub fn record(&mut self, factory: SpanFactory, range: TextRange) -> Span {
+        let source = u32::try_from(self.sources.len()).expect("macro input sources fit u32");
+        self.sources.push(range);
+        factory.span_for(source)
+    }
+
+    /// Resolve endpoints only after checking that the token belongs to this input map. The IDs
+    /// contain no map identity; callers check the token's anchor and invocation before using them.
+    pub fn resolve(&self, origins: TokenOrigins) -> Option<TextRange> {
+        let first = *self.sources.get(origins.first() as usize)?;
+        let last = *self.sources.get(origins.last()? as usize)?;
+        Some(first.cover(last))
     }
 }
 
@@ -90,14 +147,15 @@ impl SpanFactory {
 pub fn syntax_node_to_token_tree(
     tree: &ast::TokenTree,
     span_factory: SpanFactory,
+    sources: &mut TokenSourceMap,
 ) -> tt::TopSubtree {
-    let mut span_for_range = |range| span_factory.span_for(range);
+    let mut span_for_range = |range| sources.record(span_factory, range);
     syntax_node_to_token_tree_with_span(tree, &mut span_for_range)
 }
 
 /// Converts syntax into token trees with caller-provided source mapping.
 ///
-/// Source files use direct file ranges, while generated syntax maps through the expansion span map.
+/// Source files record occurrence IDs, while generated syntax keeps the input tokens' origins.
 /// Keeping the mapper at this boundary lets item-tree store token trees without reconstructing
 /// temporary source snippets later.
 pub fn syntax_node_to_token_tree_with_span(
@@ -429,13 +487,10 @@ impl<'a> TtTreeSink<'a> {
 
     fn merge_spans(left: Span, right: Span) -> Span {
         Span {
-            range: if left.ctx == right.ctx && left.anchor == right.anchor {
-                TextRange::new(
-                    left.range.start().min(right.range.start()),
-                    left.range.end().max(right.range.end()),
-                )
+            origins: if left.ctx == right.ctx && left.anchor == right.anchor {
+                left.origins.join(right.origins)
             } else {
-                left.range
+                left.origins
             },
             anchor: left.anchor,
             ctx: left.ctx,
@@ -674,9 +729,9 @@ mod tests {
 
     #[test]
     fn span_for_range_in_file_filters_mapped_origin() {
-        let span = SpanFactory::new(2, 7, Edition::CURRENT)
-            .span_for(TextRange::new(TextSize::new(3), TextSize::new(8)));
-        let other_package = SpanFactory::new(3, 7, Edition::CURRENT).span_for(span.range);
+        let span = SpanFactory::new(2, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
+        let other_package =
+            SpanFactory::new(3, 7, TokenOwner::Declaration(0), Edition::CURRENT).span_for(3);
         let span_map = ExpansionSpanMap {
             spans: vec![(TextSize::new(5), span), (TextSize::new(10), other_package)],
         };

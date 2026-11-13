@@ -31,7 +31,7 @@ use rg_ir_model::{
     Path, Span, TraitDefRef, TypeDefRef,
     identity::{ExprRef, LexicalScopeRef},
 };
-use rg_item_tree::{FromAst as _, TypePath, TypeRef};
+use rg_item_tree::{FromAst as _, NoSource, TypePath, TypeRef};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
 use super::{
@@ -510,7 +510,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedModuleSourceSite>> {
         Ok(
-            ModuleSourceSiteScanner::new(&self.db.def_map, crate_ref, file_id, offset)
+            ModuleSourceSiteScanner::new(self.db, crate_ref, file_id, offset)
                 .site()
                 .context("scan module completion source site")?
                 .map(|site| IndexedModuleSourceSite {
@@ -719,7 +719,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
             return None;
         };
         let path = path_type.path()?;
-        let path = TypePath::from_ast(&path, ());
+        let path = TypePath::from_ast(&path, &mut NoSource);
         let module_qualifier = path.as_def_map_path();
         Some((
             module_qualifier,

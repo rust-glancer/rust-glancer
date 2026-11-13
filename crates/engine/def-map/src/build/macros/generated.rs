@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use rg_ir_model::{CrateRef, FileId, ModuleId, Span};
+use rg_ir_model::{CrateRef, FileId, ModuleId};
 use rg_item_tree::{ItemTreeRef, ItemTrees};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
@@ -34,7 +34,7 @@ pub(crate) struct GeneratedOrigin {
     pub(crate) module: ModuleId,
     pub(crate) source: ItemTreeRef,
     pub(crate) file_id: FileId,
-    pub(crate) span: Span,
+    pub(crate) call_site: rg_tt::Span,
     pub(crate) order: ItemOrder,
     pub(crate) placement: MacroCallPlacement,
     pub(crate) dollar_crate: Option<CrateRef>,
@@ -66,13 +66,8 @@ impl GeneratedOrigin {
             anyhow::bail!("macro expansion syntax has errors: {errors:?}");
         }
         metric::GENERATED_SOURCES_PARSED.inc();
-        let source = GeneratedSourceLowering::lower(
-            state.crate_ref.package,
-            &self,
-            expansion,
-            state.edition,
-        )
-        .context("lower macro expansion declarations")?;
+        let source = GeneratedSourceLowering::lower(&self, expansion)
+            .context("lower macro expansion declarations")?;
         let source = state.def_map_builder.alloc_generated_source(source);
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         let result = DeclarationCollector::new(

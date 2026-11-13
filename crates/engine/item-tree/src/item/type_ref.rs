@@ -1,6 +1,6 @@
 use std::fmt;
 
-use rg_ir_model::{Mutability, Path, Span};
+use rg_ir_model::{Mutability, Path, SourceId};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -8,26 +8,26 @@ use wincode::{SchemaRead, SchemaWrite};
 /// Source-backed const-expression syntax retained by the item tree.
 ///
 /// Const evaluation belongs to the type layer, but editor queries also need to know where the
-/// expression came from. Keeping the normalized text and its original span together prevents
+/// expression came from. Keeping its occurrence ID alongside the normalized text prevents
 /// completion from reparsing a display string and then guessing how it maps back to source.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstExpr {
     text: String,
     #[shrink(skip)]
-    span: Span,
+    location: Option<SourceId>,
 }
 
 impl ConstExpr {
-    pub fn new(text: String, span: Span) -> Self {
-        Self { text, span }
+    pub fn new(text: String, location: Option<SourceId>) -> Self {
+        Self { text, location }
     }
 
     pub fn as_str(&self) -> &str {
         &self.text
     }
 
-    pub fn span(&self) -> Span {
-        self.span
+    pub fn location(&self) -> Option<SourceId> {
+        self.location
     }
 }
 
@@ -78,45 +78,6 @@ pub enum TypeRef {
 }
 
 impl TypeRef {
-    /// Move retained syntax locations through a source map without changing type structure.
-    ///
-    /// For `as_type!(Option<User>)`, this also maps `User` inside the generic argument. Macro
-    /// lowering runs this while the expansion map is alive, so stored types keep source-file
-    /// offsets without retaining the generated syntax tree.
-    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
-        match self {
-            Self::Path(path) => path.map_spans(map),
-            Self::Tuple(types) => {
-                for ty in types {
-                    ty.map_spans(map);
-                }
-            }
-            Self::Reference { inner, .. } | Self::RawPointer { inner, .. } | Self::Slice(inner) => {
-                inner.map_spans(map)
-            }
-            Self::Array { inner, len } => {
-                inner.map_spans(map);
-                if let Some(len) = len {
-                    len.span = map(len.span);
-                }
-            }
-            Self::FnPointer { params, ret } => {
-                for ty in params {
-                    ty.map_spans(map);
-                }
-                ret.map_spans(map);
-            }
-            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait { ty, .. } = bound {
-                        ty.map_spans(map);
-                    }
-                }
-            }
-            Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => {}
-        }
-    }
-
     pub fn unknown_from_text(text: impl Into<String>) -> Self {
         Self::Unknown(text.into())
     }
@@ -223,7 +184,7 @@ impl fmt::Display for TypeRef {
     }
 }
 
-/// Path syntax used as a type, with source spans and generic arguments kept intact.
+/// Path syntax used as a type, with occurrence IDs and generic arguments kept intact.
 ///
 /// ```text
 /// Vec<u8>                 -> segments [Vec<u8>], no anchor
@@ -235,9 +196,9 @@ impl fmt::Display for TypeRef {
 /// plain-path projection.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypePath {
-    /// Full source range of the path syntax, including separators around segments.
+    /// Occurrence of the whole path, including separators. Synthesized paths have no occurrence.
     #[shrink(skip)]
-    pub source_span: Span,
+    pub location: Option<SourceId>,
     pub absolute: bool,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypePathAnchor>>")]
     pub anchor: Option<TypePathAnchor>,
@@ -246,26 +207,6 @@ pub struct TypePath {
 }
 
 impl TypePath {
-    /// Mapping `Vec<User>` must reach both names; `<T as Trait>::Item` also needs its anchor mapped.
-    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
-        self.source_span = map(self.source_span);
-        if let Some(anchor) = &mut self.anchor {
-            match anchor {
-                TypePathAnchor::Type(ty) => ty.map_spans(map),
-                TypePathAnchor::QualifiedTrait { self_ty, trait_ty } => {
-                    self_ty.map_spans(map);
-                    trait_ty.map_spans(map);
-                }
-            }
-        }
-        for segment in &mut self.segments {
-            segment.span = map(segment.span);
-            for arg in &mut segment.args {
-                arg.map_spans(map);
-            }
-        }
-    }
-
     /// Returns the compact path shape used by DefMap resolution.
     ///
     /// Type anchors such as `<T>::Assoc` and `<T as Trait>::Assoc` are real path syntax, but
@@ -403,7 +344,7 @@ pub struct TypePathSegment {
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
     #[shrink(skip)]
-    pub span: Span,
+    pub location: Option<SourceId>,
 }
 
 impl fmt::Display for TypePathSegment {
@@ -432,7 +373,7 @@ pub enum GenericArg {
         name: Name,
         /// Source spelling of the binding name, retained for editor replacement edits.
         #[shrink(skip)]
-        name_span: Span,
+        name_location: Option<SourceId>,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypeRef>>")]
         ty: Option<TypeRef>,
     },
@@ -440,27 +381,6 @@ pub enum GenericArg {
 }
 
 impl GenericArg {
-    /// Map spans inside the argument, including `Item` in an associated binding `Item = User`.
-    pub fn map_spans(&mut self, map: &mut impl FnMut(Span) -> Span) {
-        match self {
-            Self::Type(ty) => ty.map_spans(map),
-            Self::Const(expr) => expr.span = map(expr.span),
-            Self::FnTraitArgs { params, ret } => {
-                for ty in params {
-                    ty.map_spans(map);
-                }
-                ret.map_spans(map);
-            }
-            Self::AssocType { name_span, ty, .. } => {
-                *name_span = map(*name_span);
-                if let Some(ty) = ty {
-                    ty.map_spans(map);
-                }
-            }
-            Self::Lifetime(_) | Self::Unsupported(_) => {}
-        }
-    }
-
     /// Extracts the syntax type from this argument when it is a type argument.
     pub fn type_ref(&self) -> Option<&TypeRef> {
         match self {
@@ -863,7 +783,7 @@ impl TypeFormatter<'static, CanonicalTypeNames> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::Span;
+    use rg_ir_model::SourceId;
     use rg_text::Name;
 
     use super::{TypePath, TypePathAnchor, TypePathSegment, TypeRef};
@@ -926,7 +846,7 @@ mod tests {
     #[test]
     fn anchored_type_paths_have_no_def_map_path_projection() {
         let path = TypePath {
-            source_span: span(),
+            location: location(),
             absolute: false,
             anchor: Some(TypePathAnchor::Type(Box::new(TypeRef::Path(type_path(
                 false,
@@ -935,7 +855,7 @@ mod tests {
             segments: vec![TypePathSegment {
                 name: Name::new("Assoc"),
                 args: Vec::new(),
-                span: span(),
+                location: location(),
             }],
         };
 
@@ -945,7 +865,7 @@ mod tests {
 
     fn type_path(absolute: bool, names: &[&str]) -> TypePath {
         TypePath {
-            source_span: span(),
+            location: location(),
             absolute,
             anchor: None,
             segments: names
@@ -953,13 +873,13 @@ mod tests {
                 .map(|name| TypePathSegment {
                     name: Name::new(*name),
                     args: Vec::new(),
-                    span: span(),
+                    location: location(),
                 })
                 .collect(),
         }
     }
 
-    fn span() -> Span {
-        Span { start: 0, end: 0 }
+    fn location() -> Option<SourceId> {
+        None
     }
 }

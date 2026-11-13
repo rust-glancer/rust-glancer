@@ -1,14 +1,15 @@
 use std::{collections::HashSet, fmt};
 
+use rg_def_map::{ItemSource, ItemSourceKind};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, EvaluatedConstValue, FileId, SavedBodyOwner,
 };
 use rg_profile::ProfileThreadContext;
-use rg_semantic_ir::{BodyOwnerData, target_declarations};
+use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, target_declarations};
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
-use super::BodySource;
+use super::{BodySource, DeclarationSourceView};
 use crate::{BodyLocalItems, BodyView, SavedBody, saved_body};
 
 /// Read saved bodies for the targets in this view. The owner catalog lets file enumeration
@@ -35,6 +36,26 @@ impl<'db> SavedBodyReader<'db> {
 }
 
 impl BodySource for SavedBodyReader<'_> {
+    fn declaration_source(
+        &self,
+        krate: CrateRef,
+        source: ItemSource,
+    ) -> Result<DeclarationSourceView<'_>, ReadError> {
+        if let ItemSourceKind::Body(source) = source.kind {
+            return self
+                .body(source.body)?
+                .map(|(body, _)| DeclarationSourceView::Body(body.source_items()))
+                .ok_or_else(|| {
+                    ReadError::Query(ajika::Error::application(
+                        "body declaration source is absent",
+                    ))
+                });
+        }
+        SavedDeclarationSourceView::new(self.db, krate, source)
+            .map(DeclarationSourceView::Saved)
+            .map_err(ReadError::Query)
+    }
+
     fn files(&self, krate: CrateRef) -> Result<UniqueVec<FileId>, ReadError> {
         Ok(self.owners(krate)?.iter().map(|owner| owner.file).collect())
     }

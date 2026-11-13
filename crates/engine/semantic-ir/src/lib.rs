@@ -11,6 +11,7 @@
 mod build;
 mod item;
 mod reader;
+mod source;
 #[doc(hidden)]
 pub mod testonly;
 
@@ -35,4 +36,5 @@ pub use self::{
         TypePathContext, TypePathResolution, UnionData,
     },
     reader::{CrateItemSource, ItemReader},
+    source::SavedDeclarationSourceView,
 };

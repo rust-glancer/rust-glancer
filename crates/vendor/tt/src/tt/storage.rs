@@ -4,7 +4,7 @@
 //! will waste a lot of memory. So instead we implement a clever compression mechanism:
 //!
 //! A `TopSubtree` has a list of [`CompressedSpanPart`], which are the parts of a span
-//! that tend to be shared between tokens - namely, without the range.
+//! that tend to be shared between tokens - namely, without the occurrence endpoints.
 //!
 //! The main list of token trees is stored in a variable-length encoding as bytes.
 //! The encoding is documented in the [`TokenTreesSlice::decode()`] function (which decodes one [`TokenTree`]).
@@ -16,7 +16,7 @@ use std::{assert_matches, collections::hash_map, fmt::Debug, hint::cold_path, me
 use rustc_hash::FxHashMap;
 
 use crate::{
-    span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize},
+    span::{Span, SpanAnchor, SyntaxContext, TokenOrigins},
     tt::{
         DelimSpan, Delimiter, DelimiterKind, Ident, IdentIsRaw, Leaf, LitKind, Literal, Punct,
         Spacing, Subtree, SubtreeView, TokenTree, TokenTreesView, TtIter, symbol::Symbol,
@@ -25,6 +25,7 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct CompressedSpanPart {
+    synthetic: bool,
     anchor: SpanAnchor,
     ctx: SyntaxContext,
 }
@@ -33,15 +34,22 @@ impl CompressedSpanPart {
     #[inline]
     fn from_span(span: &Span) -> Self {
         Self {
+            synthetic: span.origins.last().is_none(),
             anchor: span.anchor,
             ctx: span.ctx,
         }
     }
 
     #[inline]
-    fn recombine(&self, range: TextRange) -> Span {
+    fn recombine(&self, origins: TokenOrigins) -> Span {
         Span {
-            range,
+            // Delimiters can share the encoded delta while only one is synthetic. Restore
+            // that distinction from this span's metadata, not from the other delimiter.
+            origins: if self.synthetic {
+                TokenOrigins::synthetic(origins.first())
+            } else {
+                TokenOrigins::from_encoded(origins.first(), origins.encoded_width())
+            },
             anchor: self.anchor,
             ctx: self.ctx,
         }
@@ -239,8 +247,8 @@ unsafe fn encode_span<'a>(
     force_heavy_encoding: bool,
 ) -> BufferWriter<'a> {
     let span_parts_index = span_parts_map[&CompressedSpanPart::from_span(span)] as u32;
-    let offset = u32::from(span.range.start());
-    let len = u32::from(span.range.len());
+    let offset = span.origins.first();
+    let len = span.origins.encoded_width();
     unsafe {
         encode_span_no_map(
             ptr,
@@ -437,23 +445,23 @@ unsafe fn encode<'a>(
                     span_parts_map[&CompressedSpanPart::from_span(&delimiter.close)] as u32;
                 let close_span_offset_from_open = delimiter
                     .close
-                    .range
-                    .start()
-                    .checked_sub(delimiter.open.range.start())
+                    .origins
+                    .first()
+                    .checked_sub(delimiter.open.origins.first())
                     .map_or(u32::MAX, u32::from);
                 let children_byte_len = byte_size_after[1] - byte_size_after[1 + len as usize];
                 if open_span_parts_index == close_span_parts_index
                     && len <= n_bits_mask(u8::BITS)
                     && children_byte_len <= n_bits_mask(u8::BITS)
-                    && delimiter.open.range.len() == TextSize::new(1)
-                    && delimiter.close.range.len() == TextSize::new(1)
+                    && delimiter.open.origins.encoded_width() == 1
+                    && delimiter.close.origins.encoded_width() == 1
                     && close_span_offset_from_open <= n_bits_mask(11)
                 {
                     // Subtree, format 1.
                     let span = Span {
-                        range: TextRange::at(
-                            delimiter.open.range.start(),
-                            TextSize::new(close_span_offset_from_open),
+                        origins: TokenOrigins::from_encoded(
+                            delimiter.open.origins.first(),
+                            close_span_offset_from_open,
                         ),
                         anchor: delimiter.open.anchor,
                         ctx: delimiter.open.ctx,
@@ -468,7 +476,8 @@ unsafe fn encode<'a>(
                 } else if open_span_parts_index == close_span_parts_index
                     && len <= n_bits_mask(u8::BITS)
                     && children_byte_len <= n_bits_mask(u8::BITS)
-                    && delimiter.open.range.len() == delimiter.close.range.len()
+                    && delimiter.open.origins.encoded_width()
+                        == delimiter.close.origins.encoded_width()
                     && close_span_offset_from_open <= n_bits_mask(3)
                 {
                     // Subtree, format 2.
@@ -481,7 +490,8 @@ unsafe fn encode<'a>(
                     ptr = encode_span(ptr, &delimiter.open, span_parts_map, 0b00, false);
                 } else if len <= n_bits_mask(u8::BITS)
                     && children_byte_len <= n_bits_mask(12)
-                    && delimiter.open.range.len() == delimiter.close.range.len()
+                    && delimiter.open.origins.encoded_width()
+                        == delimiter.close.origins.encoded_width()
                     && close_span_offset_from_open <= n_bits_mask(8)
                     && close_span_parts_index <= n_bits_mask(7)
                 {
@@ -534,8 +544,8 @@ unsafe fn encode_top_subtree<'a>(
         ptr = encode_span_no_map(
             ptr,
             open_span_parts_index + 1,
-            delimiter.close.range.start().into(),
-            delimiter.close.range.len().into(),
+            delimiter.close.origins.first(),
+            delimiter.close.origins.encoded_width(),
             0b00,
             true,
         );
@@ -543,8 +553,8 @@ unsafe fn encode_top_subtree<'a>(
         ptr = encode_span_no_map(
             ptr,
             open_span_parts_index,
-            delimiter.open.range.start().into(),
-            delimiter.open.range.len().into(),
+            delimiter.open.origins.first(),
+            delimiter.open.origins.encoded_width(),
             0b00,
             true,
         );
@@ -726,7 +736,7 @@ impl PartialEq for BufferReader<'_> {
 
 struct InlineSpanParts {
     span_parts_index: usize,
-    text_range: TextRange,
+    origins: TokenOrigins,
 }
 
 #[derive(Clone, Copy)]
@@ -759,7 +769,7 @@ impl<'a> TokenTreesSlice<'a> {
         if !extends_to_next {
             let result = InlineSpanParts {
                 span_parts_index: span_parts_index as usize,
-                text_range: TextRange::at(TextSize::new(offset), TextSize::new(len)),
+                origins: TokenOrigins::from_encoded(offset, len),
             };
             (ptr, result)
         } else {
@@ -797,7 +807,7 @@ impl<'a> TokenTreesSlice<'a> {
             };
             let result = InlineSpanParts {
                 span_parts_index: span_parts_index as usize,
-                text_range: TextRange::at(TextSize::new(offset), TextSize::new(len)),
+                origins: TokenOrigins::from_encoded(offset, len),
             };
             (ptr, result)
         }
@@ -835,7 +845,7 @@ impl<'a> TokenTreesSlice<'a> {
             let span_and_extra = ptr.read::<u32>();
             let span;
             (ptr, span) = Self::decode_span(ptr, span_and_extra);
-            let span = compressed[span.span_parts_index].recombine(span.text_range);
+            let span = compressed[span.span_parts_index].recombine(span.origins);
 
             if span_and_extra & 0b1 == 0b1 {
                 // An ASCII punct.
@@ -886,15 +896,15 @@ impl<'a> TokenTreesSlice<'a> {
                     //  - Subtree length in bytes is a u8.
                     //  - The length of both the open and close span is 1 - so we use the already-parsed length for the open span
                     //    for other things (we can only assume it has 8 bits available, the minimum format for a length).
-                    //  - The offset between the open span's start and the close span's start is stored in 11 bits.
+                    //  - The difference between the open and close occurrence IDs is stored in 11 bits.
                     let kind =
                         transmute::<u8, DelimiterKind>((control_byte_extra_data & 0b11) as u8);
                     let mut open_span = span;
-                    let mut close_span_offset_from_open = u32::from(span.range.len());
-                    open_span.range = TextRange::at(open_span.range.start(), TextSize::new(1));
+                    let mut close_span_offset_from_open = span.origins.encoded_width();
+                    open_span.origins = TokenOrigins::from_encoded(open_span.origins.first(), 1);
                     close_span_offset_from_open |= (control_byte_extra_data >> 2) << 8;
                     let close_span = Span {
-                        range: open_span.range + TextSize::new(close_span_offset_from_open),
+                        origins: open_span.origins.shifted(close_span_offset_from_open),
                         anchor: open_span.anchor,
                         ctx: open_span.ctx,
                     };
@@ -915,15 +925,15 @@ impl<'a> TokenTreesSlice<'a> {
                     //  - Same span_parts_index for open and close span.
                     //  - Subtree length is a u8.
                     //  - Subtree length in bytes is a u8.
-                    //  - The open and close span have the same length. This covers many cases because most cases either give
-                    //    both length 1 (the brackets themselves) or the same span (usually, the whole range they encompass).
-                    //  - The offset between the open span's start and the close span's start is stored in 3 bits.
+                    //  - The open and close origins have the same encoded delta. Single-token origins
+                    //    both use delta 1; repeated origins also share their delta.
+                    //  - The difference between the open and close occurrence IDs is stored in 3 bits.
                     let kind =
                         transmute::<u8, DelimiterKind>((control_byte_extra_data & 0b11) as u8);
                     let open_span = span;
                     let close_span_offset_from_open = control_byte_extra_data >> 2;
                     let close_span = Span {
-                        range: open_span.range + TextSize::new(close_span_offset_from_open),
+                        origins: open_span.origins.shifted(close_span_offset_from_open),
                         anchor: open_span.anchor,
                         ctx: open_span.ctx,
                     };
@@ -943,8 +953,8 @@ impl<'a> TokenTreesSlice<'a> {
                     // Subtree, format 3:
                     //  - Subtree length is a u8.
                     //  - Subtree length in bytes is 12 bits.
-                    //  - The open and close span have the same length.
-                    //  - The offset between the open span's start and the close span's start is stored in 8 bits.
+                    //  - The open and close origins have the same encoded delta.
+                    //  - The difference between the open and close occurrence IDs is stored in 8 bits.
                     //  - The close span's span_parts_index is stored in 7 bits.
                     // This is less efficient than formats 1 and 2 (requires two more bytes), but more efficient than the general format.
                     let kind =
@@ -957,7 +967,7 @@ impl<'a> TokenTreesSlice<'a> {
                     close_span_parts_index |= (children_byte_len & 0b1111) << 3;
                     children_byte_len >>= 4;
                     let close_span = compressed[close_span_parts_index as usize]
-                        .recombine(open_span.range + TextSize::new(close_span_offset_from_open));
+                        .recombine(open_span.origins.shifted(close_span_offset_from_open));
 
                     TokenTree::Subtree(Subtree {
                         delimiter: Delimiter {
@@ -980,7 +990,7 @@ impl<'a> TokenTreesSlice<'a> {
                     let close_span;
                     (ptr, close_span) = Self::decode_span(ptr, close_span_start);
                     let close_span =
-                        compressed[close_span.span_parts_index].recombine(close_span.text_range);
+                        compressed[close_span.span_parts_index].recombine(close_span.origins);
                     let len = ptr.read::<u32>();
                     children_byte_len = ptr.read::<u32>();
 
@@ -1143,16 +1153,16 @@ impl TopSubtree {
         buffer: &mut [u8],
         open_span_parts_index: u32,
         close_span_parts_index: u32,
-        open_range: TextRange,
-        close_range: TextRange,
+        open_range: TokenOrigins,
+        close_range: TokenOrigins,
     ) {
         // Remember we write in reverse, so we add `3 * size_of::<u32>()`.
         unsafe {
             _ = encode_span_no_map(
                 BufferWriter::new(&mut buffer[..3 * size_of::<u32>()]),
                 open_span_parts_index,
-                u32::from(open_range.start()),
-                u32::from(open_range.len()),
+                open_range.first(),
+                open_range.encoded_width(),
                 0b00,
                 true,
             );
@@ -1161,8 +1171,8 @@ impl TopSubtree {
                     &mut buffer[..3 * size_of::<u32>() + size_of::<u8>() + 3 * size_of::<u32>()],
                 ),
                 close_span_parts_index,
-                u32::from(close_range.start()),
-                u32::from(close_range.len()),
+                close_range.first(),
+                close_range.encoded_width(),
                 0b00,
                 true,
             );
@@ -1271,8 +1281,8 @@ impl TopSubtree {
                 &mut self.buffer,
                 open_span_idx as u32,
                 close_span_idx as u32,
-                span.open.range,
-                span.close.range,
+                span.open.origins,
+                span.close.origins,
             );
         }
         self.span_parts[open_span_idx] = CompressedSpanPart::from_span(&span.open);

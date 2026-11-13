@@ -21,6 +21,7 @@ use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
     SemanticItemRef, Span, TypeDefId,
 };
+use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{SemanticItemSource, SemanticItemView};
 use rg_source::ReadError;
 
@@ -226,12 +227,17 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             if item.source().file_id != self.file_id {
                 continue;
             }
-            let declaration_span = match item.source().kind {
+            let locations = self
+                .body_ir
+                .declaration_source(body_ref.crate_ref, item.source())?;
+            let occurrence = match item.source().kind {
                 ItemSourceKind::Body(source) if source.body == body_ref => body
                     .source_item(source.item)
-                    .and_then(|item| item.name_span)
-                    .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
-                _ => item.span().unwrap_or(body.source().span),
+                    .and_then(|node| node.name_location),
+                _ => item.name_location(),
+            };
+            let Some(declaration_span) = locations.editable_span(occurrence) else {
+                continue;
             };
             if declaration_span.touches(self.offset) {
                 match item.item() {
@@ -263,8 +269,8 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
 
             if let SemanticItemRef::TypeDef(ty) = item.item() {
-                self.consider_fields(item, ty, &mut best);
-                self.consider_variants(item, ty, &mut best);
+                self.consider_fields(item, ty, &locations, &mut best);
+                self.consider_variants(item, ty, &locations, &mut best);
             }
         }
 
@@ -354,10 +360,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         if !matches!(item.origin(), DefMapRef::Body(_)) {
             return Ok(None);
         }
-        Ok(self
+        let Some(view) = self.body_ir.item(item)? else {
+            return Ok(None);
+        };
+        let locations = self
             .body_ir
-            .item(item)?
-            .and_then(|view| view.name_span())
+            .declaration_source(item.origin().origin_crate(), view.source())?;
+        Ok(locations
+            .editable_span(view.name_location())
             .map(|span| (item, span)))
     }
 
@@ -482,6 +492,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
+        locations: &dyn SourceLocations,
         best: &mut BestCursorCandidate,
     ) {
         match ty.id {
@@ -493,12 +504,15 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     return;
                 }
                 for (index, field) in data.fields.fields().iter().enumerate() {
-                    if field.span.touches(self.offset) {
+                    let Some(span) = locations.editable_span(Some(field.location)) else {
+                        continue;
+                    };
+                    if span.touches(self.offset) {
                         best.consider(
-                            field.span,
+                            span,
                             BodySourceCandidate::LocalField {
                                 field: FieldRef { owner: ty, index },
-                                span: field.span,
+                                span,
                             },
                         );
                     }
@@ -512,12 +526,15 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     return;
                 }
                 for (index, field) in data.fields.iter().enumerate() {
-                    if field.span.touches(self.offset) {
+                    let Some(span) = locations.editable_span(Some(field.location)) else {
+                        continue;
+                    };
+                    if span.touches(self.offset) {
                         best.consider(
-                            field.span,
+                            span,
                             BodySourceCandidate::LocalField {
                                 field: FieldRef { owner: ty, index },
-                                span: field.span,
+                                span,
                             },
                         );
                     }
@@ -531,6 +548,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         &self,
         item: SemanticItemView<'_>,
         ty: rg_ir_model::TypeDefRef,
+        locations: &dyn SourceLocations,
         best: &mut BestCursorCandidate,
     ) {
         let TypeDefId::Enum(enum_id) = ty.id else {
@@ -543,16 +561,19 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             return;
         }
         for (index, variant) in data.variants.iter().enumerate() {
-            if variant.name_span.touches(self.offset) {
+            let Some(span) = locations.editable_span(Some(variant.name_location)) else {
+                continue;
+            };
+            if span.touches(self.offset) {
                 best.consider(
-                    variant.name_span,
+                    span,
                     BodySourceCandidate::LocalEnumVariant {
                         variant: EnumVariantRef {
                             origin: ty.origin,
                             enum_id,
                             index,
                         },
-                        span: variant.name_span,
+                        span,
                     },
                 );
             }

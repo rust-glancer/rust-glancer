@@ -99,9 +99,9 @@ impl<S: CrateDataSource> CrateDefMapReader<S> {
             if !matches!(
                 child_data.origin,
                 ModuleOrigin::Inline {
-                    declaration_file,
+                    declaration_source,
                     ..
-                } if declaration_file == file
+                } if declaration_source.file_id == file
             ) {
                 return Ok(None);
             }

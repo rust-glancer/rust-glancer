@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore};
-use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
+use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore, DeclarationSourceView};
+use rg_def_map::{DefMap, DefMapSource, DefinitionReader, ItemSource};
 use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FileId, ImplRef, LocalDefRef, ModuleRef, PackageSlot, Path,
-    SemanticItemRef, Span,
+    SemanticItemRef, SourceId, Span,
 };
 use rg_parse::{CurrentSource, Package, ParseDb, ParsedFile, saved_syntax};
 use rg_semantic_ir::{
@@ -44,6 +44,27 @@ impl Cancelable for IndexedViewDb<'_> {
 }
 
 impl<'db> IndexedViewDb<'db> {
+    /// Open the source owner before interpreting any occurrence IDs.
+    pub(crate) fn declaration_source(
+        &self,
+        origin: DefMapRef,
+        source: ItemSource,
+    ) -> Result<DeclarationSourceView<'_>, ReadError> {
+        self.body_ir
+            .declaration_source(origin.origin_crate(), source)
+    }
+
+    pub(crate) fn source_span(
+        &self,
+        origin: DefMapRef,
+        source: ItemSource,
+        occurrence: SourceId,
+    ) -> Result<Span, ReadError> {
+        self.body_ir
+            .declaration_location(origin.origin_crate(), source, occurrence)
+            .map(|location| location.span)
+    }
+
     pub fn new(
         queries: &'db QueryContext<'db>,
         def_map: DefinitionReader<'db>,
