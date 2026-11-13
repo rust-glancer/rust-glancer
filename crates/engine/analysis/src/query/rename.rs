@@ -8,7 +8,7 @@ use rg_ir_model::{FileId, Span, identity::DeclarationRef};
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::declaration::{Declaration, DeclarationView},
-    source::{IndexedSourceSurface, SourceOccurrenceView},
+    source::{IndexedSourceProvenance, IndexedSourceSurface, SourceOccurrenceView},
 };
 
 use super::references::ReferenceResolver;
@@ -85,19 +85,37 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         // The selected symbol must resolve to one canonical declaration. References use that
         // declaration set as the semantic identity for every occurrence we might edit.
         let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
+        let [declaration_ref] = declarations.as_slice() else {
+            return Ok(None);
+        };
+        let Some(declaration) =
+            DeclarationView::new(self.analysis.view_db()).declaration(*declaration_ref)?
+        else {
+            return Ok(None);
+        };
+        // The prepare-rename placeholder preserves written text, which can contain escapes in a
+        // format string. Match occurrences by the declaration's semantic name instead.
+        let Some(old_name) = declaration.semantic_name() else {
+            return Ok(None);
+        };
 
         // Reference resolution gives us source occurrences. Rename then handles the final surface
         // rewrite, because shorthand records may need a larger replacement than the selected span.
+        let symbols = ReferenceResolver::new(self.analysis, query)
+            .source_symbols_matching_declarations(&declarations)?;
+        // A duplicated literal can also be ordinary string data or belong to an unlowered body.
+        // Those uses will not appear in the reference results. Reject the whole rename when a
+        // capture cannot be edited, rather than returning a partial set of changes.
+        if symbols.iter().any(|symbol| {
+            matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
+                && !Self::is_renameable_source(symbol)
+        }) {
+            return Ok(None);
+        }
         let mut edits = Vec::new();
-        for symbol in ReferenceResolver::new(self.analysis, query)
-            .source_symbols_matching_declarations(&declarations)?
-        {
+        for symbol in symbols {
             let Some(edit) = self
-                .rename_edit_for_symbol(
-                    symbol,
-                    Self::identifier_semantic_spelling(&rename_target.placeholder),
-                    new_name,
-                )
+                .rename_edit_for_symbol(symbol, old_name, new_name)
                 .context("while attempting to plan rename edits")?
             else {
                 continue;
@@ -123,31 +141,35 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         old_name: &str,
         new_name: &str,
     ) -> anyhow::Result<Option<RenameEdit>> {
-        if self.source_symbol_uses_different_spelling(&symbol, old_name)? {
+        if !Self::is_renameable_source(&symbol)
+            || self.source_symbol_uses_different_spelling(&symbol, old_name)?
+        {
             return Ok(None);
         }
 
         let syntax =
             SyntaxRenderer::new(self.analysis.view_db().crate_edition(symbol.crate_ref())?);
-        let new_name = syntax.identifier(new_name).to_string();
+        let new_identifier = syntax.identifier(new_name).to_string();
         let source_name = self.source_text_for_span(&symbol, symbol.span())?;
 
         // Plain references can replace the selected text directly. Shorthand record syntax carries
         // two names in one span, so those occurrences expand into explicit `field: value` spelling.
         let (span, old_text, new_text) = match symbol.surface().clone() {
-            IndexedSourceSurface::MacroArgument => return Ok(None),
+            IndexedSourceSurface::FormatCapture => {
+                (symbol.span(), source_name, new_name.to_owned())
+            }
             IndexedSourceSurface::Plain | IndexedSourceSurface::RecordFieldKeyExplicit => {
-                (symbol.span(), source_name, new_name.clone())
+                (symbol.span(), source_name, new_identifier)
             }
             IndexedSourceSurface::RecordExprShorthandFieldKey { .. } => (
                 symbol.span(),
                 source_name.clone(),
-                format!("{new_name}: {source_name}"),
+                format!("{new_identifier}: {source_name}"),
             ),
             IndexedSourceSurface::RecordExprShorthandValue { key, .. } => (
                 symbol.span(),
                 source_name,
-                format!("{}: {new_name}", syntax.field_key(&key)),
+                format!("{}: {new_identifier}", syntax.field_key(&key)),
             ),
             IndexedSourceSurface::RecordPatShorthandFieldKey {
                 field_span,
@@ -155,7 +177,11 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             } => {
                 let old_text = self.source_text_for_span(&symbol, field_span)?;
                 let pat_text = self.source_text_for_span(&symbol, pat_span)?;
-                (field_span, old_text, format!("{new_name}: {pat_text}"))
+                (
+                    field_span,
+                    old_text,
+                    format!("{new_identifier}: {pat_text}"),
+                )
             }
             IndexedSourceSurface::RecordPatShorthandBinding {
                 key,
@@ -169,7 +195,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
                     pat_span,
                     binding_name_span,
                     &pat_text,
-                    &new_name,
+                    &new_identifier,
                 )
                 .context("while attempting to rewrite record pattern shorthand binding")?;
                 (
@@ -307,10 +333,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
     ) -> anyhow::Result<Option<RenameTarget>> {
         // Structural candidates exist so references can highlight syntax tied to a symbol, but
         // they are not independently renameable cursor targets.
-        // Macro input also needs more than a single target: rewriting it changes every expanded use.
-        if symbol.role() == SourceSymbolRole::Structural
-            || matches!(symbol.surface(), IndexedSourceSurface::MacroArgument)
-        {
+        if symbol.role() == SourceSymbolRole::Structural || !Self::is_renameable_source(&symbol) {
             return Ok(None);
         }
 
@@ -359,6 +382,19 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             span: symbol.span(),
             placeholder,
         }))
+    }
+
+    /// Only format names have a supported rewrite inside copied macro input. Require their token
+    /// to survive without duplication so the edit cannot change a second, unrelated interpretation.
+    fn is_renameable_source(symbol: &SourceSymbol) -> bool {
+        match symbol.provenance() {
+            IndexedSourceProvenance::Direct => true,
+            IndexedSourceProvenance::MacroArgument { duplicated } => {
+                // TODO: Permit duplicated inputs once every active output use can be checked,
+                // including ordinary string data and generated bodies that are not lowered.
+                !duplicated && matches!(symbol.surface(), IndexedSourceSurface::FormatCapture)
+            }
+        }
     }
 
     /// Resolves a source symbol to declarations while preserving first-seen order.

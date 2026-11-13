@@ -199,11 +199,19 @@ impl BodyLowering<'_> {
     /// the same copied-token check as expression sources; template tokens get the whole call span.
     pub(super) fn source_span(&self, range: TextRange) -> Span {
         match &self.generated_context {
-            Some(context) => context
-                .expanded
-                .source_for_range(context.source, range)
+            Some(context) => self
+                .written_source_span(range)
                 .unwrap_or(context.source.span),
             None => Span::from_text_range(range),
+        }
+    }
+
+    /// Keep an occurrence only when its bytes belong to written source. Generated template text
+    /// can have a navigation fallback, but that fallback cannot stand in for a format name.
+    pub(super) fn written_source_span(&self, range: TextRange) -> Option<Span> {
+        match &self.generated_context {
+            Some(context) => context.expanded.source_for_range(context.source, range),
+            None => Some(Span::from_text_range(range)),
         }
     }
 
@@ -284,7 +292,7 @@ impl BodyLowering<'_> {
         // The tree and its token map only need to live through recursive lowering.
         self.builder
             .source_map
-            .extend_macro_arguments(expanded.argument_spans(call_source));
+            .record_expansion_arguments(expanded.argument_spans(call_source));
         let (syntax, expanded_context) = expanded.into_syntax_and_context();
         let context = GeneratedBodyMacroContext::new(call_source, expanded_context);
         // A nested expansion uses its own map, then restores the parent before lowering continues.
