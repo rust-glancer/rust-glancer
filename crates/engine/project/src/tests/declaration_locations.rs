@@ -210,7 +210,9 @@ pub struct Model;
 pub const LIMIT: u8 = 3;
 wrap!(Wrapper, Model);
 pub fn first() { let local = 1u8; }
-outer!(made, u8);
+cfg_select! {
+    true => { outer!(made, u8); }
+}
 pub fn cloned(value: Model) { let copy = value.clone(); let _ = copy; }
 "#,
     );

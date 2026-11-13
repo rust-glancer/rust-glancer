@@ -42,12 +42,25 @@ pub enum IndexedSourceRole {
     Structural,
 }
 
+/// How an occurrence relates to macro input, independently of the syntax needed to rewrite it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexedSourceProvenance {
+    /// A direct source occurrence, including the written macro invocation used for navigation.
+    Direct,
+    /// A copied input token. Several semantic occurrences can occupy the same written span.
+    MacroArgument {
+        /// Some expansion copied this token more than once, even if later processing discards a
+        /// copy. Editing it requires accounting for every use, including uses outside Body IR.
+        duplicated: bool,
+    },
+}
+
 /// Source syntax shape that may need query-specific handling after semantic resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexedSourceSurface {
-    /// A token copied from macro invocation input. Several expanded uses can share this span.
-    /// TODO: Prove edits against every expansion before enabling rename or source rewrites here.
-    MacroArgument,
+    /// A name inside a format literal. Its spelling follows format syntax (`{type}`), even when
+    /// the Rust declaration needs a raw identifier. Provenance separately controls editability.
+    FormatCapture,
     /// Ordinary occurrence that can be rewritten by replacing the selected source span.
     ///
     /// For `let title = name;`, renaming the `name` reference edits only that token.
@@ -92,6 +105,7 @@ pub struct IndexedSourceOccurrence {
     span: Span,
     role: IndexedSourceRole,
     surface: IndexedSourceSurface,
+    provenance: IndexedSourceProvenance,
     fact: IndexedSourceFact,
 }
 
@@ -106,6 +120,7 @@ impl IndexedSourceOccurrence {
         Span,
         IndexedSourceRole,
         IndexedSourceSurface,
+        IndexedSourceProvenance,
     ) {
         (
             self.fact,
@@ -114,6 +129,7 @@ impl IndexedSourceOccurrence {
             self.span,
             self.role,
             self.surface,
+            self.provenance,
         )
     }
 
@@ -142,6 +158,7 @@ impl IndexedSourceOccurrence {
             span,
             role: IndexedSourceRole::Declaration,
             surface,
+            provenance: IndexedSourceProvenance::Direct,
         }
     }
 
@@ -170,6 +187,7 @@ impl IndexedSourceOccurrence {
             span,
             role: IndexedSourceRole::Reference,
             surface,
+            provenance: IndexedSourceProvenance::Direct,
         }
     }
 
@@ -187,6 +205,7 @@ impl IndexedSourceOccurrence {
             span,
             role: IndexedSourceRole::Structural,
             surface: IndexedSourceSurface::Plain,
+            provenance: IndexedSourceProvenance::Direct,
         }
     }
 }
@@ -663,14 +682,20 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             | BodySourceCandidate::TypePath { body, .. } => Some(*body),
             _ => None,
         };
-        let macro_argument = match body {
-            Some(body) => self
-                .db
-                .body_ir
-                .body(body)?
-                .is_some_and(|body| body.source_map().is_macro_argument(span)),
-            None => false,
+        let body = match body {
+            Some(body) => self.db.body_ir.body(body)?,
+            None => None,
         };
+        let provenance = body
+            .as_ref()
+            .filter(|body| body.source_map().is_macro_argument(span))
+            .map_or(IndexedSourceProvenance::Direct, |body| {
+                IndexedSourceProvenance::MacroArgument {
+                    duplicated: body.source_map().is_duplicated_macro_argument(span),
+                }
+            });
+        let format_capture = matches!(&candidate, BodySourceCandidate::Expr { expr, .. }
+            if body.as_ref().is_some_and(|body| body.source_map().is_format_capture(*expr, span)));
         let occurrence = match candidate {
             BodySourceCandidate::Body { body, .. } => {
                 let Some(data) = self.db.body_ir.body(body)? else {
@@ -883,8 +908,9 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         };
 
         Ok(occurrence.map(|mut occurrence| {
-            if macro_argument {
-                occurrence.surface = IndexedSourceSurface::MacroArgument;
+            occurrence.provenance = provenance;
+            if format_capture {
+                occurrence.surface = IndexedSourceSurface::FormatCapture;
             }
             occurrence
         }))

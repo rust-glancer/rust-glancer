@@ -1,7 +1,7 @@
 use rg_cfg_eval::{CfgEvaluator, CfgPredicate};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
-use rg_tt::TopSubtree;
+use rg_tt::{Span as TtSpan, TopSubtree};
 use wincode::{SchemaRead, SchemaWrite};
 
 mod builtin;
@@ -108,7 +108,21 @@ pub struct CfgAttrMacroUse {
 pub struct MacroCallItem {
     pub path: Option<String>,
     pub callee: Option<Name>,
+    /// Absent for body-local foreign calls, which retain their names but are not expanded.
+    pub input: Option<MacroCallInput>,
+    pub builtin: Option<BuiltinMacroItem>,
+}
+
+/// The invocation origin and argument tokens captured for expansion.
+///
+/// Lowering a `cfg_select!` arm gives its declarations new source owners, while their tokens still
+/// belong to the outer call's input table. Retain the call site's token origin with the arguments;
+/// reconstructing it from the new declaration owner would make copied names look unrelated.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct MacroCallInput {
+    #[memsize(skip)]
+    #[shrink(skip)]
+    pub call_site: TtSpan,
     #[shrink(skip)]
     pub args: Option<TopSubtree>,
-    pub builtin: Option<BuiltinMacroItem>,
 }

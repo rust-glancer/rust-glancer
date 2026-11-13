@@ -3,7 +3,10 @@ use rg_ir_model::{Span, identity::DeclarationRef};
 
 use crate::{
     IndexedViewDb,
-    source::{IndexedSourceFact, IndexedSourceRole, IndexedSourceSurface, SourceOccurrenceView},
+    source::{
+        IndexedSourceFact, IndexedSourceProvenance, IndexedSourceRole, IndexedSourceSurface,
+        SourceOccurrenceView,
+    },
 };
 
 pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
@@ -38,7 +41,8 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             .occurrences_in_crate(*target, Some(file_id), None)
             .expect("fixture source occurrences should scan")
         {
-            let (fact, _, occurrence_file, span, role, surface) = occurrence.into_parts();
+            let (fact, _, occurrence_file, span, role, surface, provenance) =
+                occurrence.into_parts();
             if occurrence_file != file_id {
                 continue;
             }
@@ -52,7 +56,7 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
                 text,
                 format!(
                     "{} @ {}",
-                    render_occurrence(fact, role, surface),
+                    render_occurrence(fact, role, surface, provenance),
                     render_span(span, line_index)
                 ),
             ));
@@ -104,9 +108,10 @@ fn render_occurrence(
     fact: IndexedSourceFact,
     role: IndexedSourceRole,
     surface: IndexedSourceSurface,
+    provenance: IndexedSourceProvenance,
 ) -> String {
-    match surface {
-        IndexedSourceSurface::MacroArgument => "macro_argument".to_string(),
+    let surface = match surface {
+        IndexedSourceSurface::FormatCapture => "format_capture".to_string(),
         IndexedSourceSurface::RecordExprShorthandFieldKey { .. }
         | IndexedSourceSurface::RecordPatShorthandFieldKey { .. } => {
             let IndexedSourceFact::RecordField { owner, key, .. } = fact else {
@@ -146,5 +151,11 @@ fn render_occurrence(
             }
             IndexedSourceFact::UsePath { path, .. } => format!("use_path {path}"),
         },
+    };
+    match provenance {
+        IndexedSourceProvenance::Direct => surface,
+        IndexedSourceProvenance::MacroArgument { duplicated } => {
+            format!("macro_argument(duplicated={duplicated}) {surface}")
+        }
     }
 }

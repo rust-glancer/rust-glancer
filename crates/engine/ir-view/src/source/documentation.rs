@@ -97,7 +97,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
             .saved_declaration_occurrences(crate_ref, file, None)
             .context("read documentation owner declarations")?
         {
-            let (fact, _, _, span, role, _) = occurrence.into_parts();
+            let (fact, _, _, span, role, _, _) = occurrence.into_parts();
             if role == IndexedSourceRole::Declaration
                 && let IndexedSourceFact::Declaration(declaration) = fact
             {

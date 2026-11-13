@@ -5,8 +5,8 @@ use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
 
 use super::{FromAst, MaybeFromAst, normalized_syntax};
 use crate::item::{
-    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs,
-    MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallInput, MacroCallItem,
+    MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
 };
 
 pub struct MacroRulesAst;
@@ -22,6 +22,7 @@ pub struct MacroDefContext<'a> {
 
 pub struct MacroCallContext<'a> {
     pub builtin: Option<BuiltinMacroItem>,
+    pub call_site: Span,
     pub span_for_range: &'a mut dyn FnMut(TextRange) -> Span,
 }
 
@@ -86,8 +87,11 @@ impl FromAst for MacroCallItem {
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
                 .map(|name_ref| Name::new(name_ref.text())),
-            args: item.token_tree().map(|token_tree| {
-                syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
+            input: Some(MacroCallInput {
+                call_site: ctx.call_site,
+                args: item.token_tree().map(|token_tree| {
+                    syntax_node_to_token_tree_with_span(&token_tree, ctx.span_for_range)
+                }),
             }),
             builtin: ctx.builtin,
         }
