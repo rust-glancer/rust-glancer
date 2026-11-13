@@ -3,8 +3,9 @@ use std::{collections::HashSet, fmt};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, EvaluatedConstValue, FileId, SavedBodyOwner,
 };
+use rg_profile::ProfileThreadContext;
 use rg_semantic_ir::{BodyOwnerData, target_declarations};
-use rg_source::ReadError;
+use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
 use super::BodySource;
@@ -13,31 +14,16 @@ use crate::{BodyLocalItems, BodyView, SavedBody, saved_body};
 /// Read saved bodies for the targets in this view. The owner catalog lets file enumeration
 /// find bodies without computing them.
 pub(super) struct SavedBodyReader<'db> {
-    db: &'db rg_source::QueryContext<'db>,
+    db: &'db QueryContext<'db>,
     targets: HashSet<CrateRef>,
 }
 
 impl<'db> SavedBodyReader<'db> {
-    pub(super) fn new(
-        db: &'db rg_source::QueryContext<'db>,
-        targets: impl Iterator<Item = CrateRef>,
-    ) -> Self {
+    pub(super) fn new(db: &'db QueryContext<'db>, targets: impl Iterator<Item = CrateRef>) -> Self {
         Self {
             db,
             targets: targets.collect(),
         }
-    }
-
-    fn owners(&self, krate: CrateRef) -> Result<&'db [BodyOwnerData], ReadError> {
-        if !self.targets.contains(&krate) {
-            return Ok(&[]);
-        }
-        let declarations = target_declarations(self.db, krate).map_err(ReadError::Query)?;
-        let owners = declarations
-            .body_owners
-            .value_ref(self.db)
-            .map_err(ReadError::Query)?;
-        Ok(owners.as_slice())
     }
 
     fn owner(&self, key: BodyKey) -> Result<Option<&'db SavedBody>, ReadError> {
@@ -86,22 +72,44 @@ impl BodySource for SavedBodyReader<'_> {
             .and_then(|saved| saved.initializer.as_ref()))
     }
 
+    fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {
+        if !self.targets.contains(&krate) {
+            return Ok(&[]);
+        }
+        let declarations = target_declarations(self.db, krate).map_err(ReadError::Query)?;
+        let owners = declarations
+            .body_owners
+            .value_ref(self.db)
+            .map_err(ReadError::Query)?;
+        Ok(owners.as_slice())
+    }
+
     fn bodies(
         &self,
         krate: CrateRef,
         file: Option<FileId>,
-        masked: &dyn Fn(FileId) -> bool,
+        selected: &dyn Fn(&BodyOwnerData) -> bool,
     ) -> Result<Vec<(BodyRef, BodyView<'_>)>, ReadError> {
-        let mut bodies = Vec::new();
-        for root in self
+        let keys: Vec<_> = self
             .owners(krate)?
             .iter()
-            .filter(|root| file.is_none_or(|file| root.file == file) && !masked(root.file))
-        {
-            let key = BodyKey {
+            .filter(|root| file.is_none_or(|file| root.file == file) && selected(root))
+            .map(|root| BodyKey {
                 krate,
                 owner: root.owner,
-            };
+            })
+            .collect();
+        // Selection happens before inference. Ajika owns the batch so parallel owners retain
+        // their individual dependency frames and share any candidate queries they demand.
+        let profile = ProfileThreadContext::capture();
+        self.db
+            .parallel_map(&keys, |db, &key| {
+                let _profile = profile.enter();
+                saved_body(db, key).map(|_| ())
+            })
+            .map_err(ReadError::Query)?;
+        let mut bodies = Vec::new();
+        for key in keys {
             if let Some(owner) = self.owner(key)? {
                 bodies.extend(
                     owner

@@ -16,7 +16,7 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, BodyRoot, CrateRef};
-use rg_semantic_ir::{ItemLookupQuery, ItemLookupQueryCache, ItemReader};
+use rg_semantic_ir::{ItemLookupQuery, ItemReader};
 
 use super::lower::{BodyTaskSource, LoweredCrateBodies};
 use crate::{BodyFacts, BodyLocalItems, BodyStore};
@@ -134,14 +134,12 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
 
     /// Resolve one lowered crate through a visibility-scoped semantic lookup query.
     ///
-    /// The crate gets its own use-site visibility and solver answers. Dependency candidate
-    /// composition and canonical crate declarations are reused from caches owned by the
-    /// surrounding project build.
+    /// The crate gets its own use-site visibility and solver answers. Candidate answers, their visible directory, and canonical declarations are shared
+    /// by the active query operation.
     pub(super) fn resolve(
         mut self,
         def_map: &DefinitionReader<'_>,
         semantic_ir: &ItemReader<'_>,
-        item_lookup_cache: &ItemLookupQueryCache,
         cfg: CfgEvaluator<'_>,
     ) -> anyhow::Result<BodyStore> {
         let span = tracing::debug_span!(
@@ -179,12 +177,8 @@ impl<'crate_data> CrateBodyBuildState<'crate_data> {
         // in Semantic IR; items declared inside a body remain a separate overlay through
         // `BodyBuildQuerySource`.
         let phase_started = Instant::now();
-        let item_lookup_query = ItemLookupQuery::build_with_cache(
-            *semantic_ir,
-            self.crate_ref,
-            item_lookup_cache,
-            &self.cancellation,
-        )?;
+        let item_lookup_query =
+            ItemLookupQuery::build_from(*semantic_ir, self.crate_ref, &self.cancellation)?;
         let elapsed = phase_started.elapsed();
         let item_lookup_query_ms = elapsed.as_millis();
         if elapsed >= SLOW_CRATE_RESOLUTION_PHASE {

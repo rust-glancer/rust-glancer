@@ -19,7 +19,7 @@ use rg_ir_model::{
 use rg_item_tree::TypeRef;
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_std::{OperationError, UniqueVec};
+use rg_std::UniqueVec;
 use rg_ty::{AdtTy, GenericArg, Substitution, TraitApplication, Ty};
 
 use crate::resolution::{BodyResolutionContext, cache::BodyTraitSurface};
@@ -31,8 +31,8 @@ pub(crate) struct BodyTraitQuery<'query, D, I> {
 
 impl<'query, D, I> BodyTraitQuery<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
@@ -49,35 +49,27 @@ where
         scope: ScopeId,
         surface: BodyTraitSurface<'_>,
     ) -> Result<Arc<UniqueVec<TraitDefRef>>, ReadError> {
-        let result = self.context.trait_cache().surface_or_try_init(
+        self.context.trait_cache().surface_or_try_init(
             scope,
             surface,
-            || -> Result<_, OperationError<ReadError>> {
+            || -> Result<_, ReadError> {
                 let body_items = self.context.body_local_items();
                 let item_lookup = self.context.item_lookup_query();
                 let (body_traits, saved_traits) = match surface {
                     BodyTraitSurface::AssociatedItems => (
-                        body_items
-                            .traits_with_associated_items()
-                            .map_err(OperationError::Source)?,
+                        body_items.traits_with_associated_items()?,
                         item_lookup.traits_with_associated_items()?,
                     ),
                     BodyTraitSurface::Functions => (
-                        body_items
-                            .traits_with_functions()
-                            .map_err(OperationError::Source)?,
+                        body_items.traits_with_functions()?,
                         item_lookup.traits_with_functions()?,
                     ),
                     BodyTraitSurface::FunctionNamed(name) => (
-                        body_items
-                            .traits_with_function_name(name)
-                            .map_err(OperationError::Source)?,
+                        body_items.traits_with_function_name(name)?,
                         item_lookup.traits_with_function_name(name)?,
                     ),
                     BodyTraitSurface::ConstNamed(name) => (
-                        body_items
-                            .traits_with_const_name(name)
-                            .map_err(OperationError::Source)?,
+                        body_items.traits_with_const_name(name)?,
                         item_lookup.traits_with_const_name(name)?,
                     ),
                 };
@@ -88,23 +80,14 @@ where
                 // implicit lookup then asks the independent lexical question: which of those
                 // traits are in method scope at this use site? Both facts are stable for one
                 // immutable body, so deferred lookups reuse this filtered result.
-                let traits_in_scope = self
-                    .traits_in_scope(scope)
-                    .map_err(OperationError::Source)?;
+                let traits_in_scope = self.traits_in_scope(scope)?;
                 rg_std::check_cancel!(self.context, "body trait surface");
                 Ok(traits
                     .into_iter()
                     .filter(|trait_ref| traits_in_scope.contains(trait_ref))
                     .collect())
             },
-        );
-        // Keep cancellation out of the source-only type resolver interface, but propagate it
-        // through the initializer first so the cache never stores an incomplete trait surface.
-        match result {
-            Ok(traits) => Ok(traits),
-            Err(OperationError::Source(error)) => Err(error),
-            Err(OperationError::Cancelled(_)) => Ok(Arc::default()),
-        }
+        )
     }
 
     /// Return the traits Rust makes available for implicit associated-item lookup at this scope.
