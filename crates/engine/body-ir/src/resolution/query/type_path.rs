@@ -228,13 +228,11 @@ where
             .iter()
             .copied()
             .collect::<rg_std::UniqueVec<_>>();
-        if let Ok(saved) = self
-            .context
-            .item_lookup_query()
-            .inherent_impls_for_type(ty.def)
-        {
-            impls.extend(saved);
-        }
+        impls.extend(
+            self.context
+                .item_lookup_query()
+                .inherent_impls_for_type(ty.def)?,
+        );
         let item_query = self.context.item_query();
         for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {

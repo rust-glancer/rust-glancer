@@ -180,10 +180,7 @@ where
             let indexed = match name {
                 Some(name) => lookup.trait_functions_by_name(trait_ref, name),
                 None => lookup.trait_functions(trait_ref),
-            };
-            let Ok(indexed) = indexed else {
-                return Ok(Vec::new());
-            };
+            }?;
             let functions = match indexed {
                 Some(functions) => functions,
                 None => {
