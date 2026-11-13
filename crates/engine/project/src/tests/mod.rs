@@ -1,5 +1,6 @@
 mod cargo_build_outputs;
 mod current_source;
+mod demand_driven;
 mod file_queries;
 mod generated_modules;
 mod utils;
@@ -431,7 +432,7 @@ pub struct AlreadyApplied;
 }
 
 #[test]
-fn eager_indexing_includes_body_references_and_rename() {
+fn saved_queries_include_body_references_and_rename() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml

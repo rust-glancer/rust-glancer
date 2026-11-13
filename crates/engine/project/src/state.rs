@@ -41,7 +41,6 @@ pub(crate) struct ProjectState {
     pub(crate) module_files: HashMap<CrateRef, Vec<FileId>>,
     pub(crate) reports: Vec<MacroExpansionLimitReport>,
     pub(crate) macro_expansion_limit_summary: MacroExpansionLimitBuildSummary,
-    pub(crate) prefilled_bodies: usize,
 }
 
 impl ProjectState {
@@ -64,7 +63,6 @@ impl ProjectState {
                 .iter()
                 .map(|package| package.parsed_files().count())
                 .sum(),
-            prefilled_body_count: self.prefilled_bodies,
         }
     }
 

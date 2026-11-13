@@ -4,13 +4,16 @@ use std::{
     time::Duration,
 };
 
-use rg_def_map::{CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery};
+use rg_def_map::{
+    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
+    GeneratedItemStore,
+};
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
-    CrateItemSource, ItemLookupIndex, ItemStore, LangItemIndex, SemanticItemView,
-    target_declarations,
+    CrateItemSource, ItemLookupFacts, ItemLookupIndex, ItemStore, LangItemIndex, LookupAnswer,
+    LookupQuestion, SemanticItemView, SymbolNameData, target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -153,7 +156,7 @@ impl BenchWorkspace {
 #[derive(Default)]
 pub(crate) struct PreparedScopes {
     declarations: Declarations,
-    targets: Vec<(CrateRef, ItemTrees, rg_def_map::GeneratedItemStore)>,
+    targets: Vec<(CrateRef, ItemTrees, GeneratedItemStore)>,
 }
 
 impl PreparedScopes {
@@ -175,12 +178,10 @@ impl PreparedScopes {
 #[derive(Default)]
 pub(crate) struct Declarations {
     definitions: HashMap<CrateRef, CrateData>,
-    items: HashMap<CrateRef, (ItemStore, ItemLookupIndex)>,
+    items: HashMap<CrateRef, (ItemStore, ItemLookupFacts, ItemLookupIndex)>,
 }
 
 impl CrateDataSource for Declarations {
-    type Error = ReadError;
-
     fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         Ok(self.definitions.get(&krate))
     }
@@ -191,7 +192,7 @@ impl CrateItemSource for Declarations {
         Ok(item
             .origin()
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
             .and_then(|items| items.semantic_item_view(item)))
     }
 
@@ -202,7 +203,7 @@ impl CrateItemSource for Declarations {
         Ok(definition
             .origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
             .and_then(|items| {
                 items
                     .item_for_local_def(definition.local_def)
@@ -213,17 +214,38 @@ impl CrateItemSource for Declarations {
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         Ok(origin
             .as_crate_ref()
-            .and_then(|krate| self.items.get(&krate).map(|(items, _)| items))
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _)| items))
             .map(|items| items.semantic_items().collect())
             .unwrap_or_default())
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self.items.get(&krate).map(|(items, _)| items.lang_items()))
+        Ok(self
+            .items
+            .get(&krate)
+            .map(|(items, _, _)| items.lang_items()))
     }
 
-    fn lookup_index(&self, krate: CrateRef) -> Result<Option<&ItemLookupIndex>, ReadError> {
-        Ok(self.items.get(&krate).map(|(_, index)| index))
+    fn lookup_facts(&self, krate: CrateRef) -> Result<Option<&ItemLookupFacts>, ReadError> {
+        Ok(self.items.get(&krate).map(|(_, facts, _)| facts))
+    }
+
+    fn lookup_candidates(
+        &self,
+        use_site: CrateRef,
+        question: &LookupQuestion,
+    ) -> Result<LookupAnswer, ReadError> {
+        let indexes = self.items[&use_site]
+            .1
+            .visible_crates()
+            .iter()
+            .filter_map(|krate| self.items.get(krate).map(|(_, _, index)| index));
+        Ok(question.answer(indexes))
+    }
+
+    fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
+        // The isolated declaration-lowering benchmark does not run symbol discovery.
+        Ok(&[])
     }
 
     fn crates(&self) -> Vec<CrateRef> {
