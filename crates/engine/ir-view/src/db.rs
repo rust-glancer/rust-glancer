@@ -1,19 +1,22 @@
 //! Shared read handle for indexed-data views.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use rg_body_ir::{BodyReader, CurrentSourceBuilder, CurrentSourceStore};
 use rg_def_map::{DefMap, DefMapSource, DefinitionReader};
 use rg_ir_model::{
-    BodyRef, CrateRef, DefMapRef, FileId, LocalDefRef, ModuleRef, PackageSlot, SemanticItemRef,
-    Span,
+    BodyRef, CrateRef, DefMapRef, FileId, ImplRef, LocalDefRef, ModuleRef, PackageSlot, Path,
+    SemanticItemRef, Span,
 };
-use rg_parse::ParseDb;
+use rg_parse::{CurrentSource, Package, ParseDb, ParsedFile, saved_syntax};
 use rg_semantic_ir::{
-    ItemLookupQuery, ItemLookupQueryCache, ItemReader, SemanticItemSource, SemanticItemView,
-    TypePathContext, TypePathResolution,
+    ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView, TypePathContext,
+    TypePathResolution,
 };
-use rg_source::ReadError;
-use rg_std::{CancellationToken, UniqueVec};
+use rg_source::{QueryContext, ReadError};
+use rg_std::{Cancelable, CancellationToken, Cancelled, UniqueVec};
+use rg_syntax::{Parse, SourceFile};
 use rg_text::RustEdition;
 use rg_ty::{
     lookup::ItemPathQuery,
@@ -22,26 +25,27 @@ use rg_ty::{
 
 /// Read-only database handle used by all indexed-data views.
 ///
-/// Saved readers and prepared current declarations stay frozen for the request. Filling item
-/// lookup caches never changes which declarations or bodies are visible through this handle.
+/// Saved readers and prepared current declarations stay frozen for the request. Demanding lookup
+/// candidates never changes which declarations or bodies are visible through this handle.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefinitionReader<'db>,
     pub(crate) semantic_ir: ItemReader<'db>,
     pub(crate) body_ir: BodyReader<'db>,
     parse: &'db ParseDb,
-    item_lookup_cache: ItemLookupQueryCache,
+    queries: &'db QueryContext<'db>,
     cancellation: CancellationToken,
 }
 
-impl rg_std::Cancelable for IndexedViewDb<'_> {
-    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
-        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
+impl Cancelable for IndexedViewDb<'_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), Cancelled> {
+        Cancelable::check_cancelled(&self.cancellation, checkpoint)
     }
 }
 
 impl<'db> IndexedViewDb<'db> {
     pub fn new(
+        queries: &'db QueryContext<'db>,
         def_map: DefinitionReader<'db>,
         semantic_ir: ItemReader<'db>,
         body_ir: BodyReader<'db>,
@@ -53,26 +57,42 @@ impl<'db> IndexedViewDb<'db> {
             semantic_ir,
             body_ir,
             parse,
-            item_lookup_cache: ItemLookupQueryCache::new(),
+            queries,
             cancellation,
         }
+    }
+
+    pub(crate) fn parsed_file(&self, krate: CrateRef, file: FileId) -> Option<ParsedFile<'db>> {
+        self.parse.package(krate.package.0)?.parsed_file(file)
+    }
+
+    /// Share the captured syntax with body providers in this operation.
+    pub(crate) fn saved_syntax(
+        &self,
+        krate: CrateRef,
+        file: FileId,
+    ) -> anyhow::Result<Arc<Parse<SourceFile>>> {
+        Ok(saved_syntax(
+            self.queries,
+            file,
+            self.crate_edition(krate)?,
+        )?)
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
     }
 
-    /// Lend the saved readers and lookup cache used by the eventual request queries.
+    /// Lend the saved readers used by the eventual request queries.
     pub fn current_source_builder<'request>(
         &'request self,
-        source: &'request rg_parse::CurrentSource,
+        source: &'request CurrentSource,
     ) -> CurrentSourceBuilder<'request, 'db> {
         CurrentSourceBuilder::new(
             &self.def_map,
             &self.semantic_ir,
             &self.body_ir,
             source,
-            self.item_lookup_cache.clone(),
             self.cancellation.clone(),
         )
     }
@@ -106,7 +126,7 @@ impl<'db> IndexedViewDb<'db> {
         crate_ref: CrateRef,
         file: FileId,
         span: Span,
-    ) -> Option<rg_ir_model::ImplRef> {
+    ) -> Option<ImplRef> {
         self.body_ir.selected_current_impl(crate_ref, file, span)
     }
 
@@ -132,19 +152,14 @@ impl<'db> IndexedViewDb<'db> {
 
     /// Assemble the declarations visible from one crate without copying dependency indexes.
     ///
-    /// Semantic IR owns one local index per crate. This request-local query keeps those indexes
-    /// borrowed and adds only the small visibility and memoization layer needed by type queries.
+    /// Only small visibility and language-item facts are acquired here. Individual candidate
+    /// questions demand their own answers through the same operation.
     pub(crate) fn item_lookup_query(
         &self,
         use_site: CrateRef,
     ) -> anyhow::Result<ItemLookupQuery<'_>> {
-        ItemLookupQuery::build_with_cache(
-            self.semantic_ir,
-            use_site,
-            &self.item_lookup_cache,
-            &self.cancellation,
-        )
-        .context("assemble visible semantic item indexes")
+        ItemLookupQuery::build_from(self.semantic_ir, use_site, &self.cancellation)
+            .context("assemble visible semantic item indexes")
     }
 
     /// Returns the edition whose syntax rules apply at a crate_ref use site.
@@ -157,9 +172,7 @@ impl<'db> IndexedViewDb<'db> {
     }
 
     pub(crate) fn package_name(&self, package: PackageSlot) -> Option<&str> {
-        self.parse
-            .package(package.0)
-            .map(rg_parse::Package::package_name)
+        self.parse.package(package.0).map(Package::package_name)
     }
 
     /// Returns the edition whose syntax rules apply to declarations owned by this origin.
@@ -174,13 +187,11 @@ impl<'db> IndexedViewDb<'db> {
 /// lookup starting point is replaced; after that, the ordinary indexed path query owns all name
 /// resolution rules.
 impl TypePathResolver for IndexedViewDb<'_> {
-    type Error = ReadError;
-
     fn resolve_type_path(
         &self,
         anchor: TypeLoweringAnchor,
-        path: &rg_ir_model::Path,
-    ) -> Result<TypePathResolution, Self::Error> {
+        path: &Path,
+    ) -> Result<TypePathResolution, ReadError> {
         let TypeLoweringAnchor::Context(context) = anchor else {
             return Ok(TypePathResolution::Unknown);
         };
@@ -190,8 +201,6 @@ impl TypePathResolver for IndexedViewDb<'_> {
 }
 
 impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
-    type Error = ReadError;
-
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         match item.origin() {
             DefMapRef::Crate(_) => self.semantic_ir.item(item),
@@ -218,8 +227,6 @@ impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
 }
 
 impl DefMapSource for &IndexedViewDb<'_> {
-    type Error = ReadError;
-
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         match origin {
             DefMapRef::Crate(crate_ref) => self.def_map.def_map(crate_ref),

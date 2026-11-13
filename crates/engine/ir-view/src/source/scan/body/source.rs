@@ -15,7 +15,7 @@ use rg_body_ir::{BodyView, ExprKind, PatKind};
 use rg_def_map::ItemSourceKind;
 use rg_ir_model::{
     BindingId, BodyRef, CrateRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, FileId,
-    SemanticItemRef, TypeDefId,
+    SemanticItemRef, TypeDefId, TypeDefRef,
 };
 use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
@@ -25,7 +25,7 @@ use super::{
     record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, source::ReferenceSourceSelection};
 
 /// Scans one crate for every written body-local source candidate used by whole-project queries.
 ///
@@ -35,6 +35,7 @@ pub(crate) struct BodySourceScanner<'txn, 'db> {
     db: &'txn IndexedViewDb<'db>,
     crate_ref: CrateRef,
     file_id: Option<FileId>,
+    selection: Option<&'txn ReferenceSourceSelection>,
 }
 
 impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
@@ -42,11 +43,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         db: &'txn IndexedViewDb<'db>,
         crate_ref: CrateRef,
         file_id: Option<FileId>,
+        selection: Option<&'txn ReferenceSourceSelection>,
     ) -> Self {
         Self {
             db,
             crate_ref,
             file_id,
+            selection,
         }
     }
 
@@ -64,10 +67,18 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         };
         for file in files {
             rg_std::check_cancel!(self.db, "body scan file");
+            let owners = self
+                .selection
+                .map(|selection| selection.owners(self.db, self.crate_ref, file))
+                .transpose()?;
             for (body_ref, body) in self
                 .db
                 .body_ir
-                .bodies(self.crate_ref, Some(file))
+                .bodies_matching(self.crate_ref, Some(file), &|owner| {
+                    owners
+                        .as_ref()
+                        .is_none_or(|owners| owners.contains(&owner.owner))
+                })
                 .context("load body scan file")?
             {
                 rg_std::check_cancel!(self.db, "body scan");
@@ -213,7 +224,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_field_candidates(
         &self,
         item: SemanticItemView<'_>,
-        ty: rg_ir_model::TypeDefRef,
+        ty: TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         match ty.id {
@@ -255,7 +266,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_variant_candidates(
         &self,
         item: SemanticItemView<'_>,
-        ty: rg_ir_model::TypeDefRef,
+        ty: TypeDefRef,
         candidates: &mut Vec<BodySourceCandidate>,
     ) -> anyhow::Result<()> {
         let TypeDefId::Enum(enum_id) = ty.id else {

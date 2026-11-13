@@ -1,4 +1,4 @@
-use rg_def_map::DefMap;
+use rg_def_map::{DefMap, ItemSourceKind};
 use rg_ir_model::{FileId, ItemOwner, ModuleRef, SavedBodyOwner, Span};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -11,6 +11,7 @@ pub struct BodyOwnerData {
     pub module: ModuleRef,
     pub file: FileId,
     pub span: Span,
+    pub written: bool,
 }
 
 impl BodyOwnerData {
@@ -37,6 +38,7 @@ impl BodyOwnerData {
                     module: module_for(data.owner)?,
                     file: data.source.file_id,
                     span: data.span,
+                    written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
                 })
             });
         let consts = items
@@ -51,6 +53,7 @@ impl BodyOwnerData {
                     module: module_for(data.owner)?,
                     file: data.source.file_id,
                     span: data.span,
+                    written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
                 })
             });
         let statics = items
@@ -67,6 +70,7 @@ impl BodyOwnerData {
                         module: data.owner,
                         file: data.source.file_id,
                         span: data.span,
+                        written: matches!(data.source.kind, ItemSourceKind::ItemTree(_)),
                     })
             });
         functions.chain(consts).chain(statics)

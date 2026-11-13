@@ -5,7 +5,8 @@
 //! about the response shapes each server actually returns.
 
 use std::{
-    path::Path,
+    env, fs,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -16,6 +17,7 @@ use gen_lsp_types::{
     ReferenceParams, RenameParams, TextDocumentIdentifier, TextDocumentPositionParams,
     TypeDefinitionParams, WorkDoneProgressParams, WorkspaceSymbolParams,
 };
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::compare_lsp::{
@@ -36,6 +38,34 @@ pub(crate) struct ExecutionSummary {
 impl ExecutionSummary {
     pub(crate) fn results(&self) -> &[QueryExecution] {
         &self.results
+    }
+
+    /// Save raw LSP responses as agent-debug artifacts to simplify debugging and exact-location comparisons.
+    pub(crate) fn write_raw_results(&self) -> anyhow::Result<()> {
+        let Some(directory) = env::var_os("RUST_GLANCER_AGENT_DEBUG_OUTPUT_DIR") else {
+            return Ok(());
+        };
+        let results: Vec<_> = self
+            .results
+            .iter()
+            .map(|query| {
+                serde_json::json!({
+                    "label": query.label,
+                    "method": query.kind.lsp_method(),
+                    "rust_glancer": {
+                        "elapsed_ms": query.rust_glancer.latency.as_secs_f64() * 1000.0,
+                        "outcome": query.rust_glancer.value,
+                    },
+                    "rust_analyzer": {
+                        "elapsed_ms": query.rust_analyzer.latency.as_secs_f64() * 1000.0,
+                        "outcome": query.rust_analyzer.value,
+                    },
+                })
+            })
+            .collect();
+        let path = PathBuf::from(directory).join("lsp-comparison-raw.json");
+        fs::write(path, serde_json::to_vec_pretty(&results)?)
+            .context("write raw LSP comparison results")
     }
 }
 
@@ -92,7 +122,8 @@ impl RawServerOutcome {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum RawOutcome {
     Success {
         /// Full response body retained for the later normalization pass.

@@ -9,6 +9,7 @@ use rg_ir_model::{
     LocalLifetimeParamId, LocalTypeOrConstParamId, TraitDefRef, TypeParamRef,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypeOrConstParamData, TypeRef};
+use rg_source::ReadError;
 
 use super::{ItemStoreQuery, SemanticItemSource};
 use crate::{GenericParamSource, GenericParamView, Generics};
@@ -33,7 +34,7 @@ where
     }
 
     /// Returns every parameter visible in `owner` in canonical argument order.
-    pub fn generics(&self, owner: GenericDefRef) -> Result<Generics<'a>, S::Error> {
+    pub fn generics(&self, owner: GenericDefRef) -> Result<Generics<'a>, ReadError> {
         let parent = self
             .parent_generic_def(owner)?
             .map(|parent| self.generics(parent))
@@ -123,7 +124,7 @@ where
     pub fn parent_generic_def(
         &self,
         owner: GenericDefRef,
-    ) -> Result<Option<GenericDefRef>, S::Error> {
+    ) -> Result<Option<GenericDefRef>, ReadError> {
         let can_inherit = matches!(
             owner,
             GenericDefRef::Function(_) | GenericDefRef::TypeAlias(_) | GenericDefRef::Const(_)

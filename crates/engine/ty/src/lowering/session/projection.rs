@@ -4,6 +4,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{GenericDefRef, GenericParamRef, TraitDefRef, TypeParamRef};
 use rg_item_tree::{TypeRef, WherePredicate};
 use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
+use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
@@ -13,8 +14,8 @@ use crate::solver::{InferenceSubstitution as Substitution, ProjectionTy, TraitAp
 impl<'s, 'lower, 'query, D, I, R> TypeLoweringSession<'s, 'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     /// Find an associated type on a trait or one of its supertraits.
     ///
@@ -25,7 +26,7 @@ where
         &mut self,
         application: &TraitApplication<'s>,
         name: &Name,
-    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
+    ) -> Result<Option<ProjectionTy<'s>>, ReadError> {
         // Supertrait arguments can refer back to the associated item being searched for. The
         // lineage inside the graph walk cannot see that re-entry because lowering the argument
         // starts a fresh walk, so retain the semantic request across the complete lowering session.
@@ -55,7 +56,7 @@ where
         application: &TraitApplication<'s>,
         name: &Name,
         lineage: &[TraitDefRef],
-    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
+    ) -> Result<Option<ProjectionTy<'s>>, ReadError> {
         if lineage.contains(&application.def) {
             return Ok(None);
         }
@@ -129,7 +130,7 @@ where
         &mut self,
         trait_ref: TraitDefRef,
         name: &Name,
-    ) -> Result<bool, D::Error> {
+    ) -> Result<bool, ReadError> {
         self.trait_exposes_associated_type_inner(trait_ref, name, &[])
     }
 
@@ -138,7 +139,7 @@ where
         trait_ref: TraitDefRef,
         name: &Name,
         lineage: &[TraitDefRef],
-    ) -> Result<bool, D::Error> {
+    ) -> Result<bool, ReadError> {
         if lineage.contains(&trait_ref) {
             return Ok(false);
         }
@@ -185,7 +186,7 @@ where
         param: TypeParamRef,
         self_ty: Ty<'s>,
         assoc_name: &Name,
-    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
+    ) -> Result<Option<ProjectionTy<'s>>, ReadError> {
         if self
             .param_projection_stack
             .iter()
@@ -211,7 +212,7 @@ where
         param: TypeParamRef,
         self_ty: Ty<'s>,
         assoc_name: &Name,
-    ) -> Result<Option<ProjectionTy<'s>>, D::Error> {
+    ) -> Result<Option<ProjectionTy<'s>>, ReadError> {
         let generics = self.item_paths.generics().generics(self.owner)?;
         let mut bound_groups = Vec::new();
         if let Some(candidate) = generics

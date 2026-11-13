@@ -7,6 +7,7 @@ use rg_ir_model::{
     SemanticItemRef, StaticRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::FieldList;
+use rg_source::ReadError;
 
 use super::SemanticItemSource;
 use crate::{
@@ -37,21 +38,21 @@ where
     pub fn semantic_items_for_origin(
         &self,
         origin: DefMapRef,
-    ) -> Result<Vec<SemanticItemView<'a>>, S::Error> {
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         self.source.all_items(origin)
     }
 
     pub fn semantic_item_view(
         &self,
         item: SemanticItemRef,
-    ) -> Result<Option<SemanticItemView<'a>>, S::Error> {
+    ) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         self.source.item(item)
     }
 
     pub fn semantic_item_for_local_def(
         &self,
         local_def: LocalDefRef,
-    ) -> Result<Option<SemanticItemRef>, S::Error> {
+    ) -> Result<Option<SemanticItemRef>, ReadError> {
         self.source.item_for_local_def(local_def)
     }
 
@@ -59,7 +60,7 @@ where
     pub fn type_path_context_for_function(
         &self,
         function_ref: FunctionRef,
-    ) -> Result<Option<TypePathContext>, S::Error> {
+    ) -> Result<Option<TypePathContext>, ReadError> {
         let Some(function_data) = self.function_data(function_ref)? else {
             return Ok(None);
         };
@@ -70,7 +71,7 @@ where
     pub fn type_path_context_for_generic_def(
         &self,
         owner: GenericDefRef,
-    ) -> Result<Option<TypePathContext>, S::Error> {
+    ) -> Result<Option<TypePathContext>, ReadError> {
         match owner {
             GenericDefRef::TypeDef(type_def) => {
                 Ok(self
@@ -119,7 +120,7 @@ where
         &self,
         origin: DefMapRef,
         owner: ItemOwner,
-    ) -> Result<Option<TypePathContext>, S::Error> {
+    ) -> Result<Option<TypePathContext>, ReadError> {
         match owner {
             ItemOwner::Module(module) => Ok(Some(TypePathContext::module(module))),
             ItemOwner::Trait(id) => {
@@ -140,7 +141,7 @@ where
     }
 
     /// Reads the owner module for a nominal type.
-    pub fn type_def_owner(&self, ty: TypeDefRef) -> Result<Option<ModuleRef>, S::Error> {
+    pub fn type_def_owner(&self, ty: TypeDefRef) -> Result<Option<ModuleRef>, ReadError> {
         Ok(self
             .source
             .item(ty.into())?
@@ -148,7 +149,7 @@ where
     }
 
     /// Returns the display name for a nominal type ref, which intentionally carries only an ID.
-    pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&'a str>, S::Error> {
+    pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&'a str>, ReadError> {
         Ok(self
             .source
             .item(ty.into())?
@@ -157,7 +158,7 @@ where
     }
 
     /// Return the source local def for a nominal type, if its item data is available.
-    pub fn local_def_for_type_def(&self, ty: TypeDefRef) -> Result<Option<LocalDefRef>, S::Error> {
+    pub fn local_def_for_type_def(&self, ty: TypeDefRef) -> Result<Option<LocalDefRef>, ReadError> {
         Ok(self
             .source
             .item(ty.into())?
@@ -166,7 +167,7 @@ where
 
     /// Keeps the struct-constructor rule next to item data instead of duplicating shape checks in
     /// value lookup.
-    pub fn type_def_has_value_constructor(&self, ty: TypeDefRef) -> Result<bool, S::Error> {
+    pub fn type_def_has_value_constructor(&self, ty: TypeDefRef) -> Result<bool, ReadError> {
         Ok(self
             .source
             .item(ty.into())?
@@ -175,7 +176,10 @@ where
     }
 
     /// Lets callers that resolved through the type namespace enter enum-specific data.
-    pub fn enum_data_for_type_def(&self, ty: TypeDefRef) -> Result<Option<&'a EnumData>, S::Error> {
+    pub fn enum_data_for_type_def(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Option<&'a EnumData>, ReadError> {
         if !matches!(ty.id, TypeDefId::Enum(_)) {
             return Ok(None);
         }
@@ -190,7 +194,7 @@ where
         &self,
         ty: TypeDefRef,
         variant_name: &str,
-    ) -> Result<Option<EnumVariantRef>, S::Error> {
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(None);
         };
@@ -214,7 +218,7 @@ where
         enum_def: LocalDefRef,
         index: usize,
         expected_name: Option<&str>,
-    ) -> Result<Option<EnumVariantRef>, S::Error> {
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
         if let Some(SemanticItemRef::TypeDef(TypeDefRef {
             origin,
             id: TypeDefId::Enum(enum_id),
@@ -241,7 +245,7 @@ where
         &self,
         variant_ref: LocalEnumVariantRef,
         variant_data: &LocalEnumVariantData,
-    ) -> Result<Option<EnumVariantRef>, S::Error> {
+    ) -> Result<Option<EnumVariantRef>, ReadError> {
         self.enum_variant_ref_for_local_def_index(
             LocalDefRef {
                 origin: variant_ref.origin,
@@ -256,7 +260,7 @@ where
     pub fn enum_variant_data(
         &self,
         variant_ref: EnumVariantRef,
-    ) -> Result<Option<EnumVariantData<'a>>, S::Error> {
+    ) -> Result<Option<EnumVariantData<'a>>, ReadError> {
         if let Some(data) = self.enum_data_for_type_def(TypeDefRef {
             origin: variant_ref.origin,
             id: TypeDefId::Enum(variant_ref.enum_id),
@@ -280,7 +284,7 @@ where
     pub fn fields_for_enum_variant(
         &self,
         variant: EnumVariantRef,
-    ) -> Result<Vec<EnumVariantFieldRef>, S::Error> {
+    ) -> Result<Vec<EnumVariantFieldRef>, ReadError> {
         let Some(data) = self.enum_variant_data(variant)? else {
             return Ok(Vec::new());
         };
@@ -296,7 +300,7 @@ where
     pub fn enum_variant_field_data(
         &self,
         field_ref: EnumVariantFieldRef,
-    ) -> Result<Option<FieldData<'a>>, S::Error> {
+    ) -> Result<Option<FieldData<'a>>, ReadError> {
         let Some(data) = self.enum_variant_data(field_ref.owner)? else {
             return Ok(None);
         };
@@ -317,7 +321,7 @@ where
     pub fn struct_fields_for_type_def(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Option<&'a FieldList>, S::Error> {
+    ) -> Result<Option<&'a FieldList>, ReadError> {
         if !matches!(ty.id, TypeDefId::Struct(_)) {
             return Ok(None);
         }
@@ -330,7 +334,7 @@ where
 
     /// Enumerates stable field refs without exposing whether the owner stores struct or union
     /// fields.
-    pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, S::Error> {
+    pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, ReadError> {
         let Some(item) = self.source.item(ty.into())? else {
             return Ok(Vec::new());
         };
@@ -349,7 +353,7 @@ where
         &self,
         ty: TypeDefRef,
         key: &FieldKey,
-    ) -> Result<Option<FieldRef>, S::Error> {
+    ) -> Result<Option<FieldRef>, ReadError> {
         let Some(item) = self.source.item(ty.into())? else {
             return Ok(None);
         };
@@ -370,7 +374,7 @@ where
     }
 
     /// Expands a field ref with the owner/source context that member views need.
-    pub fn field_data(&self, field_ref: FieldRef) -> Result<Option<FieldData<'a>>, S::Error> {
+    pub fn field_data(&self, field_ref: FieldRef) -> Result<Option<FieldData<'a>>, ReadError> {
         let Some(item) = self.source.item(field_ref.owner.into())? else {
             return Ok(None);
         };
@@ -389,7 +393,7 @@ where
     }
 
     /// Provides trait signature/docs/associated-item data after resolution has picked a trait.
-    pub fn trait_data(&self, trait_ref: TraitDefRef) -> Result<Option<&'a TraitData>, S::Error> {
+    pub fn trait_data(&self, trait_ref: TraitDefRef) -> Result<Option<&'a TraitData>, ReadError> {
         Ok(self
             .source
             .item(trait_ref.into())?
@@ -404,7 +408,7 @@ where
         &self,
         trait_ref: TraitDefRef,
         name: &str,
-    ) -> Result<Option<TypeAliasRef>, S::Error> {
+    ) -> Result<Option<TypeAliasRef>, ReadError> {
         let Some(data) = self.trait_data(trait_ref)? else {
             return Ok(None);
         };
@@ -412,7 +416,7 @@ where
     }
 
     /// Follows an impl ref into the header and associated items used by member/type queries.
-    pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&'a ImplData>, S::Error> {
+    pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&'a ImplData>, ReadError> {
         Ok(self
             .source
             .item(impl_ref.into())?
@@ -427,7 +431,7 @@ where
         &self,
         impl_ref: ImplRef,
         name: &str,
-    ) -> Result<Option<TypeAliasRef>, S::Error> {
+    ) -> Result<Option<TypeAliasRef>, ReadError> {
         let Some(data) = self.impl_data(impl_ref)? else {
             return Ok(None);
         };
@@ -440,7 +444,7 @@ where
         origin: DefMapRef,
         items: &[AssocItemId],
         name: &str,
-    ) -> Result<Option<TypeAliasRef>, S::Error> {
+    ) -> Result<Option<TypeAliasRef>, ReadError> {
         for item in items {
             let AssocItemId::TypeAlias(id) = item else {
                 continue;
@@ -460,7 +464,7 @@ where
     pub fn function_data(
         &self,
         function_ref: FunctionRef,
-    ) -> Result<Option<&'a FunctionData>, S::Error> {
+    ) -> Result<Option<&'a FunctionData>, ReadError> {
         Ok(self
             .source
             .item(function_ref.into())?
@@ -471,7 +475,7 @@ where
     pub fn type_alias_data(
         &self,
         type_alias_ref: TypeAliasRef,
-    ) -> Result<Option<&'a TypeAliasData>, S::Error> {
+    ) -> Result<Option<&'a TypeAliasData>, ReadError> {
         Ok(self
             .source
             .item(type_alias_ref.into())?
@@ -479,7 +483,7 @@ where
     }
 
     /// Provides const item facts for hover, definition, and type projection.
-    pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&'a ConstData>, S::Error> {
+    pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&'a ConstData>, ReadError> {
         Ok(self
             .source
             .item(const_ref.into())?
@@ -487,7 +491,7 @@ where
     }
 
     /// Provides static item facts for hover, definition, and type projection.
-    pub fn static_data(&self, static_ref: StaticRef) -> Result<Option<&'a StaticData>, S::Error> {
+    pub fn static_data(&self, static_ref: StaticRef) -> Result<Option<&'a StaticData>, ReadError> {
         Ok(self
             .source
             .item(static_ref.into())?

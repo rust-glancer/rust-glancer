@@ -5,11 +5,17 @@ use std::{ffi::OsStr, path::PathBuf, time::Duration};
 use rg_source::{QueryDatabase, QueryServices};
 use rg_workspace::WorkspaceMetadata;
 
-// Change this epoch when persisted results or their producing semantics change.
-const EPOCH: &str = "rust-glancer-target-analysis-5";
+// Basically, a "version of cache schema". Should be bumped whenever queries or outputs change.
+//
+// For LLMs: DO NOT BUMP IT UNLESS EXPLICITLY ASKED. We normally need to bump it once per release.
+// During local development, dev might just remove their cache. We don't need to bump it 100 times
+// in a single branch just because we happen to iterate.
+const EPOCH: &str = "rust-glancer-target-analysis-1";
 const RETENTION: ajika::Retention = ajika::Retention {
     max_entries: 1_000_000,
-    max_bytes: 512 * 1024 * 1024,
+    // This caps durable storage, not resident memory. Large declaration graphs need enough room
+    // to survive startup; otherwise the first body request rebuilds evicted dependency targets.
+    max_bytes: 4 * 1024 * 1024 * 1024,
     max_idle: Duration::from_secs(30 * 24 * 60 * 60),
 };
 

@@ -5,6 +5,7 @@
 //! own data access methods.
 
 use rg_ir_model::{CrateRef, DefId, LocalDefRef, LocalEnumVariantRef, ModuleRef};
+use rg_source::ReadError;
 use rg_text::Name;
 
 use crate::{
@@ -14,49 +15,47 @@ use crate::{
 
 /// Module metadata, item bindings, and declaration facts read by `NameResolver`.
 pub trait NameResolutionEnv {
-    type Error;
-
     fn module_metadata(
         &self,
         module_ref: ModuleRef,
-    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error>;
+    ) -> Result<Option<ModuleResolutionView<'_>>, ReadError>;
 
     fn module_scope_entry<'a>(
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<NameBindingsView<'a>>, Self::Error>;
+    ) -> Result<Option<NameBindingsView<'a>>, ReadError>;
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error>;
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, ReadError>;
 
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, Self::Error>;
+    ) -> Result<Option<&LocalDefData>, ReadError>;
 
     fn local_enum_variant_data(
         &self,
         variant_ref: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error>;
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError>;
 
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error>;
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError>;
 
     fn local_def_kind(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, Self::Error> {
+    ) -> Result<Option<LocalDefKind>, ReadError> {
         Ok(self
             .local_def_data(local_def_ref)?
             .map(|local_def| local_def.kind))
     }
 
-    fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, ReadError> {
         let Some(module) = self.module_metadata(module_ref)? else {
             return Ok(None);
         };
@@ -82,18 +81,14 @@ pub trait MacroDefinitionEnv: NameResolutionEnv {
     fn macro_definition_view<'a>(
         &'a self,
         def: DefId,
-    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error>;
+    ) -> Result<Option<MacroDefinitionView<'a>>, ReadError>;
 }
 
 /// Crate-level graph facts needed by normal Rust module path lookup.
 pub trait CrateResolutionEnv: NameResolutionEnv {
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error>;
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError>;
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError>;
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError>;
 }

@@ -8,6 +8,7 @@ use rg_ir_model::{
     CrateRef, DefId, DefMapRef, ImportRef, LocalDefRef, LocalEnumVariantRef, LocalImplRef,
     ModuleRef,
 };
+use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rustc_hash::FxHashSet;
@@ -28,23 +29,21 @@ use crate::{
 /// Crate-only callers usually delegate to `DefinitionReader`; body-aware callers can additionally
 /// route the active body origin to its local DefMap without changing the lookup algorithm.
 pub trait DefMapSource {
-    type Error;
-
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError>;
 
     /// Whether `crate_ref` is a host-side proc-macro implementation crate.
-    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error>;
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, ReadError>;
 
     /// Compilation target width for usize arithmetic, without assuming the host architecture.
-    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error>;
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError>;
 
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, ReadError> {
         Ok(self
             .def_map_for_origin(module_ref.origin)?
             .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
-    fn module_refs(&self, crate_ref: CrateRef) -> Result<Vec<ModuleRef>, Self::Error> {
+    fn module_refs(&self, crate_ref: CrateRef) -> Result<Vec<ModuleRef>, ReadError> {
         Ok(self
             .def_map_for_origin(DefMapRef::Crate(crate_ref))?
             .map(|def_map| def_map.module_refs().collect())
@@ -54,7 +53,7 @@ pub trait DefMapSource {
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, Self::Error> {
+    ) -> Result<Option<&LocalDefData>, ReadError> {
         Ok(self
             .def_map_for_origin(local_def_ref.origin)?
             .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
@@ -63,7 +62,7 @@ pub trait DefMapSource {
     fn local_impl_data(
         &self,
         local_impl_ref: LocalImplRef,
-    ) -> Result<Option<&LocalImplData>, Self::Error> {
+    ) -> Result<Option<&LocalImplData>, ReadError> {
         Ok(self
             .def_map_for_origin(local_impl_ref.origin)?
             .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
@@ -72,13 +71,13 @@ pub trait DefMapSource {
     fn local_enum_variant_data(
         &self,
         variant_ref: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError> {
         Ok(self
             .def_map_for_origin(variant_ref.origin)?
             .and_then(|def_map| def_map.local_enum_variant(variant_ref.local_enum_variant)))
     }
 
-    fn import_data(&self, import_ref: ImportRef) -> Result<Option<&ImportData>, Self::Error> {
+    fn import_data(&self, import_ref: ImportRef) -> Result<Option<&ImportData>, ReadError> {
         Ok(self
             .def_map_for_origin(import_ref.origin)?
             .and_then(|def_map| def_map.import(import_ref.import)))
@@ -87,7 +86,7 @@ pub trait DefMapSource {
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError> {
         Ok(self
             .def_map_for_origin(enum_def.origin)?
             .map(|def_map| {
@@ -98,15 +97,11 @@ pub trait DefMapSource {
             .unwrap_or_default())
     }
 
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error>;
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError>;
 
-    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error>;
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError>;
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError>;
 
     /// Returns the unique dependency crates whose ordinary items are visible from this crate.
     ///
@@ -118,7 +113,7 @@ pub trait DefMapSource {
     fn item_lookup_dependencies(
         &self,
         crate_ref: CrateRef,
-    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+    ) -> Result<UniqueVec<CrateRef>, ReadError> {
         let mut dependencies = self
             .extern_roots(crate_ref)?
             .into_iter()
@@ -132,48 +127,42 @@ pub trait DefMapSource {
         Ok(dependencies)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error>;
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError>;
 }
 
 impl<T: DefMapSource + ?Sized> DefMapSource for &T {
-    type Error = T::Error;
-
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, ReadError> {
         (**self).def_map_for_origin(origin)
     }
 
-    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, Self::Error> {
+    fn crate_is_proc_macro(&self, crate_ref: CrateRef) -> Result<bool, ReadError> {
         (**self).crate_is_proc_macro(crate_ref)
     }
 
-    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, Self::Error> {
+    fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         (**self).target_pointer_width(crate_ref)
     }
 
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         (**self).extern_root(crate_ref, name)
     }
 
-    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
+    fn extern_roots(&self, crate_ref: CrateRef) -> Result<Vec<(String, ModuleRef)>, ReadError> {
         (**self).extern_roots(crate_ref)
     }
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         (**self).prelude_module(crate_ref)
     }
 
     fn item_lookup_dependencies(
         &self,
         crate_ref: CrateRef,
-    ) -> Result<UniqueVec<CrateRef>, Self::Error> {
+    ) -> Result<UniqueVec<CrateRef>, ReadError> {
         (**self).item_lookup_dependencies(crate_ref)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         (**self).root_module(crate_ref)
     }
 }
@@ -192,7 +181,7 @@ where
         Self { source }
     }
 
-    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, S::Error> {
+    pub fn target_pointer_width(&self, crate_ref: CrateRef) -> Result<Option<u32>, ReadError> {
         self.source.target_pointer_width(crate_ref)
     }
 
@@ -212,7 +201,10 @@ where
     /// For example, `app -> runtime -> derive_macro -> parser` contributes `app` and `runtime` to
     /// the app's item lookup. Analysing `derive_macro` itself contributes `derive_macro` and
     /// `parser`. Each crate appears at most once in traversal order.
-    pub fn item_lookup_crates_from(&self, root: CrateRef) -> Result<UniqueVec<CrateRef>, S::Error> {
+    pub fn item_lookup_crates_from(
+        &self,
+        root: CrateRef,
+    ) -> Result<UniqueVec<CrateRef>, ReadError> {
         let mut visible_crates = UniqueVec::new();
         let mut visited_crates = UniqueVec::new();
         let mut pending_crates = vec![root];
@@ -237,7 +229,7 @@ where
     pub fn macro_definition_view(
         &self,
         def: DefId,
-    ) -> Result<Option<MacroDefinitionView<'_>>, S::Error> {
+    ) -> Result<Option<MacroDefinitionView<'_>>, ReadError> {
         if let DefId::Local(def_ref) = def
             && let Some(def_map) = self.source.def_map_for_origin(def_ref.origin)?
             && let Some(local_def) = def_map.local_def(def_ref.local_def)
@@ -254,7 +246,7 @@ where
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
-    ) -> Result<VisibleScopeDefs, S::Error> {
+    ) -> Result<VisibleScopeDefs, ReadError> {
         let mut defs = VisibleScopeDefs::empty();
         self.name_resolver().visit_visible_bindings(
             importing_module,
@@ -293,7 +285,7 @@ where
     pub fn traits_in_lexical_scope(
         &self,
         importing_module: ModuleRef,
-    ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
+    ) -> Result<UniqueVec<LocalDefRef>, ReadError> {
         let resolver = self.name_resolver();
         let mut traits = UniqueVec::new();
         let mut current = Some(importing_module);
@@ -331,7 +323,7 @@ where
     pub fn traits_in_unqualified_scope(
         &self,
         importing_module: ModuleRef,
-    ) -> Result<UniqueVec<LocalDefRef>, S::Error> {
+    ) -> Result<UniqueVec<LocalDefRef>, ReadError> {
         let resolver = self.name_resolver();
         let mut occupied_type_names = FxHashSet::default();
         let mut traits = UniqueVec::new();
@@ -371,7 +363,7 @@ where
         &self,
         traits: &mut UniqueVec<LocalDefRef>,
         binding: &NameBinding,
-    ) -> Result<(), S::Error> {
+    ) -> Result<(), ReadError> {
         if let DefId::Local(local_def) = binding.def
             && self.source.local_def_data(local_def)?.map(|data| data.kind)
                 == Some(LocalDefKind::Trait)
@@ -388,7 +380,7 @@ where
         resolver: &NameResolver<'_, Self>,
         importing_module: ModuleRef,
         module: &ModuleData,
-    ) -> Result<(), S::Error> {
+    ) -> Result<(), ReadError> {
         for binding in module.scope.unnamed_trait_bindings() {
             if resolver.binding_is_visible(importing_module, binding)?
                 && let DefId::Local(local_def) = binding.def
@@ -403,7 +395,7 @@ where
     pub fn visible_unqualified_scope_defs(
         &self,
         importing_module: ModuleRef,
-    ) -> Result<VisibleScopeDefs, S::Error> {
+    ) -> Result<VisibleScopeDefs, ReadError> {
         let resolver = self.name_resolver();
 
         // First-segment resolution checks the current module scope before extern roots and the
@@ -454,7 +446,7 @@ where
     pub fn visible_absolute_root_defs(
         &self,
         importing_module: ModuleRef,
-    ) -> Result<VisibleScopeDefs, S::Error> {
+    ) -> Result<VisibleScopeDefs, ReadError> {
         let crate_ref = importing_module.origin.origin_crate();
         let mut extern_roots = self.source.extern_roots(crate_ref)?;
         extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
@@ -482,12 +474,10 @@ impl<S> NameResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
-    type Error = S::Error;
-
     fn module_metadata(
         &self,
         module_ref: ModuleRef,
-    ) -> Result<Option<ModuleResolutionView<'_>>, Self::Error> {
+    ) -> Result<Option<ModuleResolutionView<'_>>, ReadError> {
         Ok(self
             .source
             .module_data(module_ref)?
@@ -498,7 +488,7 @@ where
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<NameBindingsView<'a>>, Self::Error> {
+    ) -> Result<Option<NameBindingsView<'a>>, ReadError> {
         Ok(self
             .source
             .module_data(module_ref)?
@@ -509,7 +499,7 @@ where
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, Self::Error> {
+    ) -> Result<Vec<(&'a Name, NameBindingsView<'a>)>, ReadError> {
         Ok(self
             .source
             .module_data(module_ref)?
@@ -526,21 +516,21 @@ where
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, Self::Error> {
+    ) -> Result<Option<&LocalDefData>, ReadError> {
         self.source.local_def_data(local_def_ref)
     }
 
     fn local_enum_variant_data(
         &self,
         variant_ref: LocalEnumVariantRef,
-    ) -> Result<Option<&LocalEnumVariantData>, Self::Error> {
+    ) -> Result<Option<&LocalEnumVariantData>, ReadError> {
         self.source.local_enum_variant_data(variant_ref)
     }
 
     fn local_enum_variant_entries_for_enum<'a>(
         &'a self,
         enum_def: LocalDefRef,
-    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, Self::Error> {
+    ) -> Result<Vec<LocalEnumVariantEntry<'a>>, ReadError> {
         self.source.local_enum_variant_entries_for_enum(enum_def)
     }
 }
@@ -552,7 +542,7 @@ where
     fn macro_definition_view<'a>(
         &'a self,
         def: DefId,
-    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error> {
+    ) -> Result<Option<MacroDefinitionView<'a>>, ReadError> {
         DefMapQuery::macro_definition_view(self, def)
     }
 }
@@ -561,19 +551,15 @@ impl<S> CrateResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
-    fn extern_root(
-        &self,
-        crate_ref: CrateRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, Self::Error> {
+    fn extern_root(&self, crate_ref: CrateRef, name: &str) -> Result<Option<ModuleRef>, ReadError> {
         self.source.extern_root(crate_ref, name)
     }
 
-    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn prelude_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.source.prelude_module(crate_ref)
     }
 
-    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, Self::Error> {
+    fn root_module(&self, crate_ref: CrateRef) -> Result<Option<ModuleRef>, ReadError> {
         self.source.root_module(crate_ref)
     }
 }

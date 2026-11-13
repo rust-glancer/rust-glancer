@@ -52,7 +52,10 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     ) -> Result<Option<RecordFieldCompletionSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
 
-        for (body_ref, body) in self.body_ir.bodies(self.crate_ref, Some(self.file_id))? {
+        for (body_ref, body) in
+            self.body_ir
+                .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
+        {
             if !body.source().span.touches(self.offset) {
                 continue;
             }

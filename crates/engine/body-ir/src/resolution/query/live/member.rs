@@ -9,7 +9,7 @@ use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ScopeId, TraitApplicability, TraitDefRef};
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
-use rg_std::{OperationError, UniqueVec};
+use rg_std::UniqueVec;
 use rg_ty::{
     lookup::MemberMethodCandidateRef,
     solver::{
@@ -62,8 +62,8 @@ impl MemberCandidate<'_> {
 
 impl<'query, D, I> LiveBodyQuery<'query, D, I>
 where
-    D: DefMapSource<Error = ReadError> + Copy,
-    I: SemanticItemSource<'query, Error = ReadError> + Copy,
+    D: DefMapSource + Copy,
+    I: SemanticItemSource<'query> + Copy,
 {
     pub(crate) fn function_candidates<'s>(
         &self,
@@ -100,17 +100,10 @@ where
                 match name {
                     Some(name) if names.is_some_and(|names| names.contains_function(name)) => {}
                     Some(name) => {
-                        if let Ok(saved) =
-                            lookup.inherent_functions_for_type_and_name(adt.def, name)
-                        {
-                            functions.extend(saved);
-                        }
+                        functions
+                            .extend(lookup.inherent_functions_for_type_and_name(adt.def, name)?);
                     }
-                    None => match lookup.inherent_functions_for_type(&items, adt.def) {
-                        Ok(saved) => functions.extend(saved),
-                        Err(OperationError::Source(error)) => return Err(error),
-                        Err(OperationError::Cancelled(_)) => return Ok(Vec::new()),
-                    },
+                    None => functions.extend(lookup.inherent_functions_for_type(&items, adt.def)?),
                 }
                 names
             } else {
@@ -123,15 +116,10 @@ where
                 ) {
                     match name {
                         Some(name) => {
-                            if let Ok(saved) = lookup.structural_inherent_functions_by_name(name) {
-                                functions = saved;
-                            }
+                            functions = lookup.structural_inherent_functions_by_name(name)?;
                         }
                         None => {
-                            let Ok(impls) = lookup.structural_inherent_impls() else {
-                                return Ok(Vec::new());
-                            };
-                            for impl_ref in impls {
+                            for impl_ref in lookup.structural_inherent_impls()? {
                                 if let Some(data) = items.impl_data(impl_ref)? {
                                     functions.extend(data.functions());
                                 }
@@ -192,10 +180,7 @@ where
             let indexed = match name {
                 Some(name) => lookup.trait_functions_by_name(trait_ref, name),
                 None => lookup.trait_functions(trait_ref),
-            };
-            let Ok(indexed) = indexed else {
-                return Ok(Vec::new());
-            };
+            }?;
             let functions = match indexed {
                 Some(functions) => functions,
                 None => {

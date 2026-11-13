@@ -10,6 +10,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{ParamKind, SelfParamKind, TypeRef};
 use rg_semantic_ir::{GenericParamSource, SelfTypeOwner, SemanticItemSource, TypePathContext};
+use rg_source::ReadError;
 use rustc_type_ir::{
     ClauseKind,
     inherent::{IntoKind as _, Term as _},
@@ -33,14 +34,14 @@ pub(crate) struct TraitHeader<'s> {
 impl<'lower, 'query, D, I, R> TypeLoweringQuery<'lower, 'query, D, I, R>
 where
     D: DefMapSource,
-    I: SemanticItemSource<'query, Error = D::Error>,
-    R: TypePathResolver<Error = D::Error>,
+    I: SemanticItemSource<'query>,
+    R: TypePathResolver,
 {
     pub fn function<'s>(
         &self,
         cx: SolverInterner<'s>,
         function: FunctionRef,
-    ) -> Result<Option<CallableSignature<'s>>, D::Error> {
+    ) -> Result<Option<CallableSignature<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().function_data(function)? else {
             return Ok(None);
         };
@@ -124,7 +125,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         owner: GenericDefRef,
-    ) -> Result<Option<Vec<Clause<'s>>>, D::Error> {
+    ) -> Result<Option<Vec<Clause<'s>>>, ReadError> {
         let Some(context) = self
             .item_paths
             .items()
@@ -148,7 +149,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         param: TypeParamRef,
-    ) -> Result<Vec<TraitRefLowering<'s>>, D::Error> {
+    ) -> Result<Vec<TraitRefLowering<'s>>, ReadError> {
         let GenericDefRef::Function(_) = param.owner else {
             return Ok(Vec::new());
         };
@@ -217,7 +218,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         field: FieldRef,
-    ) -> Result<Option<Ty<'s>>, D::Error> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().field_data(field)? else {
             return Ok(None);
         };
@@ -239,7 +240,7 @@ where
         cx: SolverInterner<'s>,
         variant: EnumVariantRef,
         field_index: usize,
-    ) -> Result<Option<Ty<'s>>, D::Error> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().enum_variant_data(variant)? else {
             return Ok(None);
         };
@@ -263,7 +264,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         konst: ConstRef,
-    ) -> Result<Option<Ty<'s>>, D::Error> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().const_data(konst)? else {
             return Ok(None);
         };
@@ -293,7 +294,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         static_ref: StaticRef,
-    ) -> Result<Option<Ty<'s>>, D::Error> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().static_data(static_ref)? else {
             return Ok(None);
         };
@@ -316,7 +317,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         trait_ref: TraitDefRef,
-    ) -> Result<Option<TraitHeader<'s>>, D::Error> {
+    ) -> Result<Option<TraitHeader<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().trait_data(trait_ref)? else {
             return Ok(None);
         };
@@ -355,7 +356,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         alias: TypeAliasRef,
-    ) -> Result<Option<Ty<'s>>, D::Error> {
+    ) -> Result<Option<Ty<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().type_alias_data(alias)? else {
             return Ok(None);
         };
@@ -381,7 +382,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         owner: GenericDefRef,
-    ) -> Result<Vec<(OpaqueTy<'s>, Vec<TraitRefLowering<'s>>)>, D::Error> {
+    ) -> Result<Vec<(OpaqueTy<'s>, Vec<TraitRefLowering<'s>>)>, ReadError> {
         let Some(context) = self
             .item_paths
             .items()
@@ -442,7 +443,7 @@ where
         &self,
         cx: SolverInterner<'s>,
         impl_ref: ImplRef,
-    ) -> Result<Option<ImplHeader<'s>>, D::Error> {
+    ) -> Result<Option<ImplHeader<'s>>, ReadError> {
         let Some(data) = self.item_paths.items().impl_data(impl_ref)? else {
             return Ok(None);
         };

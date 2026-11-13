@@ -442,6 +442,7 @@ impl<'db> AnalysisFixture<'db> {
 
     fn view_db(&self) -> IndexedViewDb<'db> {
         IndexedViewDb::new(
+            self.semantic.db(),
             self.semantic.definitions(),
             self.semantic.items(),
             self.bodies(),

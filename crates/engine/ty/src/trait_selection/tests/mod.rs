@@ -8,6 +8,8 @@ mod utils;
 use std::fmt::Write as _;
 
 use expect_test::expect;
+use rg_source::ReadError;
+use rg_std::CancellationToken;
 
 use self::utils::*;
 use crate::{AdtTy, AliasTy, GenericArg, Ty, TyContext, lookup::ImplQuery};
@@ -104,7 +106,7 @@ fn named_trait_discovery_ignores_unrelated_blanket_impls() {
             .expect("fixture should contain Target")]
     );
 
-    let context = TyContext::new(&fixture, &fixture, lookup, rg_std::CancellationToken::new());
+    let context = TyContext::new(&fixture, &fixture, lookup, CancellationToken::new());
     let impl_query = ImplQuery::new(context);
     let receiver_ty = Ty::adt(AdtTy {
         def: fixture
@@ -802,7 +804,7 @@ fn trait_proofs_ignore_unresolved_receiver_constructors() {
 
 #[test]
 fn unavailable_candidate_does_not_change_independent_selection_or_normalization() {
-    use rg_ir_model::{ImplId, ImplRef};
+    use rg_ir_model::{FunctionId, FunctionRef, ImplId, ImplRef};
     use rg_std::ExpectedUnique;
 
     use crate::solver::{self, Outcome};
@@ -824,7 +826,7 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        rg_std::CancellationToken::new(),
+        CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
         .with_solver(|solver| {
@@ -882,9 +884,9 @@ fn unavailable_candidate_does_not_change_independent_selection_or_normalization(
             }
             // An unavailable environment remains an unavailable input to its own table; it
             // must neither become valid on the second proof nor poison a different table.
-            let missing_function = rg_ir_model::FunctionRef {
+            let missing_function = FunctionRef {
                 origin: origin(),
-                id: rg_ir_model::FunctionId(99),
+                id: FunctionId(99),
             };
             let incomplete = solver::InferenceTable::new(
                 solver::Solver::new(cx),
@@ -961,7 +963,7 @@ fn unavailable_nested_projection_rolls_back_its_root_and_leaves_other_roots_usab
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        rg_std::CancellationToken::new(),
+        CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
         .with_solver(|solver| {
@@ -1032,7 +1034,7 @@ fn successful_probe_keeps_its_type_evidence_independent() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        rg_std::CancellationToken::new(),
+        CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
         .with_solver(|solver| {
@@ -1066,7 +1068,7 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        rg_std::CancellationToken::new(),
+        CancellationToken::new(),
     );
     solver::SemanticDeclarations::new(&context, context.item_paths())
         .with_solver(|solver| {
@@ -1093,6 +1095,7 @@ fn signature_parameter_lists_preserve_order_and_repetition() {
 #[test]
 fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
     use rg_ir_model::{FunctionId, FunctionRef, Path, TraitApplicability};
+    use rg_semantic_ir::TypePathResolution;
 
     use crate::{
         Substitution,
@@ -1108,13 +1111,11 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
         cache: solver::DeclarationCache,
     }
     impl TypePathResolver for CachedScope<'_> {
-        type Error = std::convert::Infallible;
-
         fn resolve_type_path(
             &self,
             anchor: TypeLoweringAnchor,
             path: &Path,
-        ) -> Result<rg_semantic_ir::TypePathResolution, Self::Error> {
+        ) -> Result<TypePathResolution, ReadError> {
             TypePathResolver::resolve_type_path(&self.paths, anchor, path)
         }
     }
@@ -1144,7 +1145,7 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
         &fixture,
         &fixture,
         fixture.lookup_query(),
-        rg_std::CancellationToken::new(),
+        CancellationToken::new(),
     );
     let signatures = SemanticSignatureQuery::new(&fixture, &fixture);
     let function = FunctionRef {

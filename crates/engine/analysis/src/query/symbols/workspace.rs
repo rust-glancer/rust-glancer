@@ -14,15 +14,10 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
     }
 
     pub(crate) fn workspace_symbols(&self, query: &str) -> Result<Vec<WorkspaceSymbol>> {
-        let query = WorkspaceSymbolQuery::new(query);
         let mut symbols = Vec::new();
 
-        for symbol in SymbolView::new(self.0).workspace_symbols()? {
+        for symbol in SymbolView::new(self.0).workspace_symbols(query)? {
             rg_std::check_cancel!(self.0, "workspace symbol filtering");
-            if !query.matches(symbol.name().as_ref()) {
-                continue;
-            }
-
             symbols.push(workspace_symbol(self.0, symbol)?);
         }
 
@@ -38,21 +33,5 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
             )
         });
         Ok(symbols)
-    }
-}
-
-struct WorkspaceSymbolQuery {
-    needle: String,
-}
-
-impl WorkspaceSymbolQuery {
-    fn new(query: &str) -> Self {
-        Self {
-            needle: query.to_lowercase(),
-        }
-    }
-
-    fn matches(&self, name: &str) -> bool {
-        self.needle.is_empty() || name.to_lowercase().contains(&self.needle)
     }
 }

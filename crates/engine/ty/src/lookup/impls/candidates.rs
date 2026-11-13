@@ -2,7 +2,8 @@
 
 use rg_ir_model::{TraitDefRef, TraitImplRef};
 use rg_semantic_ir::TraitImplSelfHead;
-use rg_std::{Cancelled, UniqueVec};
+use rg_source::ReadError;
+use rg_std::UniqueVec;
 
 use crate::{
     Ty, TyContext,
@@ -29,7 +30,7 @@ impl TraitImplFilter {
         self,
         context: &TyContext<'_, D, I>,
         trait_ref: TraitDefRef,
-    ) -> Result<UniqueVec<TraitImplRef>, Cancelled> {
+    ) -> Result<UniqueVec<TraitImplRef>, ReadError> {
         rg_std::check_cancel!(context, "trait impl candidates");
         let lookup = context.item_lookup();
         let candidates = match self {

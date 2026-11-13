@@ -73,8 +73,6 @@ pub(crate) fn build_fixture_definitions(
 struct FixtureDefinitions(HashMap<CrateRef, CrateData>);
 
 impl CrateDataSource for FixtureDefinitions {
-    type Error = ReadError;
-
     fn crate_data(&self, krate: CrateRef) -> Result<Option<&CrateData>, ReadError> {
         Ok(self.0.get(&krate))
     }

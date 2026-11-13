@@ -41,7 +41,7 @@ impl<T: Cancelable + ?Sized> Cancelable for &mut T {
 /// The source can be a token or any [`Cancelable`] object; it is borrowed and evaluated once.
 /// An optional label describes the work being entered. Without one, the source location identifies
 /// the checkpoint. The enclosing function or closure must return a `Result` whose error accepts
-/// [`Cancelled`]. Cancellation stays typed when it enters a larger error, such as `OperationError`.
+/// [`Cancelled`]. Cancellation stays typed when it enters a larger error.
 ///
 /// This macro only checks where it is written. Put it inside long-running loops and before result
 /// publication, at points where stopping leaves shared state coherent.
@@ -128,40 +128,6 @@ impl fmt::Display for Cancelled {
 }
 
 impl std::error::Error for Cancelled {}
-
-/// An executing algorithm can stop even when its generic data source has no error to report.
-/// Keeping the source error intact lets callers retain cache-recovery and diagnostic policy.
-/// Source failures enter through `map_err(OperationError::Source)`; cancellation uses ordinary
-/// `?` conversion. These conversions must stay distinct even when the source error is `Cancelled`.
-#[derive(Debug)]
-pub enum OperationError<E> {
-    Source(E),
-    Cancelled(Cancelled),
-}
-
-impl<E> From<Cancelled> for OperationError<E> {
-    fn from(error: Cancelled) -> Self {
-        Self::Cancelled(error)
-    }
-}
-
-impl<E: fmt::Display> fmt::Display for OperationError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Source(error) => error.fmt(f),
-            Self::Cancelled(error) => error.fmt(f),
-        }
-    }
-}
-
-impl<E: std::error::Error + 'static> std::error::Error for OperationError<E> {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(match self {
-            Self::Source(error) => error,
-            Self::Cancelled(error) => error,
-        })
-    }
-}
 
 #[cfg(test)]
 mod tests {
