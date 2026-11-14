@@ -1,16 +1,21 @@
 //! Semantic item reads over one configured target directory.
 
-use rg_ir_model::{CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
 use rg_std::CancellationToken;
 
 use crate::{
-    ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion, SemanticItemSource,
-    SemanticItemView, SymbolNameData,
+    AssociatedItemStore, ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion,
+    SemanticItemSource, SemanticItemView, SymbolNameData,
 };
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
 pub trait CrateItemSource: Sync {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&AssociatedItemStore>, ReadError>;
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError>;
     fn item_for_local_def(
         &self,
@@ -38,6 +43,13 @@ impl std::fmt::Debug for ItemReader<'_> {
 }
 
 impl<'a> ItemReader<'a> {
+    pub fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        self.0.associated_items(store)
+    }
+
     pub fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         self.0.item(item)
     }
@@ -71,6 +83,13 @@ impl<'a> ItemReader<'a> {
 }
 
 impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        ItemReader::associated_items(self, store)
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         ItemReader::item(self, item)
     }

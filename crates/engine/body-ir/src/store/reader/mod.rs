@@ -7,12 +7,12 @@ use std::sync::Arc;
 use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, ImplRef,
-    LocalDefRef, ModuleRef, SavedBodyOwner, SemanticItemRef, SourceId, SourceLocation, Span,
+    ItemStoreRef, LocalDefRef, ModuleRef, SemanticItemRef, SourceId, SourceLocation, Span,
 };
 use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{
-    BodyOwnerData, SavedDeclarationSourceView, SemanticItemSource, SemanticItemView,
-    TargetDeclarationReader,
+    AssociatedItemStore, BodyOwnerData, SavedDeclarationSourceView, SemanticItemSource,
+    SemanticItemView, TargetDeclarationReader,
 };
 use rg_source::{QueryContext, ReadError};
 
@@ -243,13 +243,10 @@ impl<'db> BodyReader<'db> {
         &self,
         body_ref: BodyRef,
     ) -> Result<Option<(&BodyData, &BodyLocalItems)>, ReadError> {
-        let Some(owner) = body_ref.root.owner() else {
+        let Some(key) = body_ref.saved_key() else {
             return Ok(None);
         };
-        if self.saved_owner_is_masked(BodyKey {
-            krate: body_ref.crate_ref,
-            owner,
-        })? {
+        if self.saved_owner_is_masked(key)? {
             return Ok(None);
         }
         self.saved.prepared_body(body_ref)
@@ -322,23 +319,17 @@ impl<'db> BodyReader<'db> {
         if let Some(body) = self.current_initializer(item) {
             return Ok(body.initializer_value());
         }
+        let owner = BodyOwner::from(item);
         let key = match item.origin() {
             // Editing one function does not replace the saved crate declarations around it.
             // They keep their saved values unless a selected current initializer replaces them.
             DefMapRef::Crate(krate) => BodyKey {
                 krate,
-                owner: match item {
-                    ConstOrStaticRef::Const(item) => SavedBodyOwner::Const(item.id),
-                    ConstOrStaticRef::Static(item) => SavedBodyOwner::Static(item.id),
-                },
+                owner: owner.into(),
             },
             DefMapRef::Body(body) => {
-                let Some(owner) = body.root.owner() else {
+                let Some(key) = body.saved_key() else {
                     return Ok(None);
-                };
-                let key = BodyKey {
-                    krate: body.crate_ref,
-                    owner,
                 };
                 // Body-local declarations belong to the current worklist. An absent current
                 // initializer must not fall back to an older body with the same ID.
@@ -353,7 +344,6 @@ impl<'db> BodyReader<'db> {
         let Some(prepared) = self.saved.prepared_owner(key)? else {
             return Ok(None);
         };
-        let owner = BodyOwner::from(item);
         let Some((slot, _)) = prepared
             .bodies
             .iter_with_ids()
@@ -377,6 +367,19 @@ impl<'db> BodyReader<'db> {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        let DefMapRef::Body(body) = store.origin else {
+            return Ok(None);
+        };
+        Ok(self
+            .body_local_items(body)?
+            .map(BodyLocalItems::item_store)
+            .and_then(|items| items.associated_items(store)))
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         let DefMapRef::Body(body) = item.origin() else {
             return Ok(None);

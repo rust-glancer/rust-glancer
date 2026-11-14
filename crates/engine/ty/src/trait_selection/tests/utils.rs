@@ -7,11 +7,11 @@ use rg_def_map::{
     NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
 };
 use rg_ir_model::{
-    AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionId, FunctionRef,
-    GenericDefRef, GenericParamRef, ImplId, ItemId, ItemOwner, LocalDefId, LocalDefRef,
+    AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionRef, GenericDefRef,
+    GenericParamRef, ImplId, ItemId, ItemOwner, ItemStoreId, ItemStoreRef, LocalDefId, LocalDefRef,
     LocalImplId, LocalImplRef, ModuleId, ModuleRef, Mutability, PackageSlot, SemanticItemRef,
-    SignedIntTy, SourceId, StructId, TraitDefRef, TraitId, TypeAliasId, TypeAliasRef, TypeDefId,
-    TypeDefRef, TypeParamRef, UnsignedIntTy,
+    SignedIntTy, SourceId, StructId, TraitDefRef, TraitId, TypeAliasRef, TypeDefId, TypeDefRef,
+    TypeParamRef, UnsignedIntTy,
 };
 use rg_item_tree::{
     ConstExpr, FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg,
@@ -20,10 +20,11 @@ use rg_item_tree::{
     VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
-    CrateItemSource, FunctionData, FunctionSignature, GenericParamSource, GenericsQuery, ImplData,
-    ItemLookupEnv, ItemLookupIndex, ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder,
-    LangItemIndex, LookupAnswer, LookupQuestion, SemanticItemSource, SemanticItemView, StructData,
-    SymbolNameData, TraitData, TypeAliasData, TypeAliasSignature,
+    AssociatedItemStore, AssociatedItemStoreBuilder, CrateItemSource, FunctionData,
+    FunctionSignature, GenericParamSource, GenericsQuery, ImplData, ItemLookupEnv, ItemLookupIndex,
+    ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LangItemIndex, LookupAnswer,
+    LookupQuestion, SemanticItemSource, SemanticItemView, StructData, SymbolNameData, TraitData,
+    TypeAliasData, TypeAliasSignature,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
@@ -44,6 +45,7 @@ pub(super) struct TraitSelectionFixture {
     lookup_index: ItemLookupIndex,
     lookup_env: ItemLookupEnv,
     dependencies: Vec<TraitSelectionDependency>,
+    function_refs: Vec<FunctionRef>,
     type_names: HashMap<TypeDefRef, String>,
     trait_names: HashMap<TraitDefRef, String>,
     type_refs_by_name: HashMap<String, TypeDefRef>,
@@ -94,14 +96,14 @@ impl TraitSelectionFixture {
         trait_ref: TraitDefRef,
         name: &str,
     ) -> Option<TypeAliasRef> {
-        let trait_data = self.store.trait_data(trait_ref.id)?;
-        trait_data.items.iter().find_map(|item| {
+        let members = self.store.associated_items(trait_ref.member_store())?;
+        members.items().iter().find_map(|item| {
             let AssocItemId::TypeAlias(id) = item else {
                 return None;
             };
-            let data = self.store.type_alias_data(*id)?;
+            let data = members.type_alias_data(*id)?;
             (data.name.as_str() == name).then_some(TypeAliasRef {
-                origin: trait_ref.origin,
+                store: trait_ref.member_store(),
                 id: *id,
             })
         })
@@ -169,6 +171,17 @@ impl DefMapSource for TraitSelectionFixture {
 }
 
 impl CrateItemSource for TraitSelectionFixture {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&AssociatedItemStore>, ReadError> {
+        Ok(store
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| items.associated_items(store)))
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
         Ok(item
             .origin()
@@ -246,6 +259,17 @@ struct TraitSelectionDependency {
 }
 
 impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
+        Ok(store
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+            .and_then(|items| items.associated_items(store)))
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
         Ok(item
             .origin()
@@ -399,15 +423,6 @@ pub(super) fn generics(types: Vec<TypeParamData>) -> GenericParams {
 }
 
 pub(super) fn trait_data(index: usize, name: &str, generics: GenericParams) -> TraitData {
-    trait_data_with_items(index, name, generics, Vec::new())
-}
-
-pub(super) fn trait_data_with_items(
-    index: usize,
-    name: &str,
-    generics: GenericParams,
-    items: Vec<AssocItemId>,
-) -> TraitData {
     TraitData {
         local_def: local_def(index),
         source: dummy_source(),
@@ -417,7 +432,6 @@ pub(super) fn trait_data_with_items(
         docs: None,
         generics,
         super_traits: Vec::new(),
-        items,
         is_unsafe: false,
         is_auto: false,
     }
@@ -629,7 +643,6 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             self_ty,
             resolved_self_ty,
             resolved_trait_ref: Self::resolved_one(trait_ref),
-            items: Vec::new(),
             is_unsafe: false,
             polarity,
         };
@@ -650,18 +663,12 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             && let Some(index) = implementation.strip_prefix("impl#")
         {
             let impl_id = ImplId(parse_usize(index, "function impl owner"));
-            self.impls[impl_id.0]
-                .items
-                .push(AssocItemId::Function(FunctionId(id)));
             (ItemOwner::Impl(impl_id), function_name)
         } else if let Some((trait_name, function_name)) = name.split_once("::") {
             let trait_ref = *self
                 .trait_refs_by_name
                 .get(trait_name)
                 .unwrap_or_else(|| panic!("fixture should declare trait `{trait_name}` first"));
-            self.traits[trait_ref.id.0]
-                .items
-                .push(AssocItemId::Function(FunctionId(id)));
             (ItemOwner::Trait(trait_ref.id), function_name)
         } else {
             (ItemOwner::Module(module()), name)
@@ -706,15 +713,9 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             .expect("type alias fixture should be written as owner::Name");
         let owner = if let Some(index) = owner.strip_prefix("trait#") {
             let trait_id = TraitId(parse_usize(index, "trait type alias owner"));
-            self.traits[trait_id.0]
-                .items
-                .push(AssocItemId::TypeAlias(TypeAliasId(id)));
             ItemOwner::Trait(trait_id)
         } else if let Some(index) = owner.strip_prefix("impl#") {
             let impl_id = ImplId(parse_usize(index, "impl type alias owner"));
-            self.impls[impl_id.0]
-                .items
-                .push(AssocItemId::TypeAlias(TypeAliasId(id)));
             ItemOwner::Impl(impl_id)
         } else {
             panic!("type alias owner should be `trait#N` or `impl#N`");
@@ -856,8 +857,10 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             let struct_id = builder.structs.alloc(struct_data);
             builder.set_local_item(local_def, ItemId::Struct(struct_id));
         }
-        for type_alias_data in type_aliases {
-            builder.type_aliases.alloc(type_alias_data);
+        let mut members: HashMap<_, AssociatedItemStoreBuilder> = HashMap::new();
+        for data in type_aliases {
+            let store = data.owner.item_store(origin());
+            members.entry(store.id).or_default().alloc_type_alias(data);
         }
         for trait_data in traits {
             let local_def = trait_data.local_def.local_def;
@@ -867,8 +870,17 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         for impl_data in impls {
             builder.impls.alloc(impl_data);
         }
-        for function_data in functions {
-            builder.functions.alloc(function_data);
+        let mut function_refs = Vec::new();
+        for data in functions {
+            let store = data.owner.item_store(origin());
+            let id = match store.id {
+                ItemStoreId::Scope => builder.functions.alloc(data),
+                _ => members.entry(store.id).or_default().alloc_function(data),
+            };
+            function_refs.push(FunctionRef { store, id });
+        }
+        for (id, members) in members {
+            builder.set_members(id, members.build());
         }
         let mut fixture = TraitSelectionFixture {
             def_map: def_map_builder.build(),
@@ -877,6 +889,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             lookup_index: ItemLookupIndex::default(),
             lookup_env: ItemLookupEnv::default(),
             dependencies: Vec::new(),
+            function_refs,
             type_names: HashMap::new(),
             trait_names: HashMap::new(),
             type_refs_by_name: HashMap::new(),
@@ -1435,8 +1448,9 @@ impl TraitSelectionSnapshot {
     fn render_associated_ty_name(&self, associated_ty: TypeAliasRef) -> String {
         self.fixture
             .store
-            .type_alias_data(associated_ty.id)
-            .map(|data| data.name.to_string())
+            .semantic_item_view(associated_ty.into())
+            .and_then(|item| item.name())
+            .map(ToString::to_string)
             .unwrap_or_else(|| format!("type#{}", associated_ty.id.0))
     }
 
@@ -1973,10 +1987,7 @@ impl<'a, 's> TraitSelectionQueryParser<'a, 's> {
             return self.type_var(name);
         }
         if let Some(index) = text.strip_prefix("opaque#") {
-            let function = FunctionRef {
-                origin: origin(),
-                id: FunctionId(parse_usize(index, "opaque function id")),
-            };
+            let function = self.fixture.function_refs[parse_usize(index, "opaque function id")];
             let paths = ItemPathQuery::new(self.fixture, self.fixture);
             return TypeLoweringQuery::new(&paths, &paths)
                 .function(cx, function)

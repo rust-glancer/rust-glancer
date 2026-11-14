@@ -70,7 +70,7 @@ pub fn prepare_saved_body(
         let mut lowered = LoweredBodies::default();
         let mut macros = BodyMacroExpansion::new(edition, &definitions, cfg, cancellation.clone());
         BodyTaskLowering::new(source, &mut lowered, cfg, &cancellation).lower_tasks(
-            &[BodyLoweringTask::for_saved_owner(key.krate, owner, span)],
+            &[BodyLoweringTask::for_saved_owner(owner, span)],
             &mut macros,
         )?;
         if lowered.bodies().is_empty() {

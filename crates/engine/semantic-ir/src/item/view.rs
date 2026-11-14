@@ -2,8 +2,8 @@
 
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
-    SemanticItemRef, SourceId, TypeDefRef,
+    ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind, SemanticItemRef, SourceId,
+    TypeDefRef,
 };
 use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_text::Name;
@@ -180,20 +180,6 @@ impl<'a> SemanticItemView<'a> {
             | SemanticItemRef::TypeAlias(_)
             | SemanticItemRef::Const(_)
             | SemanticItemRef::Static(_) => None,
-        }
-    }
-
-    pub fn assoc_items(self) -> Option<&'a [AssocItemId]> {
-        match self.data {
-            SemanticItemData::Trait(data) => Some(&data.items),
-            SemanticItemData::Impl(data) => Some(&data.items),
-            SemanticItemData::Struct(_)
-            | SemanticItemData::Union(_)
-            | SemanticItemData::Enum(_)
-            | SemanticItemData::Function(_)
-            | SemanticItemData::TypeAlias(_)
-            | SemanticItemData::Const(_)
-            | SemanticItemData::Static(_) => None,
         }
     }
 

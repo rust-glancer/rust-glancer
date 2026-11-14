@@ -243,8 +243,8 @@ impl Substitution {
 mod tests {
     use rg_ir_model::{
         CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, GenericDefRef, ImplId, ImplRef,
-        LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, Mutability, PackageSlot,
-        PrimitiveTy, TypeParamRef,
+        ItemStoreRef, LifetimeParamRef, LocalLifetimeParamId, LocalTypeOrConstParamId, Mutability,
+        PackageSlot, PrimitiveTy, TypeParamRef,
     };
 
     use super::Substitution;
@@ -253,10 +253,10 @@ mod tests {
     #[test]
     fn unknown_substitution_preserves_reference_layers_and_lifetimes() {
         let owner = GenericDefRef::Function(FunctionRef {
-            origin: DefMapRef::Crate(CrateRef {
+            store: ItemStoreRef::scope(DefMapRef::Crate(CrateRef {
                 package: PackageSlot(0),
                 crate_id: CrateId(0),
-            }),
+            })),
             id: FunctionId(0),
         });
         let param = TypeParamRef {
@@ -307,7 +307,11 @@ mod tests {
         };
         let child = TypeParamRef {
             owner: GenericDefRef::Function(FunctionRef {
-                origin,
+                store: ImplRef {
+                    origin,
+                    id: ImplId(0),
+                }
+                .member_store(),
                 id: FunctionId(0),
             }),
             local_id: LocalTypeOrConstParamId(0),

@@ -88,8 +88,11 @@ impl ItemLookupIndex {
         // Record trait declaration surfaces before processing impls. For `value.convert()`, the
         // name `convert` should select `Convert` before its impl headers are compared with value's
         // type. `value./* completion */` instead starts from every trait containing a function.
-        for (trait_ref, trait_data) in store.traits_with_refs() {
-            if !trait_data.items.is_empty() {
+        for (trait_ref, _) in store.traits_with_refs() {
+            let Some(members) = store.associated_items(trait_ref.member_store()) else {
+                continue;
+            };
+            if !members.items().is_empty() {
                 shards[0].traits_with_associated_items.push(trait_ref);
             }
             let trait_shard = Self::shard_for(&trait_ref);
@@ -106,20 +109,17 @@ impl ItemLookupIndex {
                 .trait_functions_by_trait_and_name
                 .entry(trait_ref)
                 .or_default();
-            for item in &trait_data.items {
+            for item in members.items() {
                 match item {
                     AssocItemId::Function(id) => {
-                        let function_ref = FunctionRef {
-                            origin: trait_ref.origin,
-                            id: *id,
-                        };
+                        let function_ref = FunctionRef::new(trait_ref.member_store(), *id);
                         shards[trait_shard]
                             .trait_functions_by_trait
                             .get_mut(&trait_ref)
                             .expect("trait functions initialized above")
                             .push(function_ref);
                         shards[0].traits_with_functions.push(trait_ref);
-                        if let Some(function_data) = store.function_data(*id) {
+                        if let Some(function_data) = members.function_data(*id) {
                             shards[Self::shard_for(&function_data.name)]
                                 .traits_by_item_name
                                 .entry(function_data.name.clone())
@@ -136,7 +136,7 @@ impl ItemLookupIndex {
                         }
                     }
                     AssocItemId::Const(id) => {
-                        if let Some(const_data) = store.const_data(*id) {
+                        if let Some(const_data) = members.const_data(*id) {
                             shards[Self::shard_for(&const_data.name)]
                                 .traits_by_item_name
                                 .entry(const_data.name.clone())
@@ -181,13 +181,13 @@ impl ItemLookupIndex {
 
                 // Nominal functions share their receiver's shard; structural functions route by
                 // name. Both families can answer named lookup before callers open impl headers.
-                for item in &impl_data.items {
+                let Some(members) = store.associated_items(impl_ref.member_store()) else {
+                    continue;
+                };
+                for item in members.items() {
                     if let AssocItemId::Function(id) = item {
-                        let function_ref = FunctionRef {
-                            origin: impl_ref.origin,
-                            id: *id,
-                        };
-                        let Some(function_data) = store.function_data(*id) else {
+                        let function_ref = FunctionRef::new(impl_ref.member_store(), *id);
+                        let Some(function_data) = members.function_data(*id) else {
                             continue;
                         };
                         let functions_by_name = if let Some(self_ty) = self_ty {

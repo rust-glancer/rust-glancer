@@ -563,7 +563,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(self.named_source(
-            function.origin.origin_crate(),
+            function.store.origin.origin_crate(),
             match data.owner {
                 ItemOwner::Module(_) => SymbolKind::Function,
                 ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,

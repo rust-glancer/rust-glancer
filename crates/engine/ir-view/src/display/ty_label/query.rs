@@ -194,7 +194,7 @@ impl<'a, 'db> TypeLabelQuery<'a, 'db> {
             return Ok(None);
         };
         if (TraitDefRef {
-            origin: projection.associated_ty.origin,
+            origin: projection.associated_ty.store.origin,
             id: trait_id,
         }) != application.def
         {

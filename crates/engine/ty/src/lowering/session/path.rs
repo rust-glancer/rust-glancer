@@ -301,7 +301,7 @@ where
         let Some(context) = self
             .item_paths
             .items()
-            .type_path_context_for_owner(alias.origin, data.owner)?
+            .type_path_context_for_owner(alias.store.origin, data.owner)?
         else {
             return Ok(self.cx.unknown());
         };

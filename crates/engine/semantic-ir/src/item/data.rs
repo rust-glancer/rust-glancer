@@ -1,7 +1,6 @@
 use rg_def_map::ItemSource;
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability,
-    SourceId, TraitDefRef, TypeDefRef,
+    ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, Mutability, SourceId, TraitDefRef, TypeDefRef,
 };
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ImplPolarity, ParamKind,
@@ -72,7 +71,10 @@ pub struct EnumData {
     pub variants: Vec<EnumVariantItem>,
 }
 
-/// Trait signature and associated items.
+/// Trait header: the trait's name, generic parameters and supertraits.
+///
+/// Associated functions, types and constants live in the trait's [`crate::AssociatedItemStore`].
+/// Keeping them separate lets callers inspect the trait's bounds before asking for its members.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TraitData {
     pub local_def: LocalDefRef,
@@ -83,29 +85,18 @@ pub struct TraitData {
     pub docs: Option<Documentation>,
     pub generics: GenericParams,
     pub super_traits: Vec<TypeBound>,
-    pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
     pub is_auto: bool,
 }
 
-impl TraitData {
-    pub fn functions(&self) -> impl Iterator<Item = FunctionRef> {
-        self.items.iter().filter_map(|item| {
-            if let AssocItemId::Function(id) = item {
-                Some(FunctionRef {
-                    origin: self.local_def.origin,
-                    id: *id,
-                })
-            } else {
-                None
-            }
-        })
-    }
-}
-
-/// Impl block header and associated items.
+/// Information from the `impl<T> Trait for Type<T>` part of a block.
 ///
-/// `resolved_*` fields are intentionally lossy: invalid or ambiguous headers stay visible until
+/// Lookup matches this header against a receiver type. The header also supplies `Self` and the
+/// generic parameters and bounds inherited by the block's members. The functions, types and
+/// constants between the braces live in a separate [`crate::AssociatedItemStore`], selected by
+/// [`rg_ir_model::ImplRef::member_store`].
+///
+/// `resolved_*` fields are lossy: invalid or ambiguous headers stay visible until
 /// query code decides whether it needs a single known definition.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplData {
@@ -117,24 +108,8 @@ pub struct ImplData {
     pub self_ty: TypeRef,
     pub resolved_self_ty: ExpectedUnique<TypeDefRef>,
     pub resolved_trait_ref: ExpectedUnique<TraitDefRef>,
-    pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
     pub polarity: ImplPolarity,
-}
-
-impl ImplData {
-    pub fn functions(&self) -> impl Iterator<Item = FunctionRef> {
-        self.items.iter().filter_map(|item| {
-            if let AssocItemId::Function(id) = item {
-                Some(FunctionRef {
-                    origin: self.local_impl.origin,
-                    id: *id,
-                })
-            } else {
-                None
-            }
-        })
-    }
 }
 
 /// Function signature and source identity.

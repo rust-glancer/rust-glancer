@@ -4,7 +4,7 @@
 //! declarations or dependencies change. This environment is saved separately from candidate shards,
 //! so later queries can read them without loading the candidate tables.
 
-use rg_ir_model::{CrateRef, DefMapRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, SemanticItemRef};
 use rg_item_tree::LangItem;
 use rg_source::ReadError;
 use rg_std::{MemorySize, Shrink, UniqueVec};
@@ -54,9 +54,8 @@ impl ItemLookupEnv {
                 index
             };
             visible_crates.push(krate);
-            let origin = DefMapRef::Crate(krate);
             for lang_item in LangItem::ALL {
-                lang_items.merge_prefer_existing(lang_item, index.target(lang_item, origin));
+                lang_items.merge_prefer_existing(lang_item, index.target(lang_item));
             }
         }
 

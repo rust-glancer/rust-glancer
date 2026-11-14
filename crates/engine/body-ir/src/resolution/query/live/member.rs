@@ -92,9 +92,7 @@ where
             let mut functions = UniqueVec::new();
             let local_names = if let Some(adt) = receiver.as_adt() {
                 for &impl_ref in body_items.inherent_impls_for_type(adt.def)? {
-                    if let Some(data) = items.impl_data(impl_ref)? {
-                        functions.extend(data.functions());
-                    }
+                    functions.extend(items.associated_functions(impl_ref.member_store())?);
                 }
                 let names = body_items.inherent_item_names_for_type(adt.def)?;
                 match name {
@@ -120,9 +118,8 @@ where
                         }
                         None => {
                             for impl_ref in lookup.structural_inherent_impls()? {
-                                if let Some(data) = items.impl_data(impl_ref)? {
-                                    functions.extend(data.functions());
-                                }
+                                functions
+                                    .extend(items.associated_functions(impl_ref.member_store())?);
                             }
                         }
                     }
@@ -135,7 +132,7 @@ where
                 };
                 if name.is_some_and(|name| data.name != name)
                     || needs_self && !data.has_self_receiver()
-                    || function.origin.as_crate_ref().is_some()
+                    || function.store.origin.as_crate_ref().is_some()
                         && local_names
                             .is_some_and(|names| names.contains_function(data.name.as_str()))
                 {
@@ -144,10 +141,7 @@ where
                 let ItemOwner::Impl(id) = data.owner else {
                     continue;
                 };
-                let impl_ref = ImplRef {
-                    origin: function.origin,
-                    id,
-                };
+                let impl_ref = ImplRef::new(function.store.origin, id);
                 let Some(selection) = table.select_impl(impl_ref, receiver, None) else {
                     continue;
                 };
@@ -183,12 +177,9 @@ where
             }?;
             let functions = match indexed {
                 Some(functions) => functions,
-                None => {
-                    let Some(data) = items.trait_data(trait_ref)? else {
-                        continue;
-                    };
-                    data.functions().collect()
-                }
+                None => items
+                    .associated_functions(trait_ref.member_store())?
+                    .collect(),
             };
             for function in functions {
                 let Some(data) = items.function_data(function)? else {

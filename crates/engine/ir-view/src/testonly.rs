@@ -318,7 +318,7 @@ impl TypeRenderer<'_, '_> {
             .function_data(function_ref)
             .expect("fixture item should load")
             .expect("function ref should exist while rendering view fixture body item");
-        let owner = self.render_item_owner(function_ref.origin, data.owner);
+        let owner = self.render_item_owner(function_ref.store.origin, data.owner);
 
         format!("fn {owner}::{}", data.name)
     }
@@ -331,7 +331,7 @@ impl TypeRenderer<'_, '_> {
                     .const_data(const_ref)
                     .expect("fixture item should load")
                     .expect("const ref should exist while rendering view fixture body item");
-                let owner = self.render_item_owner(const_ref.origin, data.owner);
+                let owner = self.render_item_owner(const_ref.store.origin, data.owner);
                 format!("const {owner}::{}", data.name)
             }
             BodyOwner::Static(static_ref) => {

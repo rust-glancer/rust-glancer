@@ -332,7 +332,8 @@ pub struct FunctionParamData {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::{
-        CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ModuleId, ModuleRef, PackageSlot,
+        CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ItemStoreRef, ModuleId, ModuleRef,
+        PackageSlot,
     };
 
     use super::*;
@@ -391,7 +392,10 @@ mod tests {
 
         let owner_module = module();
         let mut body = BodyData::new(
-            BodyOwner::Function(FunctionRef::new(owner_module.origin, FunctionId(0))),
+            BodyOwner::Function(FunctionRef::new(
+                ItemStoreRef::scope(owner_module.origin),
+                FunctionId(0),
+            )),
             owner_module,
             owner_module,
             source(),
