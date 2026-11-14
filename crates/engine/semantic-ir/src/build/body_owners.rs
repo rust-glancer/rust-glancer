@@ -1,5 +1,7 @@
 use rg_def_map::{DefMap, ItemSource};
-use rg_ir_model::{FileId, ItemOwner, ModuleRef, SavedBodyOwner, SourceId};
+use rg_ir_model::{
+    FileId, ItemOwner, ItemStoreRef, ModuleRef, SavedBodyOwner, SemanticItemRef, SourceId,
+};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ItemStore;
@@ -15,7 +17,14 @@ pub struct BodyOwnerData {
 }
 
 impl BodyOwnerData {
-    /// Select outer owners in the same order as lowering. A declaration without a source body
+    pub fn store_ref(self) -> ItemStoreRef {
+        ItemStoreRef {
+            origin: self.module.origin,
+            id: self.owner.store(),
+        }
+    }
+
+    /// Enumerate scope declarations followed by member arenas. A declaration without a source body
     /// should not schedule inference, even when it has a semantic identity.
     pub fn for_crate<'a>(
         items: &'a ItemStore,
@@ -26,53 +35,50 @@ impl BodyOwnerData {
             ItemOwner::Trait(id) => items.trait_data(id).map(|data| data.owner),
             ItemOwner::Impl(id) => items.impl_data(id).map(|data| data.owner),
         };
-        let functions = items
-            .functions()
-            .iter_with_ids()
-            .filter_map(move |(id, data)| {
-                if !data.signature.has_body() {
-                    return None;
+        items.semantic_items().filter_map(move |item| {
+            let (owner, module, location) = match item.item() {
+                SemanticItemRef::Function(reference) => {
+                    let data = item.function_data()?;
+                    if !data.signature.has_body() {
+                        return None;
+                    }
+                    (
+                        SavedBodyOwner::from(reference),
+                        module_for(data.owner)?,
+                        data.location,
+                    )
                 }
-                Some(Self {
-                    owner: SavedBodyOwner::Function(id),
-                    module: module_for(data.owner)?,
-                    file: data.source.file_id,
-                    location: data.location,
-                    source: data.source,
-                })
-            });
-        let consts = items
-            .consts()
-            .iter_with_ids()
-            .filter_map(move |(id, data)| {
-                if !data.signature.has_value() {
-                    return None;
+                SemanticItemRef::Const(reference) => {
+                    let data = item.const_data()?;
+                    if !data.signature.has_value() {
+                        return None;
+                    }
+                    (
+                        SavedBodyOwner::from(reference),
+                        module_for(data.owner)?,
+                        data.location,
+                    )
                 }
-                Some(Self {
-                    owner: SavedBodyOwner::Const(id),
-                    module: module_for(data.owner)?,
-                    file: data.source.file_id,
-                    location: data.location,
-                    source: data.source,
-                })
-            });
-        let statics = items
-            .statics()
-            .iter_with_ids()
-            .filter_map(move |(id, data)| {
-                // Statics lack the function signature's `has_body` bit. An extern static's
-                // declaration sits in a foreign block and has no initializer to lower.
-                definitions
-                    .foreign_block(data.local_def.local_def)
-                    .is_none()
-                    .then_some(Self {
-                        owner: SavedBodyOwner::Static(id),
-                        module: data.owner,
-                        file: data.source.file_id,
-                        location: data.location,
-                        source: data.source,
-                    })
-            });
-        functions.chain(consts).chain(statics)
+                SemanticItemRef::Static(reference) => {
+                    let data = item.static_data()?;
+                    // Extern statics have a declaration but no initializer to lower.
+                    if definitions
+                        .foreign_block(data.local_def.local_def)
+                        .is_some()
+                    {
+                        return None;
+                    }
+                    (SavedBodyOwner::from(reference), data.owner, data.location)
+                }
+                _ => return None,
+            };
+            Some(Self {
+                owner,
+                module,
+                file: item.source().file_id,
+                location,
+                source: item.source(),
+            })
+        })
     }
 }

@@ -27,7 +27,7 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, FunctionRef, GenericDefRef, ImplRef, TraitDefRef,
+    AssocItemId, ConstRef, FunctionRef, GenericDefRef, ImplRef, ItemStoreRef, TraitDefRef,
     TypeAliasRef,
 };
 use rg_item_tree::{Documentation, ImplPolarity};
@@ -207,12 +207,6 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         if impl_data.polarity == ImplPolarity::Negative {
             return Ok(Vec::new());
         }
-        let Some(trait_data) = items
-            .trait_data(trait_ref)
-            .context("read implemented trait members")?
-        else {
-            return Ok(Vec::new());
-        };
         let signatures = SemanticSignatureQuery::with_resolver(self.db, self.db, self.db);
         let generics = GenericsQuery::new(self.db)
             .generics(GenericDefRef::Trait(trait_ref))
@@ -222,9 +216,9 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         // Record only semantic identity needed for absence checks. The impl's syntax may be
         // incomplete, but successfully lowered members still suppress duplicate scaffolds.
         let mut existing = Vec::new();
-        for item in &impl_data.items {
+        for item in items.associated_items(impl_ref.member_store())? {
             if let Some(key) = self
-                .member_key(impl_ref.origin, *item)
+                .member_key(impl_ref.member_store(), *item)
                 .context("read existing trait impl member")?
             {
                 existing.push(key);
@@ -240,9 +234,9 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
         let signatures_renderer = SignatureRenderer::new(edition);
         let types = TypeRenderer::new(self.db, edition);
         let mut missing = Vec::new();
-        for item in &trait_data.items {
+        for item in items.associated_items(trait_ref.member_store())? {
             let Some(key) = self
-                .member_key(trait_ref.origin, *item)
+                .member_key(trait_ref.member_store(), *item)
                 .context("read trait member completion identity")?
             else {
                 continue;
@@ -253,10 +247,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
 
             let candidate = match *item {
                 AssocItemId::Function(id) => {
-                    let function = FunctionRef {
-                        origin: trait_ref.origin,
-                        id,
-                    };
+                    let function = FunctionRef::new(trait_ref.member_store(), id);
                     let Some(data) = items
                         .function_data(function)
                         .context("read missing trait function")?
@@ -288,10 +279,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                     }
                 }
                 AssocItemId::TypeAlias(id) => {
-                    let alias = TypeAliasRef {
-                        origin: trait_ref.origin,
-                        id,
-                    };
+                    let alias = TypeAliasRef::new(trait_ref.member_store(), id);
                     let Some(data) = items
                         .type_alias_data(alias)
                         .context("read missing associated type")?
@@ -326,10 +314,7 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
                     }
                 }
                 AssocItemId::Const(id) => {
-                    let konst = ConstRef {
-                        origin: trait_ref.origin,
-                        id,
-                    };
+                    let konst = ConstRef::new(trait_ref.member_store(), id);
                     let Some(data) = items
                         .const_data(konst)
                         .context("read missing associated const")?
@@ -366,21 +351,21 @@ impl<'a, 'db> TraitImplView<'a, 'db> {
 
     fn member_key(
         &self,
-        origin: DefMapRef,
+        store: ItemStoreRef,
         item: AssocItemId,
     ) -> anyhow::Result<Option<AssociatedMemberKey>> {
         let items = ItemStoreQuery::new(self.db);
         Ok(match item {
             AssocItemId::Function(id) => items
-                .function_data(FunctionRef { origin, id })
+                .function_data(FunctionRef::new(store, id))
                 .context("read associated function name")?
                 .map(|data| AssociatedMemberKey::Function(data.name.to_string())),
             AssocItemId::TypeAlias(id) => items
-                .type_alias_data(TypeAliasRef { origin, id })
+                .type_alias_data(TypeAliasRef::new(store, id))
                 .context("read associated type name")?
                 .map(|data| AssociatedMemberKey::TypeAlias(data.name.to_string())),
             AssocItemId::Const(id) => items
-                .const_data(ConstRef { origin, id })
+                .const_data(ConstRef::new(store, id))
                 .context("read associated const name")?
                 .map(|data| AssociatedMemberKey::Const(data.name.to_string())),
         })

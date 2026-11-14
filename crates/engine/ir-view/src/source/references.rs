@@ -8,8 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use rg_def_map::DefMapSource as _;
 use rg_ir_model::{
-    CrateRef, DefMapRef, FileId, FunctionRef, ImplRef, ItemOwner, ModuleRef, SavedBodyOwner, Span,
-    TypeDefRef,
+    CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, SavedBodyOwner, Span, TypeDefRef,
 };
 use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery};
 use rg_syntax::{
@@ -171,7 +170,7 @@ impl ReferenceSourceSelection {
                 // impl or module may change that scope, so only use the outer scope without one.
                 let plausible = match label.as_str() {
                     "Self" if !Self::contains(&tokens, "impl", span) => {
-                        self.accepts_self(db, krate, owner)?
+                        self.accepts_self(db, owner)?
                     }
                     "self" | "super" | "crate"
                         if !self.modules.is_empty() && !Self::contains(&tokens, "mod", span) =>
@@ -204,33 +203,19 @@ impl ReferenceSourceSelection {
     /// With no nested impl, `Self` in `impl Widget { fn new() -> Self { ... } }` may refer to
     /// `Widget`, but the same method on a known different type cannot. Non-method owners and
     /// unresolved receiver types stay eligible because this check cannot establish their meaning.
-    fn accepts_self(
-        &self,
-        db: &IndexedViewDb<'_>,
-        krate: CrateRef,
-        owner: &BodyOwnerData,
-    ) -> anyhow::Result<bool> {
+    fn accepts_self(&self, db: &IndexedViewDb<'_>, owner: &BodyOwnerData) -> anyhow::Result<bool> {
         if self.types.is_empty() {
             return Ok(true);
         }
-        let SavedBodyOwner::Function(id) = owner.owner else {
-            return Ok(true);
-        };
-        let items = ItemStoreQuery::new(db);
-        let Some(function) = items.function_data(FunctionRef {
-            origin: DefMapRef::Crate(krate),
-            id,
-        })?
+        let SavedBodyOwner::Function {
+            store: ItemStoreId::Impl(id),
+            ..
+        } = owner.owner
         else {
             return Ok(true);
         };
-        let ItemOwner::Impl(id) = function.owner else {
-            return Ok(true);
-        };
-        let Some(data) = items.impl_data(ImplRef {
-            origin: DefMapRef::Crate(krate),
-            id,
-        })?
+        let Some(data) =
+            ItemStoreQuery::new(db).impl_data(ImplRef::new(owner.module.origin, id))?
         else {
             return Ok(true);
         };

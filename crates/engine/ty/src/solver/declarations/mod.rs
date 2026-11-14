@@ -293,14 +293,13 @@ where
                 result.kind = DeclarationKind::Trait {
                     is_auto: data.is_auto,
                     is_unsafe: data.is_unsafe,
-                    associated_types: data
-                        .items
+                    associated_types: items
+                        .associated_items(id.member_store())?
                         .iter()
                         .filter_map(|item| match item {
-                            AssocItemId::TypeAlias(alias) => Some(DefId::TypeAlias(TypeAliasRef {
-                                origin: id.origin,
-                                id: *alias,
-                            })),
+                            AssocItemId::TypeAlias(alias) => Some(DefId::TypeAlias(
+                                TypeAliasRef::new(id.member_store(), *alias),
+                            )),
                             _ => None,
                         })
                         .collect(),
@@ -326,12 +325,9 @@ where
                     return Ok(None);
                 };
                 let mut associated_types = Vec::new();
-                for item in &data.items {
+                for item in items.associated_items(id.member_store())? {
                     if let AssocItemId::TypeAlias(alias) = item {
-                        let alias = TypeAliasRef {
-                            origin: id.origin,
-                            id: *alias,
-                        };
+                        let alias = TypeAliasRef::new(id.member_store(), *alias);
                         let Some(data) = items.type_alias_data(alias)? else {
                             return Ok(None);
                         };

@@ -1317,7 +1317,7 @@ impl CrateBodyIrSnapshot<'_> {
                     .expect("type alias ref should exist while rendering body IR");
                 format!(
                     "type {}::{}",
-                    self.render_owner(data.owner, type_alias_ref.origin),
+                    self.render_owner(data.owner, type_alias_ref.store.origin),
                     data.name
                 )
             }
@@ -1330,7 +1330,7 @@ impl CrateBodyIrSnapshot<'_> {
                     .expect("const ref should exist while rendering body IR");
                 format!(
                     "const {}::{}",
-                    self.render_owner(data.owner, const_ref.origin),
+                    self.render_owner(data.owner, const_ref.store.origin),
                     data.name
                 )
             }
@@ -1566,7 +1566,7 @@ impl CrateBodyIrSnapshot<'_> {
             .function_data(function_ref)
             .expect("fixture item should load")
             .expect("function id should exist while rendering body IR");
-        let owner = self.render_owner(data.owner, function_ref.origin);
+        let owner = self.render_owner(data.owner, function_ref.store.origin);
 
         format!("fn {owner}::{}", data.name)
     }

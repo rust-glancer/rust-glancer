@@ -10,8 +10,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
-    BodyId, ConstRef, CrateRef, DefMapRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span,
-    StaticRef,
+    BodyId, ConstRef, FileId, FunctionRef, ModuleRef, SavedBodyOwner, Span, StaticRef,
 };
 use rg_parse::{CurrentSource, Package, saved_syntax};
 use rg_semantic_ir::BodyOwnerData;
@@ -47,12 +46,12 @@ pub(crate) struct BodyLoweringTask {
 }
 
 impl BodyLoweringTask {
-    pub(crate) fn for_saved_owner(krate: CrateRef, root: BodyOwnerData, span: Span) -> Self {
-        let origin = DefMapRef::Crate(krate);
+    pub(crate) fn for_saved_owner(root: BodyOwnerData, span: Span) -> Self {
+        let store = root.store_ref();
         let owner = match root.owner {
-            SavedBodyOwner::Function(id) => BodyOwner::Function(FunctionRef::new(origin, id)),
-            SavedBodyOwner::Const(id) => BodyOwner::Const(ConstRef { origin, id }),
-            SavedBodyOwner::Static(id) => BodyOwner::Static(StaticRef { origin, id }),
+            SavedBodyOwner::Function { id, .. } => BodyOwner::Function(FunctionRef::new(store, id)),
+            SavedBodyOwner::Const { id, .. } => BodyOwner::Const(ConstRef::new(store, id)),
+            SavedBodyOwner::Static(id) => BodyOwner::Static(StaticRef::new(store.origin, id)),
         };
         Self {
             owner,

@@ -626,7 +626,7 @@ where
                     return Ok(true);
                 };
                 let ty = self.inference.root_resolved_expr_ty(*iterable);
-                let trait_ref = TraitDefRef::new(function.origin, trait_id);
+                let trait_ref = TraitDefRef::new(function.store.origin, trait_id);
                 let Some(projection) = self
                     .context
                     .live()

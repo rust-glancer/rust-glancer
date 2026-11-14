@@ -2,9 +2,8 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 use rg_ir_model::{
-    AssocItemId, ConstId, ConstRef, CrateId, CrateRef, DefMapRef, FunctionId, FunctionRef, ImplId,
-    ImplRef, ModuleId, ModuleRef, PackageSlot, Path, SemanticItemRef, TraitDefRef, TypeAliasId,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, CrateId, CrateRef, DefMapRef, FunctionRef, ImplId, ImplRef, ModuleId, ModuleRef,
+    PackageSlot, Path, SemanticItemRef, TraitDefRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_parse::{CargoTarget, Package, ParseDb};
@@ -226,12 +225,11 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                     {
                         trait_functions.extend(functions.iter().copied());
                     }
-                    if let Some(data) = items
-                        .impl_data(trait_impl.impl_ref)
-                        .expect("fixture semantic query should read trait impl")
-                    {
-                        trait_impl_functions.extend(data.functions());
-                    }
+                    trait_impl_functions.extend(
+                        items
+                            .associated_functions(trait_impl.impl_ref.member_store())
+                            .expect("fixture members"),
+                    );
                 }
 
                 let mut dump = format!(
@@ -423,14 +421,14 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             rg_ir_model::ItemOwner::Trait(trait_id) => self.render_trait_ref(
                 semantic_ir,
                 TraitDefRef {
-                    origin: function_ref.origin,
+                    origin: function_ref.store.origin,
                     id: trait_id,
                 },
             ),
             rg_ir_model::ItemOwner::Impl(impl_id) => self.render_impl_ref(
                 semantic_ir,
                 ImplRef {
-                    origin: function_ref.origin,
+                    origin: function_ref.store.origin,
                     id: impl_id,
                 },
             ),
@@ -611,7 +609,7 @@ impl CrateSemanticIrSnapshot<'_> {
                     self.render_fields(&variant.fields, depth + 2, dump);
                 }
             }
-            SemanticItemRef::Trait(_) => {
+            SemanticItemRef::Trait(trait_ref) => {
                 let data = self
                     .item(item)
                     .trait_data()
@@ -639,13 +637,17 @@ impl CrateSemanticIrSnapshot<'_> {
                     Self::where_clause(&data.generics),
                 )
                 .expect("string writes should not fail");
-                for assoc_item in &data.items {
-                    self.render_assoc_item(*assoc_item, depth + 1, dump);
+                for member in self
+                    .items
+                    .iter()
+                    .filter(|member| member.item().store() == trait_ref.member_store())
+                {
+                    self.render_item(member.item(), depth + 1, dump);
                 }
             }
-            SemanticItemRef::Function(function) => self.render_function(function.id, depth, dump),
-            SemanticItemRef::TypeAlias(alias) => self.render_type_alias(alias.id, depth, dump),
-            SemanticItemRef::Const(konst) => self.render_const(konst.id, depth, dump),
+            SemanticItemRef::Function(function) => self.render_function(function, depth, dump),
+            SemanticItemRef::TypeAlias(alias) => self.render_type_alias(alias, depth, dump),
+            SemanticItemRef::Const(konst) => self.render_const(konst, depth, dump),
             SemanticItemRef::Static(_) => {
                 let data = self
                     .item(item)
@@ -704,28 +706,23 @@ impl CrateSemanticIrSnapshot<'_> {
             )
             .expect("string writes should not fail"),
         }
-        for assoc_item in &data.items {
-            self.render_assoc_item(*assoc_item, depth + 1, dump);
+        let store = ImplRef {
+            origin: DefMapRef::Crate(self.crate_ref),
+            id,
+        }
+        .member_store();
+        for member in self
+            .items
+            .iter()
+            .filter(|member| member.item().store() == store)
+        {
+            self.render_item(member.item(), depth + 1, dump);
         }
     }
 
-    fn render_assoc_item(&self, item_id: AssocItemId, depth: usize, dump: &mut String) {
-        match item_id {
-            AssocItemId::Function(id) => self.render_function(id, depth, dump),
-            AssocItemId::TypeAlias(id) => self.render_type_alias(id, depth, dump),
-            AssocItemId::Const(id) => self.render_const(id, depth, dump),
-        }
-    }
-
-    fn render_function(&self, id: FunctionId, depth: usize, dump: &mut String) {
+    fn render_function(&self, reference: FunctionRef, depth: usize, dump: &mut String) {
         let data = self
-            .item(
-                FunctionRef {
-                    origin: DefMapRef::Crate(self.crate_ref),
-                    id,
-                }
-                .into(),
-            )
+            .item(reference.into())
             .function_data()
             .expect("function id should exist while rendering");
         let params = data
@@ -753,15 +750,9 @@ impl CrateSemanticIrSnapshot<'_> {
         .expect("string writes should not fail");
     }
 
-    fn render_type_alias(&self, id: TypeAliasId, depth: usize, dump: &mut String) {
+    fn render_type_alias(&self, reference: TypeAliasRef, depth: usize, dump: &mut String) {
         let data = self
-            .item(
-                TypeAliasRef {
-                    origin: DefMapRef::Crate(self.crate_ref),
-                    id,
-                }
-                .into(),
-            )
+            .item(reference.into())
             .type_alias_data()
             .expect("type alias id should exist while rendering");
         let bounds = if data.signature.bounds().is_empty() {
@@ -797,15 +788,9 @@ impl CrateSemanticIrSnapshot<'_> {
         .expect("string writes should not fail");
     }
 
-    fn render_const(&self, id: ConstId, depth: usize, dump: &mut String) {
+    fn render_const(&self, reference: ConstRef, depth: usize, dump: &mut String) {
         let data = self
-            .item(
-                ConstRef {
-                    origin: DefMapRef::Crate(self.crate_ref),
-                    id,
-                }
-                .into(),
-            )
+            .item(reference.into())
             .const_data()
             .expect("const id should exist while rendering");
         let ty = data

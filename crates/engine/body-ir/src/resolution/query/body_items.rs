@@ -137,15 +137,7 @@ where
             // Follow member lists using this inventory, so each body's data is acquired once.
             let item_names: HashMap<_, _> = items
                 .iter()
-                .filter_map(|item| {
-                    let id = match item.item() {
-                        SemanticItemRef::Function(function) => AssocItemId::Function(function.id),
-                        SemanticItemRef::Const(konst) => AssocItemId::Const(konst.id),
-                        SemanticItemRef::TypeAlias(alias) => AssocItemId::TypeAlias(alias.id),
-                        _ => return None,
-                    };
-                    Some((id, item.name()?))
-                })
+                .filter_map(|item| Some((item.item(), item.name()?)))
                 .collect();
 
             // Impl declarations provide receiver candidates. Inherent impls additionally retain
@@ -188,8 +180,13 @@ where
                     .inherent_item_names_by_type
                     .entry(*self_ty)
                     .or_default();
-                for item in &impl_data.items {
-                    let Some(name) = item_names.get(item) else {
+                for item in self
+                    .context
+                    .item_query()
+                    .associated_items(impl_ref.member_store())?
+                {
+                    let Some(name) = item_names.get(&item.semantic_ref(impl_ref.member_store()))
+                    else {
                         continue;
                     };
                     match item {
@@ -213,17 +210,19 @@ where
                 let SemanticItemRef::Trait(trait_ref) = view.item() else {
                     continue;
                 };
-                let Some(trait_data) = view.trait_data() else {
-                    continue;
-                };
-                if !trait_data.items.is_empty() {
+                let members = self
+                    .context
+                    .item_query()
+                    .associated_items(trait_ref.member_store())?;
+                if !members.is_empty() {
                     index.traits_with_associated_items.push(trait_ref);
                 }
 
                 let mut has_function = false;
-                for item in &trait_data.items {
+                for item in members {
                     has_function |= matches!(item, AssocItemId::Function(_));
-                    let Some(name) = item_names.get(item) else {
+                    let Some(name) = item_names.get(&item.semantic_ref(trait_ref.member_store()))
+                    else {
                         continue;
                     };
                     match item {

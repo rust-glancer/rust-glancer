@@ -43,17 +43,10 @@ impl<'db> SavedBodyReader<'db> {
         if let ItemSourceKind::Body(source) = source.kind {
             // Resolving an occurrence only needs the location output. Keep this separate from
             // local declaration reads, which must observe prepared meaning alone.
-            let sources = if let Some(owner) = source.body.root.owner()
+            let sources = if let Some(key) = source.body.saved_key()
                 && self.targets.contains(&source.body.crate_ref)
             {
-                let prepared = prepare_saved_body(
-                    self.db,
-                    BodyKey {
-                        krate: source.body.crate_ref,
-                        owner,
-                    },
-                )
-                .map_err(ReadError::Query)?;
+                let prepared = prepare_saved_body(self.db, key).map_err(ReadError::Query)?;
                 match prepared.as_ref() {
                     Some(prepared) => prepared
                         .sources
@@ -84,12 +77,8 @@ impl<'db> SavedBodyReader<'db> {
         &self,
         body: BodyRef,
     ) -> Result<Option<(BodyView<'_>, &BodyLocalItems)>, ReadError> {
-        let Some(owner) = body.root.owner() else {
+        let Some(key) = body.saved_key() else {
             return Ok(None);
-        };
-        let key = BodyKey {
-            krate: body.crate_ref,
-            owner,
         };
         let Some(saved) = self.owner(key)? else {
             return Ok(None);
@@ -101,20 +90,13 @@ impl<'db> SavedBodyReader<'db> {
         &self,
         body: BodyRef,
     ) -> Result<Option<(&BodyData, &BodyLocalItems)>, ReadError> {
-        let Some(owner) = body.root.owner() else {
+        let Some(key) = body.saved_key() else {
             return Ok(None);
         };
         if !self.targets.contains(&body.crate_ref) {
             return Ok(None);
         }
-        let prepared = prepare_saved_body(
-            self.db,
-            BodyKey {
-                krate: body.crate_ref,
-                owner,
-            },
-        )
-        .map_err(ReadError::Query)?;
+        let prepared = prepare_saved_body(self.db, key).map_err(ReadError::Query)?;
         let Some(prepared) = prepared.as_ref() else {
             return Ok(None);
         };

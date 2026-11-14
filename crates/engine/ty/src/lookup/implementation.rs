@@ -51,10 +51,7 @@ where
         let ItemOwner::Trait(id) = data.owner else {
             return Ok(None);
         };
-        let trait_ref = TraitDefRef {
-            origin: function.origin,
-            id,
-        };
+        let trait_ref = TraitDefRef::new(function.store.origin, id);
 
         // A call stores the trait's arguments followed by the method's own arguments.
         // For `Convert<u32>::convert::<u8>`, impl matching needs Self and u32, not the method's
@@ -190,15 +187,10 @@ where
         };
 
         let trait_ref = match data.owner {
-            ItemOwner::Trait(id) => TraitDefRef {
-                origin: function.origin,
-                id,
-            },
+            ItemOwner::Trait(id) => TraitDefRef::new(function.store.origin, id),
             ItemOwner::Impl(id) => {
-                let Some(implementation) = items.impl_data(ImplRef {
-                    origin: function.origin,
-                    id,
-                })?
+                let Some(implementation) =
+                    items.impl_data(ImplRef::new(function.store.origin, id))?
                 else {
                     return Ok(UniqueVec::new());
                 };
@@ -227,12 +219,13 @@ where
         impl_ref: ImplRef,
         method_name: &str,
     ) -> Result<UniqueVec<FunctionRef>, ReadError> {
-        let Some(data) = self.context.item_paths().items().impl_data(impl_ref)? else {
-            return Ok(UniqueVec::new());
-        };
-
         let mut functions = UniqueVec::new();
-        for function in data.functions() {
+        for function in self
+            .context
+            .item_paths()
+            .items()
+            .associated_functions(impl_ref.member_store())?
+        {
             rg_std::check_cancel!(self.context, "implementation candidates");
             let Some(function_data) = self.context.item_paths().items().function_data(function)?
             else {

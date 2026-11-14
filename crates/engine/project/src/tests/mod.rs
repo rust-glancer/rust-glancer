@@ -7,6 +7,7 @@ mod file_queries;
 mod format_captures;
 mod generated_modules;
 mod initializers;
+mod member_identity;
 mod utils;
 
 use std::{

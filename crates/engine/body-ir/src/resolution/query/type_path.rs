@@ -235,9 +235,6 @@ where
         );
         let item_query = self.context.item_query();
         for impl_ref in impls {
-            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-                continue;
-            };
             if self
                 .context
                 .impl_query()
@@ -247,14 +244,11 @@ where
                 continue;
             }
 
-            for item in &impl_data.items {
+            for item in item_query.associated_items(impl_ref.member_store())? {
                 let AssocItemId::TypeAlias(id) = item else {
                     continue;
                 };
-                let alias_ref = TypeAliasRef {
-                    origin: impl_ref.origin,
-                    id: *id,
-                };
+                let alias_ref = TypeAliasRef::new(impl_ref.member_store(), *id);
                 let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
                     continue;
                 };

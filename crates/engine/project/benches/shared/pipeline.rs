@@ -8,12 +8,12 @@ use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
     GeneratedItemStore, GeneratedSourceStore,
 };
-use rg_ir_model::{BodyKey, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
-    CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemStore, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemView, SymbolNameData, target_declarations,
+    AssociatedItemStore, CrateItemSource, ItemLookupEnv, ItemLookupIndex, ItemStore, LangItemIndex,
+    LookupAnswer, LookupQuestion, SemanticItemView, SymbolNameData, target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -196,6 +196,17 @@ impl CrateDataSource for Declarations {
 }
 
 impl CrateItemSource for Declarations {
+    fn associated_items(
+        &self,
+        store: ItemStoreRef,
+    ) -> Result<Option<&AssociatedItemStore>, ReadError> {
+        Ok(store
+            .origin
+            .as_crate_ref()
+            .and_then(|krate| self.items.get(&krate).map(|(items, _, _, _)| items))
+            .and_then(|items| items.associated_items(store)))
+    }
+
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
         Ok(item
             .origin()
