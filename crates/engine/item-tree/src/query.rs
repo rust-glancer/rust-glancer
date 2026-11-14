@@ -5,15 +5,15 @@ use rg_workspace::PackageInput;
 
 use crate::{DeclarationSourceStore, FileTree, lower::FileLowering};
 
-/// Two outputs from lowering the same saved file: declaration meaning and occurrence positions.
+/// Two outputs from lowering the same saved file: declaration meaning and source data.
 ///
 /// Adding a comment before `fn load() -> User` changes its positions, but can leave its lowered
 /// declaration unchanged. Separate outputs let semantic queries depend on `items` without also
-/// depending on `locations`. Queries that need positions read the matching location output.
+/// depending on `sources`. Positions and initializer previews use the matching source output.
 #[ajika::output]
 pub struct FileDeclarations {
     pub items: FileTree,
-    pub locations: DeclarationSourceStore<Span>,
+    pub sources: DeclarationSourceStore<Span>,
 }
 
 /// Lowers one file in its package context. Macro spans retain both the package slot and the
@@ -27,13 +27,13 @@ pub fn file_declarations(
 ) -> ajika::Result<FileDeclarations> {
     let edition = PackageInput::at(package).edition(db)?;
     let syntax = rg_parse::saved_syntax(db, file, edition)?;
-    let (mut tree, mut locations) = FileLowering::lower(package, file, edition, &syntax);
-    locations.shrink_to_fit();
+    let (mut tree, mut sources) = FileLowering::lower(package, file, edition, &syntax);
+    sources.shrink_to_fit();
     tree.shrink_to_fit();
-    FileDeclarations::new(db, tree, locations)
+    FileDeclarations::new(db, tree, sources)
 }
 
-/// Acquiring a location map is an explicit dependency, separate from reading declaration meaning.
+/// Acquiring source data is an explicit dependency, separate from reading declaration meaning.
 /// Read it from the operation's query context so reused declaration IDs resolve to that snapshot's
 /// positions, including after an edit that only moved the declaration.
 pub fn file_declaration_sources<'db>(
@@ -41,7 +41,5 @@ pub fn file_declaration_sources<'db>(
     package: PackageSlot,
     file: FileId,
 ) -> ajika::Result<&'db DeclarationSourceStore<Span>> {
-    file_declarations(db, package, file)?
-        .locations
-        .value_ref(db)
+    file_declarations(db, package, file)?.sources.value_ref(db)
 }

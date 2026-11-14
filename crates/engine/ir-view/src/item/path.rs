@@ -153,8 +153,8 @@ impl<'a, 'db> PathView<'a, 'db> {
         };
         let name = self.syntax.identifier(name);
         let mut owner = self.path_for_owner(item.origin(), owner)?;
-        // A current root initializer owns a new declaration so its value can change.
-        // Its temporary module still represents the saved containing module for display.
+        // A new or changed initializer header gets a request-local declaration. Its temporary
+        // module still represents the saved containing module for display.
         if owner.is_none()
             && let DefMapRef::Body(body_ref) = item.origin()
             && self.db.is_current_body(body_ref)

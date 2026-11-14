@@ -1,6 +1,7 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, ExprId, FunctionRef, identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, EvaluatedConstValue, ExprId, FunctionRef,
+    identity::DeclarationRef,
 };
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_ty::{GenericArgs, Ty};
@@ -11,10 +12,10 @@ use super::{BodyData, ExprKind};
 /// Persisted semantic sidecar for one frozen [`BodyData`].
 ///
 /// `BodyData` owns the syntax-shaped structure. This type owns the conclusions derived from that
-/// structure: binding types, expression types and resolutions, and selected call targets. The
-/// dense binding and expression arenas deliberately mirror the ids and cardinalities in the body,
-/// so one `ExprId` addresses both its structural node and its semantic facts. Calls are kept sparse
-/// because only call expressions can have [`CallFacts`].
+/// structure: binding types, expression types and resolutions, selected call targets, and any
+/// evaluated initializer value. The dense binding and expression arenas deliberately mirror the
+/// ids and cardinalities in the body, so one `ExprId` addresses both its structural node and its
+/// semantic facts. Calls are kept sparse because only call expressions can have [`CallFacts`].
 ///
 /// Inference finalizes its type arenas in place, then moves them into this sidecar.
 /// Readers normally pair it with its body through `BodyView`; it is not another owning body model.
@@ -25,6 +26,9 @@ pub struct BodyFacts {
     /// Calls are sparse relative to expressions, so selected targets do not need one dense option
     /// slot per expression.
     calls: Vec<(ExprId, CallFacts)>,
+    /// Evaluated const or static initializer, when supported. A mutable static's runtime value
+    /// can differ. Boxing keeps ordinary function facts from reserving space for a numeric value.
+    initializer: Option<Box<EvaluatedConstValue>>,
 }
 
 impl BodyFacts {
@@ -32,6 +36,7 @@ impl BodyFacts {
         bindings: Arena<BindingId, Ty>,
         exprs: Arena<ExprId, ExprFacts>,
         calls: Vec<(ExprId, CallFacts)>,
+        initializer: Option<EvaluatedConstValue>,
     ) -> Self {
         // Inference collects selected calls in expression-id order. Keep that ordering so readers
         // can find a call by binary search without another index.
@@ -40,7 +45,12 @@ impl BodyFacts {
             bindings,
             exprs,
             calls,
+            initializer: initializer.map(Box::new),
         }
+    }
+
+    pub(crate) fn initializer_value(&self) -> Option<EvaluatedConstValue> {
+        self.initializer.as_deref().copied()
     }
 
     /// Check that this sidecar can be indexed with the ids defined by `body`.

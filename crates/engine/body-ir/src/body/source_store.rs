@@ -1,9 +1,11 @@
-//! Physical occurrences for one body, resolved while its syntax and macro maps are available.
+//! Physical occurrences and bounded previews captured while a body's syntax is available.
+
+use std::collections::HashMap;
 
 use rg_ir_model::{BodySource, SourceId, SourceLocation, Span};
-use rg_item_tree::{RecordSource, SourceLocations, SourceRole, TypeSource};
+use rg_item_tree::{RecordSource, SourceLocations, SourceRole, TypeSource, initializer_preview};
 use rg_std::{MemorySize, Shrink};
-use rg_syntax::TextRange;
+use rg_syntax::{AstNode as _, TextRange, ast};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::BodySourceMap;
@@ -24,6 +26,7 @@ pub(crate) struct BodyLocation {
 #[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodySourceStore {
     entries: Vec<BodyLocation>,
+    initializer_previews: HashMap<SourceId, String>,
     pub(crate) provenance: BodySourceMap,
 }
 
@@ -59,6 +62,17 @@ impl BodySourceStore {
         &self.provenance
     }
 
+    /// Bounded display text for this initializer or a declaration recorded inside this body.
+    pub fn initializer_preview(&self, id: SourceId) -> Option<&str> {
+        self.initializer_previews.get(&id).map(String::as_str)
+    }
+
+    pub(crate) fn record_initializer_preview(&mut self, id: SourceId, preview: Option<String>) {
+        if let Some(preview) = preview {
+            self.initializer_previews.insert(id, preview);
+        }
+    }
+
     pub(crate) fn recorder<'a>(
         &'a mut self,
         map: &'a dyn Fn(TextRange, SourceRole) -> BodyLocation,
@@ -90,6 +104,13 @@ pub(crate) struct BodySourceRecorder<'a> {
 impl RecordSource for BodySourceRecorder<'_> {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId {
         self.store.record_location((self.map)(range, role))
+    }
+
+    fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {
+        let id = self.record(initializer.syntax().text_range());
+        self.store
+            .record_initializer_preview(id, initializer_preview(initializer));
+        id
     }
 }
 

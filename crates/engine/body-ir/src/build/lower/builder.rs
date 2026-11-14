@@ -13,29 +13,16 @@ use crate::body::{
 ///
 /// The pending arena uses the same temporary binding ids as `body`. Pattern materialization
 /// compacts those ids and consumes this value into the immutable `BodyData` stored by the database.
-/// Numeric literal values are temporary inputs to const evaluation too. They do not enter
-/// `BodyData`; concrete evaluation results live with the declarations instead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LoweredBodyData {
     body: BodyData,
     pub(crate) sources: BodySourceStore,
     pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
-    /// Numeric payloads are needed while evaluating initializers, but persisted bodies only need
-    /// literal categories for type queries. Drop these inputs when finalizing the body.
-    /// Entries follow expression allocation order, so lookups can binary-search by `ExprId`.
-    integer_literals: Vec<(ExprId, u128)>,
 }
 
 impl LoweredBodyData {
     pub(crate) fn body(&self) -> &BodyData {
         &self.body
-    }
-
-    pub(crate) fn integer_literal(&self, expr: ExprId) -> Option<u128> {
-        self.integer_literals
-            .binary_search_by_key(&expr.0, |(id, _)| id.0)
-            .ok()
-            .map(|index| self.integer_literals[index].1)
     }
 
     pub(crate) fn set_owner_context(&mut self, owner: BodyOwner, owner_module: ModuleRef) {
@@ -137,11 +124,11 @@ impl BodyBuilder {
                 pats,
                 statements,
                 exprs,
+                integer_literals,
                 unmodeled_syntax,
             ),
             sources,
             pending_binding_resolutions,
-            integer_literals,
         }
     }
 

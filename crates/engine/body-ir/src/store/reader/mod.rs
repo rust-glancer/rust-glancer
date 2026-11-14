@@ -7,7 +7,7 @@ use std::sync::Arc;
 use rg_def_map::{DefMap, ItemSource, ItemSourceKind};
 use rg_ir_model::{
     BodyKey, BodyRef, ConstOrStaticRef, CrateRef, DefMapRef, EvaluatedConstValue, FileId, ImplRef,
-    LocalDefRef, ModuleRef, SemanticItemRef, SourceId, SourceLocation, Span,
+    LocalDefRef, ModuleRef, SavedBodyOwner, SemanticItemRef, SourceId, SourceLocation, Span,
 };
 use rg_item_tree::SourceLocations;
 use rg_semantic_ir::{
@@ -18,8 +18,8 @@ use rg_source::{QueryContext, ReadError};
 
 use self::saved::SavedBodyReader;
 use crate::{
-    BodyData, BodyFactsStore, BodyLocalItems, BodySourceStore, BodyView, CurrentSourceStore,
-    PreparedBodyStore,
+    BodyData, BodyFactsStore, BodyLocalItems, BodyOwner, BodySourceStore, BodyView,
+    CurrentSourceStore, PreparedBodyStore,
 };
 
 /// One operation's saved body reads and its optional current-source overlay.
@@ -243,20 +243,32 @@ impl<'db> BodyReader<'db> {
         &self,
         body_ref: BodyRef,
     ) -> Result<Option<(&BodyData, &BodyLocalItems)>, ReadError> {
-        // Only a changed editor file needs masking. Its outer-owner metadata also identifies
-        // the file of nested bodies, so checking visibility never needs occurrence locations.
+        let Some(owner) = body_ref.root.owner() else {
+            return Ok(None);
+        };
+        if self.saved_owner_is_masked(BodyKey {
+            krate: body_ref.crate_ref,
+            owner,
+        })? {
+            return Ok(None);
+        }
+        self.saved.prepared_body(body_ref)
+    }
+
+    // Outer-owner metadata also identifies the file of nested bodies. Checking visibility must
+    // not acquire positional data or infer a body that a changed editor file has hidden.
+    fn saved_owner_is_masked(&self, key: BodyKey) -> Result<bool, ReadError> {
         if let Some((krate, file)) = self.current.masked_file
-            && krate == body_ref.crate_ref
-            && let Some(owner) = body_ref.root.owner()
+            && krate == key.krate
             && self
                 .saved
                 .owners(krate)?
                 .iter()
-                .any(|data| data.owner == owner && data.file == file)
+                .any(|data| data.owner == key.owner && data.file == file)
         {
-            return Ok(None);
+            return Ok(true);
         }
-        self.saved.prepared_body(body_ref)
+        Ok(false)
     }
 
     pub(crate) fn saved_prepared_bodies(
@@ -290,11 +302,70 @@ impl<'db> BodyReader<'db> {
         }))
     }
 
-    pub fn saved_initializer_value(
+    /// Selected editor bodies supply both their value and their preview, even when their header
+    /// still belongs to a saved declaration. Absence of a value or preview is authoritative.
+    pub fn current_initializer(&self, item: ConstOrStaticRef) -> Option<BodyView<'_>> {
+        let owner = BodyOwner::from(item);
+        self.current
+            .bodies()
+            .iter()
+            .map(|body| body.view())
+            .find(|body| body.owner() == owner)
+    }
+
+    /// Demand initializer facts through the same path for crate declarations, nested items, and
+    /// current editor bodies. This reads prepared meaning and facts without loading source maps.
+    pub fn initializer_value(
         &self,
         item: ConstOrStaticRef,
-    ) -> Result<Option<&EvaluatedConstValue>, ReadError> {
-        self.saved.initializer(item)
+    ) -> Result<Option<EvaluatedConstValue>, ReadError> {
+        if let Some(body) = self.current_initializer(item) {
+            return Ok(body.initializer_value());
+        }
+        let key = match item.origin() {
+            // Editing one function does not replace the saved crate declarations around it.
+            // They keep their saved values unless a selected current initializer replaces them.
+            DefMapRef::Crate(krate) => BodyKey {
+                krate,
+                owner: match item {
+                    ConstOrStaticRef::Const(item) => SavedBodyOwner::Const(item.id),
+                    ConstOrStaticRef::Static(item) => SavedBodyOwner::Static(item.id),
+                },
+            },
+            DefMapRef::Body(body) => {
+                let Some(owner) = body.root.owner() else {
+                    return Ok(None);
+                };
+                let key = BodyKey {
+                    krate: body.crate_ref,
+                    owner,
+                };
+                // Body-local declarations belong to the current worklist. An absent current
+                // initializer must not fall back to an older body with the same ID.
+                if self.is_current_origin(DefMapRef::Body(body))
+                    || self.saved_owner_is_masked(key)?
+                {
+                    return Ok(None);
+                }
+                key
+            }
+        };
+        let Some(prepared) = self.saved.prepared_owner(key)? else {
+            return Ok(None);
+        };
+        let owner = BodyOwner::from(item);
+        let Some((slot, _)) = prepared
+            .bodies
+            .iter_with_ids()
+            .find(|(_, body)| body.owner() == owner)
+        else {
+            return Ok(None);
+        };
+        let facts = self.saved.facts(key)?;
+        Ok(facts
+            .bodies
+            .get(slot)
+            .and_then(|body| body.initializer_value()))
     }
 
     /// Return the body-local DefMap without exposing the containing storage object.
@@ -356,6 +427,15 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
 pub enum DeclarationSourceView<'a> {
     Saved(SavedDeclarationSourceView<'a>),
     Body(&'a BodySourceStore),
+}
+
+impl<'a> DeclarationSourceView<'a> {
+    pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&'a str> {
+        match self {
+            Self::Saved(source) => source.initializer_preview(occurrence),
+            Self::Body(source) => source.initializer_preview(occurrence),
+        }
+    }
 }
 
 impl SourceLocations for DeclarationSourceView<'_> {

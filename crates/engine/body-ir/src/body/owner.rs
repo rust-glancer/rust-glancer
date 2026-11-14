@@ -1,4 +1,6 @@
-use rg_ir_model::{ConstRef, FunctionRef, GenericDefRef, StaticRef, identity::DeclarationRef};
+use rg_ir_model::{
+    ConstOrStaticRef, ConstRef, FunctionRef, GenericDefRef, StaticRef, identity::DeclarationRef,
+};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -11,6 +13,15 @@ pub enum BodyOwner {
     Const(ConstRef),
     /// Static initializer body, such as `static CURRENT: u8 = value;`.
     Static(StaticRef),
+}
+
+impl From<ConstOrStaticRef> for BodyOwner {
+    fn from(item: ConstOrStaticRef) -> Self {
+        match item {
+            ConstOrStaticRef::Const(item) => Self::Const(item),
+            ConstOrStaticRef::Static(item) => Self::Static(item),
+        }
+    }
 }
 
 impl BodyOwner {
