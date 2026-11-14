@@ -21,7 +21,7 @@ use rg_ir_view::{
     item::declaration::{Declaration, DeclarationView},
     source::{IndexedSourceSurface, ReferenceSourceSelection, SourceOccurrenceView},
 };
-use rg_std::UniqueVec;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use super::search::{ReferenceScanTarget, ReferenceSearchLabel};
 use crate::{model::SymbolAt, source_symbol::SourceSymbol};
@@ -42,6 +42,7 @@ impl ReferenceSubject {
         let mut declaration_locations = Vec::new();
         let mut exact_labels = UniqueVec::new();
         let mut exact_labels_supported = true;
+        let mut local_scan_target = ExpectedUnique::new();
 
         for declaration_ref in declarations {
             let declaration = declaration_view.declaration(*declaration_ref)?;
@@ -82,6 +83,20 @@ impl ReferenceSubject {
                 exact_labels_supported = false;
             }
 
+            // A local binding copied through a macro still belongs to its source file, even when
+            // its declaration cannot be edited. Keep that scope separate from editable occurrences.
+            // Every selected declaration must establish the same local scope to narrow the search.
+            if let Some(declaration) = &declaration
+                && ReferenceSearchHints::is_body_local_declaration(declaration_ref)
+            {
+                local_scan_target.push(ReferenceScanTarget {
+                    crate_ref: declaration.crate_ref(),
+                    file_id: Some(declaration.file_id()),
+                });
+            } else {
+                local_scan_target = ExpectedUnique::Ambiguous;
+            }
+
             // Navigation may lead to a whole macro invocation. Only an actual source occurrence
             // can be projected back into references, which rename also consumes as editable text.
             if let Some(declaration) = declaration
@@ -102,15 +117,13 @@ impl ReferenceSubject {
             exact_labels = UniqueVec::new();
         }
 
-        let local_scan_target =
-            ReferenceSearchHints::build_local_scan_target(declarations, &declaration_locations);
         let subject = Self {
             declarations: declarations.iter().copied().collect(),
             declaration_locations,
         };
         let hints = ReferenceSearchHints {
             exact_labels,
-            local_scan_target,
+            local_scan_target: local_scan_target.into_option(),
         };
         Ok((subject, hints))
     }
@@ -213,30 +226,6 @@ impl ReferenceSearchHints {
                 SourceOccurrenceView::new(db).expr_source_label(*expr)
             }
             SymbolAt::Declaration { .. } | SymbolAt::FunctionBody { .. } => Ok(None),
-        }
-    }
-
-    fn build_local_scan_target(
-        declarations: &[DeclarationRef],
-        locations: &[ReferenceSourceLocation],
-    ) -> Option<ReferenceScanTarget> {
-        if declarations.is_empty()
-            || locations.is_empty()
-            || !declarations.iter().all(Self::is_body_local_declaration)
-        {
-            return None;
-        }
-
-        let first = locations.first()?;
-        if locations.iter().all(|location| {
-            location.crate_ref == first.crate_ref && location.file_id == first.file_id
-        }) {
-            Some(ReferenceScanTarget {
-                crate_ref: first.crate_ref,
-                file_id: Some(first.file_id),
-            })
-        } else {
-            None
         }
     }
 

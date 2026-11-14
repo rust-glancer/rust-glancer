@@ -9,6 +9,64 @@ use rg_std::CancellationToken;
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
 
 #[test]
+fn macro_binding_references_keep_their_local_scan_scope() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:macro_local_scope
+mod other;
+macro_rules! bind { ($name:ident) => { $name }; }
+fn demo() {
+    let bind!($binding$value) = 1u8;
+    let _ = $usage$value;
+}
+//- /src/other.rs
+fn first() { let value = 2u8; let _ = value; }
+fn second() { let value = 3u8; let _ = value; }
+"#,
+    );
+    let project = fixture.build_project();
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    project.inspect(|snapshot| {
+        let context = snapshot
+            .file_context_for_path(fixture.path("src/lib.rs"))
+            .expect("route source")
+            .expect("source target");
+        let analysis = snapshot.analysis();
+        let crates = [context.crate_ref];
+        let start = fixture.markers().position("usage").offset;
+        let expected = vec![ReferenceLocation {
+            crate_ref: context.crate_ref,
+            file_id: context.file,
+            span: Span {
+                start,
+                end: start + 5,
+            },
+        }];
+        // Both the copied binding and its ordinary use identify the same local. Whether the
+        // declaration can be edited must not send either search into unrelated files.
+        for marker in ["binding", "usage"] {
+            assert_eq!(
+                analysis
+                    .references(
+                        context.crate_ref,
+                        context.file,
+                        fixture.markers().position(marker).offset,
+                        ReferenceQuery::find_references(&crates, false),
+                    )
+                    .expect("binding references"),
+                expected,
+                "references from {marker}",
+            );
+        }
+    });
+    profile.finish().assert_counter_path_with_message(
+        "body_ir.saved.owners",
+        1,
+        "only the binding's function needs body preparation",
+    );
+}
+
+#[test]
 fn discovers_references_before_demanding_bodies_and_reuses_them_after_restart() {
     let mut source = r#"
 //- /src/lib.rs crate:demanded
