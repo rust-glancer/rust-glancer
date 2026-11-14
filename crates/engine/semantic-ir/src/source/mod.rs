@@ -11,7 +11,7 @@ use rg_source::QueryContext;
 
 use crate::target_declarations;
 
-/// The location tables needed to read occurrences from one saved declaration source.
+/// The source tables needed to read occurrences and previews from one saved declaration source.
 ///
 /// Open this view using the declaration's [`ItemSource`], then resolve its [`SourceId`] values
 /// through [`SourceLocations`]. The source chooses the table; an ID alone cannot do that.
@@ -73,6 +73,13 @@ impl<'db> SavedDeclarationSourceView<'db> {
                     ));
                 }
             }
+        }
+    }
+
+    pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&'db str> {
+        match self {
+            Self::File(source) => source.initializer_preview(occurrence),
+            Self::Generated { locations, .. } => locations.initializer_preview(occurrence),
         }
     }
 }

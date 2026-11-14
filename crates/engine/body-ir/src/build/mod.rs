@@ -1,6 +1,5 @@
 //! Lower and infer saved and current-source bodies with shared kernels.
 
-mod const_eval;
 mod current;
 mod local_items;
 mod lower;

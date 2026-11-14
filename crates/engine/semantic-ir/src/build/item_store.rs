@@ -397,8 +397,7 @@ where
             visibility: item.visibility.clone(),
             docs: item.docs.clone(),
             signature: ConstSignature::from_item(declaration),
-            initializer_preview: declaration.initializer_preview.clone(),
-            value: None,
+            initializer_location: declaration.initializer_location,
         })
     }
 
@@ -421,8 +420,7 @@ where
             docs: item.docs.clone(),
             ty: declaration.ty.clone(),
             mutability: declaration.mutability,
-            initializer_preview: declaration.initializer_preview.clone(),
-            value: None,
+            initializer_location: declaration.initializer_location,
         })
     }
 }

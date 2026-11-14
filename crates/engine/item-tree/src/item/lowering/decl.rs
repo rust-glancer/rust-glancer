@@ -337,7 +337,7 @@ impl FromAst for ConstItem {
             generics: GenericParams::from_ast(item, source),
             ty: item.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             has_value: item.eq_token().is_some(),
-            initializer_preview: item.body().and_then(initializer_preview),
+            initializer_location: item.body().map(|body| source.record_initializer(&body)),
         }
     }
 }
@@ -350,21 +350,9 @@ impl FromAst for StaticItem {
         Self {
             ty: item.ty().map(|ty| TypeRef::from_ast(&ty, source)),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
-            initializer_preview: item.body().and_then(initializer_preview),
+            initializer_location: item.body().map(|body| source.record_initializer(&body)),
         }
     }
-}
-
-// Capture only short initializers while syntax is available. Keep the text verbatim:
-// collapsing whitespace would change string literals and the extent of line comments.
-fn initializer_preview(body: ast::Expr) -> Option<String> {
-    const MAX_BYTES: u32 = 160;
-    const MAX_LINES: usize = 3;
-    if u32::from(body.syntax().text_range().len()) > MAX_BYTES {
-        return None;
-    }
-    let text = body.syntax().text().to_string();
-    (text.lines().count() <= MAX_LINES).then_some(text)
 }
 
 fn param_list_from_ast(

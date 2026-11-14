@@ -1,9 +1,7 @@
 use std::{collections::HashSet, fmt, sync::Arc};
 
 use rg_def_map::{ItemSource, ItemSourceKind};
-use rg_ir_model::{
-    BodyKey, BodyRef, ConstOrStaticRef, CrateRef, EvaluatedConstValue, FileId, SavedBodyOwner,
-};
+use rg_ir_model::{BodyKey, BodyRef, CrateRef, FileId};
 use rg_profile::ProfileThreadContext;
 use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, target_declarations};
 use rg_source::{QueryContext, ReadError};
@@ -175,33 +173,6 @@ impl<'db> SavedBodyReader<'db> {
 
     pub(crate) fn facts(&self, key: BodyKey) -> Result<Arc<BodyFactsStore>, ReadError> {
         infer_saved_body(self.db, key).map_err(ReadError::Query)
-    }
-
-    pub(crate) fn initializer(
-        &self,
-        item: ConstOrStaticRef,
-    ) -> Result<Option<&EvaluatedConstValue>, ReadError> {
-        let Some(krate) = item.origin().as_crate_ref() else {
-            return Ok(None);
-        };
-        let owner = match item {
-            ConstOrStaticRef::Const(item) => SavedBodyOwner::Const(item.id),
-            ConstOrStaticRef::Static(item) => SavedBodyOwner::Static(item.id),
-        };
-        if !self.targets.contains(&krate) {
-            return Ok(None);
-        }
-        let prepared =
-            prepare_saved_body(self.db, BodyKey { krate, owner }).map_err(ReadError::Query)?;
-        let Some(prepared) = prepared.as_ref() else {
-            return Ok(None);
-        };
-        Ok(prepared
-            .data
-            .value_ref(self.db)
-            .map_err(ReadError::Query)?
-            .initializer
-            .as_ref())
     }
 
     pub(crate) fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {

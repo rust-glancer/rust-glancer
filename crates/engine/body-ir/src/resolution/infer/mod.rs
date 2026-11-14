@@ -145,7 +145,8 @@ where
         // A cancelled solver may return a conservative answer. Do not publish that answer as a
         // completed body.
         rg_std::check_cancel!(self.context, "finalize body facts");
-        Ok(self.finish_coercions().finish())
+        let initializer = self.context.evaluate_initializer()?;
+        Ok(self.finish_coercions().finish(initializer))
     }
 
     /// Populate editor-facing declarations after inference settles. A uniquely selected call

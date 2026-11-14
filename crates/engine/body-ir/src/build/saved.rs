@@ -3,7 +3,7 @@
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{CrateDefMapReader, DefinitionReader};
-use rg_ir_model::{BodyId, BodyKey, SavedBodyOwner};
+use rg_ir_model::{BodyId, BodyKey};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{
     ItemLookupQuery, ItemReader, SavedDeclarationSourceView, TargetDeclarationReader,
@@ -19,10 +19,7 @@ use super::{
     },
     state::BodyStoreBuilder,
 };
-use crate::{
-    BodyFactsStore, BodySourceStore, BodyStore, PreparedBodyStore, profile::metric,
-    resolution::BodyResolutionContext,
-};
+use crate::{BodyFactsStore, BodySourceStore, BodyStore, PreparedBodyStore, profile::metric};
 
 /// One preparation produces semantic data and fresh occurrences as independently compared outputs.
 #[ajika::output]
@@ -79,33 +76,11 @@ pub fn prepare_saved_body(
         if lowered.bodies().is_empty() {
             return Ok(None);
         }
-        let initializer = if matches!(
-            key.owner,
-            SavedBodyOwner::Const(_) | SavedBodyOwner::Static(_)
-        ) {
-            // Saved declaration hover needs the same value as the old initializer pass. Evaluate
-            // it from the owner's lowered expression before that temporary syntax is dropped.
-            let lookup = ItemLookupQuery::build_from(items, key.krate, &cancellation)?;
-            let lowered_root = &lowered.bodies()[BodyId(0)];
-            BodyResolutionContext::new(
-                &definitions,
-                &items,
-                key.body(BodyId(0)),
-                lowered_root.body(),
-                &lookup,
-                cancellation.clone(),
-            )
-            .evaluate_initializer(lowered_root)?
-            .map(|(_, value)| value)
-        } else {
-            None
-        };
         // Nested bodies allocate into this root's arena. They can borrow earlier local items in
         // the worklist without crossing an Ajika query boundary or aliasing another root's IDs.
         let (mut data, mut sources) =
             BodyStoreBuilder::new(key.body(BodyId(0)), source, lowered, cancellation)
                 .prepare_saved(&definitions, &items, cfg)?;
-        data.initializer = initializer;
         data.shrink_to_fit();
         sources.shrink_to_fit();
         Ok(Some(PreparedBody::new(db, data, sources)?))

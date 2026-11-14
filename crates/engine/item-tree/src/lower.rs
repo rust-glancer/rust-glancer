@@ -51,7 +51,6 @@ impl FileLowering<'_> {
             expansion: None,
         }
         .collect_items(&mut builder, source_file.items());
-        // TODO: Store initializer previews with source outputs instead of declaration meaning.
         // TODO: Track source-sensitive attributes when attribute macro expansion is supported.
         (
             FileTree {
@@ -66,8 +65,9 @@ impl FileLowering<'_> {
         )
     }
 
-    /// Recovery inside a closed function body belongs to body queries. An incomplete
-    /// declaration can change how neighboring syntax is parsed, so keep its text dependency.
+    /// Recovery inside a closed function body or terminated initializer belongs to body queries.
+    /// An incomplete declaration can change how neighboring syntax is parsed, so keep its text
+    /// dependency.
     fn has_declaration_parse_errors(syntax: &Parse<ast::SourceFile>) -> bool {
         // Additional syntax validation does not change the recovered tree.
         let parse_errors = syntax.parse_errors();
@@ -79,14 +79,29 @@ impl FileLowering<'_> {
             .tree()
             .syntax()
             .descendants()
-            .filter_map(ast::Fn::cast)
-            .filter_map(|function| function.body())
-            .filter(|body| {
-                body.stmt_list().is_some_and(|statements| {
-                    statements.l_curly_token().is_some() && statements.r_curly_token().is_some()
-                })
+            .filter_map(|node| {
+                let body = match ast::Item::cast(node)? {
+                    ast::Item::Fn(function) => {
+                        let body = function.body()?;
+                        let statements = body.stmt_list()?;
+                        statements.l_curly_token()?;
+                        statements.r_curly_token()?;
+                        ast::Expr::BlockExpr(body)
+                    }
+                    // The semicolon closes an initializer independently of the expression form.
+                    // Errors in the annotation remain outside this range and still affect headers.
+                    ast::Item::Const(item) => {
+                        item.semicolon_token()?;
+                        item.body()?
+                    }
+                    ast::Item::Static(item) => {
+                        item.semicolon_token()?;
+                        item.body()?
+                    }
+                    _ => return None,
+                };
+                Some(body.syntax().text_range())
             })
-            .map(|body| body.syntax().text_range())
             .collect();
         parse_errors
             .iter()

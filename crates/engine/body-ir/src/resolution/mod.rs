@@ -9,6 +9,7 @@
 //! caches share declaration results across expressions and deferred lookups.
 
 mod cache;
+mod const_eval;
 mod context;
 mod infer;
 mod query;

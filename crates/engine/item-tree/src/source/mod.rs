@@ -12,10 +12,14 @@
 //!
 //! File tables store byte ranges. Generated tables store token provenance that can be resolved
 //! against file tables. Bodies can store already-resolved locations for their own source snapshot.
+//! Bounded initializer previews also live on this side: changing `2 + 2` to `4` changes display
+//! text and body meaning, but leaves the const's declaration and its occurrence IDs unchanged.
+
+use std::collections::HashMap;
 
 use rg_ir_model::{SourceId, SourceLocation, Span};
 use rg_std::{MemorySize, Shrink};
-use rg_syntax::TextRange;
+use rg_syntax::{AstNode as _, TextRange, ast};
 use rg_tt::{Span as TtSpan, TokenOwner};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -31,11 +35,17 @@ use wincode::{SchemaRead, SchemaWrite};
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink, SchemaRead, SchemaWrite)]
 pub struct DeclarationSourceStore<T> {
     owners: Vec<Vec<T>>,
+    // Preview text changes independently of the declaration's name, type, and occurrence IDs.
+    // Keep it sparse: most source occurrences are not initializer expressions.
+    initializer_previews: HashMap<SourceId, String>,
 }
 
 impl<T> Default for DeclarationSourceStore<T> {
     fn default() -> Self {
-        Self { owners: Vec::new() }
+        Self {
+            owners: Vec::new(),
+            initializer_previews: HashMap::new(),
+        }
     }
 }
 
@@ -54,6 +64,7 @@ impl<T> DeclarationSourceStore<T> {
         DeclarationSourceBuilder {
             owner,
             entries: Vec::new(),
+            initializer_previews: Vec::new(),
             map,
         }
     }
@@ -62,6 +73,8 @@ impl<T> DeclarationSourceStore<T> {
     /// IDs have no entries to read from the store. Dropping a builder does not finish it.
     pub fn finish_owner(&mut self, builder: DeclarationSourceBuilder<'_, T>) {
         self.owners[builder.owner as usize] = builder.entries;
+        self.initializer_previews
+            .extend(builder.initializer_previews);
     }
 
     pub fn entries(&self) -> impl Iterator<Item = &T> {
@@ -72,6 +85,12 @@ impl<T> DeclarationSourceStore<T> {
         self.owners
             .get(source.owner as usize)?
             .get(source.local as usize)
+    }
+
+    /// Short, verbatim initializer text, when lowering could retain it within the display limit.
+    /// This also works for generated declarations whose bodies cannot yet be analyzed.
+    pub fn initializer_preview(&self, source: SourceId) -> Option<&str> {
+        self.initializer_previews.get(&source).map(String::as_str)
     }
 }
 
@@ -117,6 +136,10 @@ impl SourceLocations for DeclarationSourceStore<Span> {
 pub trait RecordSource: TypeSource {
     fn record_as(&mut self, range: TextRange, role: SourceRole) -> SourceId;
 
+    /// Record the initializer as one occurrence, regardless of its expression structure. The
+    /// declaration keeps this ID; the source store keeps its optional bounded display text.
+    fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId;
+
     fn record(&mut self, range: TextRange) -> SourceId {
         self.record_as(range, SourceRole::Syntax)
     }
@@ -149,6 +172,7 @@ pub enum SourceRole {
 pub struct DeclarationSourceBuilder<'a, T> {
     owner: u32,
     entries: Vec<T>,
+    initializer_previews: Vec<(SourceId, String)>,
     map: &'a mut dyn FnMut(TextRange, SourceRole) -> T,
 }
 
@@ -160,6 +184,14 @@ impl<T> RecordSource for DeclarationSourceBuilder<'_, T> {
             owner: self.owner,
             local,
         }
+    }
+
+    fn record_initializer(&mut self, initializer: &ast::Expr) -> SourceId {
+        let id = self.record(initializer.syntax().text_range());
+        if let Some(preview) = initializer_preview(initializer) {
+            self.initializer_previews.push((id, preview));
+        }
+        id
     }
 }
 
@@ -212,4 +244,17 @@ impl TypeSource for NoSource {
     fn record_type(&mut self, _range: TextRange) -> Option<SourceId> {
         None
     }
+}
+
+/// Capture only short initializers while syntax is available. Keep the text verbatim:
+/// collapsing whitespace would change string literals and the extent of line comments.
+/// Declaration and body lowering share the same limit, including for current editor text.
+pub fn initializer_preview(body: &ast::Expr) -> Option<String> {
+    const MAX_BYTES: u32 = 160;
+    const MAX_LINES: usize = 3;
+    if u32::from(body.syntax().text_range().len()) > MAX_BYTES {
+        return None;
+    }
+    let text = body.syntax().text().to_string();
+    (text.lines().count() <= MAX_LINES).then_some(text)
 }
