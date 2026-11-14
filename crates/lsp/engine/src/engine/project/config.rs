@@ -14,6 +14,7 @@ pub(crate) struct ProjectConfiguration {
     pub(super) cargo_metadata_config: CargoMetadataConfig,
     pub(super) workspace_lowering_config: WorkspaceLoweringConfig,
     pub(super) discover_sysroot: bool,
+    pub(super) reuse_cache: bool,
     #[cfg(test)]
     pub(crate) sysroot_sources: Option<SysrootSources>,
 }
@@ -38,6 +39,7 @@ impl From<AnalysisConfig> for ProjectConfiguration {
             cargo_metadata_config,
             workspace_lowering_config,
             discover_sysroot: matches!(config.sysroot_discovery, ProtoSysrootDiscovery::Auto),
+            reuse_cache: config.reuse_cache,
             #[cfg(test)]
             sysroot_sources: None,
         }

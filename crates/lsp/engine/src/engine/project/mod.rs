@@ -94,6 +94,7 @@ impl ProjectCoordinator {
             cargo_features = ?configuration.cargo_metadata_config.features(),
             cfg_test = configuration.workspace_lowering_config.is_cfg_test_enabled(),
             cfg_atoms = ?configuration.workspace_lowering_config.cfg_atoms(),
+            reuse_cache = configuration.reuse_cache,
             "starting workspace indexing"
         );
 
@@ -167,6 +168,7 @@ impl ProjectCoordinator {
             let result = Project::builder(workspace.clone())
                 .workspace_lowering_config(configuration.workspace_lowering_config.clone())
                 .cargo_metadata_config(configuration.cargo_metadata_config.clone())
+                .reuse_cache(configuration.reuse_cache)
                 .memory_hooks(Arc::clone(&self.memory_hooks))
                 .build();
             match result {

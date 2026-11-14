@@ -42,10 +42,14 @@ impl ServerKind {
         }
     }
 
-    /// Disable background work that would make query latency less comparable.
+    /// Start with fresh semantic results and disable competing background work. Reset only the
+    /// analysis cache: Cargo artifacts can supply generated source needed by both servers.
     pub(super) fn initialization_options(self) -> Value {
         match self {
             Self::RustGlancer => json!({
+                "cache": {
+                    "reuseOnStartup": false,
+                },
                 "diagnostics": {
                     "onStartup": false,
                     "onSave": false,
