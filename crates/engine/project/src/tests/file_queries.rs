@@ -132,7 +132,9 @@ fn main() {
             .expect("imported type definition");
         assert_eq!(targets.len(), 1);
         assert_eq!(
-            snapshot.file_path(targets[0].crate_ref.package, targets[0].file_id),
+            snapshot
+                .file_path(targets[0].crate_ref.package, targets[0].file_id)
+                .expect("source path"),
             Some(included.as_path())
         );
 
@@ -294,7 +296,7 @@ fn main() {}
     let tool = fixture.path("src/bin/tool.rs");
     std::fs::remove_file(&tool).expect("remove autodiscovered target");
     project
-        .apply_change(SavedFileChange::fs_path(tool))
+        .apply_changes([SavedFileChange::fs_path(tool)])
         .expect("reload Cargo metadata after deleting a target");
     project.inspect(|snapshot| {
         let analysis = snapshot.analysis();

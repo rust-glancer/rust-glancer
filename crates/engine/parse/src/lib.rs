@@ -7,6 +7,7 @@ mod line_index;
 mod module;
 mod package;
 mod query;
+mod source_reader;
 mod target;
 mod text_range_map;
 
@@ -25,6 +26,7 @@ pub use self::{
     },
     package::Package,
     query::saved_syntax,
+    source_reader::SavedSourceReader,
     target::{CargoTarget, CargoTargetId},
     text_range_map::{TextRangeMap, TextRangeMapping},
 };

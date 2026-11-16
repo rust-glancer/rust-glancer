@@ -16,8 +16,8 @@ use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, TargetDeclarationReader,
-    target_declarations,
+    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, SavedSourceResolver,
+    SourceSelection, TargetDeclarationReader, target_declarations,
 };
 
 const OWNERS_PER_PAGE: usize = 64;
@@ -156,6 +156,39 @@ pub fn associated_declarations(
     };
     let bodies: Vec<_> = BodyOwnerData::for_members(headers, &items, store).collect();
     AssociatedDeclarations::new(db, items, sources, files, bodies).map(Some)
+}
+
+/// Gather body metadata through the same source selection used by signature scans. Owners are
+/// restricted to the selected file; matching an individual body range belongs to the caller.
+pub fn body_owners(
+    db: &QueryContext<'_>,
+    krate: CrateRef,
+    selection: SourceSelection,
+) -> ajika::Result<Vec<BodyOwnerData>> {
+    let target = target_declarations(db, krate)?;
+    let in_selected_file =
+        |owner: &BodyOwnerData| selection.file().is_none_or(|file| file == owner.file);
+    let mut owners: Vec<_> = target
+        .body_owners
+        .value_ref(db)?
+        .iter()
+        .copied()
+        .filter(in_selected_file)
+        .collect();
+    for store in SavedSourceResolver::new(db, krate).member_stores(selection)? {
+        let Some(members) = associated_declarations(db, krate, store.id)? else {
+            continue;
+        };
+        owners.extend(
+            members
+                .body_owners
+                .value_ref(db)?
+                .iter()
+                .copied()
+                .filter(in_selected_file),
+        );
+    }
+    Ok(owners)
 }
 
 /// Direct body identity already contains its member store; do not enumerate neighboring owners.

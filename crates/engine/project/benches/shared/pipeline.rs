@@ -10,10 +10,11 @@ use rg_def_map::{
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
-use rg_parse::{ParseDb, TargetFileManifest, saved_syntax};
+use rg_parse::{ParseDb, SavedSourceReader, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
     AssociatedItemStore, CrateItemSource, ItemLookupEnv, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemView, SymbolNameData, TargetItemData, target_declarations,
+    LookupQuestion, SemanticItemView, SourceSelection, SymbolNameData, TargetItemData,
+    body_owners, target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -90,11 +91,11 @@ impl BenchWorkspace {
             inputs,
             self.targets.iter().copied().zip(&manifests),
         )?;
-        // The old root parse included line indexes. Build them explicitly now that routing
-        // leaves them lazy.
+        // Include coordinate indexing in this parsing stage. These indexes belong to the query
+        // operation, not the startup file inventory.
+        let sources = SavedSourceReader::new(db);
         for file in parse.packages().iter().flat_map(|pkg| pkg.parsed_files()) {
-            file.line_index()
-                .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
+            sources.line_index(file.file_id())?;
         }
         Ok(parse)
     }
@@ -133,19 +134,16 @@ impl BenchWorkspace {
     }
 
     pub(crate) fn body_owners(&self, db: &QueryContext<'_>) -> ajika::Result<Vec<BodyKey>> {
-        let declarations =
-            db.parallel_map(&self.targets, |db, &krate| target_declarations(db, krate))?;
+        db.parallel_map(&self.targets, |db, &krate| target_declarations(db, krate))?;
         let mut owners = Vec::new();
-        for (&krate, declarations) in self.targets.iter().zip(&declarations) {
+        for &krate in &self.targets {
             if self.workspace.packages()[krate.package.0].is_workspace_member
                 && TargetInput::at(krate)
                     .kind(db)?
                     .is_primary_analysis_target()
             {
                 owners.extend(
-                    declarations
-                        .body_owners
-                        .value(db)?
+                    body_owners(db, krate, SourceSelection::All)?
                         .iter()
                         .map(|owner| BodyKey {
                             krate,
@@ -246,6 +244,17 @@ impl CrateItemSource for Declarations {
         let _ = origin;
         Err(ReadError::Query(ajika::Error::contract(
             "broad reads are outside the header benchmark",
+        )))
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let _ = (origin, selection);
+        Err(ReadError::Query(ajika::Error::contract(
+            "source scans are outside the header benchmark",
         )))
     }
 

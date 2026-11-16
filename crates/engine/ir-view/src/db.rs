@@ -9,10 +9,10 @@ use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreRef, LocalDefRef, ModuleRef,
     PackageSlot, Path, SemanticItemRef, SourceId, Span,
 };
-use rg_parse::{CurrentSource, Package, ParseDb, ParsedFile, saved_syntax};
+use rg_parse::{CurrentSource, Package, ParseDb, SavedSourceReader};
 use rg_semantic_ir::{
     AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
-    TypePathContext, TypePathResolution,
+    SourceSelection, TypePathContext, TypePathResolution,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::{Cancelable, CancellationToken, Cancelled, UniqueVec};
@@ -83,8 +83,8 @@ impl<'db> IndexedViewDb<'db> {
         }
     }
 
-    pub(crate) fn parsed_file(&self, krate: CrateRef, file: FileId) -> Option<ParsedFile<'db>> {
-        self.parse.package(krate.package.0)?.parsed_file(file)
+    pub(crate) fn saved_text(&self, file: FileId) -> anyhow::Result<Arc<str>> {
+        Ok(SavedSourceReader::new(self.queries).text(file)?)
     }
 
     /// Share the captured syntax with body providers in this operation.
@@ -93,11 +93,7 @@ impl<'db> IndexedViewDb<'db> {
         krate: CrateRef,
         file: FileId,
     ) -> anyhow::Result<Arc<Parse<SourceFile>>> {
-        Ok(saved_syntax(
-            self.queries,
-            file,
-            self.crate_edition(krate)?,
-        )?)
+        Ok(SavedSourceReader::new(self.queries).syntax(file, self.crate_edition(krate)?)?)
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
@@ -113,6 +109,7 @@ impl<'db> IndexedViewDb<'db> {
             &self.def_map,
             &self.semantic_ir,
             &self.body_ir,
+            SavedSourceReader::new(self.queries),
             source,
             self.cancellation.clone(),
         )
@@ -246,6 +243,17 @@ impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
         match definition.origin {
             DefMapRef::Crate(_) => self.semantic_ir.item_for_local_def(definition),
             DefMapRef::Body(_) => (&self.body_ir).item_for_local_def(definition),
+        }
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic_ir.source_items(origin, selection),
+            DefMapRef::Body(_) => (&self.body_ir).source_items(origin, selection),
         }
     }
 

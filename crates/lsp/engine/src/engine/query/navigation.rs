@@ -372,7 +372,7 @@ impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
         file: FileId,
     ) -> anyhow::Result<CapturedNavigationSource> {
         let package = crate_ref.package;
-        let Some(saved_path) = self.snapshot.file_path(package, file) else {
+        let Some(saved_path) = self.snapshot.file_path(package, file)? else {
             return Ok(CapturedNavigationSource::Unavailable);
         };
         let Some(document) = self

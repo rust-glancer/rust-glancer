@@ -1,5 +1,6 @@
 use rg_body_ir::testonly::BodyIrFixture;
 use rg_ir_model::{Span, identity::DeclarationRef};
+use rg_parse::{LineIndex, SavedSourceReader};
 
 use crate::{
     IndexedViewDb,
@@ -21,11 +22,9 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             .find(|file| file.path().ends_with("src/lib.rs"))
             .expect("fixture should contain src/lib.rs")
             .file_id();
-        let parsed_file = package
-            .parsed_file(file_id)
-            .expect("fixture source file should be parsed");
-        let line_index = parsed_file
-            .line_index()
+        let sources = SavedSourceReader::new(view.semantic().db());
+        let line_index = sources
+            .line_index(file_id)
             .expect("fixture line index should load");
         let view_db = IndexedViewDb::new(
             view.semantic().db(),
@@ -46,8 +45,8 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             if occurrence_file != file_id {
                 continue;
             }
-            let Some(text) = parsed_file
-                .text_for_span(span)
+            let Some(text) = sources
+                .text_for_span(file_id, span)
                 .expect("source occurrence text should load")
             else {
                 continue;
@@ -93,7 +92,7 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
     });
 }
 
-fn render_span(span: Span, line_index: &rg_parse::LineIndex) -> String {
+fn render_span(span: Span, line_index: &LineIndex) -> String {
     let line_column = line_index.line_column_span(span);
     format!(
         "{}:{}-{}:{}",

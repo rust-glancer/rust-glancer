@@ -119,7 +119,7 @@ pub fn neighbor() { let adjacent = 1u32; let _ = adjacent; }
     let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved,body_ir.resolution");
     fs::write(&path, &shifted).expect("save trivia");
     project
-        .apply_change(SavedFileChange::fs_path(&path))
+        .apply_changes([SavedFileChange::fs_path(&path)])
         .expect("publish trivia");
     check(&project, &shifted, false);
     assert_eq!(
@@ -201,7 +201,7 @@ pub fn make() -> u8 { 1 }
     let changed = original.replace("value = 1u8", "value = true");
     fs::write(&path, &changed).expect("save expression");
     project
-        .apply_change(SavedFileChange::fs_path(&path))
+        .apply_changes([SavedFileChange::fs_path(&path)])
         .expect("publish expression");
     let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
     check(&project, &changed, "value", PrimitiveTy::Bool);
@@ -225,7 +225,7 @@ pub fn make() -> u8 { 1 }
     let api = fixture.path("src/api.rs");
     fs::write(&api, "pub fn make() -> u16 { 1 }\n").expect("save signature");
     project
-        .apply_change(SavedFileChange::fs_path(&api))
+        .apply_changes([SavedFileChange::fs_path(&api)])
         .expect("publish signature");
     check(
         &project,

@@ -5,7 +5,9 @@ use rg_ir_model::{
     BodyId, BodyKey, BodyRef, DefMapRef, ExprId, FileId, ModuleRef, SavedBodyOwner, SemanticItemRef,
 };
 use rg_profile::test_support::ProfileTest;
-use rg_semantic_ir::{CrateItemSource as _, SemanticItemSource as _, TargetDeclarationReader};
+use rg_semantic_ir::{
+    CrateItemSource as _, SemanticItemSource as _, SourceSelection, TargetDeclarationReader,
+};
 use rg_source::{CapturedSource, QueryContext, SourceInput};
 use rg_ty::{ConstValue, GenericArg};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
@@ -64,7 +66,7 @@ pub fn other() {}
         .run(|db| {
             let declarations = TargetDeclarationReader::for_target(db, target)?;
             let reader = BodyReader::new(db, &declarations);
-            let owners: Vec<_> = reader.owners(target)?.copied().collect();
+            let owners: Vec<_> = reader.owners(target, SourceSelection::All)?.collect();
             let outer = declarations
                 .all_items(DefMapRef::Crate(target))?
                 .into_iter()

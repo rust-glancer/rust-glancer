@@ -7,6 +7,7 @@ mod file_queries;
 mod format_captures;
 mod generated_modules;
 mod initializers;
+mod lazy_members;
 mod member_identity;
 mod utils;
 
@@ -62,7 +63,7 @@ pub struct Before;
     std::fs::write(&path, captured.text()).expect("disk should contain the proposed saved value");
 
     let summary = project
-        .apply_change(SavedFileChange::captured(captured.clone()))
+        .apply_changes([SavedFileChange::captured(captured.clone())])
         .expect("matching captured source should publish");
 
     assert_ne!(project.generation_id(), previous_generation);
@@ -75,13 +76,16 @@ pub struct Before;
         .expect("published captured source should remain available");
     assert_eq!(summary.changed_files.len(), 1);
     assert_eq!(entry.source_revision(), captured.revision());
-    assert_eq!(
-        entry
-            .source_text()
-            .expect("published captured source should reload from matching disk")
-            .as_ref(),
-        "pub struct Captured;\n"
-    );
+    project.inspect(|snapshot| {
+        assert_eq!(
+            snapshot
+                .file_source_text(PackageSlot(0), entry.file_id())
+                .expect("published captured source should reload from matching disk")
+                .expect("published source is available")
+                .as_ref(),
+            "pub struct Captured;\n"
+        );
+    });
 }
 
 #[test]
@@ -108,7 +112,7 @@ pub struct Published;
     std::fs::write(&path, "pub struct Newer;\n")
         .expect("disk should advance beyond the captured proposal");
     let error = project
-        .apply_change(SavedFileChange::captured(captured))
+        .apply_changes([SavedFileChange::captured(captured)])
         .expect_err("a newer disk value must reject the captured candidate");
 
     let canonical = path
@@ -191,7 +195,7 @@ pub struct AlreadySaved;
         .expect("existing fixture source should capture");
 
     let summary = project
-        .apply_change(SavedFileChange::captured(captured))
+        .apply_changes([SavedFileChange::captured(captured)])
         .expect("unchanged captured save should be accepted");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -272,7 +276,7 @@ pub struct Before;
     std::fs::write(&new, "pub struct After;\n")
         .expect("renamed module should accept a later saved edit");
     project
-        .apply_change(SavedFileChange::fs_path(&new))
+        .apply_changes([SavedFileChange::fs_path(&new)])
         .expect("later save should not validate the retired module path");
 }
 
@@ -418,7 +422,7 @@ pub struct AlreadyApplied;
         .clear();
 
     let summary = project
-        .apply_change(SavedFileChange::fs_path(fixture.path("src/lib.rs")))
+        .apply_changes([SavedFileChange::fs_path(fixture.path("src/lib.rs"))])
         .expect("an unchanged watcher replay should be accepted");
 
     assert_eq!(summary, AnalysisChangeSummary::default());
@@ -628,7 +632,7 @@ recurse!();
     std::fs::write(&source_path, "pub struct Finished;\n")
         .expect("fixture source should accept a finite replacement");
     let change = project
-        .apply_change(SavedFileChange::fs_path(source_path))
+        .apply_changes([SavedFileChange::fs_path(source_path)])
         .expect("finite replacement should rebuild the affected package");
     assert_eq!(change.changed_crates.len(), 1);
     assert!(
@@ -765,7 +769,7 @@ pub struct Account;
         ],
         expect![[r#"
             changed files
-            - host_update_fixture src/lib.rs
+            - src/lib.rs
 
             changed targets
             - host_update_fixture[lib]
@@ -817,8 +821,8 @@ mod api;
         ],
         expect![[r#"
             changed files
-            - host_new_module_fixture src/api.rs
-            - host_new_module_fixture src/lib.rs
+            - src/api.rs
+            - src/lib.rs
 
             changed targets
             - host_new_module_fixture[lib]
@@ -984,7 +988,7 @@ pub struct NewType;
         &[HostObservation::workspace_symbols("NewType")],
         expect![[r#"
             changed files
-            - new_pkg crates/new_pkg/src/lib.rs
+            - crates/new_pkg/src/lib.rs
 
             changed targets
             - app[lib]
@@ -1045,7 +1049,7 @@ pub struct NewType;
         &[HostObservation::workspace_symbols("NewType")],
         expect![[r#"
             changed files
-            - new_pkg crates/new_pkg/src/lib.rs
+            - crates/new_pkg/src/lib.rs
 
             changed targets
             - app[lib]
@@ -1126,7 +1130,7 @@ fn smoke() {}
         )],
         expect![[r#"
             changed files
-            - autotarget_fixture tests/smoke.rs
+            - tests/smoke.rs
 
             changed targets
             - autotarget_fixture[lib]
@@ -1166,7 +1170,7 @@ fn changed_smoke() {}
         &[],
         expect![[r#"
             changed files
-            - autotarget_update_fixture tests/smoke.rs
+            - tests/smoke.rs
 
             changed targets
             - autotarget_update_fixture[test]
@@ -1313,7 +1317,7 @@ pub struct Root;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1331,7 +1335,7 @@ pub struct Api;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/api.rs
+            - crates/dep/src/api.rs
 
             changed targets
             - dep[lib]
@@ -1406,8 +1410,8 @@ pub struct Root;
         ],
         expect![[r#"
             changed files
-            - dep crates/dep/src/api.rs
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/api.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1547,7 +1551,7 @@ pub struct Renamed;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]
@@ -1623,7 +1627,7 @@ pub struct Renamed;
         &[HostObservation::type_names_at("app marker 0", "app", "0")],
         expect![[r#"
             changed files
-            - dep crates/dep/src/lib.rs
+            - crates/dep/src/lib.rs
 
             changed targets
             - dep[lib]

@@ -9,9 +9,13 @@
 //! These choices only reduce the amount of source sent to semantic matching. The analysis layer
 //! still resolves every surviving candidate before it is returned as a reference.
 
-use anyhow::Context as _;
+use std::collections::HashMap;
+
 use rg_analysis::{ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
+use rg_parse::SavedSourceReader;
+use rg_semantic_ir::complete_source_ownership;
+use rg_source::QueryContext;
 use rg_std::UniqueVec;
 
 use crate::state::ProjectState;
@@ -55,6 +59,7 @@ impl<'a> ReferenceSearchPlanner<'a> {
     /// a persistent text index or changing the declaration matcher that proves each result.
     pub(super) fn files_matching_labels(
         &self,
+        db: &QueryContext<'_>,
         search_crates: &[CrateRef],
         labels: &[ReferenceSearchLabel],
         cancellation: &rg_std::CancellationToken,
@@ -63,36 +68,24 @@ impl<'a> ReferenceSearchPlanner<'a> {
             return Ok(None);
         };
 
-        let packages = Self::unique_crate_packages(search_crates);
-
         let mut files = UniqueVec::new();
-        for package in packages {
-            rg_std::check_cancel!(cancellation, "reference package planning");
-            let Some(parsed_package) = self.state.parse_db().package(package.0) else {
-                continue;
-            };
-
-            for parsed_file in parsed_package.parsed_files() {
+        let mut matches = HashMap::new();
+        let sources = SavedSourceReader::new(db);
+        for &crate_ref in search_crates {
+            let ownership = complete_source_ownership(db, crate_ref)?;
+            for file_id in ownership.files() {
                 rg_std::check_cancel!(cancellation, "reference source prefilter");
-                let source = parsed_file.source_text().with_context(|| {
-                    format!(
-                        "while attempting to read source text for {}",
-                        parsed_file.path().display()
-                    )
-                })?;
-                if !prefilter.matches(source.as_bytes()) {
-                    continue;
-                }
-
-                for crate_ref in self.state.crates_for_file(package, parsed_file.file_id()) {
-                    if !search_crates.contains(&crate_ref) {
-                        continue;
+                let matched = match matches.get(&file_id) {
+                    Some(&matched) => matched,
+                    None => {
+                        let source = sources.text(file_id)?;
+                        let matched = prefilter.matches(source.as_bytes());
+                        matches.insert(file_id, matched);
+                        matched
                     }
-                    let file = ReferenceSearchFile {
-                        crate_ref,
-                        file_id: parsed_file.file_id(),
-                    };
-                    files.push(file);
+                };
+                if matched {
+                    files.push(ReferenceSearchFile { crate_ref, file_id });
                 }
             }
         }
@@ -156,14 +149,6 @@ impl<'a> ReferenceSearchPlanner<'a> {
         }
 
         packages
-    }
-
-    fn unique_crate_packages(crates: &[CrateRef]) -> Vec<PackageSlot> {
-        crates
-            .iter()
-            .map(|crate_ref| crate_ref.package)
-            .collect::<UniqueVec<_>>()
-            .into_vec()
     }
 }
 

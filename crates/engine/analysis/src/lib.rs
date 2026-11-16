@@ -25,7 +25,7 @@ use rg_ir_view::{
 };
 use rg_parse::{
     CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext,
-    ParseDb, parse_source_file,
+    ParseDb, SavedSourceReader, parse_source_file,
 };
 use rg_syntax::SourceFile;
 
@@ -167,13 +167,12 @@ impl<'a> Analysis<'a> {
 
     pub(crate) fn module_file_candidates(
         &self,
-        crate_ref: CrateRef,
         file: FileId,
         file_base: IndexedModuleFileBase,
         inline_module_path: &[String],
     ) -> anyhow::Result<Vec<String>> {
         self.saved_source
-            .module_file_candidates(crate_ref, file, file_base, inline_module_path)
+            .module_file_candidates(file, file_base, inline_module_path)
     }
 
     pub(crate) fn declared_features(&self, package: PackageSlot) -> &[String] {
@@ -727,11 +726,12 @@ impl CurrentSourceView {
 #[derive(Debug, Clone, Copy)]
 pub struct SavedSourceView<'a> {
     parse: &'a ParseDb,
+    sources: SavedSourceReader<'a>,
 }
 
 impl<'a> SavedSourceView<'a> {
-    pub fn new(parse: &'a ParseDb) -> Self {
-        Self { parse }
+    pub fn new(parse: &'a ParseDb, sources: SavedSourceReader<'a>) -> Self {
+        Self { parse, sources }
     }
 
     fn declared_features(&self, package: PackageSlot) -> &[String] {
@@ -744,28 +744,16 @@ impl<'a> SavedSourceView<'a> {
     /// Lists conventional out-of-line child modules below one file-backed source position.
     fn module_file_candidates(
         &self,
-        crate_ref: CrateRef,
         file: FileId,
         file_base: IndexedModuleFileBase,
         inline_module_path: &[String],
     ) -> anyhow::Result<Vec<String>> {
-        let Some(parsed_file) = self
-            .parse
-            .package(crate_ref.package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
-            return Ok(Vec::new());
-        };
-
+        let path = self.sources.path(file)?;
         let mut context = match file_base {
-            IndexedModuleFileBase::TargetRoot => {
-                ModuleFileContext::for_target_root(parsed_file.path())
-            }
-            IndexedModuleFileBase::Conventional => {
-                ModuleFileContext::from_definition_file(parsed_file.path())
-            }
+            IndexedModuleFileBase::TargetRoot => ModuleFileContext::for_target_root(path),
+            IndexedModuleFileBase::Conventional => ModuleFileContext::from_definition_file(path),
             IndexedModuleFileBase::PathAttribute => {
-                ModuleFileContext::for_path_attribute_file(parsed_file.path())
+                ModuleFileContext::for_path_attribute_file(path)
             }
         };
         // TODO: Carry direct `#[path]` overrides on inline-module ancestors in the indexed source
@@ -784,28 +772,17 @@ impl<'a> SavedSourceView<'a> {
         file: FileId,
         span: Span,
     ) -> anyhow::Result<Option<String>> {
-        let Some(parsed_file) = self
-            .parse
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
+        if self.parse.package(package.0).is_none() {
             return Ok(None);
-        };
-        parsed_file.text_for_span(span)
+        }
+        Ok(self.sources.text_for_span(file, span)?)
     }
 
     fn file_text(&self, package: PackageSlot, file: FileId) -> anyhow::Result<Option<String>> {
-        let Some(parsed_file) = self
-            .parse
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
+        if self.parse.package(package.0).is_none() {
             return Ok(None);
-        };
-        let text = parsed_file
-            .source_text()
-            .context("load completion source file text")?;
-        Ok(Some(text.to_string()))
+        }
+        Ok(Some(self.sources.text(file)?.to_string()))
     }
 
     fn line_for_offset(
@@ -814,13 +791,9 @@ impl<'a> SavedSourceView<'a> {
         file: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<u32>> {
-        let Some(parsed_file) = self
-            .parse
-            .package(package.0)
-            .and_then(|package| package.parsed_file(file))
-        else {
+        if self.parse.package(package.0).is_none() {
             return Ok(None);
-        };
-        Ok(Some(parsed_file.line_index()?.position(offset).line))
+        }
+        Ok(Some(self.sources.line_index(file)?.position(offset).line))
     }
 }

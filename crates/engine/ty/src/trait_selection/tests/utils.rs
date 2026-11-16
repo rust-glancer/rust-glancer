@@ -23,7 +23,7 @@ use rg_semantic_ir::{
     AssociatedItemStore, AssociatedItemStoreBuilder, CrateItemSource, FunctionData,
     FunctionSignature, GenericParamSource, GenericsQuery, ImplData, ItemLookupEnv, ItemLookupIndex,
     ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemSource, SemanticItemView, StructData,
+    LookupQuestion, SemanticItemSource, SemanticItemView, SourceSelection, StructData,
     SymbolNameData, TraitData, TypeAliasData, TypeAliasSignature,
 };
 use rg_source::ReadError;
@@ -235,6 +235,21 @@ impl CrateItemSource for TraitSelectionFixture {
         Ok(result)
     }
 
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        Ok(CrateItemSource::all_items(self, origin)?
+            .into_iter()
+            .filter(|item| {
+                selection
+                    .file()
+                    .is_none_or(|file| item.source().file_id == file)
+            })
+            .collect())
+    }
+
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
         Ok(self.crate_items(krate).map(ItemStore::lang_items))
     }
@@ -328,6 +343,14 @@ impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
 
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         CrateItemSource::all_items(*self, origin)
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        CrateItemSource::source_items(*self, origin, selection)
     }
 }
 

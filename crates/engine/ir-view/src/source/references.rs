@@ -10,7 +10,7 @@ use rg_def_map::DefMapSource as _;
 use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ImplRef, ItemStoreId, ModuleRef, SavedBodyOwner, Span, TypeDefRef,
 };
-use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery};
+use rg_semantic_ir::{BodyOwnerData, ItemStoreQuery, SourceSelection};
 use rg_syntax::{
     SyntaxKind,
     ast::{self, AstToken as _, FormatStringPartKind},
@@ -48,7 +48,7 @@ impl ReferenceSourceSelection {
         krate: CrateRef,
         file: FileId,
     ) -> anyhow::Result<HashSet<SavedBodyOwner>> {
-        let owners = db.body_ir.owners(krate)?.filter(|owner| owner.file == file);
+        let owners = db.body_ir.owners(krate, SourceSelection::AllInFile(file))?;
         if owners.clone().next().is_none() {
             return Ok(HashSet::new());
         }
@@ -73,15 +73,11 @@ impl ReferenceSourceSelection {
         if labels.is_empty() {
             return Ok(selected);
         }
-        let Some(parsed) = db.parsed_file(krate, file) else {
-            // Without saved source to inspect, we cannot exclude any of this file's owners.
-            return Ok(owners.clone().map(|owner| owner.owner).collect());
-        };
         // Relative keywords cannot name a foreign module. After removing those labels, most
         // dependency files can be rejected from their text without building any syntax tree.
         // Keep generated owners even when the text lacks a label. `include!` also prevents this
         // shortcut: the included file may contain references absent from the invocation's text.
-        let text = parsed.source_text()?;
+        let text = db.saved_text(file)?;
         // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
         // Escapes require the syntax pass below before we can rule out its references.
         if !labels.iter().any(|label| text.contains(label.as_str()))
@@ -170,7 +166,7 @@ impl ReferenceSourceSelection {
                 // impl or module may change that scope, so only use the outer scope without one.
                 let plausible = match label.as_str() {
                     "Self" if !Self::contains(&tokens, "impl", span) => {
-                        self.accepts_self(db, owner)?
+                        self.accepts_self(db, &owner)?
                     }
                     "self" | "super" | "crate"
                         if !self.modules.is_empty() && !Self::contains(&tokens, "mod", span) =>

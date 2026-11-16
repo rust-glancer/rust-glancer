@@ -34,7 +34,7 @@ pub(crate) fn workspace_symbol(
     snapshot: ProjectSnapshot<'_>,
     symbol: WorkspaceSymbol,
 ) -> anyhow::Result<Option<LspWorkspaceSymbol>> {
-    let Some(path) = snapshot.file_path(symbol.crate_ref.package, symbol.file_id) else {
+    let Some(path) = snapshot.file_path(symbol.crate_ref.package, symbol.file_id)? else {
         return Ok(None);
     };
     let Ok(uri) = path_to_file_uri(path) else {

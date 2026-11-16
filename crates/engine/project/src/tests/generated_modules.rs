@@ -647,7 +647,7 @@ pub struct Appeared;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/optional.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -671,7 +671,7 @@ pub struct Renamed;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/optional.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -695,8 +695,8 @@ pub struct RootOnly;
         ],
         expect![[r#"
             changed files
-            - generated_module_update_fixture src/lib.rs
-            - generated_module_update_fixture src/optional.rs
+            - src/lib.rs
+            - src/optional.rs
 
             changed targets
             - generated_module_update_fixture[lib]
@@ -826,7 +826,7 @@ pub struct ChildItem;
     std::fs::rename(&flat_path, &nested_path)
         .expect("generated module fixture should rename to nested form");
     project
-        .apply_change(SavedFileChange::fs_path(&nested_path))
+        .apply_changes([SavedFileChange::fs_path(&nested_path)])
         .expect("the unknown nested path should trigger generated module rediscovery");
 
     let canonical_nested = nested_path
@@ -863,7 +863,7 @@ make_child!();
     )
     .expect("fixture root should be changed after generated module deletion");
     project
-        .apply_change(SavedFileChange::fs_path(&lib_path))
+        .apply_changes([SavedFileChange::fs_path(&lib_path)])
         .expect("saving the declaring file should publish the missing generated module state");
 
     project.inspect(|snapshot| {

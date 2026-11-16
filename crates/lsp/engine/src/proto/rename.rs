@@ -32,7 +32,7 @@ pub(crate) fn workspace_edit(
     for edit in edits {
         rg_std::check_cancel!(cancellation, "rename edit conversion");
         let path = snapshot
-            .file_path(edit.crate_ref.package, edit.file_id)
+            .file_path(edit.crate_ref.package, edit.file_id)?
             .with_context(|| {
                 format!(
                     "while attempting to find file path for rename edit in package {:?}, file {:?}",

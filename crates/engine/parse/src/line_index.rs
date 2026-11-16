@@ -1,4 +1,5 @@
-use rg_ir_model::Span;
+use rg_ir_model::{FileId, Span};
+use rg_source::{QueryContext, SourceInput};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -44,7 +45,7 @@ impl LineEndings {
     }
 }
 
-#[derive(Debug, Clone, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct LineIndex {
     line_endings: LineEndings,
     pub(crate) lines: Vec<LineInfo>,
@@ -52,7 +53,17 @@ pub struct LineIndex {
     pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
+#[ajika::query]
 impl LineIndex {
+    /// Share line conversion within an operation, including files first reached by lazy includes.
+    #[ajika::query(transient, returns(ref))]
+    pub(crate) fn for_file(db: &QueryContext<'_>, file: FileId) -> ajika::Result<Self> {
+        let text = SourceInput::entry(db, file)?
+            .text()
+            .map_err(ajika::Error::application)?;
+        Ok(Self::new(&text))
+    }
+
     /// Builds a fast line-start index for repeated offset-to-position lookups.
     pub fn new(source: &str) -> Self {
         let mut index = Self {

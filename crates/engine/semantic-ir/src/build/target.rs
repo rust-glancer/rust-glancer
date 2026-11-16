@@ -27,19 +27,27 @@ use super::{
 use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
     ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
-    LookupKeys, LookupQuestion, SemanticItemSource, SemanticItemView, SymbolNameData,
+    LookupKeys, LookupQuestion, SavedSourceResolver, SemanticItemSource, SemanticItemView,
+    SourceOwnershipIndex, SourceSelection, SymbolNameData,
     item::AssociatedItemHints,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
 #[derive(PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct TargetDeclarationMetadata {
+    /// Sources reached during module collection. Member includes are discovered by their owner's
+    /// query and do not extend this startup manifest.
     pub sources: TargetFileManifest,
     pub module_files: Vec<FileId>,
     pub macro_expansion_limit: Option<MacroExpansionLimitReport>,
 }
 
 /// Handles for the independently readable parts of one target's declarations.
+///
+/// `items` contains module declarations and trait/impl headers. Their associated declarations
+/// are separate owner queries: this result keeps the inputs and macro scopes needed to build
+/// them, along with cheap name hints for deciding which owners to open. Those member queries
+/// are left for readers that need their declarations or include files.
 #[ajika::output]
 pub struct TargetDeclarations {
     metadata: TargetDeclarationMetadata,
@@ -54,8 +62,12 @@ pub struct TargetDeclarations {
     lookup_keys: LookupKeys,
     body_owners: Vec<BodyOwnerData>,
     symbol_names: Vec<SymbolNameData>,
+    source_ownership: SourceOwnershipIndex,
 }
 
+/// Publish module declarations and the inputs for later member queries as separate outputs.
+/// Reading this result gives handles; each reader acquires the payloads it needs through its own
+/// query frame, without observing unrelated member data or source maps.
 #[ajika::query]
 pub fn target_declarations(
     db: &QueryContext<'_>,
@@ -71,6 +83,7 @@ pub fn target_declarations(
         lookup_env,
         lookup,
         generated_sources,
+        mut source_ownership,
     } = TargetItemData::build(
         db,
         &data,
@@ -93,6 +106,9 @@ pub fn target_declarations(
         .collect();
     module_files.sort_unstable();
     module_files.dedup();
+    for &file in &sources.files {
+        source_ownership.record(file, ItemStoreRef::scope(DefMapRef::Crate(krate)));
+    }
     let metadata = TargetDeclarationMetadata {
         sources,
         module_files,
@@ -121,6 +137,7 @@ pub fn target_declarations(
         lookup_keys,
         body_owners,
         symbol_names,
+        source_ownership,
     )
 }
 
@@ -131,6 +148,7 @@ pub struct TargetItemData {
     pub lookup_env: ItemLookupEnv,
     pub lookup: ItemLookupIndex,
     pub generated_sources: GeneratedSourceStore,
+    pub source_ownership: SourceOwnershipIndex,
 }
 
 impl TargetItemData {
@@ -148,22 +166,26 @@ impl TargetItemData {
         let mut items = ItemStore::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         let mut lookup_hints = HashMap::new();
+        let mut source_ownership = SourceOwnershipIndex::default();
         let owners: Vec<_> = items
             .traits_with_refs()
             .map(|(owner, data)| {
                 (
                     owner.member_store(),
                     AssociatedItemOwner::Trait(data.local_def.local_def),
+                    data.source.file_id,
                 )
             })
             .chain(items.impls_with_refs().map(|(owner, data)| {
                 (
                     owner.member_store(),
                     AssociatedItemOwner::Impl(data.local_impl.local_impl),
+                    data.source.file_id,
                 )
             }))
             .collect();
-        for (owner, collected) in owners {
+        for (owner, collected, file) in owners {
+            source_ownership.record(file, owner);
             let input = member_inputs
                 .get(&collected)
                 .ok_or_else(|| ajika::Error::contract("collected owner has no member input"))?;
@@ -184,6 +206,9 @@ impl TargetItemData {
                     }
                     _ => continue,
                 }
+            }
+            if hints.has_macros {
+                source_ownership.defer(owner);
             }
             lookup_hints.insert(owner.id, hints);
         }
@@ -225,6 +250,7 @@ impl TargetItemData {
             lookup_env: env,
             lookup,
             generated_sources,
+            source_ownership,
         })
     }
 }
@@ -411,6 +437,39 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         Ok(result)
     }
 
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let Some(krate) = origin.as_crate_ref() else {
+            return Ok(Vec::new());
+        };
+        let Some(items) = self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+        else {
+            return Ok(Vec::new());
+        };
+        let mut selected: Vec<_> = items
+            .scope_items()
+            .filter(|item| {
+                selection
+                    .file()
+                    .is_none_or(|file| item.source().file_id == file)
+            })
+            .collect();
+        for owner in SavedSourceResolver::new(self.db, krate)
+            .member_stores(selection)
+            .map_err(ReadError::Query)?
+        {
+            if let Some(members) = self.associated_items(owner)? {
+                selected.extend(members.semantic_items(owner));
+            }
+        }
+        Ok(selected)
+    }
+
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
         self.acquire(krate, |result| &result.lang_items)
             .map_err(ReadError::Query)
@@ -508,5 +567,18 @@ impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'
             )));
         }
         self.dependencies.all_items(origin)
+    }
+
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        if origin == self.items.origin() {
+            return Err(ReadError::Query(ajika::Error::contract(
+                "source scans requested while building headers",
+            )));
+        }
+        self.dependencies.source_items(origin, selection)
     }
 }

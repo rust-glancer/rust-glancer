@@ -15,6 +15,7 @@
 //! attach current code to an unrelated declaration.
 
 use std::{
+    collections::HashSet,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -28,9 +29,10 @@ use rg_ir_model::{
     TraitDefRef,
 };
 use rg_item_tree::SourceLocations as _;
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, Package};
-use rg_semantic_ir::{ItemLookupQuery, ItemReader, ItemStoreQuery};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, SavedSourceReader};
+use rg_semantic_ir::{ItemLookupQuery, ItemReader, ItemStoreQuery, SourceSelection};
 use rg_std::{CancellationToken, ExpectedUnique};
+use rg_text::RustEdition;
 
 use super::{
     CurrentSourceBuildCheckpoint, CurrentSourceSelection, CurrentSourceUnavailable,
@@ -62,7 +64,8 @@ pub(super) struct CurrentBodyBuildOutcome {
 /// when no saved declaration matches. It then hands the roots to the same lowering and resolution
 /// stages used by saved builds. The resulting bodies exist only for this analysis request.
 pub(super) struct CurrentBodyBuilder<'source, 'db> {
-    parse_package: &'source Package,
+    edition: RustEdition,
+    saved_source: SavedSourceReader<'db>,
     cfg: CfgEvaluator<'source>,
     def_map: &'source DefinitionReader<'db>,
     semantic_ir: &'source ItemReader<'db>,
@@ -79,7 +82,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
     /// Prepare current-body construction for one explicit selection policy.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        parse_package: &'source Package,
+        edition: RustEdition,
+        saved_source: SavedSourceReader<'db>,
         cfg: CfgEvaluator<'source>,
         def_map: &'source DefinitionReader<'db>,
         semantic_ir: &'source ItemReader<'db>,
@@ -92,7 +96,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         cancellation: CancellationToken,
     ) -> Self {
         Self {
-            parse_package,
+            edition,
+            saved_source,
             cfg,
             def_map,
             semantic_ir,
@@ -156,9 +161,32 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // An unchanged declaration can reuse its saved owner. If no saved declaration matches, we
         // widen to the outermost current declaration so request-local parameters, `Self`, and
         // associated-item context remain available to nested bodies.
-        let saved_items = self
-            .semantic_ir
-            .all_items(DefMapRef::Crate(self.crate_ref))?;
+        let mut saved_items = Vec::new();
+        let mut seen = HashSet::new();
+        for selected in &current_owners {
+            for syntax in selected.syntax().ancestors() {
+                let Some(owner) = SyntaxBodyOwner::cast_with_body(syntax) else {
+                    continue;
+                };
+                let ExpectedUnique::One(span) = self
+                    .associations
+                    .saved_declaration_for_current(owner.syntax())
+                else {
+                    continue;
+                };
+                // Match current syntax first, then select using its saved position. Current
+                // offsets cannot select saved impls after text has moved in the editor.
+                let candidates = self.semantic_ir.source_items(
+                    DefMapRef::Crate(self.crate_ref),
+                    SourceSelection::at(self.file, span.start),
+                )?;
+                saved_items.extend(
+                    candidates
+                        .into_iter()
+                        .filter(|item| seen.insert(item.item())),
+                );
+            }
+        }
         let saved_owners = SavedRootOwnerIndex::new(&saved_items, self.file, self.saved_body_ir)?;
         let mut roots = Vec::<PreparedCurrentRoot>::new();
         let mut unavailable = Vec::new();
@@ -262,13 +290,11 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         // functions and initializers declared inside these roots. The nested-body index lets an
         // unchanged declaration keep its saved `BodyRef`; crate lookup continues to come from the
         // saved project rather than publishing request-local items globally.
-        let saved_bodies =
-            self.saved_body_ir
-                .saved_prepared_bodies(self.crate_ref, self.file, &|owner| {
-                    roots
-                        .iter()
-                        .any(|root| root.body_ref.root.owner() == Some(owner.owner))
-                })?;
+        let keys: Vec<_> = roots
+            .iter()
+            .filter_map(|root| root.body_ref.saved_key())
+            .collect();
+        let saved_bodies = self.saved_body_ir.saved_prepared_bodies(&keys)?;
         let saved_nested_bodies = SavedNestedBodyIndex::new(
             self.saved_body_ir,
             self.crate_ref,
@@ -281,7 +307,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
             ItemLookupQuery::build_from(*self.semantic_ir, self.crate_ref, &cancellation)
                 .context("build the current body's visible item lookup query")?;
         let task_source = BodyTaskSource::Current {
-            package: self.parse_package,
+            saved: self.saved_source,
+            edition: self.edition,
             file: self.file,
             source: self.current_source,
         };
@@ -295,12 +322,8 @@ impl<'source, 'db> CurrentBodyBuilder<'source, 'db> {
         for root in &roots {
             let lowering_started = Instant::now();
             let mut lowered = LoweredBodies::default();
-            let mut macro_expansion = BodyMacroExpansion::new(
-                self.parse_package.edition(),
-                self.def_map,
-                self.cfg,
-                cancellation.clone(),
-            );
+            let mut macro_expansion =
+                BodyMacroExpansion::new(self.edition, self.def_map, self.cfg, cancellation.clone());
             let lowered_roots =
                 BodyTaskLowering::new(task_source, &mut lowered, self.cfg, &cancellation)
                     .lower_tasks(&[root.lowering_task(self.file)], &mut macro_expansion)?;

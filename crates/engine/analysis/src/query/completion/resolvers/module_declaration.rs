@@ -72,7 +72,6 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
         for candidate in self
             .analysis
             .module_file_candidates(
-                self.crate_ref,
                 self.file_id,
                 site.source().file_base(),
                 site.source().inline_module_path(),

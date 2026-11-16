@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rg_ir_model::{CrateRef, FileId, PackageSlot};
+use rg_ir_model::{CrateRef, FileId};
 use rg_source::CapturedSource;
 use rg_std::MemorySize;
 
@@ -45,7 +45,9 @@ impl SavedFileChange {
 /// Summary of what one saved-file update touched.
 #[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct AnalysisChangeSummary {
-    pub changed_files: Vec<ChangedFile>,
+    /// Physical sources whose contents or known membership changed, including lazy includes.
+    pub changed_files: Vec<FileId>,
+    /// Affected targets known from module indexing; source acceptance does not require an owner.
     pub changed_crates: Vec<CrateRef>,
 }
 
@@ -53,11 +55,4 @@ impl AnalysisChangeSummary {
     pub(crate) fn is_empty(&self) -> bool {
         self.changed_files.is_empty() && self.changed_crates.is_empty()
     }
-}
-
-/// One file whose captured revision or package membership changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
-pub struct ChangedFile {
-    pub package: PackageSlot,
-    pub file: FileId,
 }

@@ -13,9 +13,12 @@ use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, enclosing_inline_module_path};
+use rg_parse::{
+    CurrentSource, DeclarationAssociationIndex, Package, SavedSourceReader,
+    enclosing_inline_module_path,
+};
 use rg_semantic_ir::ItemReader;
-use rg_std::ExpectedUnique;
+use rg_std::{Cancelable, CancellationToken, Cancelled, ExpectedUnique};
 use rg_syntax::{AstNode as _, ast};
 
 use self::body::CurrentBodyBuilder;
@@ -59,13 +62,14 @@ pub struct CurrentSourceBuilder<'request, 'db> {
     def_map: &'request DefinitionReader<'db>,
     semantic_ir: &'request ItemReader<'db>,
     saved_bodies: &'request BodyReader<'db>,
+    saved_source: SavedSourceReader<'db>,
     source: &'request CurrentSource,
-    cancellation: rg_std::CancellationToken,
+    cancellation: CancellationToken,
 }
 
-impl rg_std::Cancelable for CurrentSourceBuilder<'_, '_> {
-    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
-        rg_std::Cancelable::check_cancelled(&self.cancellation, checkpoint)
+impl Cancelable for CurrentSourceBuilder<'_, '_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), Cancelled> {
+        Cancelable::check_cancelled(&self.cancellation, checkpoint)
     }
 }
 
@@ -74,13 +78,15 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         def_map: &'request DefinitionReader<'db>,
         semantic_ir: &'request ItemReader<'db>,
         saved_bodies: &'request BodyReader<'db>,
+        saved_source: SavedSourceReader<'db>,
         source: &'request CurrentSource,
-        cancellation: rg_std::CancellationToken,
+        cancellation: CancellationToken,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
             saved_bodies,
+            saved_source,
             source,
             cancellation,
         }
@@ -91,7 +97,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
     #[rg_std::cancelable("prepare current target")]
     pub fn build_target(
         self,
-        package: &rg_parse::Package,
+        package: &Package,
         crate_ref: CrateRef,
         file: FileId,
         associations: &DeclarationAssociationIndex,
@@ -120,7 +126,8 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         let mut current = CurrentSourceStore::default();
         let saved_bodies = self.saved_bodies;
         let mut built = CurrentBodyBuilder::new(
-            package,
+            package.edition(),
+            self.saved_source,
             cfg,
             self.def_map,
             self.semantic_ir,
@@ -197,7 +204,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
                         .context("saved impl has no definition map")?;
                     for item in self
                         .semantic_ir
-                        .all_items(DefMapRef::Crate(crate_ref))
+                        .scope_items(DefMapRef::Crate(crate_ref))
                         .context("load saved impl items")?
                     {
                         let rg_ir_model::SemanticItemRef::Impl(impl_ref) = item.item() else {

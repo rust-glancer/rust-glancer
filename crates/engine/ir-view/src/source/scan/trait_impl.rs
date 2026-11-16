@@ -6,7 +6,7 @@
 
 use rg_def_map::DefMapSource as _;
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ImplRef, SemanticItemRef, TraitDefRef};
-use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
+use rg_semantic_ir::{SemanticItemSource as _, SemanticItemView};
 use rg_source::ReadError;
 
 use super::NarrowestSourceSite;
@@ -51,9 +51,9 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
     /// Search both crate-level and body-local semantic item stores.
     pub(crate) fn site(&self) -> Result<Option<TraitImplSourceSite>, ReadError> {
         let mut best = NarrowestSourceSite::new();
-        let items = ItemStoreQuery::new(self.db);
+        // Selecting an impl needs its header and source range, not any associated declarations.
         self.scan_items(
-            items.semantic_items_for_origin(DefMapRef::Crate(self.crate_ref))?,
+            self.db.scope_items(DefMapRef::Crate(self.crate_ref))?,
             &mut best,
         )?;
 
@@ -64,10 +64,7 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
                 .body_ir
                 .bodies_at(self.crate_ref, self.file_id, self.offset, None)?
         {
-            self.scan_items(
-                items.semantic_items_for_origin(DefMapRef::Body(body_ref))?,
-                &mut best,
-            )?;
+            self.scan_items(self.db.scope_items(DefMapRef::Body(body_ref))?, &mut best)?;
         }
         Ok(best.finish())
     }
@@ -78,6 +75,9 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
         best: &mut NarrowestSourceSite<TraitImplSourceSite>,
     ) -> Result<(), ReadError> {
         for item in items {
+            if item.source().file_id != self.file_id {
+                continue;
+            }
             let SemanticItemRef::Impl(impl_ref) = item.item() else {
                 continue;
             };
@@ -90,9 +90,6 @@ impl<'a, 'db> TraitImplSourceSiteScanner<'a, 'db> {
             let Some(source) = self.db.local_impl_data(data.local_impl)? else {
                 continue;
             };
-            if source.file_id != self.file_id {
-                continue;
-            }
             let span = self
                 .db
                 .source_span(impl_ref.origin, source.source, source.location)?;

@@ -11,7 +11,7 @@ pub(crate) fn location_for_reference(
     snapshot: ProjectSnapshot<'_>,
     reference: &ReferenceLocation,
 ) -> anyhow::Result<Option<Location>> {
-    let Some(path) = snapshot.file_path(reference.crate_ref.package, reference.file_id) else {
+    let Some(path) = snapshot.file_path(reference.crate_ref.package, reference.file_id)? else {
         return Ok(None);
     };
     let Ok(uri) = path_to_file_uri(path) else {

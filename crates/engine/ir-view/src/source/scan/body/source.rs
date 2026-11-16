@@ -18,7 +18,7 @@ use rg_ir_model::{
     SemanticItemRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::SourceLocations;
-use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView, SourceSelection};
 
 use super::{
     BindingSurface, BodySourceCandidate, RecordFieldKeySurface,
@@ -75,7 +75,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             for (body_ref, body) in self
                 .db
                 .body_ir
-                .bodies_matching(self.crate_ref, Some(file), &|owner| {
+                .bodies_matching(self.crate_ref, SourceSelection::AllInFile(file), &|owner| {
                     owners
                         .as_ref()
                         .is_none_or(|owners| owners.contains(&owner.owner))

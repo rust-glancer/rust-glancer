@@ -18,7 +18,7 @@ pub use rg_body_ir::{
 pub use rg_def_map::{MacroExpansionLimitGroup, MacroExpansionLimitReport};
 
 pub use self::{
-    change::{AnalysisChangeSummary, ChangedFile, SavedFileChange},
+    change::{AnalysisChangeSummary, SavedFileChange},
     indexing::ProjectBuilder,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},

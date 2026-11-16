@@ -6,7 +6,8 @@ use anyhow::Context as _;
 use rg_analysis::{Analysis, CurrentSourceView, SavedSourceRelationship, SavedSourceView};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection};
 use rg_ir_model::{CrateRef, FileId};
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex, SavedSourceReader};
+use rg_source::SourceRevision;
 
 use super::ProjectSnapshot;
 
@@ -34,25 +35,17 @@ impl<'a> ProjectSnapshot<'a> {
         source: &str,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<DocumentSourceView> {
-        let (crate_ref, file) = target;
+        let (_, file) = target;
         rg_std::check_cancel!(cancellation, "document source");
-        let saved_file = self
-            .state
-            .parse_db()
-            .package(crate_ref.package.0)
-            .context("saved-source target has no parse package")?
-            .parsed_file(file)
-            .context("saved-source target has no parsed file")?;
-        if saved_file.source_revision() != rg_source::SourceRevision::from_bytes(source.as_bytes())
-        {
+        // An opened include may have been discovered after startup. Its captured source owns
+        // the saved revision even when the parse inventory has no entry for this file.
+        let saved = SavedSourceReader::new(self.query_context());
+        if saved.revision(file)? != SourceRevision::from_bytes(source.as_bytes()) {
             return self
                 .prepare_current_source(target, source, cancellation)
                 .map(DocumentSourceView::Current);
         }
-        let line_index = self
-            .file_line_index(crate_ref.package, file)?
-            .context("exact saved document has no line index")?
-            .clone();
+        let line_index = saved.line_index(file)?.clone();
         Ok(DocumentSourceView::SavedExact(line_index))
     }
 
@@ -74,18 +67,16 @@ impl<'a> ProjectSnapshot<'a> {
             package.edition(),
         ));
         let current_syntax = current_source.parse().tree();
-        let saved_file = package
-            .parsed_file(file)
-            .context("current-source target has no saved parse file")?;
-        let saved_syntax = saved_file
-            .parse_syntax()
+        let saved = SavedSourceReader::new(self.query_context());
+        let saved_syntax = saved
+            .syntax(file, package.edition())
             .context("parse saved syntax for declaration association")?
             .tree();
         let associations = Arc::new(DeclarationAssociationIndex::new(
             &current_syntax,
             &saved_syntax,
         ));
-        let relationship = if current_source.revision() == saved_file.source_revision() {
+        let relationship = if current_source.revision() == saved.revision(file)? {
             SavedSourceRelationship::Exact
         } else {
             SavedSourceRelationship::Different
@@ -133,7 +124,10 @@ impl<'a> ProjectSnapshot<'a> {
             .context("prepare current-source target")?;
         let analysis = Analysis::new(
             view_db.with_current_source(current),
-            SavedSourceView::new(self.state.parse_db()),
+            SavedSourceView::new(
+                self.state.parse_db(),
+                SavedSourceReader::new(self.query_context()),
+            ),
         )
         .with_current_source(current_source_view);
         Ok((analysis, summary))

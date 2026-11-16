@@ -87,7 +87,9 @@ pub struct GeneratedChild;
             .next()
             .expect("recovered generated symbol should exist");
         assert_eq!(
-            snapshot.file_path(generated_symbol.crate_ref.package, generated_symbol.file_id),
+            snapshot
+                .file_path(generated_symbol.crate_ref.package, generated_symbol.file_id)
+                .expect("source path"),
             Some(
                 fs::canonicalize(&generated)
                     .expect("generated source should canonicalize")
@@ -110,7 +112,7 @@ pub struct GeneratedChild;
     )
     .expect("ordinary fixture source should be updated");
     project
-        .apply_change(SavedFileChange::fs_path(fixture.path("src/lib.rs")))
+        .apply_changes([SavedFileChange::fs_path(fixture.path("src/lib.rs"))])
         .expect("ordinary save should preserve passive generated sources");
     assert_symbol_count(&project, "RecoveredGenerated", 1);
     assert_symbol_count(&project, "MacroRecovered", 1);
@@ -120,7 +122,7 @@ pub struct GeneratedChild;
     fs::write(&generated, "pub struct RefreshedGenerated;")
         .expect("generated fixture source should be refreshed");
     project
-        .apply_change(SavedFileChange::fs_path(&generated))
+        .apply_changes([SavedFileChange::fs_path(&generated)])
         .expect("generated source save should rebuild its explicit owner");
     assert_symbol_count(&project, "RecoveredGenerated", 0);
     assert_symbol_count(&project, "RefreshedGenerated", 1);

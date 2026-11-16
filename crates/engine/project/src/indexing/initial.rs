@@ -1,7 +1,5 @@
 //! Demand the roots of a saved project and restore its routing from their manifests.
 
-use std::collections::HashSet;
-
 use rg_ir_model::CrateRef;
 use rg_parse::ParseDb;
 use rg_profile::{ProfileMeasurement, ProfileThreadContext};
@@ -76,12 +74,12 @@ pub(crate) fn build_state(
     metric::PAYLOAD_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.bytes_written));
     metric::METADATA_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.metadata_bytes_written));
 
-    let retained: HashSet<_> = parse
-        .packages()
-        .iter()
-        .flat_map(|package| package.parsed_files().map(|file| file.file_id()))
-        .collect();
-    SourceInput::retire_detached_sources(database, |file| retained.contains(&file))?;
+    // A captured file may belong to a member query that startup has not demanded. Module
+    // manifests cannot prove that it is detached. Keep the revision observation, but release
+    // reloadable text just as for eagerly discovered files.
+    // TODO: Retire captures once live input reachability can be proven without eager discovery.
+    // Partial declaration ownership cannot prove absence, and expansion also observes files that
+    // contribute no declarations. Detached captures can still require stale-source recovery.
     SourceInput::evict_saved_text(database.inputs());
     Ok(ProjectState {
         generation_id: ProjectGenerationId::fresh(),

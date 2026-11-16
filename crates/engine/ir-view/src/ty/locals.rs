@@ -13,7 +13,7 @@ use rg_ir_model::{
     GenericDefRef, ModuleId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef, Span,
     identity::DeclarationRef,
 };
-use rg_semantic_ir::ItemStoreQuery;
+use rg_semantic_ir::{ItemStoreQuery, SourceSelection};
 use rg_ty::Ty;
 
 use crate::{IndexedViewDb, lookup::name::ValueOrTypeNamespace, ty::IndexedType};
@@ -447,7 +447,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         for (_, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, Some(file_id))
+            .bodies(crate_ref, SourceSelection::written_file(file_id))
             .context("read bodies for inferred bindings")?
         {
             // Function and closure parameters share a binding kind. Use the closure parameter
@@ -513,7 +513,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         for (body_ref, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, Some(file_id))
+            .bodies(crate_ref, SourceSelection::written_file(file_id))
             .context("read bodies for resolved calls")?
         {
             for (expr_idx, expr) in body.exprs().iter().enumerate() {
@@ -572,7 +572,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         for (body_ref, body) in self
             .db
             .body_ir
-            .bodies(crate_ref, Some(file_id))
+            .bodies(crate_ref, SourceSelection::written_file(file_id))
             .context("read body-local item groups")?
         {
             groups.push(BodyLocalGroup {

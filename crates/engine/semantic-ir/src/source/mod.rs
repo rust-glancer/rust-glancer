@@ -4,11 +4,19 @@
 //! source identity to the file tables read through the operation's query context. Generated syntax
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 
+mod ownership;
+mod resolve;
+
 use rg_def_map::{GeneratedExpansionLocations, GeneratedLocations, ItemSource, ItemSourceKind};
 use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
+pub(crate) use self::resolve::SavedSourceResolver;
+pub use self::{
+    ownership::{SourceOwnership, SourceOwnershipIndex, complete_source_ownership},
+    resolve::SourceSelection,
+};
 use crate::{associated_declarations, target_declarations};
 
 /// The source tables needed to read occurrences and previews from one saved declaration source.

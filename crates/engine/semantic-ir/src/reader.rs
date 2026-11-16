@@ -1,4 +1,4 @@
-//! Semantic item reads over one configured target directory.
+//! Semantic item reads over configured targets.
 
 use rg_ir_model::{CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_source::ReadError;
@@ -6,7 +6,7 @@ use rg_std::CancellationToken;
 
 use crate::{
     AssociatedItemStore, ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion,
-    SemanticItemSource, SemanticItemView, SymbolNameData,
+    SemanticItemSource, SemanticItemView, SourceSelection, SymbolNameData,
 };
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
@@ -23,7 +23,16 @@ pub trait CrateItemSource: Sync {
     ) -> Result<Option<SemanticItemRef>, ReadError>;
     /// Read module-owned declarations and owner headers without acquiring associated stores.
     fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
+    /// Enumerate every declaration, opening all associated stores in a saved target. Use this
+    /// for whole-target operations; a file or cursor scan should select through `source_items`.
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
+    /// Select written containers or every interpretation of a file, as requested explicitly by
+    /// `selection`. Consumers still check exact ranges after acquisition.
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError>;
     fn lookup_candidates(
@@ -71,6 +80,14 @@ impl<'a> ItemReader<'a> {
         self.0.all_items(origin)
     }
 
+    pub fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        self.0.source_items(origin, selection)
+    }
+
     pub(crate) fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
         self.0.lang_items(krate)
     }
@@ -113,5 +130,12 @@ impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
 
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         ItemReader::all_items(self, origin)
+    }
+    fn source_items(
+        &self,
+        origin: DefMapRef,
+        selection: SourceSelection,
+    ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        ItemReader::source_items(self, origin, selection)
     }
 }

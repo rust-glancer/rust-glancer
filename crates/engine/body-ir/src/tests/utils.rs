@@ -8,7 +8,7 @@ use rg_ir_model::{
     SemanticItemRef, StmtId, TraitDefRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_item_tree::{FieldItem, SourceLocations as _};
-use rg_parse::{CargoTarget, Package, ParseDb};
+use rg_parse::{CargoTarget, Package, ParseDb, SavedSourceReader};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
@@ -1697,14 +1697,8 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source(&self, source: BodySource) -> String {
-        let line_column = self
-            .project
-            .parse_db()
-            .package(self.crate_ref.package.0)
-            .expect("source package should exist while rendering body IR source")
-            .parsed_file(source.file_id)
-            .expect("source file should exist while rendering body IR source")
-            .line_index()
+        let line_column = SavedSourceReader::new(self.project.semantic().db())
+            .line_index(source.file_id)
             .expect("source file line index should load while rendering body IR source")
             .line_column_span(source.span);
         format!(
@@ -1717,16 +1711,8 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source_text(&self, source: BodySource) -> String {
-        let parsed_file = self
-            .project
-            .parse_db()
-            .package(self.crate_ref.package.0)
-            .expect("source package should exist while rendering body IR text")
-            .parsed_file(source.file_id)
-            .expect("source file should exist while rendering body IR text");
-
-        parsed_file
-            .text_for_span(source.span)
+        SavedSourceReader::new(self.project.semantic().db())
+            .text_for_span(source.file_id, source.span)
             .expect("body source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
             .split_whitespace()

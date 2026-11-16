@@ -12,7 +12,7 @@ use rg_source::{SourceInput, SourcePresence};
 use rg_std::{NormalizedPathBuf, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
-pub use self::input::{AnalysisChangeSummary, ChangedFile, SavedFileChange};
+pub use self::input::{AnalysisChangeSummary, SavedFileChange};
 use self::workspace_graph::WorkspaceGraphChanges;
 use crate::{Project, ProjectMemoryPurgePoint, indexing::build_state, state::ProjectState};
 
@@ -20,13 +20,6 @@ impl Project {
     pub fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         self.publish_changes(&[], true)?;
         Ok(())
-    }
-
-    pub fn apply_change(
-        &mut self,
-        change: SavedFileChange,
-    ) -> anyhow::Result<AnalysisChangeSummary> {
-        self.apply_changes([change])
     }
 
     pub fn apply_changes(
@@ -119,17 +112,20 @@ impl Project {
             }
             Ok((targets, presence_changed))
         })?;
-        let result = build_state(database, workspace, targets);
+        // Source publication is independent of module discovery. A lazy include can change
+        // without appearing in the startup parse inventory at all.
+        let result =
+            SourceInput::changed_files(&accepted, database.inputs()).and_then(|source_changes| {
+                build_state(database, workspace, targets)
+                    .map(|candidate| (candidate, source_changes))
+            });
         match result {
-            Ok(candidate) => {
-                let summary = if graph_changed {
+            Ok((candidate, source_changes)) => {
+                let mut summary = if graph_changed {
                     let changed_files = changes
                         .iter()
                         .flat_map(|change| candidate.parse.file_refs_for_path(change.path()))
-                        .map(|file| ChangedFile {
-                            package: file.package,
-                            file: file.file,
-                        })
+                        .map(|file| file.file)
                         .collect::<UniqueVec<_>>()
                         .into_vec();
                     let changed_crates = candidate
@@ -149,6 +145,9 @@ impl Project {
                 } else {
                     Self::summarize_changes(&self.state, &candidate)
                 };
+                let mut changed_files = summary.changed_files.into_iter().collect::<UniqueVec<_>>();
+                changed_files.extend(source_changes);
+                summary.changed_files = changed_files.into_vec();
                 // A path can change its referent while both files stay in the target manifest.
                 // A successful request must observe the new lookup even in that case.
                 if graph_changed || presence_changed || !summary.is_empty() {
@@ -185,7 +184,7 @@ impl Project {
                 if old.parsed_file(id).map(|file| file.source_revision())
                     != new.parsed_file(id).map(|file| file.source_revision())
                 {
-                    changed_files.push(ChangedFile { package, file: id });
+                    changed_files.push(id);
                     changed_crates.extend(before.crates_for_file(package, id));
                     changed_crates.extend(after.crates_for_file(package, id));
                 }
