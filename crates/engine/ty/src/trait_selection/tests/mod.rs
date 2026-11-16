@@ -1181,7 +1181,10 @@ fn inherited_equalities_survive_owned_substitution_and_cached_queries() {
     let mut subst = Substitution::new();
     subst.push(param, GenericArg::Type(Box::new(user)));
     let bound = subst.apply_trait_ref(&bounds[0]);
-    let goal = TraitGoal::from_lowering(bound);
+    let goal = TraitGoal {
+        application: bound.application,
+        associated_types: bound.associated_types,
+    };
     let scope = CachedScope {
         paths: context.item_paths().clone(),
         cache: Default::default(),

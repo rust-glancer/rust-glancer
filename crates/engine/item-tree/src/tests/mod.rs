@@ -2,7 +2,6 @@ mod utils;
 
 use expect_test::expect;
 use rg_ir_model::Span;
-use rg_parse::{LineColumnSpan, Position};
 use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
 use crate::{
@@ -727,24 +726,11 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
 
     assert!(matches!(function.kind, ItemKind::Function(_)));
 
-    let parsed_file = db.parse_db().packages()[0]
-        .parsed_file(file_tree.file)
-        .expect("fixture source should be parsed");
     let locations = db.locations(0, file_tree.file);
     let span = locations
         .span(function.location)
         .expect("function location");
     assert_eq!(span, Span { start: 0, end: 73 });
-    let line_index = parsed_file
-        .line_index()
-        .expect("fixture line index should load");
-    assert_eq!(
-        line_index.line_column_span(span),
-        LineColumnSpan {
-            start: Position { line: 0, column: 0 },
-            end: Position { line: 2, column: 1 },
-        }
-    );
 }
 
 #[test]

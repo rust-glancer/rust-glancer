@@ -2,8 +2,8 @@ use std::{collections::HashMap, convert::Infallible, mem};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalEnumVariantRef,
-    LocalImplId, LocalImplRef, ModuleId, ModuleRef,
+    DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalEnumVariantId, LocalImplId, LocalImplRef,
+    ModuleId, ModuleRef,
 };
 use rg_item_tree::{EnumItem, FieldList, ItemKind, VisibilityLevel};
 use rg_std::{MemoryRecorder, MemorySize, Shrink};
@@ -408,10 +408,6 @@ impl DefMapBuilder {
         self.imports.as_slice()
     }
 
-    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
-        self.imports.iter_with_ids()
-    }
-
     /// Returns a generated source allocated so far during macro collection.
     pub(crate) fn generated_source(
         &self,
@@ -528,16 +524,6 @@ impl DefMap {
         self.data.local_enum_variants.as_slice()
     }
 
-    pub fn local_enum_variant_refs(&self) -> impl Iterator<Item = LocalEnumVariantRef> {
-        self.data
-            .local_enum_variants
-            .iter_with_ids()
-            .map(|(id, _)| LocalEnumVariantRef {
-                origin: self.own_ref,
-                local_enum_variant: id,
-            })
-    }
-
     pub fn local_enum_variant_entries_for_enum(
         &self,
         enum_def: LocalDefId,
@@ -584,10 +570,6 @@ impl DefMap {
 
     pub fn import(&self, import: ImportId) -> Option<&ImportData> {
         self.data.imports.get(import)
-    }
-
-    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
-        self.data.imports.iter_with_ids()
     }
 }
 

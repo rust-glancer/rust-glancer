@@ -266,20 +266,6 @@ impl WorkspaceMetadata {
         self.package(&PackageId::sysroot(krate))
     }
 
-    /// Returns package slots whose manifest directory contains `path`.
-    ///
-    /// This is intentionally a filesystem-root query, not a parsed-file ownership query. The
-    /// analysis host uses it when a saved file was not part of the parsed graph yet, for example
-    /// after `mod api;` was saved before `api.rs` existed. Rebuilding the containing package lets
-    /// normal module discovery decide whether the new path is actually reachable.
-    pub fn package_slots_containing_path(&self, path: &Path) -> Vec<usize> {
-        self.packages
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, package)| package.contains_path(path).then_some(slot))
-            .collect()
-    }
-
     /// Iterates over packages that belong to the analyzed workspace.
     pub fn workspace_packages(&self) -> impl Iterator<Item = &Package> + '_ {
         self.packages

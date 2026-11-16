@@ -7,8 +7,8 @@
 
 use rg_def_map::DefMapSource;
 use rg_ir_model::{
-    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericDefRef, GenericParamRef, ImplRef,
-    StaticRef, TraitDefRef, TypeAliasRef, TypeParamRef,
+    ConstRef, EnumVariantRef, FieldRef, FunctionRef, GenericParamRef, ImplRef, StaticRef,
+    TraitDefRef, TypeAliasRef, TypeParamRef,
 };
 use rg_item_tree::FunctionQualifiers;
 use rg_semantic_ir::{GenericParamSource, SemanticItemSource};
@@ -169,23 +169,6 @@ where
                 _ => None,
             })
         })
-    }
-
-    /// Build the use-site type of one function item with its complete generic arity.
-    ///
-    /// Path lookup has no inference table in which to allocate use-site variables. Keep each
-    /// generic position as a kind-correct unknown instead of leaking the declaration's own `T`
-    /// into the body. Direct calls replace these placeholders with stable call-owned slots.
-    pub fn function_item_ty(&self, function: FunctionRef) -> Result<Option<Ty>, ReadError> {
-        if self.item_paths.items().function_data(function)?.is_none() {
-            return Ok(None);
-        }
-        let generics = self
-            .item_paths
-            .generics()
-            .generics(GenericDefRef::Function(function))?;
-        let args = Substitution::new().args_for(&generics);
-        Ok(Some(Ty::fn_def_with_args(function, args)))
     }
 
     /// Return the trait bounds carried by one function-owned type parameter.

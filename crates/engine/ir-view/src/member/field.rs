@@ -2,10 +2,9 @@
 
 use anyhow::Context as _;
 use rg_ir_model::{
-    BodyRef, EnumVariantFieldRef, EnumVariantRef, FieldRef, Path, ScopeId, TypeDefRef,
-    identity::DeclarationRef,
+    BodyRef, EnumVariantFieldRef, EnumVariantRef, FieldRef, TypeDefRef, identity::DeclarationRef,
 };
-use rg_semantic_ir::{ItemStoreQuery, TypePathResolution};
+use rg_semantic_ir::ItemStoreQuery;
 
 use super::{ConstructorShape, MemberEnumVariantField, MemberField, MemberView};
 use crate::{
@@ -31,28 +30,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
             fields.push(field);
         }
         Ok(fields)
-    }
-
-    /// Resolve a body type path and return its declared fields.
-    pub fn field_candidates_for_body_type_path<'view>(
-        &'view self,
-        body: BodyRef,
-        scope: ScopeId,
-        path: &Path,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let Some(resolution) = BodyResolutionView::new(self.db)
-            .type_path_resolution(body, scope, path)
-            .context("resolve body field type path")?
-        else {
-            return Ok(Vec::new());
-        };
-
-        if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
-            return self
-                .field_candidates_for_type_def(ty)
-                .context("resolve fields for body type path");
-        }
-        Ok(Vec::new())
     }
 
     /// Return fields declared directly by a resolved nominal type.

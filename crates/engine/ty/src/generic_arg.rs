@@ -182,19 +182,6 @@ pub struct TraitRefLowering {
     pub associated_types: Vec<AssocTypeBinding>,
 }
 
-impl TraitRefLowering {
-    pub fn into_clauses(self) -> impl Iterator<Item = Clause> {
-        let application = self.application;
-        let associated_types = self.associated_types;
-        std::iter::once(Clause::Implemented(application)).chain(associated_types.into_iter().map(
-            |binding| Clause::AliasEq {
-                alias: binding.projection,
-                ty: binding.ty,
-            },
-        ))
-    }
-}
-
 /// Flat predicate vocabulary consumed by declaration queries and the compiler solver adapter.
 ///
 /// A bound such as `T: Iterator<Item = User>` becomes one `Implemented` clause for

@@ -1,6 +1,6 @@
 //! Owned inputs for trait-selection and associated-type queries.
 
-use crate::{AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, TraitRefLowering, Ty};
+use crate::{AssocTypeBinding, GenericArg, GenericArgs, TraitApplication, Ty};
 
 /// A trait question expressed in owned types, including any associated-type equalities.
 /// For `T: Iterator<Item = u8>`, the application supplies `T` as `Self`, and the separate equality
@@ -31,13 +31,6 @@ impl TraitGoal {
         }
     }
 
-    pub fn from_lowering(lowering: TraitRefLowering) -> Self {
-        Self {
-            application: lowering.application,
-            associated_types: lowering.associated_types,
-        }
-    }
-
     pub fn self_ty(&self) -> &Ty {
         self.application
             .self_ty()
@@ -46,21 +39,5 @@ impl TraitGoal {
 
     pub fn trait_ref(&self) -> rg_ir_model::TraitDefRef {
         self.application.def
-    }
-
-    /// Iterate trait input args without associated-type equality constraints.
-    ///
-    /// Rust syntax puts both shapes inside the same angle brackets:
-    ///
-    /// ```text
-    /// Iterator<Item = User>
-    /// Indexed<Key, Item = User>
-    /// ```
-    ///
-    /// Only the positional inputs belong in the trait substitution represented as
-    /// `Implemented(Self: Trait<...>)`. Associated equality args are separate projection
-    /// constraints, such as `<Self as Iterator>::Item = User`.
-    pub fn iter_positional_args(&self) -> impl Iterator<Item = &GenericArg> {
-        self.application.args.iter().skip(1)
     }
 }

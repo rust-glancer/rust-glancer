@@ -19,8 +19,4 @@ impl RecordFieldSyntax {
     pub fn is_explicit(self) -> bool {
         matches!(self, Self::Explicit)
     }
-
-    pub fn is_shorthand(self) -> bool {
-        matches!(self, Self::Shorthand)
-    }
 }

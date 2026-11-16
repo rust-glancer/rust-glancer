@@ -543,19 +543,6 @@ impl<E: CrateResolutionEnv + ?Sized> NameResolver<'_, E> {
         )
     }
 
-    /// Resolve an import path to every definition it denotes from the importing module.
-    pub fn import_defs(
-        &self,
-        importing_module: ModuleRef,
-        path: &Path,
-    ) -> Result<Vec<DefId>, ReadError> {
-        let mut defs = UniqueVec::new();
-        for (_, binding) in self.import_bindings(importing_module, path, NamespaceSet::ALL)? {
-            defs.push(binding.def);
-        }
-        Ok(defs.into_vec())
-    }
-
     /// Resolve the type namespace of an import path and keep a module target.
     pub fn import_module(
         &self,

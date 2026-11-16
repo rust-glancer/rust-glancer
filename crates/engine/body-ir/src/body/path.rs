@@ -63,33 +63,6 @@ impl BodyPath {
         self.prefix_through(self.segments.len().checked_sub(1)?)
     }
 
-    /// Split the outermost `Type::<T>::item` shape into `Type::<T>` and `item`.
-    ///
-    /// If the prefix itself contains associated paths, type resolution handles those later. This
-    /// only detaches the final associated item name from the syntax-preserving type prefix.
-    pub fn split_type_prefix_name(&self) -> Option<(TypeRef, &str)> {
-        if self.segments.len() < 2 {
-            return None;
-        }
-        let BodyPathSegmentKind::Name(last_segment) = self.segments.last()?.kind() else {
-            return None;
-        };
-
-        let prefix_segments = self.segments[..self.segments.len() - 1]
-            .iter()
-            .map(BodyPathSegment::as_type_path_segment)
-            .collect::<Option<Vec<_>>>()?;
-        Some((
-            TypeRef::Path(TypePath {
-                location: None,
-                absolute: self.absolute,
-                anchor: None,
-                segments: prefix_segments,
-            }),
-            last_segment.as_str(),
-        ))
-    }
-
     /// Split `Type::item` or `<Self as Trait>::item` into a typed prefix and final item name.
     pub fn split_associated_item_prefix_name(&self) -> Option<(BodyAssociatedPathPrefix, &str)> {
         if self.segments.len() < 2 {
@@ -448,86 +421,13 @@ impl BodyAssociatedPathPrefix {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::SourceId;
-    use rg_item_tree::{GenericArg, TypePath, TypePathSegment, TypeRef};
+    use rg_item_tree::{TypePath, TypePathSegment, TypeRef};
     use rg_text::Name;
 
     use super::{
         BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
         BodyPathSegmentKind,
     };
-
-    #[test]
-    fn splits_outermost_type_prefix_from_final_name() {
-        let cases = [
-            (
-                "nested prefix",
-                body_path(
-                    false,
-                    vec![name("A", None), name("B", None), name("C", None)],
-                ),
-                Some(("A::B", "C")),
-            ),
-            (
-                "generic prefix",
-                body_path(
-                    false,
-                    vec![
-                        name(
-                            "Vec",
-                            Some(BodyPathSegmentArgs::Angle {
-                                colon_colon: true,
-                                args: vec![GenericArg::Type(TypeRef::Infer)],
-                            }),
-                        ),
-                        name("new", None),
-                    ],
-                ),
-                Some(("Vec<_>", "new")),
-            ),
-            (
-                "single segment",
-                body_path(false, vec![name("Vec", None)]),
-                None,
-            ),
-            (
-                "final non-name segment",
-                body_path(
-                    false,
-                    vec![name("Vec", None), segment(BodyPathSegmentKind::SelfKw)],
-                ),
-                None,
-            ),
-        ];
-
-        for (label, path, expected) in cases {
-            let actual = path
-                .split_type_prefix_name()
-                .map(|(prefix, name)| (prefix.to_string(), name.to_owned()));
-            assert_eq!(
-                actual
-                    .as_ref()
-                    .map(|(prefix, name)| (prefix.as_str(), name.as_str())),
-                expected,
-                "{label}"
-            );
-        }
-    }
-
-    #[test]
-    fn does_not_split_type_anchor_prefixes_as_plain_type_paths() {
-        let path = body_path(
-            false,
-            vec![
-                segment(BodyPathSegmentKind::TypeAnchor {
-                    ty: Some(type_path_ref("T")),
-                    trait_ref: Some(type_path_ref("Trait")),
-                }),
-                name("Assoc", None),
-            ],
-        );
-
-        assert_eq!(path.split_type_prefix_name(), None);
-    }
 
     #[test]
     fn splits_qualified_trait_prefix_from_final_name() {

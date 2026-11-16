@@ -410,10 +410,10 @@ impl CrateBodyIrSnapshot<'_> {
                 let fields = fields
                     .iter()
                     .map(|field| {
-                        let shorthand = if field.syntax.is_shorthand() {
-                            "shorthand "
-                        } else {
+                        let shorthand = if field.syntax.is_explicit() {
                             ""
+                        } else {
+                            "shorthand "
                         };
                         format!("{shorthand}{}=p{}", field.key, field.pat.0)
                     })
@@ -554,17 +554,20 @@ impl CrateBodyIrSnapshot<'_> {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");
-        let facts = body
-            .expr_fact(expr)
-            .expect("expr facts should exist while rendering body IR");
+        let resolution = body
+            .expr_resolution(expr)
+            .expect("expr resolution should exist while rendering body IR");
+        let ty = body
+            .expr_ty(expr)
+            .expect("expr type should exist while rendering body IR");
         writeln!(
             dump,
             "{}expr e{} {}{} => {} @ {}",
             Self::indent(depth),
             expr.0,
             self.render_expr_head(body, data),
-            self.render_resolution(&facts.resolution),
-            self.render_ty(&facts.ty),
+            self.render_resolution(resolution),
+            self.render_ty(ty),
             self.render_source(body.source_at(data.source)),
         )
         .expect("string writes should not fail");

@@ -518,7 +518,7 @@ impl<'db> AnalysisFixture<'db> {
                 if definitions
                     .modules()
                     .iter()
-                    .any(|module| module.origin.contains_file(file_id))
+                    .any(|module| module.origin.files().any(|file| file == file_id))
                 {
                     matches.push((owner, file_id));
                 }
@@ -796,9 +796,9 @@ impl AnalysisQuerySnapshot<'_, '_> {
             }
             AnalysisQueryKind::CompletionsAt => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()
@@ -809,9 +809,9 @@ impl AnalysisQuerySnapshot<'_, '_> {
             }
             AnalysisQueryKind::CompletionsAtVerbose => {
                 let completion_query = CompletionQuery::new(target, file_id, offset)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()
@@ -829,9 +829,9 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     .expect("completion source text should load");
                 let completion_query = CompletionQuery::new(target, file_id, offset)
                     .with_source_text(&source_text)
-                    .with_client_capabilities(
-                        CompletionClientCapabilities::default().with_snippet_support(true),
-                    );
+                    .with_client_capabilities(CompletionClientCapabilities {
+                        snippet_support: true,
+                    });
                 let mut completions = self
                     .db
                     .analysis()

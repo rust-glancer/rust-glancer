@@ -73,8 +73,4 @@ impl Package {
             .parent()
             .expect("package manifest path should have a parent directory")
     }
-
-    pub(crate) fn contains_path(&self, path: &Path) -> bool {
-        path.starts_with(self.root_dir())
-    }
 }
