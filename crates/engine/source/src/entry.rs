@@ -7,6 +7,7 @@ use std::{
 };
 
 use rg_ir_model::FileId;
+use rg_std::{MemoryRecorder, MemorySize};
 
 use crate::{CapturedSource, SourceError, SourceRevision, revision::SourceDescriptor};
 
@@ -33,6 +34,18 @@ pub struct SourceEntry {
 }
 
 impl SourceEntry {
+    /// Copy the small retained record out of allocations made during analysis. Saved bytes can
+    /// be reloaded with revision validation; editor bytes must stay alive with this input.
+    pub(crate) fn relocated(&self) -> Self {
+        Self {
+            descriptor: self.descriptor.relocated(),
+            text: match &self.text {
+                SourceText::Saved(_) => SourceText::Saved(Mutex::new(None)),
+                SourceText::Editor(text) => SourceText::Editor(Arc::clone(text)),
+            },
+        }
+    }
+
     pub(crate) fn init(
         file: &FileId,
         cx: &dyn ajika::InputInit,
@@ -206,6 +219,21 @@ impl SourceEntry {
                 })
             }
             result => result,
+        }
+    }
+}
+
+impl MemorySize for SourceEntry {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.descriptor.record_memory_children(recorder);
+        let text = match &self.text {
+            SourceText::Saved(text) => text.lock().expect("source backing lock").clone(),
+            SourceText::Editor(text) => Some(Arc::clone(text)),
+        };
+        if let Some(text) = text
+            && recorder.visit_shared_allocation(Arc::as_ptr(&text).cast::<()>())
+        {
+            text.record_memory_children(recorder);
         }
     }
 }

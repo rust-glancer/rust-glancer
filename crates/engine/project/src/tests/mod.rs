@@ -351,6 +351,19 @@ pub struct User;
         .memory_hooks(hooks)
         .build()
         .expect("analysis project should build");
+    assert_eq!(
+        points.lock().expect("memory hook points").as_slice(),
+        [ProjectMemoryPurgePoint::AfterProjectBuild],
+    );
+    let old_source = project
+        .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
+            let context = snapshot
+                .file_context_for_path(fixture.path("src/lib.rs"))?
+                .expect("root source");
+            let entry = rg_source::SourceInput::entry(snapshot.query_context(), context.file)?;
+            Ok(Arc::downgrade(&entry))
+        })
+        .expect("observe source ownership");
     points
         .lock()
         .expect("recorded memory hook points should not be poisoned")
@@ -396,6 +409,10 @@ pub struct SavedUser;
             .as_slice(),
         [ProjectMemoryPurgePoint::AfterProjectChange],
         "a multi-file batch should publish one generation",
+    );
+    assert!(
+        old_source.upgrade().is_none(),
+        "publication releases old source metadata even for unchanged files"
     );
 }
 

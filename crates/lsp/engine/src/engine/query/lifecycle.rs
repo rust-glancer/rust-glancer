@@ -315,12 +315,17 @@ impl QueryRunner<'_> {
                         _ => None,
                     };
                     let error = format!("{error:#}");
+                    let persistence_kind = match runtime_error.map(ajika::Error::kind) {
+                        Some(ajika::ErrorKind::Persistence(error)) => Some(error.kind()),
+                        _ => None,
+                    };
                     tracing::warn!(
                         query = label,
                         queued_ms = queue_elapsed.as_millis(),
                         elapsed_ms = query_elapsed.as_millis(),
                         status = "error",
                         repair_pending,
+                        ?persistence_kind,
                         ?cycle,
                         error = %error,
                         "analysis query completed"

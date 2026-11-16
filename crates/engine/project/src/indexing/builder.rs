@@ -66,7 +66,7 @@ impl ProjectBuilder {
 
     pub fn build(mut self) -> anyhow::Result<Project> {
         let mut queries = ProjectQueries::open(&self.workspace, self.reuse_cache)
-            .context("open saved query cache")?;
+            .context("open project query storage")?;
         let state = queries
             .update_saved(|database| {
                 let targets = database.update_inputs(|update| {
@@ -76,24 +76,23 @@ impl ProjectBuilder {
                 Ok(build_state(database, self.workspace, targets)?)
             })
             .context("index saved project")?;
-        self.memory_hooks
-            .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
-
-        let bytes = self
-            .process_memory_sampler
-            .as_ref()
-            .map(|_| state.memory_size());
-        let process_memory = self
-            .process_memory_sampler
-            .as_mut()
-            .and_then(|sampler| sampler());
-        record_build_checkpoint("after project", bytes, process_memory);
-        Ok(Project {
+        let project = Project {
             queries: Mutex::new(queries),
             state,
             workspace_lowering_config: self.workspace_lowering_config,
             cargo_metadata_config: self.cargo_metadata_config,
             memory_hooks: self.memory_hooks,
-        })
+        };
+        project.collect_at(ProjectMemoryPurgePoint::AfterProjectBuild);
+        let bytes = self
+            .process_memory_sampler
+            .as_ref()
+            .map(|_| project.memory_size());
+        let process_memory = self
+            .process_memory_sampler
+            .as_mut()
+            .and_then(|sampler| sampler());
+        record_build_checkpoint("after project", bytes, process_memory);
+        Ok(project)
     }
 }

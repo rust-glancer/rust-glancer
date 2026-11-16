@@ -1,7 +1,7 @@
 //! Keeps the saved `Project` on the engine thread and changes it in command order.
 //!
-//! Queries borrow this project and may ask the coordinator to load package data that was left on
-//! disk. Saves and file-watcher events build and publish a new project generation. These
+//! Queries borrow this project and load the results they need within an operation. Saves and
+//! file-watcher events build and publish a new project generation. These
 //! operations share one command lane, so the project is never mutated by competing workers.
 //!
 //! A filesystem burst can keep changing after a watcher command reaches the engine. Project

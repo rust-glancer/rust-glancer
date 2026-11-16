@@ -1,4 +1,4 @@
-use std::{fs, path::Path, time::Duration};
+use std::{fs, path::Path, sync::Arc, time::Duration};
 
 use rg_analysis::CompletionQuery;
 use rg_ir_model::{PrimitiveTy, Span, UnsignedIntTy};
@@ -49,11 +49,28 @@ fn editor_declarations_reach_other_files_and_survive_request_boundaries() {
     let model = fixture.path("src/model.rs");
     let consumer = fixture.path("src/consumer.rs");
     let saved_generation = project.generation_id();
-    let saved_type = project
+    let (saved_type, text, syntax) = project
         .with_snapshot(CancellationToken::new(), |snapshot| {
-            result_type(snapshot, &consumer)
+            let context = snapshot
+                .file_context_for_path(&consumer)?
+                .expect("consumer");
+            let sources = snapshot.sources();
+            let text = sources.text(context.file)?;
+            let syntax = sources.syntax(
+                context.file,
+                snapshot
+                    .package_edition(context.crate_ref.package)
+                    .expect("edition"),
+            )?;
+            Ok((
+                result_type(snapshot, &consumer)?,
+                Arc::downgrade(&text),
+                Arc::downgrade(&syntax),
+            ))
         })
         .expect("saved query");
+    assert!(text.upgrade().is_none(), "saved text is request-scoped");
+    assert!(syntax.upgrade().is_none(), "syntax is request-scoped");
     assert_eq!(saved_type, PrimitiveTy::UnsignedInt(UnsignedIntTy::U8));
 
     let edited = CapturedSource::new(
@@ -110,6 +127,8 @@ pub fn inspect() { let result = Value.get(); let _ = result; }
             .expect("editor query")
     };
     query();
+    // Idle collection must preserve input identity, editor bytes and reusable query results.
+    project.collect();
     let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved,def_map.construction");
     query();
     let profile = profile.finish();

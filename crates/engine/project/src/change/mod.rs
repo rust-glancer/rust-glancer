@@ -171,8 +171,9 @@ impl Project {
             return Ok(AnalysisChangeSummary::default());
         };
         self.state = candidate;
-        self.memory_hooks
-            .purge(ProjectMemoryPurgePoint::AfterProjectChange);
+        // Replacing state and accepting inputs have now released the previous generation. Repack
+        // only after that release, so old owners cannot keep the indexing allocations alive.
+        self.collect_at(ProjectMemoryPurgePoint::AfterProjectChange);
         Ok(summary)
     }
 }

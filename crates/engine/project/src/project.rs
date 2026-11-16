@@ -6,17 +6,18 @@ use std::{
 };
 
 use rg_source::{CapturedSource, SourceError};
-use rg_std::{CancellationToken, MemorySize};
+use rg_std::{CancellationToken, MemoryRecorder, MemorySize};
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
     MacroExpansionLimitBuildSummary, ProjectBuilder, ProjectGenerationId, ProjectMemoryHooks,
-    ProjectSnapshot, ProjectStats, project_queries::ProjectQueries, state::ProjectState,
+    ProjectMemoryPurgePoint, ProjectSnapshot, ProjectStats, project_queries::ProjectQueries,
+    state::ProjectState,
 };
 
 #[derive(MemorySize)]
 pub struct Project {
-    #[memsize(skip)]
+    #[memsize(with = "Self::record_queries_memory")]
     pub(crate) queries: Mutex<ProjectQueries>,
     pub(crate) state: ProjectState,
     #[memsize(skip)]
@@ -27,6 +28,36 @@ pub struct Project {
 }
 
 impl Project {
+    fn record_queries_memory(queries: &Mutex<ProjectQueries>, recorder: &mut MemoryRecorder) {
+        queries
+            .lock()
+            .expect("project query runtime")
+            .record_memory_children(recorder);
+    }
+
+    /// Release operation leftovers and apply retention at a host idle boundary. This does not
+    /// change the published generation or discard editor inputs. Maintenance failure is reported
+    /// separately: an already accepted save must not look like a rejected source update.
+    pub fn collect(&self) {
+        self.collect_at(ProjectMemoryPurgePoint::Idle);
+    }
+
+    pub(crate) fn collect_at(&self, point: ProjectMemoryPurgePoint) {
+        let result = self
+            .queries
+            .lock()
+            .expect("project query runtime")
+            .collect();
+        if let Err(error) = result {
+            let persistence_kind = match error.kind() {
+                ajika::ErrorKind::Persistence(error) => Some(error.kind()),
+                _ => None,
+            };
+            tracing::warn!(%error, ?persistence_kind, boundary = point.label(), "query storage maintenance failed");
+        }
+        self.memory_hooks.purge(point);
+    }
+
     pub fn builder(workspace: WorkspaceMetadata) -> ProjectBuilder {
         ProjectBuilder::new(workspace)
     }

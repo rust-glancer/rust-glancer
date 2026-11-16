@@ -1,8 +1,8 @@
 //! Async access to the single-lane LSP analysis engine.
 //!
 //! RPC handlers clone `EngineHandle` and enqueue typed commands. A dedicated thread consumes those
-//! commands in FIFO order, which keeps saved-project mutation, query-time materialization, and
-//! package offloading from racing each other. The child modules split that thread into command
+//! commands in FIFO order, which keeps input publication, query runs, and idle collection from
+//! racing each other. The child modules split that thread into command
 //! dispatch, project lifecycle ownership, and request-scoped query execution.
 
 mod command;
@@ -299,5 +299,29 @@ pub struct Ready;
             .request(EngineCommand::Shutdown)
             .await
             .expect("fixture engine shuts down");
+
+        // The reply is also the handoff point for a replacement engine. It must be able to open
+        // the same storage slot immediately, without waiting for the old dispatcher to exit.
+        let root = fixture.path("");
+        let target = std::env::var_os("CARGO_TARGET_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| fixture.path("target"));
+        let storage = target
+            .join("rust_glancer")
+            .join(root.file_name().expect("fixture root name"))
+            .join("queries/1");
+        assert!(storage.is_dir(), "the engine used persistent storage");
+        let _reopened = rg_source::QueryDatabase::open(
+            storage,
+            "shutdown-release-check",
+            ajika::Inputs::default(),
+            rg_source::QueryServices::default(),
+            ajika::Retention {
+                max_entries: 0,
+                max_bytes: 0,
+                max_idle: Duration::ZERO,
+            },
+        )
+        .expect("shutdown released the query storage lock before replying");
     }
 }

@@ -1,15 +1,16 @@
 //! FIFO command routing for the single semantic execution lane.
 //!
 //! RPC tasks may enqueue work concurrently, but saved-project changes and semantic queries run one
-//! at a time here. This is intentional: query-time materialization mutates package residency, so a
-//! pool of otherwise read-only queries would still need to coordinate ownership of the project.
+//! at a time here. Query runs and input publication need exclusive access to the runtime. The
+//! same lane also ensures that request borrows have ended before idle collection or shutdown.
 
 use std::{
     num::NonZeroUsize,
     sync::{
         Arc,
-        mpsc::{Receiver, Sender},
+        mpsc::{Receiver, RecvTimeoutError, Sender},
     },
+    time::Duration,
 };
 
 use rg_lsp_proto::InlayHintsConfig;
@@ -60,7 +61,27 @@ impl EngineDispatcher {
     pub(super) fn run(mut self, receiver: Receiver<QueuedEngineCommand>) {
         tracing::debug!("LSP engine dispatcher started");
 
-        while let Ok(queued) = receiver.recv() {
+        // Collect once after a burst has gone quiet. Automatic Ajika maintenance still bounds
+        // storage during sustained activity; this pass also repacks host-owned source metadata.
+        let mut needs_collection = false;
+        loop {
+            let queued = if needs_collection {
+                match receiver.recv_timeout(Duration::from_secs(1)) {
+                    Ok(queued) => queued,
+                    Err(RecvTimeoutError::Timeout) => {
+                        if let Ok(project) = self.project.saved_project() {
+                            project.collect();
+                        }
+                        needs_collection = false;
+                        continue;
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            } else {
+                let Ok(queued) = receiver.recv() else { break };
+                queued
+            };
+            needs_collection = true;
             let queue_elapsed = queued.enqueued_at.elapsed();
             let cancellation = queued.cancellation;
             let command = queued.command;
@@ -406,8 +427,11 @@ impl EngineDispatcher {
                 }
                 EngineCommand::Shutdown(respond_to) => {
                     tracing::info!("shutting down LSP engine dispatcher");
+                    // Earlier commands have drained on this lane. Drop the database (including
+                    // its storage lock) before the caller is allowed to restart the engine.
+                    drop(self);
                     let _ = respond_to.send(Ok(()));
-                    break;
+                    return;
                 }
             }
         }
