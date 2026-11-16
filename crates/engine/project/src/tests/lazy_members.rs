@@ -393,6 +393,47 @@ pub fn needle_free() {}
 }
 
 #[test]
+fn workspace_search_stops_recursive_member_includes() {
+    for recursion in [
+        r#"include!("methods.rs");"#,
+        "cfg_select! { all() => { again!(); } }",
+    ] {
+        let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+            &r#"
+//- /src/lib.rs crate:recursive_member_include
+macro_rules! again { () => { include!("methods.rs"); }; }
+pub struct First;
+pub struct Second;
+impl First { include!("methods.rs"); }
+impl Second { include!("methods.rs"); }
+
+//- /src/methods.rs
+pub fn wanted() {}
+RECURSIVE_INCLUDE
+"#
+            .replace("RECURSIVE_INCLUDE", recursion),
+        );
+        let project = fixture.build_project();
+        project.inspect(|snapshot| {
+            let symbols = snapshot
+                .analysis()
+                .workspace_symbols("wanted")
+                .expect("search recursively included members");
+            let mut containers = symbols
+                .iter()
+                .map(|symbol| symbol.container_name.as_deref())
+                .collect::<Vec<_>>();
+            containers.sort_unstable();
+            assert_eq!(
+                containers,
+                [Some("impl First"), Some("impl Second")],
+                "recursive includes must stop without suppressing another owner's members: {recursion}"
+            );
+        });
+    }
+}
+
+#[test]
 fn included_owners_keep_their_collected_macro_scope() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
