@@ -8,7 +8,7 @@ use std::{
 
 use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
-    GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport,
+    GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport, MacroScopeData,
 };
 use rg_ir_model::{CrateRef, DefMapRef, FileId, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
@@ -17,7 +17,7 @@ use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::impl_headers::impl_header_resolutions;
+use super::{impl_headers::impl_header_resolutions, members::AssociatedItemInputs};
 use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
     ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
@@ -39,6 +39,8 @@ pub struct TargetDeclarations {
     definitions: CrateData,
     items: ItemStore,
     generated_sources: GeneratedSourceStore,
+    member_inputs: AssociatedItemInputs,
+    macro_scopes: MacroScopeData,
     lang_items: LangItemIndex,
     lookup_env: ItemLookupEnv,
     lookup_shards: Vec<ajika::Output<ItemLookupShard>>,
@@ -79,6 +81,7 @@ pub fn target_declarations(
         macro_expansion_limit: built.macro_expansion_limit,
     };
     let lang_items = items.lang_items().clone();
+    let member_inputs = AssociatedItemInputs::publish(db, &items, built.member_inputs)?;
     let symbol_names = SymbolNameData::for_target(&items, data.def_map());
     let (lookup_keys, shards) = lookup.into_parts();
     let lookup_shards = shards
@@ -92,6 +95,8 @@ pub fn target_declarations(
         data,
         items,
         generated_sources,
+        member_inputs,
+        built.macro_scopes,
         lang_items,
         lookup_env,
         lookup_shards,

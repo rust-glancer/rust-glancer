@@ -2,23 +2,22 @@
 //!
 //! Item-scope bindings answer which macros a module contains. Textual lookup additionally needs
 //! to know which definitions precede a call, including where a child module was declared. Keep
-//! that ordering separate from ordinary namespace lookup and discard it after construction.
+//! that ordering separate from ordinary namespace lookup so deferred members can reuse it.
 
 use std::collections::HashMap;
 
 use rg_ir_model::{LocalDefId, ModuleId};
 use rg_item_tree::MacroUseSelector;
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::ItemOrder;
 
-/// Build-time textual scope for `macro_rules!` definitions.
+/// Textual scope for `macro_rules!` definitions.
 ///
 /// Unlike ordinary macro namespace bindings, textual `macro_rules!` visibility depends on source
-/// order and on the declaration position of nested modules. We keep that ordering state only while
-/// expanding macros; generated module items and associated replacement edges enter the frozen
-/// def-map afterwards.
-#[derive(Debug, Clone, Default)]
+/// order and on the declaration position of nested modules.
+#[derive(Debug, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub(crate) struct TextualMacroScopes {
     definitions: HashMap<ModuleId, HashMap<Name, Vec<TextualMacroDefinition>>>,
     module_declaration_orders: HashMap<ModuleId, ItemOrder>,
@@ -101,7 +100,7 @@ impl TextualMacroScopes {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 struct TextualMacroDefinition {
     local_def: LocalDefId,
     order: ItemOrder,

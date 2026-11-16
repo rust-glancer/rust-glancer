@@ -19,9 +19,9 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    CrateResolutionEnv, GeneratedItemRef, GeneratedLocations, ItemSource, ItemSourceKind,
-    LocalDefKind, LocalImplData, MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder,
-    source::GeneratedSourceData,
+    AssociatedItemInput, AssociatedItemOwner, CrateResolutionEnv, GeneratedItemRef,
+    GeneratedLocations, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
+    MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder, source::GeneratedSourceData,
 };
 
 /// One derived impl waiting to be attached to the module that owns its struct or enum.
@@ -119,6 +119,10 @@ impl BuiltinDeriveExpansion {
             .expect("derive owner module exists")
             .impls
             .push(local_impl);
+        state.member_inputs.insert(
+            AssociatedItemOwner::Impl(local_impl),
+            AssociatedItemInput::Empty,
+        );
     }
 
     /// A derive can come from a source file or from another macro's output. Keep the original

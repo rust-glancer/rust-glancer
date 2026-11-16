@@ -372,8 +372,8 @@ impl MacroExpansionAttempt {
 
         // Then resolve against the current scope snapshot. Unresolved user macros can be retried;
         // compiler builtins are handled only after resolution identifies a builtin definition.
-        let resolver = ItemMacroResolver::new(env, state);
-        let Some(resolved) = resolver.resolve(call, &path)? else {
+        let resolver = ItemMacroResolver::new(env, state.crate_ref, &state.macro_scopes);
+        let Some(resolved) = resolver.resolve(call.module, &call.order, &path)? else {
             return Ok(Self::new(
                 call_id,
                 call,

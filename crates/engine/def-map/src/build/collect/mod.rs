@@ -16,7 +16,7 @@ use rg_text::{Name, RustEdition};
 use super::{
     MacroSourceFileResolutions,
     crates::{CrateBuilder, ExternPreludeBuilder, KnownModuleFiles},
-    macros::{MacroCallOrigin, TextualMacroScopes},
+    macros::{MacroCallOrigin, MacroScopeData},
 };
 use crate::{DefMapBuilder, ModuleBuilder, ModuleDocumentation, ModuleOrigin, Visibility};
 
@@ -61,9 +61,8 @@ pub(super) fn collect_crate(
         def_map_builder: builder,
         extern_prelude: ExternPreludeBuilder::new(roots),
         prelude: None,
-        macro_definitions: HashMap::new(),
-        textual_macro_scopes: TextualMacroScopes::default(),
-        macro_use_imports: Vec::new(),
+        member_inputs: HashMap::new(),
+        macro_scopes: MacroScopeData::default(),
         macro_directives: Vec::new(),
         macro_source_file_requests: Vec::new(),
         pending_generated_modules: Vec::new(),

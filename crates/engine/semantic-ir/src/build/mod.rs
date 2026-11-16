@@ -5,6 +5,7 @@ pub(crate) mod impl_headers;
 mod item_store;
 mod lookup;
 mod lower_crate;
+mod members;
 mod symbol_names;
 mod target;
 

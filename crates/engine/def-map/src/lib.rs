@@ -43,8 +43,9 @@ pub use self::{
         ExpandedBodyMacro,
     },
     build::{
-        CrateBuildOutput, CrateDependencies, ImportCollectionEnv, ImportCollectionOutput,
-        ImportCollector, ModuleImportInput, ResolvedModuleImports,
+        AssociatedItemInput, AssociatedItemOwner, CrateBuildOutput, CrateDependencies,
+        ImportCollectionEnv, ImportCollectionOutput, ImportCollector,
+        MacroScopeData, ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},
     item_scope::{ItemScope, ItemScopeBuilder, NameBindings, NameBindingsView},

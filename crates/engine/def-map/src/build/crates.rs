@@ -11,7 +11,7 @@ use std::{
 };
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
-use rg_ir_model::{CrateRef, DefId, FileId, LocalDefId, ModuleId, ModuleRef};
+use rg_ir_model::{CrateRef, DefId, FileId, ModuleId, ModuleRef};
 use rg_parse::{CargoTargetId, ModuleFileContext};
 use rg_std::NativeOsString;
 use rg_text::{Name, RustEdition};
@@ -19,9 +19,9 @@ use rg_workspace::TargetKind;
 
 use super::{
     macros::{
-        MacroCallOrigin, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-        MacroUseImport, PendingGeneratedModule, PendingInclude, PendingMacroExpansionLimitReport,
-        TextualMacroScopes,
+        AssociatedItemInput, AssociatedItemOwner, MacroCallOrigin, MacroCallSite, MacroDirective,
+        MacroDirectiveState, MacroScopeData, PendingGeneratedModule, PendingInclude,
+        PendingMacroExpansionLimitReport,
     },
     output::CrateBuildOutput,
 };
@@ -51,10 +51,8 @@ pub(crate) struct CrateBuilder {
     pub(crate) def_map_builder: DefMapBuilder,
     pub(crate) extern_prelude: ExternPreludeBuilder,
     pub(crate) prelude: Option<ModuleRef>,
-    pub(crate) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
-    pub(crate) textual_macro_scopes: TextualMacroScopes,
-    /// Legacy macro imports sorted by declaration order, including generated declarations.
-    pub(crate) macro_use_imports: Vec<MacroUseImport>,
+    pub(crate) member_inputs: HashMap<AssociatedItemOwner, AssociatedItemInput>,
+    pub(crate) macro_scopes: MacroScopeData,
     pub(crate) macro_directives: Vec<MacroDirective>,
     /// Requests from the latest expansion batch, cleared after source loading.
     pub(crate) macro_source_file_requests: Vec<MacroSourceFileRequest>,
@@ -70,8 +68,9 @@ pub(crate) struct CrateBuilder {
 }
 
 impl CrateBuilder {
-    /// Move settled data into the result and discard build-only queues and textual macro state.
+    /// Move settled data into the result and discard build-only work queues.
     /// Generated declarations remain separate because Semantic IR still needs their item syntax.
+    /// Deferred owners retain the textual scope needed to resolve their unexpanded member calls.
     pub(crate) fn finish(self, package_name: &str) -> CrateBuildOutput {
         let macro_expansion_limit =
             self.macro_expansion_limit
@@ -102,6 +101,8 @@ impl CrateBuilder {
         CrateBuildOutput {
             data,
             generated_items,
+            macro_scopes: self.macro_scopes,
+            member_inputs: self.member_inputs,
             macro_expansion_limit,
         }
     }
