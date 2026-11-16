@@ -172,7 +172,6 @@ impl<S: CrateDataSource> DefMapSource for CrateDefMapReader<S> {
         Ok(self
             .0
             .crate_data(krate)?
-            .and_then(CrateData::root_module)
-            .map(|root| ModuleRef::krate(krate, root)))
+            .map(|data| ModuleRef::krate(krate, data.root_module())))
     }
 }

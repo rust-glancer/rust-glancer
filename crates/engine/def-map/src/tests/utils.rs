@@ -194,7 +194,7 @@ impl<'a> FixtureCrate<'a> {
             .def_map_db()
             .package(self.crate_ref.package)
             .and_then(|package| package.crate_data(self.crate_ref.crate_id))
-            .and_then(|crate_data| crate_data.root_module())
+            .map(|crate_data| crate_data.root_module())
             .and_then(|root_module| self.def_map().module(root_module))
             .and_then(|module| module.scope.entry(name));
         FixtureEntry {

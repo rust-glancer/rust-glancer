@@ -27,7 +27,7 @@ pub struct PreparedBody {
     sources: Arena<BodyId, BodySourceStore>,
 }
 
-/// Query a single outer owner. The current target directory establishes whether the owner still
+/// Query a single outer owner. The target's body-owner list establishes whether the owner still
 /// exists; an older record cannot supply its previous body after that declaration disappears.
 #[ajika::query]
 pub fn prepare_saved_body(

@@ -91,7 +91,7 @@ impl CrateBuilder {
             self.target_kind,
             target_pointer_width,
             self.crate_name,
-            Some(self.root_module),
+            self.root_module,
             self.extern_prelude.freeze(),
             self.prelude,
             self.def_map_builder.build(),

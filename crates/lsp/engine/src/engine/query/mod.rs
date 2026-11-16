@@ -1,7 +1,7 @@
 //! Runs editor queries against one saved project.
 //!
-//! A feature method selects the first owning crate for the document. It loads any
-//! saved package data needed by the feature, prepares selected bodies and declarations from the
+//! A feature method selects the first owning crate for the document. It acquires the
+//! declarations and bodies needed by the feature, prepares selected changes from the
 //! editor text, runs `rg_analysis`, and converts the result to LSP types. Current semantics belong
 //! only to that request; they do not turn the saved project into an unsaved copy.
 //!

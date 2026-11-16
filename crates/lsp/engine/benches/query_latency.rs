@@ -29,7 +29,7 @@ fn main() {
 // =============================================================================
 
 // Initialization is intentionally outside Divan's measured closure. Every query begins from a
-// settled all-offloadable project, which is the normal low-idle-memory LSP configuration.
+// project whose declarations are ready. The first request can still demand untouched bodies.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn hover_clean(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
