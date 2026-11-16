@@ -446,30 +446,31 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
     /// Search compact names before acquiring declarations for rendering the matches.
     pub fn workspace_symbols(&self, query: &str) -> Result<Vec<IndexedSymbolEntry>> {
-        let needle = query.to_lowercase();
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
-        for krate in index.included_crates()? {
-            for candidate in self.db.semantic_ir.symbol_names(krate)? {
-                rg_std::check_cancel!(self.db, "workspace symbol discovery");
-                if !candidate.name.to_lowercase().contains(&needle) {
-                    continue;
+        let candidates = self.db.semantic_ir.search_symbols(
+            &index.included_crates()?,
+            query,
+            self.db.cancellation(),
+        )?;
+        for candidate in candidates {
+            let declaration_ref = candidate.declaration;
+            let container_ref = candidate.container;
+            rg_std::check_cancel!(self.db, "workspace symbol rendering");
+            let Some(declaration) = self.declaration(declaration_ref)? else {
+                continue;
+            };
+            let container = if let Some(container_ref) = container_ref {
+                match self.declaration(container_ref)? {
+                    Some(parent) => self.child_container_name(&parent)?,
+                    None => None,
                 }
-                let Some(declaration) = self.declaration(candidate.declaration)? else {
-                    continue;
-                };
-                let container = if let Some(container) = candidate.container {
-                    match self.declaration(container)? {
-                        Some(parent) => self.child_container_name(&parent)?,
-                        None => None,
-                    }
-                } else if let DeclarationRef::Module(module) = candidate.declaration {
-                    index.module_container_name(module)?
-                } else {
-                    None
-                };
-                symbols.push(IndexedSymbolEntry::new(declaration, container));
-            }
+            } else if let DeclarationRef::Module(module) = declaration_ref {
+                index.module_container_name(module)?
+            } else {
+                None
+            };
+            symbols.push(IndexedSymbolEntry::new(declaration, container));
         }
         Ok(symbols)
     }

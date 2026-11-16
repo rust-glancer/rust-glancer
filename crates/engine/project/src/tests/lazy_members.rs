@@ -1,6 +1,6 @@
 use std::fs;
 
-use rg_analysis::{CompletionQuery, ReferenceQuery, SavedSourceRelationship};
+use rg_analysis::{CompletionQuery, ReferenceQuery, SavedSourceRelationship, SymbolKind};
 use rg_body_ir::{BodyReader, CurrentSourceSelection};
 use rg_ir_model::{BodyId, BodyKey, DefMapRef, PrimitiveTy, SemanticItemRef, UnsignedIntTy};
 use rg_semantic_ir::{ItemReader, complete_source_ownership};
@@ -225,6 +225,170 @@ pub fn wanted() -> u8 { 1u8 }
     let identity = check(&project);
     drop(project);
     assert_eq!(check(&fixture.build_project()), identity);
+}
+
+#[test]
+fn member_macro_scope_and_broad_names_survive_restart() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:lazy_scope
+macro_rules! methods { () => { pub fn wanted_early() -> u8 { 1 } }; }
+pub struct Early;
+impl Early { methods!(); }
+macro_rules! owner { () => { pub struct Generated; impl Generated { methods!(); } }; }
+owner!();
+macro_rules! methods { () => { pub fn wanted_late() -> u16 { 1 } }; }
+pub struct Late;
+impl Late { methods!(); }
+#[macro_export]
+macro_rules! number { () => { pub fn wanted_root() -> u32 { 1 } }; }
+macro_rules! qualified { () => { $crate::number!(); }; }
+mod child {
+    macro_rules! number { () => { pub fn wanted_root() -> u64 { 1 } }; }
+    pub struct Nested;
+    impl Nested { qualified!(); }
+}
+
+fn calls() {
+    let late = Late::wanted_late(); let _ = $late$late;
+    let generated = Generated::wanted_early(); let _ = $generated$generated;
+    let early = Early::wanted_early(); let _ = $early$early;
+    let root = child::Nested::wanted_root(); let _ = $root$root;
+}
+"#,
+    );
+    for restart in [false, true] {
+        let project = fixture.build_project();
+        project.inspect(|snapshot| {
+            let context = snapshot
+                .file_context_for_path(fixture.path("src/lib.rs"))
+                .expect("route source")
+                .expect("target");
+            let analysis = snapshot.analysis();
+            // On restart, discover all macro names before selecting a particular owner.
+            if restart {
+                assert_eq!(
+                    analysis
+                        .workspace_symbols("wanted_")
+                        .expect("warm names")
+                        .len(),
+                    4
+                );
+            }
+            for (marker, expected) in [
+                ("late", UnsignedIntTy::U16),
+                ("generated", UnsignedIntTy::U8),
+                ("early", UnsignedIntTy::U8),
+                ("root", UnsignedIntTy::U32),
+            ] {
+                assert_eq!(
+                    analysis
+                        .type_at(
+                            context.crate_ref,
+                            context.file,
+                            fixture.markers().position(marker).offset
+                        )
+                        .expect("member call")
+                        .expect("binding type")
+                        .primitive(),
+                    Some(PrimitiveTy::UnsignedInt(expected)),
+                    "{marker}"
+                );
+            }
+            let symbols = analysis
+                .workspace_symbols("wanted_")
+                .expect("all member names");
+            assert_eq!(symbols.len(), 4);
+        });
+    }
+}
+
+#[test]
+fn workspace_search_resolves_written_and_generated_member_names() {
+    let fixture = ProjectSourceFixture::build_with_fake_sysroot(
+        r#"
+//- /src/lib.rs crate:lazy_search_names
+pub trait Service {
+    fn needle_decl(&self);
+    const NEEDLE_REQUIRED: u8;
+    type NeedleOutput;
+}
+pub struct Ordinary;
+impl Ordinary {
+    pub fn needle_direct() {}
+    pub const NEEDLE_CONST: u8 = 1;
+    pub type NeedleType = u8;
+}
+macro_rules! methods {
+    () => { pub fn before() {} pub fn needle_generated() {} };
+}
+pub struct Generated;
+impl Generated {
+    methods!();
+    pub fn needle_after() {}
+}
+pub fn needle_free() {}
+"#,
+    );
+    for _ in 0..2 {
+        // A second project reuses persisted discovery. Repeat each search in the same process too.
+        let project = fixture.build_project();
+        project.inspect(|snapshot| {
+            for _ in 0..2 {
+                let symbols = snapshot
+                    .analysis()
+                    .workspace_symbols("NeEdLe")
+                    .expect("search member names");
+                let mut names = symbols
+                    .iter()
+                    .map(|symbol| {
+                        (
+                            symbol.name.as_str(),
+                            symbol.kind,
+                            symbol.container_name.as_deref(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                names.sort_unstable_by_key(|(name, _, _)| *name);
+                assert_eq!(
+                    names,
+                    [
+                        ("NEEDLE_CONST", SymbolKind::Const, Some("impl Ordinary")),
+                        ("NEEDLE_REQUIRED", SymbolKind::Const, Some("trait Service")),
+                        ("NeedleOutput", SymbolKind::TypeAlias, Some("trait Service")),
+                        ("NeedleType", SymbolKind::TypeAlias, Some("impl Ordinary")),
+                        ("needle_after", SymbolKind::Method, Some("impl Generated")),
+                        ("needle_decl", SymbolKind::Method, Some("trait Service")),
+                        ("needle_direct", SymbolKind::Method, Some("impl Ordinary")),
+                        ("needle_free", SymbolKind::Function, None),
+                        (
+                            "needle_generated",
+                            SymbolKind::Method,
+                            Some("impl Generated")
+                        ),
+                    ]
+                );
+                for symbol in symbols {
+                    let text = snapshot
+                        .file_text_for_span(
+                            symbol.crate_ref.package,
+                            symbol.file_id,
+                            symbol.span.expect("symbol navigation span"),
+                        )
+                        .expect("symbol navigation text")
+                        .expect("symbol source");
+                    // Template names navigate to the invocation. The written member after that
+                    // expansion must retain its own identity and name span, not `before`'s ID.
+                    let expected = if symbol.name == "needle_generated" {
+                        "methods!();"
+                    } else {
+                        &symbol.name
+                    };
+                    assert_eq!(text, expected, "{} navigation", symbol.name);
+                }
+            }
+        });
+    }
 }
 
 #[test]

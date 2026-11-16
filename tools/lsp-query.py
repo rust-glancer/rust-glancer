@@ -23,6 +23,7 @@ MAX_HINTS = 200
 MAX_COMPLETIONS = 200
 MAX_CODE_ACTIONS = 100
 MAX_TOKENS = 200
+MAX_SYMBOLS = 200
 STDERR_TAIL_BYTES = 64 * 1024
 MAX_SERVER_LOG_BYTES = 64 * 1024 * 1024
 MAX_PROTOCOL_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -98,7 +99,8 @@ Query file shape:
        "context": {"triggerKind": 1, "only": ["quickfix"]}},
       {"kind": "inlay", "label": "block", "range": {"startMarker": "let value", "endMarker": "next_line"}},
       {"kind": "semantic-tokens", "label": "documentation"},
-      {"kind": "semantic-tokens", "label": "cancellation", "cancelAfterMs": 1}
+      {"kind": "semantic-tokens", "label": "cancellation", "cancelAfterMs": 1},
+      {"kind": "workspace-symbol", "label": "first broad request", "query": "child_modules"}
     ]
   }
 
@@ -444,10 +446,13 @@ def normalize_plan(plan_value: Any, root: Path, options: Options) -> Dict[str, A
             "inlay",
             "inlay-hints",
             "semantic-tokens",
+            "workspace-symbol",
         }:
             fail("unsupported query kind: {}".format(query.get("kind")))
         if query["kind"] == "inlay-hints":
             query["kind"] = "inlay"
+        if query["kind"] == "workspace-symbol" and not isinstance(query.get("query"), str):
+            fail("workspace-symbol query must be a string")
         if "context" in query and query["context"] is not None:
             context = require_object(query["context"], "query context")
             if query["kind"] == "completion":
@@ -991,8 +996,10 @@ async def run(argv: Sequence[str]) -> None:
     binary = release_binary(options)
     file_path = plan["file"]
     uri = file_path.as_uri()
+    startup_started = time.perf_counter_ns()
     client = await LspClient.start(binary, root, options.timeout_ms, options.show_logs)
     results = []
+    readiness_ms = None
 
     try:
         initialized = await client.request(
@@ -1049,9 +1056,24 @@ async def run(argv: Sequence[str]) -> None:
         # Readiness includes the configured body indexes.
         if plan["readinessBarrier"] == "ready":
             await wait_until_ready(client, options.timeout_ms)
+            readiness_ms = (time.perf_counter_ns() - startup_started) / 1_000_000
 
         for query in plan["queries"]:
-            if query["kind"] == "hover":
+            if query["kind"] == "workspace-symbol":
+                request_started = time.perf_counter_ns()
+                response = await client.request("workspace/symbol", {"query": query["query"]})
+                elapsed_ms = (time.perf_counter_ns() - request_started) / 1_000_000
+                symbols = response.get("result") or []
+                results.append({
+                    "kind": "workspace-symbol",
+                    "label": query.get("label", query["query"]),
+                    "elapsedMs": round(elapsed_ms, 3),
+                    "totalCount": len(symbols),
+                    "symbols": symbols[:MAX_SYMBOLS],
+                    "truncated": len(symbols) > MAX_SYMBOLS,
+                    "raw": symbols,
+                })
+            elif query["kind"] == "hover":
                 position = query_position(query, plan["text"])
                 request_started = time.perf_counter_ns()
                 response = await client.request(
@@ -1201,6 +1223,7 @@ async def run(argv: Sequence[str]) -> None:
         "binary": os.path.relpath(str(binary), str(TOOL_ROOT)),
         "barriers": {
             "readiness": plan["readinessBarrier"],
+            "elapsedMs": round(readiness_ms, 3) if readiness_ms is not None else None,
         },
         "results": results,
     }
@@ -1213,7 +1236,14 @@ async def run(argv: Sequence[str]) -> None:
     print("binary: {}".format(output["binary"]))
     for result in results:
         label = " " + str(result["label"])
-        if result["kind"] == "hover":
+        if result["kind"] == "workspace-symbol":
+            print("\nworkspace-symbol{} ({:.3f} ms, {} symbols)".format(
+                label, result["elapsedMs"], result["totalCount"]))
+            for symbol in result["symbols"]:
+                print("  {}".format(symbol["name"]))
+            if result["truncated"]:
+                print("  <truncated>")
+        elif result["kind"] == "hover":
             print(
                 "\nhover{} @ {}:{} ({:.3f} ms)".format(
                     label,

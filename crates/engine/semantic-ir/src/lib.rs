@@ -24,7 +24,7 @@ pub(crate) use self::source::SavedSourceResolver;
 pub use self::{
     build::{
         AssociatedDeclarations, BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader,
-        SymbolNameData, TargetDeclarationMetadata, TargetDeclarationReader,
+        SymbolNameData, SymbolNameIndex, TargetDeclarationMetadata, TargetDeclarationReader,
         TargetDeclarations, TargetItemData, associated_declarations, body_owners, saved_body_owner,
         target_declarations,
     },

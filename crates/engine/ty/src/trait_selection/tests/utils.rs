@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Write as _, iter};
+use std::{collections::HashMap, fmt::Write as _, iter, sync::Arc};
 
 use expect_test::Expect;
 use rg_def_map::{
@@ -24,7 +24,7 @@ use rg_semantic_ir::{
     FunctionSignature, GenericParamSource, GenericsQuery, ImplData, ItemLookupEnv, ItemLookupIndex,
     ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LangItemIndex, LookupAnswer,
     LookupQuestion, SemanticItemSource, SemanticItemView, SourceSelection, StructData,
-    SymbolNameData, TraitData, TypeAliasData, TypeAliasSignature,
+    SymbolNameIndex, TraitData, TypeAliasData, TypeAliasSignature,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
@@ -276,9 +276,9 @@ impl CrateItemSource for TraitSelectionFixture {
         )
     }
 
-    fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
+    fn symbol_names(&self, _crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError> {
         // These solver fixtures describe types directly and have no source-symbol surface.
-        Ok(&[])
+        Ok(Vec::new())
     }
 
     fn crates(&self) -> Vec<CrateRef> {

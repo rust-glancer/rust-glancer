@@ -13,7 +13,7 @@ pub use self::{
     body_owners::BodyOwnerData,
     item_store::{ItemStoreLowerer, ItemStoreSourceReader},
     members::{AssociatedDeclarations, associated_declarations, body_owners, saved_body_owner},
-    symbol_names::SymbolNameData,
+    symbol_names::{SymbolNameData, SymbolNameIndex},
     target::{
         TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, TargetItemData,
         target_declarations,

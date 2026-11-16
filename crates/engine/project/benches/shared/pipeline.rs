@@ -13,7 +13,7 @@ use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{ParseDb, SavedSourceReader, TargetFileManifest, saved_syntax};
 use rg_semantic_ir::{
     AssociatedItemStore, CrateItemSource, ItemLookupEnv, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemView, SourceSelection, SymbolNameData, TargetItemData,
+    LookupQuestion, SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData,
     body_owners, target_declarations,
 };
 use rg_source::{
@@ -282,9 +282,9 @@ impl CrateItemSource for Declarations {
         )
     }
 
-    fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
+    fn symbol_names(&self, _crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError> {
         // The isolated declaration-lowering benchmark does not run symbol discovery.
-        Ok(&[])
+        Ok(Vec::new())
     }
 
     fn crates(&self) -> Vec<CrateRef> {

@@ -18,17 +18,19 @@ use rg_item_tree::{ItemKind, ItemTrees};
 use rg_parse::TargetFileManifest;
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
+use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
     impl_headers::impl_header_resolutions,
     members::{AssociatedItemInputs, associated_declarations},
+    symbol_names::{MemberNameData, macro_symbol_names},
 };
 use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
     ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
     LookupKeys, LookupQuestion, SavedSourceResolver, SemanticItemSource, SemanticItemView,
-    SourceOwnershipIndex, SourceSelection, SymbolNameData,
+    SourceOwnershipIndex, SourceSelection, SymbolNameData, SymbolNameIndex,
     item::AssociatedItemHints,
 };
 
@@ -61,7 +63,7 @@ pub struct TargetDeclarations {
     lookup_shards: Vec<ajika::Output<ItemLookupShard>>,
     lookup_keys: LookupKeys,
     body_owners: Vec<BodyOwnerData>,
-    symbol_names: Vec<SymbolNameData>,
+    symbol_names: SymbolNameIndex,
     source_ownership: SourceOwnershipIndex,
 }
 
@@ -83,6 +85,7 @@ pub fn target_declarations(
         lookup_env,
         lookup,
         generated_sources,
+        symbol_names,
         mut source_ownership,
     } = TargetItemData::build(
         db,
@@ -116,7 +119,6 @@ pub fn target_declarations(
     };
     let lang_items = items.lang_items().clone();
     let member_inputs = AssociatedItemInputs::publish(db, &items, built.member_inputs)?;
-    let symbol_names = SymbolNameData::for_target(&items, data.def_map());
     let (lookup_keys, shards) = lookup.into_parts();
     let lookup_shards = shards
         .into_iter()
@@ -148,6 +150,7 @@ pub struct TargetItemData {
     pub lookup_env: ItemLookupEnv,
     pub lookup: ItemLookupIndex,
     pub generated_sources: GeneratedSourceStore,
+    pub symbol_names: SymbolNameIndex,
     pub source_ownership: SourceOwnershipIndex,
 }
 
@@ -167,6 +170,10 @@ impl TargetItemData {
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         let mut lookup_hints = HashMap::new();
         let mut source_ownership = SourceOwnershipIndex::default();
+        let mut symbol_names = SymbolNameIndex {
+            declarations: SymbolNameData::for_target(&items, data.def_map()),
+            ..SymbolNameIndex::default()
+        };
         let owners: Vec<_> = items
             .traits_with_refs()
             .map(|(owner, data)| {
@@ -190,6 +197,7 @@ impl TargetItemData {
                 .get(&collected)
                 .ok_or_else(|| ajika::Error::contract("collected owner has no member input"))?;
             let mut hints = AssociatedItemHints::default();
+            let mut written_names = Vec::new();
             for (source, item) in input.declarations(db, items.crate_ref())? {
                 if let Some(lang_item) = item.lang_item {
                     items
@@ -206,9 +214,19 @@ impl TargetItemData {
                     }
                     _ => continue,
                 }
+                // Match the name retained by semantic lowering for incomplete declarations too.
+                written_names.push(item.name.clone().unwrap_or_else(Name::missing));
             }
+            // Reuse the lookup-hint walk for symbol search. Member lowering assigns the final
+            // IDs, so these written names select a whole owner, not syntax-order IDs.
             if hints.has_macros {
+                symbol_names.macro_owners.push(owner);
                 source_ownership.defer(owner);
+            } else if !written_names.is_empty() {
+                symbol_names.members.push(MemberNameData {
+                    owner,
+                    names: written_names,
+                });
             }
             lookup_hints.insert(owner.id, hints);
         }
@@ -245,11 +263,13 @@ impl TargetItemData {
         let mut lookup = ItemLookupIndex::build_from_headers(&items, &self_heads, lookup_hints);
         items.shrink_to_fit();
         lookup.shrink_to_fit();
+        symbol_names.shrink_to_fit();
         Ok(Self {
             items,
             lookup_env: env,
             lookup,
             generated_sources,
+            symbol_names,
             source_ownership,
         })
     }
@@ -490,11 +510,24 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
             .map_err(ReadError::Query)
     }
 
-    fn symbol_names(&self, krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
-        Ok(self
-            .acquire(krate, |result| &result.symbol_names)
-            .map_err(ReadError::Query)?
-            .map_or(&[], Vec::as_slice))
+    fn symbol_names(&self, crates: &[CrateRef]) -> Result<Vec<Arc<SymbolNameIndex>>, ReadError> {
+        let targets: Vec<_> = crates
+            .iter()
+            .copied()
+            .filter(|krate| self.targets.contains(krate))
+            .collect();
+        // Broad search must learn names from every macro-bearing owner. Keep that cached discovery
+        // separate from startup's written-name table, so subsequent searches can share both tables
+        // without copying them or reopening ordinary member stores.
+        let tables = self
+            .db
+            .parallel_map(&targets, |db, &krate| {
+                let written = target_declarations(db, krate)?.symbol_names.value(db)?;
+                let generated = db.query::<macro_symbol_names>(krate)?;
+                Ok([written, generated])
+            })
+            .map_err(ReadError::Query)?;
+        Ok(tables.into_iter().flatten().collect())
     }
 
     fn crates(&self) -> Vec<CrateRef> {
