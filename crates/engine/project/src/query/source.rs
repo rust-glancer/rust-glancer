@@ -15,8 +15,8 @@ use super::ProjectSnapshot;
 
 /// Analysis-ready context for one filesystem path.
 ///
-/// A shared module can belong to several crates. Editor queries use the first owner in saved
-/// package/target order, preferring a known written context before discovering include owners.
+/// A shared module can belong to several crates. Editor queries use the first owner in
+/// package/target order, preferring written module owners before discovering include owners.
 /// Exhaustive operations use every owning crate instead of this editor selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
@@ -55,17 +55,23 @@ impl<'a> ProjectSnapshot<'a> {
         source_path: &Path,
     ) -> anyhow::Result<Option<FileContext>> {
         let file = FileId::for_path(&self.query_context().interner(), source_path)?;
-        if let Some(crate_ref) = self.state.sources.first_module_crate(file) {
-            // Saved routing is a cheap candidate. An editor view may have removed or moved this
-            // module, so verify membership against the declarations of the active input revision.
-            let metadata = target_declarations(self.query_context(), crate_ref)?
-                .metadata
-                .value_ref(self.query_context())?;
-            if metadata.sources.modules.binary_search(&file).is_ok() {
+        if let Some(sources) = self.saved_sources {
+            if let Some(crate_ref) = sources.first_module_crate(file) {
                 return Ok(Some(FileContext { crate_ref, file }));
             }
+        } else {
+            // An unsaved `mod shared;` in lib.rs can take precedence over main.rs's saved owner.
+            // Select from active declarations, rather than just validating the old selection.
+            for (crate_ref, _) in self.state.workspace().targets() {
+                let metadata = target_declarations(self.query_context(), crate_ref)?
+                    .metadata
+                    .value_ref(self.query_context())?;
+                if metadata.sources.modules.binary_search(&file).is_ok() {
+                    return Ok(Some(FileContext { crate_ref, file }));
+                }
+            }
         }
-        for &crate_ref in &self.state.targets {
+        for (crate_ref, _) in self.state.workspace().targets() {
             let target = target_declarations(self.query_context(), crate_ref)?;
             if !target
                 .source_ownership
@@ -76,7 +82,7 @@ impl<'a> ProjectSnapshot<'a> {
                 return Ok(Some(FileContext { crate_ref, file }));
             }
         }
-        for &crate_ref in &self.state.targets {
+        for (crate_ref, _) in self.state.workspace().targets() {
             if !complete_source_ownership(self.query_context(), crate_ref)?
                 .owners(file)
                 .is_empty()

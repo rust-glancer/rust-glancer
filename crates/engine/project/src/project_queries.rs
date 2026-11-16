@@ -125,7 +125,12 @@ impl ProjectQueries {
         let result = self.database.run(|db| {
             let declarations =
                 TargetDeclarationReader::for_project(db, state.targets.iter().copied());
-            let snapshot = ProjectSnapshot::new(state, db, &declarations);
+            let snapshot = ProjectSnapshot::new(
+                state,
+                db,
+                &declarations,
+                documents.is_empty().then_some(&state.sources),
+            );
             work(snapshot).map_err(|error| {
                 ReadError::query_cause(error.as_ref()).unwrap_or_else(|| {
                     ajika::Error::application(

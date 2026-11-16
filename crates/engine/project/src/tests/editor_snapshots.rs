@@ -43,6 +43,68 @@ fn result_type(snapshot: ProjectSnapshot<'_>, path: &Path) -> anyhow::Result<Pri
 }
 
 #[test]
+fn editor_module_routing_uses_the_same_owner_before_and_after_save() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "editor_module_routing"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub type Value = u8;
+
+//- /src/main.rs
+mod shared;
+type Value = u16;
+fn main() {}
+
+//- /src/shared.rs
+pub fn read() { let result: crate::Value = 1; let _ = result; }
+"#,
+    );
+    let mut project = fixture.build_project();
+    let library = fixture.path("src/lib.rs");
+    let shared = fixture.path("src/shared.rs");
+    assert_eq!(
+        project
+            .with_snapshot(CancellationToken::new(), |snapshot| {
+                result_type(snapshot, &shared)
+            })
+            .expect("saved binary interpretation"),
+        PrimitiveTy::UnsignedInt(UnsignedIntTy::U16)
+    );
+
+    // Both targets now own the file. The library takes precedence even while its edit is unsaved.
+    let edited = CapturedSource::new(&library, "pub type Value = u8;\nmod shared;\n")
+        .expect("edited library");
+    assert_eq!(
+        project
+            .with_editor_snapshot(
+                std::slice::from_ref(&edited),
+                CancellationToken::new(),
+                |snapshot| result_type(snapshot, &shared),
+            )
+            .expect("editor library interpretation"),
+        PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)
+    );
+
+    fs::write(&library, edited.text()).expect("save library");
+    project
+        .apply_changes([SavedFileChange::captured(edited)])
+        .expect("publish saved library");
+    assert_eq!(
+        project
+            .with_snapshot(CancellationToken::new(), |snapshot| {
+                result_type(snapshot, &shared)
+            })
+            .expect("saved library interpretation"),
+        PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)
+    );
+}
+
+#[test]
 fn editor_declarations_reach_other_files_and_survive_request_boundaries() {
     let fixture = ProjectSourceFixture::build(FIXTURE);
     let project = fixture.build_project();
