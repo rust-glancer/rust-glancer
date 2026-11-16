@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, SourceId};
+use rg_ir_model::{CrateRef, FileId, ItemStoreId, ModuleId, ModuleRef, Path, SourceId};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
     GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef, ItemTrees,
@@ -109,7 +109,14 @@ impl BuiltinDeriveExpansion {
         let source = state.def_map_builder.alloc_generated_source(self.source);
         let local_impl = state.def_map_builder.alloc_local_impl(LocalImplData {
             module: self.module,
-            source: ItemSource::synthetic(file_id, GeneratedItemRef { source, item }),
+            source: ItemSource::synthetic(
+                file_id,
+                GeneratedItemRef {
+                    store: ItemStoreId::Scope,
+                    source,
+                    item,
+                },
+            ),
             file_id,
             location,
         });

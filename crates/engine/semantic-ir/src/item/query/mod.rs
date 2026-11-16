@@ -35,6 +35,12 @@ pub trait SemanticItemSource<'a>: Clone {
         definition: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, ReadError>;
 
-    /// Acquire each containing group once and enumerate its items in storage order.
+    /// Read declarations in the lexical scope, including trait and impl headers, without
+    /// acquiring their associated stores. Callers can select an owner before reading its members.
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError>;
+
+    /// Enumerate all declarations in the origin, acquiring every associated store as well.
+    /// On a saved target this can expand every member macro; selecting only an impl header should
+    /// use `scope_items` instead.
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError>;
 }

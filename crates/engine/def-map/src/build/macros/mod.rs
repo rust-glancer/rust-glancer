@@ -33,7 +33,7 @@ mod members;
 mod resolve;
 mod textual_scope;
 
-pub use self::members::{AssociatedItemInput, AssociatedItemOwner};
+pub use self::members::{AssociatedItemInput, AssociatedItemOwner, ExpandedAssociatedItems};
 pub(super) use self::{
     attempts::{
         MacroExpansionAttempt, MacroExpansionScan, apply_expansion_attempts,
@@ -78,15 +78,6 @@ impl MacroDirective {
 pub(super) enum MacroCallOrigin {
     Source,
     Generated { parent_call: usize },
-}
-
-/// Says where a successful item-shaped expansion is spliced.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum MacroCallPlacement {
-    /// Ordinary module-position output, such as `make_types!();`, enters the caller's module.
-    ModuleItems,
-    /// Output from `impl User { make_methods!(); }` replaces the call inside that trait or impl.
-    AssociatedItems { call_source: crate::ItemSource },
 }
 
 /// Worklist state for an item-shaped macro call seen during def-map construction.
@@ -140,8 +131,7 @@ pub struct MacroScopeData {
 
 /// One queued item-shaped macro call plus the call-site state needed after ItemTree lowering.
 ///
-/// `module` supplies the scope used to resolve the call and any nested macros, while `placement`
-/// says whether successful output enters that module or replaces an associated-item call. The
+/// `module` supplies the scope used to resolve the call and collect its output. The
 /// `module_file_context` also follows the caller: a macro imported from another crate must still
 /// resolve a generated `mod child;` next to the invocation, not next to its definition.
 #[derive(Debug, Clone)]
@@ -156,8 +146,6 @@ pub(super) struct MacroCallSite {
     pub(super) file_id: FileId,
     pub(super) call_site: rg_tt::Span,
     pub(super) order: ItemOrder,
-    /// Destination retained by nested calls and pending source collection.
-    pub(super) placement: MacroCallPlacement,
     /// Logical filesystem base inherited by declarations emitted from this call.
     pub(super) module_file_context: Arc<ModuleFileContext>,
 }

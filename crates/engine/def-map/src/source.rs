@@ -4,15 +4,15 @@
 //! IDs. Generated declarations also need the connection back to input tokens: their parsed syntax
 //! is temporary, and its offsets are not positions that an editor can navigate to or edit.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use rg_arena::Arena;
-use rg_ir_model::{BodyRef, FileId, PackageSlot, SourceId};
+use rg_ir_model::{BodyRef, FileId, ItemStoreId, PackageSlot, SourceId};
 use rg_item_tree::{DeclarationSourceStore, ItemNode, ItemTreeId, ItemTreeRef};
 use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
-/// Stable identifier of one macro expansion payload produced during crate construction.
+/// Stable identifier of one macro expansion within its owning source store.
 ///
 /// The id remains part of compact source provenance after the payload is discarded, just as an
 /// [`ItemTreeRef`] remains useful after the transient ItemTree phase has finished.
@@ -33,13 +33,20 @@ impl rg_arena::ArenaId for GeneratedSourceId {
     }
 }
 
-/// Crate-local source identity for one generated item.
+/// Source identity for one generated item within a module scope or an associated owner.
 ///
 /// During Semantic IR lowering this addresses [`GeneratedItemStore`]. Later phases retain it only
 /// as provenance and use the semantic declaration data copied during lowering.
+///
+/// Two independently expanded impls can both allocate `GeneratedSourceId(0)`. `store` selects
+/// which owner's expansion table to open before `source` and `item` select entries inside it.
+/// A module-level macro emitting an entire impl keeps its methods' sources in `ItemStoreId::Scope`
+/// too; only expansions performed inside a member query use that owner's store ID here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[shrink(leaf)]
 pub struct GeneratedItemRef {
+    /// Module expansion and each deferred owner allocate their own expansion slots.
+    pub store: ItemStoreId,
     pub source: GeneratedSourceId,
     pub item: ItemTreeId,
 }
@@ -115,10 +122,12 @@ impl ItemSource {
                 item,
             }),
             ItemSourceKind::Generated(source) => ItemSourceKind::Generated(GeneratedItemRef {
+                store: source.store,
                 source: source.source,
                 item,
             }),
             ItemSourceKind::Synthetic(source) => ItemSourceKind::Synthetic(GeneratedItemRef {
+                store: source.store,
                 source: source.source,
                 item,
             }),
@@ -180,11 +189,6 @@ impl GeneratedSourceData {
 #[derive(Debug, Clone, Default, MemorySize, Shrink)]
 pub struct GeneratedItemStore {
     sources: Arena<GeneratedSourceId, GeneratedSourceData>,
-    /// Generated associated items keyed by the macro call they replace.
-    ///
-    /// For `impl User { methods!(); }`, the call source maps to its generated functions, types,
-    /// consts, and any retained nested macro calls.
-    associated_macro_expansions: HashMap<ItemSource, Vec<ItemSource>>,
 }
 
 impl GeneratedItemStore {
@@ -202,7 +206,7 @@ impl GeneratedItemStore {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.sources.is_empty() && self.associated_macro_expansions.is_empty()
+        self.sources.is_empty()
     }
 
     pub(crate) fn alloc_source(&mut self, source: GeneratedSourceData) -> GeneratedSourceId {
@@ -213,25 +217,10 @@ impl GeneratedItemStore {
         self.sources.get(source)
     }
 
-    pub(crate) fn insert_associated_macro_expansion(
-        &mut self,
-        call: ItemSource,
-        generated_items: Vec<ItemSource>,
-    ) {
-        self.associated_macro_expansions
-            .insert(call, generated_items);
-    }
-
     pub fn item(&self, item: GeneratedItemRef) -> Option<&ItemNode> {
         self.sources
             .get(item.source)
             .and_then(|source| source.item(item.item))
-    }
-
-    pub fn associated_macro_expansion(&self, call: ItemSource) -> Option<&[ItemSource]> {
-        self.associated_macro_expansions
-            .get(&call)
-            .map(Vec::as_slice)
     }
 }
 

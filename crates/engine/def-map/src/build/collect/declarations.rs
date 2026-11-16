@@ -16,7 +16,8 @@ use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, LocalImplId, ModuleId, ModuleRef,
+    CrateRef, DefId, DefMapRef, FileId, ItemStoreId, LocalDefId, LocalDefRef, LocalImplId,
+    ModuleId, ModuleRef,
 };
 use rg_item_tree::{
     EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ImportAlias, ItemKind, ItemNode,
@@ -37,8 +38,7 @@ use crate::{
         crates::CrateBuilder,
         macros::{
             AssociatedItemInput, AssociatedItemOwner, GeneratedOrigin, ItemOrder, MacroCallOrigin,
-            MacroCallPlacement, MacroCallSite,
-            MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
+            MacroCallSite, MacroDefinitionRecord, MacroUseImport, PendingGeneratedModule,
         },
     },
     profile::metric,
@@ -86,32 +86,19 @@ impl<'a> DeclarationCollector<'a> {
         file: FileId,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
-        self.collect_file_items(
-            module,
-            file,
-            ItemOrder::real,
-            MacroCallPlacement::ModuleItems,
-            context,
-        )?;
+        self.collect_file_items(module, file, ItemOrder::real, context)?;
         Ok(self.changed)
     }
 
-    /// Splice a real include at its invocation, keeping its source refs and placement.
+    /// Splice a real include at its invocation, keeping its source refs.
     pub(crate) fn collect_file(
         mut self,
         module: ModuleId,
         file: FileId,
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
-        self.collect_file_items(
-            module,
-            file,
-            |index| order.generated_child(index),
-            placement,
-            context,
-        )?;
+        self.collect_file_items(module, file, |index| order.generated_child(index), context)?;
         Ok(self.changed)
     }
 
@@ -123,7 +110,6 @@ impl<'a> DeclarationCollector<'a> {
         file: FileId,
         items: &[ItemTreeId],
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<bool> {
         // This subset still belongs to the active file. A child module pointing back to that
@@ -139,7 +125,6 @@ impl<'a> DeclarationCollector<'a> {
                 .into()
             }),
             |index| order.generated_child(index),
-            placement,
             context,
         )?;
         Ok(self.changed)
@@ -164,13 +149,13 @@ impl<'a> DeclarationCollector<'a> {
                 ItemSource::generated(
                     origin.file_id,
                     GeneratedItemRef {
+                        store: ItemStoreId::Scope,
                         source: generated_source,
                         item,
                     },
                 )
             }),
             |index| origin.order.generated_child(index),
-            origin.placement,
             origin.module_file_context,
         )?;
         Ok(self.changed)
@@ -221,7 +206,6 @@ impl<'a> DeclarationCollector<'a> {
         module: ModuleId,
         file: FileId,
         order_for: impl Fn(usize) -> ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<()> {
         if !self.active_files.insert(file) {
@@ -241,23 +225,20 @@ impl<'a> DeclarationCollector<'a> {
                 .into()
             }),
             order_for,
-            placement,
             context,
         );
         self.active_files.remove(&file);
         result
     }
 
-    /// Apply the same cfg and declaration rules to every source; associated output stays in its owner.
+    /// Apply the same cfg and declaration rules to written and generated module items.
     fn collect_items(
         &mut self,
         module: ModuleId,
         items: impl IntoIterator<Item = ItemSource>,
         order_for: impl Fn(usize) -> ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) -> Result<()> {
-        let mut associated_items = Vec::new();
         for (index, source) in items.into_iter().enumerate() {
             let item = self.item(source);
             if !self.is_item_enabled(&item) {
@@ -265,40 +246,10 @@ impl<'a> DeclarationCollector<'a> {
             }
             self.changed = true;
             let order = order_for(index);
-            match placement {
-                MacroCallPlacement::ModuleItems => {
-                    if matches!(source.kind, ItemSourceKind::Generated(_)) {
-                        metric::GENERATED_ITEMS_SEEN.inc();
-                    }
-                    self.collect_item(module, &item, source, order, Arc::clone(&context))?;
-                }
-                MacroCallPlacement::AssociatedItems { .. } => match &item.kind {
-                    ItemKind::Const(_) | ItemKind::Function(_) | ItemKind::TypeAlias(_) => {
-                        associated_items.push(source)
-                    }
-                    ItemKind::MacroCall(call) => {
-                        associated_items.push(source);
-                        self.collect_macro_call(
-                            module,
-                            &item,
-                            source,
-                            call,
-                            order,
-                            MacroCallPlacement::AssociatedItems {
-                                call_source: source,
-                            },
-                            Arc::clone(&context),
-                        );
-                    }
-                    // Other declarations do not produce supported associated-item facts.
-                    _ => {}
-                },
+            if matches!(source.kind, ItemSourceKind::Generated(_)) {
+                metric::GENERATED_ITEMS_SEEN.inc();
             }
-        }
-        if let MacroCallPlacement::AssociatedItems { call_source } = placement {
-            self.state
-                .def_map_builder
-                .insert_associated_macro_expansion(call_source, associated_items);
+            self.collect_item(module, &item, source, order, Arc::clone(&context))?;
         }
         Ok(())
     }
@@ -331,15 +282,9 @@ impl<'a> DeclarationCollector<'a> {
                     order,
                 );
             }
-            ItemKind::MacroCall(call) => self.collect_macro_call(
-                module,
-                item,
-                source,
-                call,
-                order,
-                MacroCallPlacement::ModuleItems,
-                context,
-            ),
+            ItemKind::MacroCall(call) => {
+                self.collect_macro_call(module, item, source, call, order, context)
+            }
             ItemKind::MacroDefinition(definition) => {
                 self.collect_macro_definition(module, item, source, definition, order)
             }
@@ -386,7 +331,6 @@ impl<'a> DeclarationCollector<'a> {
         source: ItemSource,
         call: &MacroCallItem,
         order: ItemOrder,
-        placement: MacroCallPlacement,
         context: Arc<ModuleFileContext>,
     ) {
         let Some(input) = &call.input else {
@@ -416,7 +360,6 @@ impl<'a> DeclarationCollector<'a> {
                 file_id: item.file_id,
                 call_site: input.call_site,
                 order,
-                placement,
                 module_file_context: context,
             },
             self.origin,
@@ -566,7 +509,6 @@ impl<'a> DeclarationCollector<'a> {
                             ItemOrder::real(index)
                         }
                     },
-                    MacroCallPlacement::ModuleItems,
                     child_context,
                 )?;
             }
@@ -574,13 +516,7 @@ impl<'a> DeclarationCollector<'a> {
                 let Some((file, child_context)) = resolved_file else {
                     return Ok(());
                 };
-                self.collect_file_items(
-                    child,
-                    file,
-                    ItemOrder::real,
-                    MacroCallPlacement::ModuleItems,
-                    child_context,
-                )?;
+                self.collect_file_items(child, file, ItemOrder::real, child_context)?;
             }
         }
         if let Some(macro_use) = &module_item.macro_use

@@ -5,7 +5,7 @@
 
 use anyhow::Context as _;
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{DefMap, DefinitionReader};
+use rg_def_map::DefinitionReader;
 use rg_ir_model::{
     BodyId, BodyRef, BodySource, DefMapRef, FileId, ItemOwner, ModuleRef, Span, StaticRef,
 };
@@ -67,8 +67,7 @@ impl BodyStoreBuilder<'_> {
                 body_ref,
                 body_data,
                 &self.lowered_bodies.bodies()[body].sources,
-                items.def_map(),
-                items.item_store(),
+                &items,
                 &self.cancellation,
             )
             .context("collect nested body tasks")?;
@@ -137,14 +136,10 @@ impl BodyStoreBuilder<'_> {
         };
         let (owner, owner_module) = match body.owner() {
             BodyOwner::Function(_) => {
-                let mut matches =
-                    items
-                        .item_store()
-                        .functions_with_refs()
-                        .filter_map(|(function, data)| {
-                            matches_root_source(data.source.file_id, data.location)
-                                .then_some((BodyOwner::Function(function), data.owner))
-                        });
+                let mut matches = items.functions_with_refs().filter_map(|(function, data)| {
+                    matches_root_source(data.source.file_id, data.location)
+                        .then_some((BodyOwner::Function(function), data.owner))
+                });
                 let Some((owner, item_owner)) = matches.next() else {
                     anyhow::bail!(
                         "request-local body root has no function declaration in its item store"
@@ -160,14 +155,10 @@ impl BodyStoreBuilder<'_> {
                 (owner, owner_module)
             }
             BodyOwner::Const(_) => {
-                let mut matches =
-                    items
-                        .item_store()
-                        .consts_with_refs()
-                        .filter_map(|(reference, data)| {
-                            matches_root_source(data.source.file_id, data.location)
-                                .then_some((BodyOwner::Const(reference), data.owner))
-                        });
+                let mut matches = items.consts_with_refs().filter_map(|(reference, data)| {
+                    matches_root_source(data.source.file_id, data.location)
+                        .then_some((BodyOwner::Const(reference), data.owner))
+                });
                 let Some((owner, item_owner)) = matches.next() else {
                     anyhow::bail!(
                         "request-local body root has no const declaration in its item store"
@@ -239,10 +230,11 @@ impl BodyStoreBuilder<'_> {
         body_ref: BodyRef,
         body: &BodyData,
         sources: &BodySourceStore,
-        def_map: &DefMap,
-        item_store: &ItemStore,
+        items: &BodyLocalItems,
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<Vec<BodyLoweringTask>> {
+        let def_map = items.def_map();
+        let item_store = items.item_store();
         let body_source = sources.source(body.source());
         let body_owner = body.owner();
         let fallback_module = body.fallback_module();
@@ -251,7 +243,7 @@ impl BodyStoreBuilder<'_> {
 
         // Visit scope declarations and each owner arena. Member identity includes the trait or
         // impl, while type lookup still starts from its lexical module.
-        for (function_ref, function_data) in item_store.functions_with_refs() {
+        for (function_ref, function_data) in items.functions_with_refs() {
             rg_std::check_cancel!(cancellation, "nested body task");
             if function_ref.store.origin != origin {
                 continue;
@@ -286,7 +278,7 @@ impl BodyStoreBuilder<'_> {
             });
         }
 
-        for (const_ref, const_data) in item_store.consts_with_refs() {
+        for (const_ref, const_data) in items.consts_with_refs() {
             rg_std::check_cancel!(cancellation, "nested body task");
             if body_owner == BodyOwner::Const(const_ref) {
                 continue;

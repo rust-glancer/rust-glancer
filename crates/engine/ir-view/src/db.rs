@@ -249,6 +249,13 @@ impl<'a, 'db> SemanticItemSource<'a> for &'a IndexedViewDb<'db> {
         }
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic_ir.scope_items(origin),
+            DefMapRef::Body(_) => (&self.body_ir).scope_items(origin),
+        }
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         match origin {
             DefMapRef::Crate(_) => self.semantic_ir.all_items(origin),

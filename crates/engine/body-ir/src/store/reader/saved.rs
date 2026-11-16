@@ -3,7 +3,7 @@ use std::{collections::HashSet, fmt, sync::Arc};
 use rg_def_map::{ItemSource, ItemSourceKind};
 use rg_ir_model::{BodyKey, BodyRef, CrateRef, FileId};
 use rg_profile::ProfileThreadContext;
-use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, target_declarations};
+use rg_semantic_ir::{BodyOwnerData, SavedDeclarationSourceView, saved_body_owner, target_declarations};
 use rg_source::{QueryContext, ReadError};
 use rg_std::UniqueVec;
 
@@ -155,6 +155,13 @@ impl<'db> SavedBodyReader<'db> {
 
     pub(crate) fn facts(&self, key: BodyKey) -> Result<Arc<BodyFactsStore>, ReadError> {
         infer_saved_body(self.db, key).map_err(ReadError::Query)
+    }
+
+    pub(crate) fn owner_data(&self, key: BodyKey) -> Result<Option<&BodyOwnerData>, ReadError> {
+        if !self.targets.contains(&key.krate) {
+            return Ok(None);
+        }
+        saved_body_owner(self.db, key).map_err(ReadError::Query)
     }
 
     pub(crate) fn owners(&self, krate: CrateRef) -> Result<&[BodyOwnerData], ReadError> {

@@ -44,7 +44,7 @@ pub use self::{
     },
     build::{
         AssociatedItemInput, AssociatedItemOwner, CrateBuildOutput, CrateDependencies,
-        ImportCollectionEnv, ImportCollectionOutput, ImportCollector,
+        ExpandedAssociatedItems, ImportCollectionEnv, ImportCollectionOutput, ImportCollector,
         MacroScopeData, ModuleImportInput, ResolvedModuleImports,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath},

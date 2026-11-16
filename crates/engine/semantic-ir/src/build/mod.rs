@@ -12,6 +12,7 @@ mod target;
 pub use self::{
     body_owners::BodyOwnerData,
     item_store::{ItemStoreLowerer, ItemStoreSourceReader},
+    members::{AssociatedDeclarations, associated_declarations, saved_body_owner},
     symbol_names::SymbolNameData,
     target::{
         TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, target_declarations,

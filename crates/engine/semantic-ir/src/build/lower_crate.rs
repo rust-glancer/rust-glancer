@@ -39,10 +39,6 @@ impl<'a> ItemStoreSourceReader<'a> for CrateLowering<'a> {
         };
         Ok(item)
     }
-
-    fn associated_macro_expansion(&self, source: ItemSource) -> Option<&[ItemSource]> {
-        self.generated_items.associated_macro_expansion(source)
-    }
 }
 
 impl ItemStore {

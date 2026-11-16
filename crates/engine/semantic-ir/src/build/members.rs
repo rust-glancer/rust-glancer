@@ -7,12 +7,18 @@
 
 use std::collections::HashMap;
 
-use rg_def_map::{AssociatedItemInput, AssociatedItemOwner};
-use rg_ir_model::ItemStoreId;
-use rg_source::QueryContext;
+use rg_def_map::{
+    AssociatedItemInput, AssociatedItemOwner, CrateDefMapReader, DefMapQuery, GeneratedSourceStore,
+};
+use rg_ir_model::{BodyKey, CrateRef, DefMapRef, FileId, ItemOwner, ItemStoreId, ItemStoreRef};
+use rg_source::{QueryContext, ReadError};
+use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::ItemStore;
+use crate::{
+    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, TargetDeclarationReader,
+    target_declarations,
+};
 
 const OWNERS_PER_PAGE: usize = 64;
 type InputPage = Vec<AssociatedItemInput>;
@@ -88,4 +94,85 @@ impl AssociatedItemInputs {
             .get(index % OWNERS_PER_PAGE)
             .ok_or_else(|| ajika::Error::contract("member input is missing"))
     }
+}
+
+/// Independently readable results from expanding and lowering one trait or impl's members.
+///
+/// A semantic reader needs `items`; navigation also needs the generated occurrence maps in
+/// `sources`. `body_owners` identifies functions and initializers without lowering their bodies.
+/// Keeping these outputs separate avoids loading source maps just to inspect a signature.
+#[ajika::output]
+pub struct AssociatedDeclarations {
+    items: AssociatedItemStore,
+    sources: GeneratedSourceStore,
+    /// The owner's file and readable include files reached while expanding its members.
+    /// These files may be absent from the module file manifest produced at startup.
+    files: Vec<FileId>,
+    body_owners: Vec<BodyOwnerData>,
+}
+
+/// Open one saved member store using the trait or impl ID from its header.
+///
+/// The target query supplies replay inputs and frozen macro scopes, never a prebuilt member list.
+/// Expansion finishes before lowering allocates any member IDs. A direct member or body reference
+/// already identifies this owner, so it does not need to enumerate other traits or impls.
+/// The key names the owner, not its source revision. Ajika validates the input reads and compares
+/// the separate outputs, allowing unchanged member meaning to survive a source-only edit.
+#[ajika::query(returns(ref))]
+pub fn associated_declarations(
+    db: &QueryContext<'_>,
+    krate: CrateRef,
+    owner: ItemStoreId,
+) -> ajika::Result<Option<AssociatedDeclarations>> {
+    let target = target_declarations(db, krate)?;
+    let headers = target.items.value_ref(db)?;
+    let item_owner = match owner {
+        ItemStoreId::Trait(id) if headers.trait_data(id).is_some() => ItemOwner::Trait(id),
+        ItemStoreId::Impl(id) if headers.impl_data(id).is_some() => ItemOwner::Impl(id),
+        _ => return Ok(None),
+    };
+    let input = target.member_inputs.value_ref(db)?.get(db, owner)?;
+    let mut builder = AssociatedItemStoreBuilder::default();
+    let (mut sources, files) = {
+        let reader = TargetDeclarationReader::for_target(db, krate)?;
+        let env = DefMapQuery::new(CrateDefMapReader(&reader));
+        let expanded = input
+            .expand(db, krate, owner, &target.macro_scopes, &env)
+            .map_err(|error| {
+                ReadError::query_cause(error.as_ref())
+                    .unwrap_or_else(|| ajika::Error::application(error.into_boxed_dyn_error()))
+            })?;
+        for (source, item) in expanded.items {
+            builder.lower(source, item_owner, &item);
+        }
+        (expanded.sources, expanded.files)
+    };
+    let mut items = builder.build();
+    items.shrink_to_fit();
+    sources.shrink_to_fit();
+    let store = ItemStoreRef {
+        origin: DefMapRef::Crate(krate),
+        id: owner,
+    };
+    let bodies: Vec<_> = BodyOwnerData::for_members(headers, &items, store).collect();
+    AssociatedDeclarations::new(db, items, sources, files, bodies).map(Some)
+}
+
+/// Direct body identity already contains its member store; do not enumerate neighboring owners.
+pub fn saved_body_owner<'db>(
+    db: &'db QueryContext<'db>,
+    key: BodyKey,
+) -> ajika::Result<Option<&'db BodyOwnerData>> {
+    let owners = match key.owner.store() {
+        ItemStoreId::Scope => target_declarations(db, key.krate)?
+            .body_owners
+            .value_ref(db)?,
+        owner => {
+            let Some(declarations) = associated_declarations(db, key.krate, owner)? else {
+                return Ok(None);
+            };
+            declarations.body_owners.value_ref(db)?
+        }
+    };
+    Ok(owners.iter().find(|owner| owner.owner == key.owner))
 }

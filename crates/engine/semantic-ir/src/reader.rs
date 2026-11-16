@@ -21,6 +21,8 @@ pub trait CrateItemSource: Sync {
         &self,
         definition: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, ReadError>;
+    /// Read module-owned declarations and owner headers without acquiring associated stores.
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError>;
@@ -61,6 +63,10 @@ impl<'a> ItemReader<'a> {
         self.0.item_for_local_def(definition)
     }
 
+    pub fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        self.0.scope_items(origin)
+    }
+
     pub fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         self.0.all_items(origin)
     }
@@ -99,6 +105,10 @@ impl<'a> SemanticItemSource<'a> for &ItemReader<'a> {
         definition: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, ReadError> {
         ItemReader::item_for_local_def(self, definition)
+    }
+
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        ItemReader::scope_items(self, origin)
     }
 
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {

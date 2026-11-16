@@ -259,9 +259,8 @@ impl<'db> BodyReader<'db> {
             && krate == key.krate
             && self
                 .saved
-                .owners(krate)?
-                .iter()
-                .any(|data| data.owner == key.owner && data.file == file)
+                .owner_data(key)?
+                .is_some_and(|data| data.file == file)
         {
             return Ok(true);
         }
@@ -376,7 +375,6 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
         };
         Ok(self
             .body_local_items(body)?
-            .map(BodyLocalItems::item_store)
             .and_then(|items| items.associated_items(store)))
     }
 
@@ -386,8 +384,7 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
         };
         Ok(self
             .body_local_items(body)?
-            .map(BodyLocalItems::item_store)
-            .and_then(|items| items.semantic_item_view(item)))
+            .and_then(|items| items.item(item)))
     }
 
     fn item_for_local_def(
@@ -407,14 +404,24 @@ impl<'a> SemanticItemSource<'a> for &'a BodyReader<'_> {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         let DefMapRef::Body(body) = origin else {
             return Ok(Vec::new());
         };
         Ok(self
             .body_local_items(body)?
             .map(BodyLocalItems::item_store)
-            .map(|items| items.semantic_items().collect())
+            .map(|items| items.scope_items().collect())
+            .unwrap_or_default())
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        let DefMapRef::Body(body) = origin else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .body_local_items(body)?
+            .map(|items| items.all_items().collect())
             .unwrap_or_default())
     }
 }

@@ -54,10 +54,10 @@ impl<'a> LocalItemSource<'a> {
             .context("collect local names")?
             .finalize(surrounding, cancellation)
             .context("finalize local declarations")?;
-        let items = LocalItemStoreCollector::new(self.items, &def_map)
+        let items = LocalItemStoreCollector::new(self.items, def_map)
             .collect(cancellation)
             .context("lower local signatures")?;
         rg_std::check_cancel!(cancellation, "finish local declarations");
-        Ok(BodyLocalItems::new(def_map, items))
+        Ok(items)
     }
 }

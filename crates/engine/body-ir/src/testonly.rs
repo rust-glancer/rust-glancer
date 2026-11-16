@@ -185,6 +185,13 @@ impl<'a> SemanticItemSource<'a> for &'a BodyIrView<'_> {
         }
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        match origin {
+            DefMapRef::Crate(_) => self.semantic.items().scope_items(origin),
+            DefMapRef::Body(_) => (&self.bodies).scope_items(origin),
+        }
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         match origin {
             DefMapRef::Crate(_) => self.semantic.items().all_items(origin),

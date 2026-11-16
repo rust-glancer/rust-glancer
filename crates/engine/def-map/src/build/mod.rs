@@ -23,7 +23,7 @@ pub use self::{
         ImportCollectionEnv, ImportCollectionOutput, ImportCollector, ModuleImportInput,
         ResolvedModuleImports,
     },
-    macros::{AssociatedItemInput, AssociatedItemOwner, MacroScopeData},
+    macros::{AssociatedItemInput, AssociatedItemOwner, ExpandedAssociatedItems, MacroScopeData},
     output::CrateBuildOutput,
     target::CrateDependencies,
 };

@@ -10,14 +10,17 @@ use rg_def_map::{
     CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
     GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport, MacroScopeData,
 };
-use rg_ir_model::{CrateRef, DefMapRef, FileId, ItemStoreRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::ItemTrees;
 use rg_parse::TargetFileManifest;
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::{impl_headers::impl_header_resolutions, members::AssociatedItemInputs};
+use super::{
+    impl_headers::impl_header_resolutions,
+    members::{AssociatedItemInputs, associated_declarations},
+};
 use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
     ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
@@ -254,16 +257,31 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         let Some(krate) = store.origin.as_crate_ref() else {
             return Ok(None);
         };
-        Ok(self
-            .acquire(krate, |result| &result.items)
-            .map_err(ReadError::Query)?
-            .and_then(|items| items.associated_items(store)))
+        if !self.targets.contains(&krate) || store.id == ItemStoreId::Scope {
+            return Ok(None);
+        }
+        let Some(members) =
+            associated_declarations(self.db, krate, store.id).map_err(ReadError::Query)?
+        else {
+            return Ok(None);
+        };
+        members
+            .items
+            .value_ref(self.db)
+            .map(Some)
+            .map_err(ReadError::Query)
     }
 
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
         let Some(krate) = item.origin().as_crate_ref() else {
             return Ok(None);
         };
+        let store = item.store();
+        if store.id != ItemStoreId::Scope {
+            return Ok(self
+                .associated_items(store)?
+                .and_then(|members| members.item(item)));
+        }
         let Some(items) = self
             .acquire(krate, |result| &result.items)
             .map_err(ReadError::Query)?
@@ -291,6 +309,17 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
             .map(|item| item.semantic_ref(definition.origin)))
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let Some(krate) = origin.as_crate_ref() else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .acquire(krate, |result| &result.items)
+            .map_err(ReadError::Query)?
+            .map(|items| items.scope_items().collect())
+            .unwrap_or_default())
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         let Some(krate) = origin.as_crate_ref() else {
             return Ok(Vec::new());
@@ -301,7 +330,13 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         else {
             return Ok(Vec::new());
         };
-        Ok(items.semantic_items().collect())
+        let mut result: Vec<_> = items.scope_items().collect();
+        for owner in items.member_stores() {
+            if let Some(members) = self.associated_items(owner)? {
+                result.extend(members.semantic_items(owner));
+            }
+        }
+        Ok(result)
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
@@ -360,7 +395,9 @@ impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'
         store: ItemStoreRef,
     ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
         if store.origin == self.items.origin() {
-            return Ok(self.items.associated_items(store));
+            return Err(ReadError::Query(ajika::Error::contract(
+                "member declarations requested while building headers",
+            )));
         }
         self.dependencies.associated_items(store)
     }
@@ -385,9 +422,18 @@ impl<'a, D: CrateItemSource> SemanticItemSource<'a> for LocalDeclarations<'a, &'
         self.dependencies.item_for_local_def(definition)
     }
 
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        if origin == self.items.origin() {
+            return Ok(self.items.scope_items().collect());
+        }
+        self.dependencies.scope_items(origin)
+    }
+
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         if origin == self.items.origin() {
-            return Ok(self.items.semantic_items().collect());
+            return Err(ReadError::Query(ajika::Error::contract(
+                "all declarations requested while building headers",
+            )));
         }
         self.dependencies.all_items(origin)
     }

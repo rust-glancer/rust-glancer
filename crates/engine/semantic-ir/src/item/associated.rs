@@ -13,6 +13,8 @@ use super::{ConstData, FunctionData, SemanticItemView, TypeAliasData, view::Sema
 /// impl's members. Outside this store, pair each local ID with its [`ItemStoreRef`].
 ///
 /// These payloads describe declarations; their bodies and initializers are handled by Body IR.
+/// Saved targets build and cache each store on demand. Body-local scopes keep their completed
+/// member stores alongside the enclosing scope because that body's syntax is already being lowered.
 #[derive(Debug, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct AssociatedItemStore {
     items: Vec<AssocItemId>,
@@ -38,7 +40,7 @@ impl AssociatedItemStore {
         self.consts.get(id)
     }
 
-    pub(crate) fn item(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
+    pub fn item(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
         let data = match item {
             SemanticItemRef::Function(item) => {
                 SemanticItemData::Function(self.function_data(item.id)?)
@@ -52,7 +54,7 @@ impl AssociatedItemStore {
         Some(SemanticItemView::new(item, data))
     }
 
-    pub(crate) fn semantic_items(
+    pub fn semantic_items(
         &self,
         store: ItemStoreRef,
     ) -> impl Iterator<Item = SemanticItemView<'_>> {

@@ -204,16 +204,6 @@ impl DefMapBuilder {
         self.local_impls.alloc(local_impl)
     }
 
-    /// Records the generated items that replace one trait/impl macro invocation.
-    pub(crate) fn insert_associated_macro_expansion(
-        &mut self,
-        call: ItemSource,
-        generated_items: Vec<ItemSource>,
-    ) {
-        self.generated_items
-            .insert_associated_macro_expansion(call, generated_items);
-    }
-
     pub fn alloc_import(&mut self, import: ImportData) -> ImportId {
         self.imports.alloc(import)
     }

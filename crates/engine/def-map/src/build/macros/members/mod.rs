@@ -23,6 +23,9 @@ use wincode::{SchemaRead, SchemaWrite};
 use super::ItemOrder;
 use crate::{ItemSource, ItemSourceKind};
 
+mod expand;
+pub use self::expand::ExpandedAssociatedItems;
+
 /// Identity assigned when a trait or impl is collected, before semantic headers are lowered.
 /// Two includes can reuse the same syntax while creating distinct owners in distinct scopes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

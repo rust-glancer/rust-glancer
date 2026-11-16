@@ -12,9 +12,7 @@ use rg_item_tree::{ItemTreeRef, ItemTrees};
 use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::ModuleFileContext;
 
-use super::{
-    ItemOrder, MacroCallOrigin, MacroCallPlacement, generated_tree::GeneratedSourceLowering,
-};
+use super::{ItemOrder, MacroCallOrigin, generated_tree::GeneratedSourceLowering};
 use crate::{
     ItemSource, MacroSourceFileRequest,
     build::{
@@ -26,9 +24,8 @@ use crate::{
 
 /// Call-site identity used for every item produced by one macro expansion.
 ///
-/// Placement and module-file context also stay call-site-relative. Placement keeps associated
-/// output in its trait or impl, while the file context makes an out-of-line child module belong
-/// beside the invocation rather than the macro definition.
+/// Module-file context stays call-site-relative: an out-of-line child module belongs beside the
+/// invocation rather than the macro definition.
 #[derive(Debug, Clone)]
 pub(crate) struct GeneratedOrigin {
     pub(crate) module: ModuleId,
@@ -36,7 +33,6 @@ pub(crate) struct GeneratedOrigin {
     pub(crate) file_id: FileId,
     pub(crate) call_site: rg_tt::Span,
     pub(crate) order: ItemOrder,
-    pub(crate) placement: MacroCallPlacement,
     pub(crate) dollar_crate: Option<CrateRef>,
     pub(crate) parent_call: usize,
     pub(crate) module_file_context: Arc<ModuleFileContext>,
@@ -66,8 +62,14 @@ impl GeneratedOrigin {
             anyhow::bail!("macro expansion syntax has errors: {errors:?}");
         }
         metric::GENERATED_SOURCES_PARSED.inc();
-        let source = GeneratedSourceLowering::lower(&self, expansion)
-            .context("lower macro expansion declarations")?;
+        let source = GeneratedSourceLowering::lower(
+            self.source,
+            self.file_id,
+            self.call_site,
+            self.dollar_crate,
+            expansion,
+        )
+        .context("lower macro expansion declarations")?;
         let source = state.def_map_builder.alloc_generated_source(source);
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         let result = DeclarationCollector::new(
@@ -102,8 +104,7 @@ pub(crate) struct PendingGeneratedModule {
 /// Pending collection for a builtin `include!` that named a file we have yet to acquire.
 ///
 /// The macro directive is complete. This pending operation owns the remaining file collection.
-/// The origin retains ancestry for nested macros and placement for splicing the loaded items into
-/// the module or associated owner.
+/// The origin retains ancestry for nested macros and the module receiving the loaded items.
 #[derive(Debug, Clone)]
 pub(crate) struct PendingInclude {
     pub(super) request: MacroSourceFileRequest,
@@ -156,7 +157,6 @@ pub(crate) fn apply_pending_macro_source_files(
                     pending.origin.module,
                     *file_id,
                     pending.origin.order,
-                    pending.origin.placement,
                     pending.origin.module_file_context,
                 );
             }

@@ -7,7 +7,7 @@ use rg_ir_model::{BodyId, BodyKey};
 use rg_item_tree::SourceLocations as _;
 use rg_semantic_ir::{
     ItemLookupQuery, ItemReader, SavedDeclarationSourceView, TargetDeclarationReader,
-    target_declarations,
+    saved_body_owner,
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
@@ -36,13 +36,7 @@ pub fn prepare_saved_body(
     key: BodyKey,
 ) -> ajika::Result<Option<PreparedBody>> {
     metric::OWNERS.inc();
-    let declarations = target_declarations(db, key.krate)?;
-    let owners = declarations.body_owners.value_ref(db)?;
-    let Some(owner) = owners
-        .iter()
-        .find(|owner| owner.owner == key.owner)
-        .copied()
-    else {
+    let Some(owner) = saved_body_owner(db, key)?.copied() else {
         return Ok(None);
     };
 

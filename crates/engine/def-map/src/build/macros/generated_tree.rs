@@ -9,13 +9,14 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use rg_arena::Arena;
+use rg_ir_model::{CrateRef, FileId};
 use rg_item_tree::{
     CfgExpr, ConstItem, DeclarationSourceStore, Documentation, EnumItem, ExternBlockItem,
     ExternCrateItem, FromAst, FunctionItem, ImplItem, InnerDocs, ItemKind, ItemNode, ItemTreeId,
-    LangItem, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext, MacroDefinitionItem,
-    MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem, ModuleSource,
-    OuterDocs, RecordSource, SourceRole, StaticItem, StructItem, TraitItem, TypeAliasItem,
-    UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
+    ItemTreeRef, LangItem, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
+    MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem,
+    ModuleSource, OuterDocs, RecordSource, SourceRole, StaticItem, StructItem, TraitItem,
+    TypeAliasItem, UnionItem, UseItem, UserFacingAttrs, VisibilityLevel,
 };
 use rg_macro_runtime::ExpansionSyntax;
 use rg_syntax::{
@@ -25,7 +26,6 @@ use rg_syntax::{
 use rg_text::Name;
 use rg_tt::{Span as TtSpan, syntax_bridge::ExpansionSpanMap};
 
-use super::generated::GeneratedOrigin;
 use crate::source::{
     GeneratedExpansionLocations, GeneratedLocation, GeneratedLocations, GeneratedSourceData,
 };
@@ -35,17 +35,21 @@ use crate::source::{
 /// The parsed tree has its own byte offsets. A recorder assigns fresh IDs to the declarations
 /// lowered here and stores how each occurrence relates to input tokens. Semantic lowering can
 /// then copy the declaration meaning without retaining either the parsed tree or its offsets.
-pub(super) struct GeneratedSourceLowering<'a> {
-    origin: &'a GeneratedOrigin,
+pub(super) struct GeneratedSourceLowering {
+    file_id: FileId,
+    dollar_crate: Option<CrateRef>,
     fallback_span: TtSpan,
     span_map: Arc<ExpansionSpanMap>,
     locations: DeclarationSourceStore<GeneratedLocation>,
     items: Arena<ItemTreeId, ItemNode>,
 }
 
-impl<'a> GeneratedSourceLowering<'a> {
+impl GeneratedSourceLowering {
     pub(super) fn lower(
-        origin: &'a GeneratedOrigin,
+        origin_source: ItemTreeRef,
+        file_id: FileId,
+        call_site: TtSpan,
+        dollar_crate: Option<CrateRef>,
         expansion: ExpansionSyntax,
     ) -> Result<GeneratedSourceData> {
         let ExpansionSyntax { parse, span_map } = expansion;
@@ -53,9 +57,10 @@ impl<'a> GeneratedSourceLowering<'a> {
             .context("while attempting to cast macro expansion syntax root")?;
         // Unmapped tokens belong to the invocation as a whole. Prepare this once so nested
         // calls and definitions can borrow the token map without rebuilding their fallback.
-        let fallback_span = origin.call_site;
+        let fallback_span = call_site;
         let mut lowering = Self {
-            origin,
+            file_id,
+            dollar_crate,
             fallback_span,
             span_map: Arc::new(span_map),
             locations: DeclarationSourceStore::default(),
@@ -66,11 +71,11 @@ impl<'a> GeneratedSourceLowering<'a> {
             .context("while attempting to lower generated source items")?;
 
         Ok(GeneratedSourceData {
-            origin_file_id: origin.file_id,
+            origin_file_id: file_id,
             locations: GeneratedLocations::Expansion(GeneratedExpansionLocations::new(
                 lowering.locations,
             )),
-            origin_source: origin.source,
+            origin_source,
             top_level,
             items: lowering.items,
         })
@@ -131,10 +136,7 @@ impl<'a> GeneratedSourceLowering<'a> {
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item, source))
             }
             ast::Item::Enum(item) => {
-                let kind = ItemKind::Enum(EnumItem::from_ast(
-                    &item,
-                    (self.origin.dollar_crate, source),
-                ));
+                let kind = ItemKind::Enum(EnumItem::from_ast(&item, (self.dollar_crate, source)));
                 let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
@@ -254,10 +256,8 @@ impl<'a> GeneratedSourceLowering<'a> {
                 Some(self.alloc_documented_item(kind, name, name_range, visibility, &item, source))
             }
             ast::Item::Struct(item) => {
-                let kind = ItemKind::Struct(StructItem::from_ast(
-                    &item,
-                    (self.origin.dollar_crate, source),
-                ));
+                let kind =
+                    ItemKind::Struct(StructItem::from_ast(&item, (self.dollar_crate, source)));
                 let name = Self::name_from_ast(item.name());
                 let name_range = item.name().map(|name| name.syntax().text_range());
                 let visibility = VisibilityLevel::from_ast(&item.visibility(), ());
@@ -447,7 +447,7 @@ impl<'a> GeneratedSourceLowering<'a> {
             visibility,
             docs,
             location,
-            self.origin.file_id,
+            self.file_id,
         ))
     }
 

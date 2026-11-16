@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, CrateRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef,
@@ -11,9 +9,8 @@ use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{
-    AssociatedItemStore, ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData,
-    StructData, TraitData, TypeAliasData, UnionData, lang_item::LangItemIndex,
-    view::SemanticItemData,
+    ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
+    TraitData, TypeAliasData, UnionData, lang_item::LangItemIndex, view::SemanticItemData,
 };
 
 #[derive(Debug)]
@@ -33,8 +30,7 @@ pub struct ItemStoreBuilder {
     pub type_aliases: Arena<TypeAliasId, TypeAliasData>,
     pub consts: Arena<ConstId, ConstData>,
     pub statics: Arena<StaticId, StaticData>,
-    members: HashMap<ItemStoreId, AssociatedItemStore>,
-    lang_items: LangItemIndex,
+    pub(crate) lang_items: LangItemIndex,
 }
 
 impl ItemStoreBuilder {
@@ -55,7 +51,6 @@ impl ItemStoreBuilder {
             type_aliases: Arena::default(),
             consts: Arena::default(),
             statics: Arena::default(),
-            members: HashMap::new(),
             lang_items: LangItemIndex::default(),
         }
     }
@@ -79,10 +74,6 @@ impl ItemStoreBuilder {
         }
     }
 
-    pub fn set_members(&mut self, id: ItemStoreId, members: AssociatedItemStore) {
-        self.members.insert(id, members);
-    }
-
     pub fn build(self) -> ItemStore {
         ItemStore {
             origin: self.origin,
@@ -96,26 +87,26 @@ impl ItemStoreBuilder {
             type_aliases: self.type_aliases,
             consts: self.consts,
             statics: self.statics,
-            members: self.members,
             lang_items: self.lang_items,
         }
     }
 }
 
-/// Declarations from one crate or body scope, including the member stores for its traits and impls.
+/// Declarations from one crate or body scope, including trait and impl headers.
 ///
 /// ```text
 /// impl<T> Bag<T> {
 ///     fn first(&self) -> &T { ... }
 /// }
 /// ```
-/// `impls` stores the [`ImplData`] for `impl<T> Bag<T>`. A separate [`AssociatedItemStore`], keyed
+/// `impls` stores the [`ImplData`] for `impl<T> Bag<T>`. A separate [`super::AssociatedItemStore`], keyed
 /// by that block's `ImplId`, stores `first`. Lookup can inspect the header to decide whether the
 /// impl applies to a receiver, then ask for the declarations inside it.
 ///
 /// The `functions`, `type_aliases` and `consts` arenas here hold free declarations only. Associated
-/// declarations live in `members`; their references record which store owns their local ID.
-/// Lowering fills both the scope arenas and the member stores before publishing this `ItemStore`.
+/// references record which store owns their local ID. Saved targets compute those stores on demand
+/// through `associated_declarations`. Body-local readers own their completed member stores separately.
+/// This store has the same contents regardless of how a reader acquires members.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemStore {
     // DefMap this item store corresponds to.
@@ -133,8 +124,7 @@ pub struct ItemStore {
     type_aliases: Arena<TypeAliasId, TypeAliasData>,
     consts: Arena<ConstId, ConstData>,
     statics: Arena<StaticId, StaticData>,
-    members: HashMap<ItemStoreId, AssociatedItemStore>,
-    lang_items: LangItemIndex,
+    pub(crate) lang_items: LangItemIndex,
 }
 
 impl ItemStore {
@@ -196,22 +186,14 @@ impl ItemStore {
             .map(move |(id, data)| (ImplRef::new(self.origin, id), data))
     }
 
-    pub fn functions_with_refs(&self) -> impl Iterator<Item = (FunctionRef, &FunctionData)> {
-        self.semantic_items().filter_map(|item| {
-            let SemanticItemRef::Function(reference) = item.item() else {
-                return None;
-            };
-            Some((reference, item.function_data()?))
-        })
-    }
-
-    pub fn consts_with_refs(&self) -> impl Iterator<Item = (ConstRef, &ConstData)> {
-        self.semantic_items().filter_map(|item| {
-            let SemanticItemRef::Const(reference) = item.item() else {
-                return None;
-            };
-            Some((reference, item.const_data()?))
-        })
+    /// Enumerate member-store identities from headers without acquiring their declarations.
+    pub fn member_stores(&self) -> impl Iterator<Item = ItemStoreRef> {
+        self.traits_with_refs()
+            .map(|(owner, _)| owner.member_store())
+            .chain(
+                self.impls_with_refs()
+                    .map(|(owner, _)| owner.member_store()),
+            )
     }
 
     pub fn struct_data(&self, id: StructId) -> Option<&StructData> {
@@ -238,15 +220,10 @@ impl ItemStore {
         self.statics.get(id)
     }
 
-    pub fn associated_items(&self, store: ItemStoreRef) -> Option<&AssociatedItemStore> {
-        debug_assert_eq!(store.origin, self.origin, "Wrong lexical scope");
-        self.members.get(&store.id)
-    }
-
     pub fn semantic_item_view(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
         let store = item.store();
         if store.id != ItemStoreId::Scope {
-            return self.associated_items(store)?.item(item);
+            return None;
         }
         debug_assert_eq!(item.origin(), self.origin, "Wrong item store");
 
@@ -279,23 +256,9 @@ impl ItemStore {
         Some(SemanticItemView::new(item, data))
     }
 
-    pub fn semantic_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
-        // Follow header order rather than hash-map order for stable broad enumeration.
-        let stores = self
-            .traits_with_refs()
-            .map(|(owner, _)| owner.member_store())
-            .chain(
-                self.impls_with_refs()
-                    .map(|(owner, _)| owner.member_store()),
-            );
-        self.scope_items().chain(stores.flat_map(|store| {
-            self.associated_items(store)
-                .into_iter()
-                .flat_map(move |members| members.semantic_items(store))
-        }))
-    }
-
-    fn scope_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
+    /// Declarations owned by the lexical scope, including trait and impl headers. Associated
+    /// declarations are enumerated separately through their owner's member store.
+    pub fn scope_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
         let origin = self.origin;
         self.structs
             .iter_with_ids()

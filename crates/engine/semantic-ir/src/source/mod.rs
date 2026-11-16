@@ -5,11 +5,11 @@
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 
 use rg_def_map::{GeneratedExpansionLocations, GeneratedLocations, ItemSource, ItemSourceKind};
-use rg_ir_model::{CrateRef, FileId, PackageSlot, SourceId, SourceLocation, Span};
+use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
 
-use crate::target_declarations;
+use crate::{associated_declarations, target_declarations};
 
 /// The source tables needed to read occurrences and previews from one saved declaration source.
 ///
@@ -46,8 +46,21 @@ impl<'db> SavedDeclarationSourceView<'db> {
                     )?));
                 }
                 ItemSourceKind::Generated(generated) | ItemSourceKind::Synthetic(generated) => {
-                    let declarations = target_declarations(db, krate)?;
-                    let sources = declarations.generated_sources.value_ref(db)?;
+                    // Expansion slots are local to the query that produced them. The source ref
+                    // routes directly to module output or one member owner, without searching others.
+                    let sources = if generated.store == ItemStoreId::Scope {
+                        target_declarations(db, krate)?
+                            .generated_sources
+                            .value_ref(db)?
+                    } else {
+                        associated_declarations(db, krate, generated.store)?
+                            .as_ref()
+                            .ok_or_else(|| {
+                                ajika::Error::application("generated source owner is absent")
+                            })?
+                            .sources
+                            .value_ref(db)?
+                    };
                     let locations = sources
                         .get(generated.source)
                         .ok_or_else(|| ajika::Error::application("generated source is absent"))?;
