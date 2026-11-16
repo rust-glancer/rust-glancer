@@ -1,4 +1,4 @@
-//! Saved text and syntax utilities share the captured input, regardless of discovery order.
+//! Text and syntax utilities share the active captured input, regardless of discovery order.
 
 use std::{
     path::{Path, PathBuf},
@@ -10,22 +10,23 @@ use rg_source::{QueryContext, SourceInput, SourceRevision};
 use rg_syntax::{Parse, SourceFile};
 use rg_text::RustEdition;
 
-use crate::{LineIndex, saved_syntax};
+use crate::{LineIndex, source_syntax};
 
 /// Operation-scoped source access. A file does not have to be discovered by module collection:
 /// declaration queries can discover includes later and use the same source authority here.
+/// The enclosing operation selects saved inputs or an editor view before this reader is created.
 #[derive(Debug, Clone, Copy)]
-pub struct SavedSourceReader<'db> {
+pub struct SourceReader<'db> {
     db: &'db QueryContext<'db>,
 }
 
-impl<'db> SavedSourceReader<'db> {
+impl<'db> SourceReader<'db> {
     pub fn new(db: &'db QueryContext<'db>) -> Self {
         Self { db }
     }
 
     pub fn path(&self, file: FileId) -> ajika::Result<&'db Path> {
-        Ok(saved_file_path(self.db, file)?.as_path())
+        Ok(source_file_path(self.db, file)?.as_path())
     }
 
     pub fn text(&self, file: FileId) -> ajika::Result<Arc<str>> {
@@ -50,7 +51,7 @@ impl<'db> SavedSourceReader<'db> {
         file: FileId,
         edition: RustEdition,
     ) -> ajika::Result<Arc<Parse<SourceFile>>> {
-        saved_syntax(self.db, file, edition)
+        source_syntax(self.db, file, edition)
     }
 
     pub fn line_index(&self, file: FileId) -> ajika::Result<&'db LineIndex> {
@@ -61,6 +62,6 @@ impl<'db> SavedSourceReader<'db> {
 // Keep decoded paths in the operation so navigation can borrow them without retaining a file
 // table for every lazy source in the project.
 #[ajika::query(transient, returns(ref))]
-fn saved_file_path(db: &QueryContext<'_>, file: FileId) -> ajika::Result<PathBuf> {
+fn source_file_path(db: &QueryContext<'_>, file: FileId) -> ajika::Result<PathBuf> {
     file.path(&db.interner())
 }

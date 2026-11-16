@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeSet, HashMap},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
@@ -10,15 +11,13 @@ use rg_def_map::{
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
-use rg_parse::{SavedSourceReader, saved_syntax};
+use rg_parse::{SourceReader, source_syntax};
 use rg_semantic_ir::{
     AssociatedItemStore, CrateItemSource, ItemLookupEnv, LookupAnswer, LookupQuestion,
     SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData, body_owners,
     target_declarations,
 };
-use rg_source::{
-    QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
-};
+use rg_source::{QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput};
 use rg_workspace::{PackageInput, TargetInput, WorkspaceMetadata};
 
 use super::BenchTarget;
@@ -52,8 +51,7 @@ impl BenchWorkspace {
         let inputs = self
             .inputs
             .edit(|update| {
-                update.forget_all(SourceInput::CAPTURE);
-                update.forget_all(SourcePresence::RESOLVED_FILE);
+                SourceInput::forget_observations(update);
                 Ok(())
             })
             .expect("benchmark source inputs should reset");
@@ -69,14 +67,16 @@ impl BenchWorkspace {
     }
 
     pub(crate) fn parse_roots(&self, db: &QueryContext<'_>) -> ajika::Result<()> {
-        let sources = SavedSourceReader::new(db);
+        let sources = SourceReader::new(db);
         for &krate in &self.targets {
-            let path = TargetInput::at(krate).root_path(db)?;
-            let file = SourcePresence::at(path)
-                .resolved_file(db)?
+            let path = TargetInput::at(krate)
+                .root_path(db)?
+                .into_os_string()
+                .expect("benchmark target path is native");
+            let file = SourceInput::file_at(db, Path::new(&path))?
                 .expect("benchmark target root should exist");
             let edition = PackageInput::at(krate.package).edition(db)?;
-            saved_syntax(db, file, edition)?;
+            source_syntax(db, file, edition)?;
             sources.line_index(file)?;
         }
         Ok(())

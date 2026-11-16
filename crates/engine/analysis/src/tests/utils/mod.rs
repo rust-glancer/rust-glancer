@@ -6,7 +6,7 @@ use expect_test::Expect;
 use rg_body_ir::{BodyReader, ExprData, ExprKind};
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
 use rg_ir_view::{IndexedViewDb, testonly::render_indexed_type};
-use rg_parse::SavedSourceReader;
+use rg_parse::SourceReader;
 use rg_semantic_ir::{
     complete_source_ownership,
     testonly::{SemanticIrFixture, SemanticIrView},
@@ -460,7 +460,7 @@ impl<'db> AnalysisFixture<'db> {
     /// Renders source locations relative to their Cargo package instead of exposing temporary
     /// fixture roots or host-native path separators in snapshots.
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let path = SavedSourceReader::new(self.semantic.db())
+        let path = SourceReader::new(self.semantic.db())
             .path(file_id)
             .expect("snapshot source path should load");
         let package_root = self.semantic.workspace().packages()[package.0].root_dir();
@@ -483,7 +483,7 @@ impl<'db> AnalysisFixture<'db> {
     ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
-        let sources = SavedSourceReader::new(self.semantic.db());
+        let sources = SourceReader::new(self.semantic.db());
         for (owner, target) in self.semantic.workspace().targets() {
             let package = &self.semantic.workspace().packages()[owner.package.0];
             if !selected.matches_package(&package.name) || target.kind != selected.kind {
@@ -736,7 +736,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 .expect("string writes should not fail");
             }
             AnalysisQueryKind::CodeActions(trigger) => {
-                let source_text = SavedSourceReader::new(self.db.semantic.db())
+                let source_text = SourceReader::new(self.db.semantic.db())
                     .text(file_id)
                     .expect("code action source text should load");
                 let actions = self
@@ -787,7 +787,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
             | AnalysisQueryKind::CompletionsAtVerboseWithSource
             | AnalysisQueryKind::CompletionKeywordsAtWithSource
             | AnalysisQueryKind::CompletionKeywordsAtVerboseWithSource => {
-                let source_text = SavedSourceReader::new(self.db.semantic.db())
+                let source_text = SourceReader::new(self.db.semantic.db())
                     .text(file_id)
                     .expect("completion source text should load");
                 let completion_query = CompletionQuery::new(target, file_id, offset)
@@ -1344,7 +1344,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
     }
 
     fn render_source_span(&self, file_id: FileId, span: Span) -> String {
-        let line_column = SavedSourceReader::new(self.db.semantic.db())
+        let line_column = SourceReader::new(self.db.semantic.db())
             .line_index(file_id)
             .expect("span file line index should load while rendering analysis query")
             .line_column_span(span);
@@ -1362,7 +1362,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
     }
 
     fn render_source_text_for_span(&self, file_id: FileId, span: Span) -> String {
-        SavedSourceReader::new(self.db.semantic.db())
+        SourceReader::new(self.db.semantic.db())
             .text_for_span(file_id, span)
             .expect("analysis source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())
@@ -1577,7 +1577,7 @@ impl AnalysisSymbolSnapshot<'_> {
     }
 
     fn render_source_span(&self, file_id: FileId, span: Span) -> String {
-        let line_column = SavedSourceReader::new(self.db.semantic.db())
+        let line_column = SourceReader::new(self.db.semantic.db())
             .line_index(file_id)
             .expect("span file line index should load while rendering analysis symbol")
             .line_column_span(span);

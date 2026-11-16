@@ -10,7 +10,8 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetada
 use super::build_state;
 use crate::{
     BuildProcessMemory, ProcessMemorySampler, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
-    memory::NoopProjectMemoryHooks, profile::record_build_checkpoint, project_queries,
+    memory::NoopProjectMemoryHooks, profile::record_build_checkpoint,
+    project_queries::ProjectQueries,
 };
 
 pub struct ProjectBuilder {
@@ -64,17 +65,17 @@ impl ProjectBuilder {
     }
 
     pub fn build(mut self) -> anyhow::Result<Project> {
-        let mut database =
-            project_queries::open(&self.workspace).context("open saved query cache")?;
-        if !self.reuse_cache {
-            database.invalidate().context("reset saved query cache")?;
-        }
-        let targets = database.update_inputs(|update| {
-            self.workspace.write_inputs(update)?;
-            CrateDependencies::write_inputs(&self.workspace, update)
-        })?;
-        let state =
-            build_state(&mut database, self.workspace, targets).context("index saved project")?;
+        let mut queries = ProjectQueries::open(&self.workspace, self.reuse_cache)
+            .context("open saved query cache")?;
+        let state = queries
+            .update_saved(|database| {
+                let targets = database.update_inputs(|update| {
+                    self.workspace.write_inputs(update)?;
+                    CrateDependencies::write_inputs(&self.workspace, update)
+                })?;
+                Ok(build_state(database, self.workspace, targets)?)
+            })
+            .context("index saved project")?;
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
@@ -88,7 +89,7 @@ impl ProjectBuilder {
             .and_then(|sampler| sampler());
         record_build_checkpoint("after project", bytes, process_memory);
         Ok(Project {
-            database: Mutex::new(database),
+            queries: Mutex::new(queries),
             state,
             workspace_lowering_config: self.workspace_lowering_config,
             cargo_metadata_config: self.cargo_metadata_config,

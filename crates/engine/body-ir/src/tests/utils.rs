@@ -9,7 +9,7 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_item_tree::{FieldItem, SourceLocations as _};
-use rg_parse::SavedSourceReader;
+use rg_parse::SourceReader;
 use rg_semantic_ir::{GenericParamSource, GenericsQuery};
 use rg_ty::{
     AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitRefLowering, Ty,
@@ -1702,7 +1702,7 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source(&self, source: BodySource) -> String {
-        let line_column = SavedSourceReader::new(self.project.semantic().db())
+        let line_column = SourceReader::new(self.project.semantic().db())
             .line_index(source.file_id)
             .expect("source file line index should load while rendering body IR source")
             .line_column_span(source.span);
@@ -1716,7 +1716,7 @@ impl CrateBodyIrSnapshot<'_> {
     }
 
     fn render_source_text(&self, source: BodySource) -> String {
-        SavedSourceReader::new(self.project.semantic().db())
+        SourceReader::new(self.project.semantic().db())
             .text_for_span(source.file_id, source.span)
             .expect("body source text should load")
             .unwrap_or_else(|| "<invalid>".to_string())

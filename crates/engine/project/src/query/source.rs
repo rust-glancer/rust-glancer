@@ -1,4 +1,4 @@
-//! Selects one crate interpretation for editor queries and exposes saved source text.
+//! Selects one crate interpretation and reads source from the active query input view.
 //!
 //! File membership comes from declaration outputs. Startup knows module sources; an include
 //! reached by lazy member expansion is routed through the same captured source inputs.
@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
-use rg_parse::SavedSourceReader;
+use rg_parse::SourceReader;
 use rg_semantic_ir::{complete_source_ownership, target_declarations};
 use rg_std::MemorySize;
 use rg_text::RustEdition;
@@ -27,8 +27,8 @@ pub struct FileContext {
 impl<'a> ProjectSnapshot<'a> {
     /// Physical source access uses only the file identity. A file can have several crate
     /// interpretations; selecting one belongs to routing and semantic queries, not text reads.
-    pub fn sources(&self) -> SavedSourceReader<'a> {
-        SavedSourceReader::new(self.query_context())
+    pub fn sources(&self) -> SourceReader<'a> {
+        SourceReader::new(self.query_context())
     }
 
     /// Returns whether a package belongs to the analyzed workspace.
@@ -56,7 +56,14 @@ impl<'a> ProjectSnapshot<'a> {
     ) -> anyhow::Result<Option<FileContext>> {
         let file = FileId::for_path(&self.query_context().interner(), source_path)?;
         if let Some(crate_ref) = self.state.sources.first_module_crate(file) {
-            return Ok(Some(FileContext { crate_ref, file }));
+            // Saved routing is a cheap candidate. An editor view may have removed or moved this
+            // module, so verify membership against the declarations of the active input revision.
+            let metadata = target_declarations(self.query_context(), crate_ref)?
+                .metadata
+                .value_ref(self.query_context())?;
+            if metadata.sources.modules.binary_search(&file).is_ok() {
+                return Ok(Some(FileContext { crate_ref, file }));
+            }
         }
         for &crate_ref in &self.state.targets {
             let target = target_declarations(self.query_context(), crate_ref)?;

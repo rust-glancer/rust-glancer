@@ -1,7 +1,7 @@
-//! Exact source and path observations shared by the providers in one generation.
+//! Exact source and path observations shared by providers in one saved or editor input view.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -11,14 +11,40 @@ use rg_std::NativeOsString;
 
 use crate::{CapturedSource, QueryContext, SourceEntry, SourceError, read_source_text};
 
+/// Captured source for one canonical file, shared by parsing and semantic providers. Saved and
+/// editor views use the same key; the installed inputs choose its bytes and cache policy.
 #[ajika::input(key = FileId)]
 pub struct SourceInput {
-    #[input(stamp = capture_stamp, initialize = capture_entry)]
+    #[input(
+        stamp = SourceEntry::stamp,
+        initialize = SourceEntry::init,
+        lifetime = SourceEntry::lifetime,
+        durability = SourceEntry::durability
+    )]
     capture: Result<Arc<SourceEntry>, Arc<SourceError>>,
 }
 
 impl SourceInput {
+    /// Resolve a path spelling in this input view, including an observed absence. File identity
+    /// stays canonical even when module discovery reaches it through another spelling.
+    pub fn file_at(db: &QueryContext<'_>, path: &Path) -> ajika::Result<Option<FileId>> {
+        Ok(
+            SourcePresence::at(NativeOsString::from_os_str(path.as_os_str()))
+                .observation(db)?
+                .file(),
+        )
+    }
+
+    /// Forget text and path observations after the host replaces its workspace graph.
+    /// The next read captures them again under the new configuration.
+    pub fn forget_observations(update: &mut ajika::InputUpdate) {
+        update.forget_all(Self::CAPTURE);
+        update.forget_all(SourcePresence::OBSERVATION);
+    }
+
     /// Install exact saved bytes under the canonical path captured with them.
+    /// Saving the same bytes as an editor capture preserves its stamp but gives it persistent
+    /// lifetime, allowing a later query to promote retained editor results.
     pub fn set_saved(
         update: &mut ajika::InputUpdate,
         interner: &ajika::Interner,
@@ -26,6 +52,56 @@ impl SourceInput {
     ) -> ajika::Result<()> {
         let file = FileId::for_path(interner, source.path())?;
         Self::at(file).set_capture(update, Ok(Arc::new(SourceEntry::saved_captured(source))))
+    }
+
+    /// Apply a complete editor capture over the saved baseline. Unchanged documents retain their
+    /// saved inputs. Each new view starts at the baseline, so typing never grows a chain of views.
+    /// `saved` must be the accepted disk baseline, even if the database is serving an editor view.
+    /// For example, changing the supplied set from `[a, b]` to `[b]` restores the saved `a`.
+    pub fn editor_view(
+        saved: &ajika::Inputs,
+        interner: &ajika::Interner,
+        documents: &[CapturedSource],
+    ) -> ajika::Result<ajika::Inputs> {
+        let mut edited = Vec::new();
+        for document in documents {
+            let file = FileId::for_path(interner, document.path())?;
+            // Observe the saved value before overriding it. Ajika must invalidate proofs made
+            // with Medium durability on the first edit, even if this file was previously lazy.
+            let previous = saved.get(Self::CAPTURE, &file, interner)?;
+            if let Ok(entry) = previous {
+                if entry.revision() == document.revision() {
+                    continue;
+                }
+                // This saved capture will be hidden by editor text. Release its reloadable
+                // bytes here, because end-of-operation eviction visits the effective inputs.
+                entry.evict_saved_text();
+            }
+            edited.push((file, document));
+        }
+        if edited.is_empty() {
+            return Ok(saved.clone());
+        }
+
+        let edited_files = edited.iter().map(|(file, _)| *file).collect::<HashSet<_>>();
+        saved.overlay().edit(|update| {
+            for (file, document) in edited {
+                Self::at(file).set_capture(update, Ok(Arc::new(SourceEntry::editor(document))))?;
+                SourcePresence::at(NativeOsString::from_os_str(document.path().as_os_str()))
+                    .set_observation(update, SourcePresenceData::Editor(file))?;
+            }
+            // A module can have been found through a symlink spelling. Its presence observation
+            // belongs to this editor view too, although file identity remains canonical.
+            for (path, presence) in saved.entries(SourcePresence::OBSERVATION) {
+                if let Some(file) = presence.file()
+                    && edited_files.contains(&file)
+                {
+                    SourcePresence::at(path)
+                        .set_observation(update, SourcePresenceData::Editor(file))?;
+                }
+            }
+            Ok(())
+        })
     }
 
     /// An include can be backed by an optional Cargo output. Capture unreadability as a value
@@ -40,6 +116,8 @@ impl SourceInput {
             .map_err(ajika::Error::application)
     }
 
+    /// Release reloadable text while keeping the revisions needed to check later disk reads.
+    /// Editor captures stay resident because their bytes cannot be recovered from disk.
     pub fn evict_saved_text(inputs: &ajika::Inputs) {
         for (_, entry) in inputs.entries(Self::CAPTURE) {
             if let Ok(entry) = entry {
@@ -67,18 +145,19 @@ impl SourceInput {
                 Err(_) => affected(&file.path(interner)?),
             };
             if changed {
-                Self::at(file).set_capture(update, Self::read_capture(file, interner)?)?;
+                Self::at(file).set_capture(update, SourceEntry::read_capture(file, interner)?)?;
             }
         }
 
         let mut presence_changed = false;
-        for (key, resolved) in inputs.entries(SourcePresence::RESOLVED_FILE) {
+        for (key, presence) in inputs.entries(SourcePresence::OBSERVATION) {
+            let resolved = presence.file();
             let canonical = resolved.map(|file| file.path(interner)).transpose()?;
             // A rename notification can name only the destination. Capture disappearance too,
             // so a module can select its alternate path in this candidate.
             let disappeared = canonical.as_ref().is_some_and(|path| !path.is_file());
             if disappeared && let Some(file) = resolved {
-                Self::at(file).set_capture(update, Self::read_capture(file, interner)?)?;
+                Self::at(file).set_capture(update, SourceEntry::read_capture(file, interner)?)?;
             }
             let spelling = native_path(key.clone())?;
             if disappeared || affected(&spelling) || canonical.as_deref().is_some_and(affected) {
@@ -90,7 +169,8 @@ impl SourceInput {
                         .as_deref()
                         .map(|path| FileId::for_path(interner, path))
                         .transpose()?;
-                    SourcePresence::at(key).set_resolved_file(update, file)?;
+                    SourcePresence::at(key)
+                        .set_observation(update, SourcePresenceData::Saved(file))?;
                     presence_changed = true;
                 }
             }
@@ -98,18 +178,9 @@ impl SourceInput {
         Ok(presence_changed)
     }
 
-    fn read_capture(
-        file: FileId,
-        interner: &ajika::Interner,
-    ) -> ajika::Result<Result<Arc<SourceEntry>, Arc<SourceError>>> {
-        let path = file.path(interner)?;
-        Ok(read_source_text(&path)
-            .map(|text| Arc::new(SourceEntry::saved(path, text)))
-            .map_err(Arc::new))
-    }
-
-    /// Compare explicit input updates before rebuilding queries. Query initialization is not a
-    /// source edit: a lazy include may be observed for the first time in either generation.
+    /// Compare captured content before and after the host's input updates. Call this before
+    /// demanding new declaration queries: files first discovered by those queries should not
+    /// be reported as source edits.
     pub fn changed_files(
         before: &ajika::Inputs,
         after: &ajika::Inputs,
@@ -117,19 +188,22 @@ impl SourceInput {
         let mut changed = Vec::new();
         for (file, capture) in after.entries(Self::CAPTURE) {
             let previous = before.peek(Self::CAPTURE, &file);
-            if previous.as_ref().map(capture_stamp).transpose()? != Some(capture_stamp(&capture)?) {
+            if previous.as_ref().map(SourceEntry::stamp).transpose()?
+                != Some(SourceEntry::stamp(&capture)?)
+            {
                 changed.push(file);
             }
         }
         Ok(changed)
     }
 
-    /// Include observations initialized during replay when validating the candidate.
+    /// Check captured disk contents and path resolutions before publishing a saved candidate.
+    /// Call after declaration queries so their lazily discovered sources are checked too.
     pub fn validate_saved(inputs: &ajika::Inputs, interner: &ajika::Interner) -> ajika::Result<()> {
         Self::validate_observations(inputs, interner, Err)
     }
 
-    /// Find settled changes together after an edit burst, including newly present modules.
+    /// Find disk observations that no longer match their captured values after an edit burst.
     pub fn stale_saved_paths(
         inputs: &ajika::Inputs,
         interner: &ajika::Interner,
@@ -166,7 +240,10 @@ impl SourceInput {
                 on_error(error).map_err(ajika::Error::application)?;
             }
         }
-        for (path, expected) in inputs.entries(SourcePresence::RESOLVED_FILE) {
+        for (path, expected) in inputs.entries(SourcePresence::OBSERVATION) {
+            let SourcePresenceData::Saved(expected) = expected else {
+                continue;
+            };
             let path = native_path(path)?;
             let expected = expected.map(|file| file.path(interner)).transpose()?;
             if let Err(error) = SourcePresence::validate(&path, expected.as_deref()) {
@@ -178,11 +255,16 @@ impl SourceInput {
 }
 
 #[ajika::input(key = NativeOsString)]
-pub struct SourcePresence {
+struct SourcePresence {
     // The key is the path spelling, which can be absent or resolve through a symlink.
     // The answer names the canonical file so a retargeted symlink changes the observation.
-    #[input(initialize = capture_path)]
-    resolved_file: Option<FileId>,
+    #[input(
+        initialize = SourcePresenceData::init,
+        stamp = SourcePresenceData::stamp,
+        lifetime = SourcePresenceData::lifetime,
+        durability = SourcePresenceData::durability
+    )]
+    observation: SourcePresenceData,
 }
 
 impl SourcePresence {
@@ -216,34 +298,54 @@ impl SourcePresence {
     }
 }
 
-fn capture_entry(
-    file: &FileId,
-    cx: &dyn ajika::InputInit,
-) -> ajika::Result<Result<Arc<SourceEntry>, Arc<SourceError>>> {
-    SourceInput::read_capture(*file, &cx.interner())
+/// A path can be present because it was observed on disk or supplied by the editor. The resolved
+/// file is semantic input; the origin controls reuse and storage lifetime independently of it.
+/// Queries see only the resolved file through `file_at`. The tag stays private and out of the
+/// content stamp: saving an existing file changes its policy, not where its module path resolves.
+#[derive(Debug, Clone, Copy)]
+enum SourcePresenceData {
+    Saved(Option<FileId>),
+    Editor(FileId),
 }
 
-fn capture_path(path: &NativeOsString, cx: &dyn ajika::InputInit) -> ajika::Result<Option<FileId>> {
-    SourcePresence::resolve(&native_path(path.clone())?)
-        .map_err(ajika::Error::application)?
-        .as_deref()
-        .map(|path| FileId::for_path(&cx.interner(), path))
-        .transpose()
+impl SourcePresenceData {
+    fn init(path: &NativeOsString, cx: &dyn ajika::InputInit) -> ajika::Result<Self> {
+        SourcePresence::resolve(&native_path(path.clone())?)
+            .map_err(ajika::Error::application)?
+            .as_deref()
+            .map(|path| FileId::for_path(&cx.interner(), path))
+            .transpose()
+            .map(Self::Saved)
+    }
+
+    fn file(self) -> Option<FileId> {
+        match self {
+            Self::Saved(file) => file,
+            Self::Editor(file) => Some(file),
+        }
+    }
+
+    fn stamp(&self) -> ajika::Result<ajika::Stamp> {
+        ajika::Stamp::of_value(&self.file())
+    }
+
+    fn lifetime(&self) -> ajika::Lifetime {
+        match self {
+            Self::Saved(_) => ajika::Lifetime::Persistent,
+            Self::Editor(_) => ajika::Lifetime::Session,
+        }
+    }
+
+    fn durability(&self) -> ajika::Durability {
+        match self {
+            Self::Saved(_) => ajika::Durability::Medium,
+            Self::Editor(_) => ajika::Durability::Low,
+        }
+    }
 }
 
 fn native_path(path: NativeOsString) -> ajika::Result<PathBuf> {
     path.into_os_string()
         .map(PathBuf::from)
         .ok_or_else(|| ajika::Error::contract("invalid native source path"))
-}
-
-fn capture_stamp(
-    capture: &Result<Arc<SourceEntry>, Arc<SourceError>>,
-) -> ajika::Result<ajika::Stamp> {
-    // Evicting saved text doesn't change what a reader can observe. SourceEntry verifies the
-    // revision if it has to reload those bytes from disk.
-    Ok(match capture {
-        Ok(entry) => ajika::Stamp::from_bytes(*entry.revision().as_bytes()),
-        Err(_) => ajika::Stamp::of(b"unreadable Rust source"),
-    })
 }

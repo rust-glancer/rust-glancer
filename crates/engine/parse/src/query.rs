@@ -6,8 +6,10 @@ use rg_text::RustEdition;
 use crate::parse_source_file;
 
 /// Shares syntax for a captured source within one operation.
+/// Saved and editor sources use this same provider. Its transient policy lets each operation
+/// share a parse without retaining parse trees between requests.
 #[ajika::query(transient)]
-pub fn saved_syntax(
+pub fn source_syntax(
     db: &rg_source::QueryContext<'_>,
     file: FileId,
     edition: RustEdition,

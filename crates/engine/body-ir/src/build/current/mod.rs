@@ -13,7 +13,7 @@ use anyhow::Context as _;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
 use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, SavedSourceReader, enclosing_inline_module_path,
+    CurrentSource, DeclarationAssociationIndex, SourceReader, enclosing_inline_module_path,
 };
 use rg_semantic_ir::ItemReader;
 use rg_source::QueryContext;
@@ -117,7 +117,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         let saved_bodies = self.saved_bodies;
         let mut built = CurrentBodyBuilder::new(
             config.edition,
-            SavedSourceReader::new(self.db),
+            SourceReader::new(self.db),
             cfg,
             self.def_map,
             self.semantic_ir,

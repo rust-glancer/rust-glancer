@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use anyhow::Context as _;
 use rg_def_map::CrateDependencies;
 use rg_ir_model::FileId;
-use rg_source::{SourceInput, SourcePresence};
+use rg_source::SourceInput;
 use rg_std::{NormalizedPathBuf, UniqueVec};
 use rg_workspace::WorkspaceMetadata;
 
@@ -53,7 +53,7 @@ impl Project {
         }
 
         let interner = self
-            .database
+            .queries
             .get_mut()
             .expect("project query runtime")
             .interner();
@@ -97,88 +97,82 @@ impl Project {
         } else {
             self.workspace().clone()
         };
-        let database = self.database.get_mut().expect("project query runtime");
-        // Lazy captures made during refresh may also become visible in the accepted inputs. Ajika
-        // requires queries to work regardless of whether an initializer has already run.
-        // Input changes advance the revision, so later queries will observe the updated state anyway.
-        let accepted = database.inputs().clone();
-        let interner = database.interner();
-        let changed_paths = changes
-            .iter()
-            .map(|change| FileId::for_path(&interner, change.path()))
-            .collect::<ajika::Result<Vec<_>>>()?;
-        let (targets, presence_changed) = database.update_inputs(|update| {
-            let (targets, presence_changed) = if graph_changed {
-                update.forget_all(SourceInput::CAPTURE);
-                update.forget_all(SourcePresence::RESOLVED_FILE);
-                workspace.write_inputs(update)?;
-                (CrateDependencies::write_inputs(&workspace, update)?, false)
-            } else {
-                let paths = changes
-                    .iter()
-                    .map(SavedFileChange::path)
-                    .collect::<Vec<_>>();
-                let presence_changed =
-                    SourceInput::refresh_saved_paths(&accepted, update, &interner, &paths)?;
-                (self.state.targets.clone(), presence_changed)
-            };
-            for source in changes.iter().filter_map(SavedFileChange::captured_source) {
-                SourceInput::set_saved(update, &interner, source)?;
-            }
-            Ok((targets, presence_changed))
-        })?;
-        // Source publication is independent of module discovery. A lazy include can change
-        // without appearing in the published source index at all.
-        let result =
-            SourceInput::changed_files(&accepted, database.inputs()).and_then(|source_changes| {
-                build_state(database, workspace, targets)
-                    .map(|candidate| (candidate, source_changes))
-            });
-        match result {
-            Ok((candidate, source_changes)) => {
-                let summary = if graph_changed {
-                    let mut changed_files = source_changes.into_iter().collect::<UniqueVec<_>>();
-                    changed_files.extend(
-                        changed_paths
-                            .into_iter()
-                            .filter(|&file| candidate.sources.contains_collected_file(file)),
-                    );
-                    let changed_crates = candidate
-                        .targets
-                        .iter()
-                        .copied()
-                        .filter(|krate| {
-                            !candidate.workspace.packages()[krate.package.0]
-                                .origin
-                                .is_sysroot()
-                        })
-                        .collect::<Vec<_>>();
-                    AnalysisChangeSummary {
-                        changed_files: changed_files.into_vec(),
-                        changed_crates,
-                    }
+        let previous = &self.state;
+        let queries = self.queries.get_mut().expect("project query runtime");
+        let published = queries.update_saved(|database| {
+            // Keep the accepted inputs for source-change comparison. The clone shares lazy
+            // observations; it does not freeze an inventory of files discovered so far.
+            let accepted = database.inputs().clone();
+            let interner = database.interner();
+            let changed_paths = changes
+                .iter()
+                .map(|change| FileId::for_path(&interner, change.path()))
+                .collect::<ajika::Result<Vec<_>>>()?;
+            let (targets, presence_changed) = database.update_inputs(|update| {
+                let (targets, presence_changed) = if graph_changed {
+                    SourceInput::forget_observations(update);
+                    workspace.write_inputs(update)?;
+                    (CrateDependencies::write_inputs(&workspace, update)?, false)
                 } else {
-                    candidate
-                        .sources
-                        .changes_from(&self.state.sources, &source_changes)
+                    let paths = changes
+                        .iter()
+                        .map(SavedFileChange::path)
+                        .collect::<Vec<_>>();
+                    let presence_changed =
+                        SourceInput::refresh_saved_paths(&accepted, update, &interner, &paths)?;
+                    (previous.targets.clone(), presence_changed)
                 };
-                // A path can change its referent while both files stay in the target.
-                // A successful request must observe the new lookup even in that case.
-                if graph_changed || presence_changed || !summary.is_empty() {
-                    self.state = candidate;
-                    self.memory_hooks
-                        .purge(ProjectMemoryPurgePoint::AfterProjectChange);
-                    return Ok(summary);
+                for source in changes.iter().filter_map(SavedFileChange::captured_source) {
+                    SourceInput::set_saved(update, &interner, source)?;
                 }
+                Ok((targets, presence_changed))
+            })?;
+            // Source publication is independent of module discovery. A lazy include can change
+            // without appearing in the published source index at all.
+            let source_changes = SourceInput::changed_files(&accepted, database.inputs())?;
+            let candidate = build_state(database, workspace, targets)
+                .context("validate saved project candidate")?;
+            let summary = if graph_changed {
+                let mut changed_files = source_changes.into_iter().collect::<UniqueVec<_>>();
+                changed_files.extend(
+                    changed_paths
+                        .into_iter()
+                        .filter(|&file| candidate.sources.contains_collected_file(file)),
+                );
+                let changed_crates = candidate
+                    .targets
+                    .iter()
+                    .copied()
+                    .filter(|krate| {
+                        !candidate.workspace.packages()[krate.package.0]
+                            .origin
+                            .is_sysroot()
+                    })
+                    .collect::<Vec<_>>();
+                AnalysisChangeSummary {
+                    changed_files: changed_files.into_vec(),
+                    changed_crates,
+                }
+            } else {
+                candidate
+                    .sources
+                    .changes_from(&previous.sources, &source_changes)
+            };
+            // A path can change its referent while both files stay in the target.
+            // A successful request must observe the new lookup even in that case.
+            if graph_changed || presence_changed || !summary.is_empty() {
+                return Ok(Some((candidate, summary)));
             }
-            Err(error) => {
-                // Ajika can finish a checkpoint before the host learns that it cannot publish.
-                // The previous inputs must validate any such records before serving a request.
-                database.replace_inputs(accepted);
-                return Err(error).context("validate saved project candidate");
-            }
-        }
-        database.replace_inputs(accepted);
-        Ok(AnalysisChangeSummary::default())
+            // Accept the refreshed saved inputs, but keep the published metadata and generation
+            // when no source content, routing, or workspace configuration changed.
+            Ok(None)
+        })?;
+        let Some((candidate, summary)) = published else {
+            return Ok(AnalysisChangeSummary::default());
+        };
+        self.state = candidate;
+        self.memory_hooks
+            .purge(ProjectMemoryPurgePoint::AfterProjectChange);
+        Ok(summary)
     }
 }

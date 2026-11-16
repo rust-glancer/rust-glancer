@@ -108,7 +108,7 @@ impl HostFixture {
                 let path = changed_file
                     .path(
                         &project
-                            .database
+                            .queries
                             .lock()
                             .expect("project query runtime")
                             .interner(),

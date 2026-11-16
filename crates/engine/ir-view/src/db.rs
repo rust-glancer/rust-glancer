@@ -9,7 +9,7 @@ use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreRef, LocalDefRef, ModuleRef,
     PackageSlot, Path, SemanticItemRef, SourceId, Span,
 };
-use rg_parse::{CurrentSource, SavedSourceReader};
+use rg_parse::{CurrentSource, SourceReader};
 use rg_semantic_ir::{
     AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
     SourceSelection, TypePathContext, TypePathResolution,
@@ -26,8 +26,9 @@ use rg_workspace::{CrateConfig, PackageInput};
 
 /// Read-only database handle used by all indexed-data views.
 ///
-/// Saved readers and prepared current declarations stay frozen for the request. Demanding lookup
-/// candidates never changes which declarations or bodies are visible through this handle.
+/// Readers use one fixed input view, plus any current declarations prepared for this request.
+/// Demanding lookup candidates never changes which declarations or bodies are visible through
+/// this handle.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefinitionReader<'db>,
@@ -81,8 +82,8 @@ impl<'db> IndexedViewDb<'db> {
         }
     }
 
-    pub fn sources(&self) -> SavedSourceReader<'db> {
-        SavedSourceReader::new(self.queries)
+    pub fn sources(&self) -> SourceReader<'db> {
+        SourceReader::new(self.queries)
     }
 
     pub(crate) fn crate_config(&self, krate: CrateRef) -> anyhow::Result<CrateConfig> {
@@ -90,19 +91,19 @@ impl<'db> IndexedViewDb<'db> {
     }
 
     /// Share the captured syntax with body providers in this operation.
-    pub(crate) fn saved_syntax(
+    pub(crate) fn source_syntax(
         &self,
         krate: CrateRef,
         file: FileId,
     ) -> anyhow::Result<Arc<Parse<SourceFile>>> {
-        Ok(SavedSourceReader::new(self.queries).syntax(file, self.crate_edition(krate)?)?)
+        Ok(SourceReader::new(self.queries).syntax(file, self.crate_edition(krate)?)?)
     }
 
     pub fn cancellation(&self) -> &CancellationToken {
         &self.cancellation
     }
 
-    /// Lend the saved readers used by the eventual request queries.
+    /// Lend the snapshot's readers used by the eventual request queries.
     pub fn current_source_builder<'request>(
         &'request self,
         source: &'request CurrentSource,

@@ -1,4 +1,4 @@
-//! Source text and path fixed together before a saved-project rebuild starts.
+//! Source text and path fixed together before an editor request or saved-project rebuild.
 //!
 //! `CapturedSource::new` canonicalizes the path as soon as an event supplies the text. It then
 //! keeps that path, text, revision, and byte length in one value, so a later project update cannot
@@ -8,7 +8,8 @@ use std::{path::Path, sync::Arc};
 
 use crate::{SourceError, SourceRevision, revision::SourceDescriptor};
 
-/// One canonical Rust source file captured before rebuilding the saved project.
+/// One canonical Rust source file captured at the host boundary.
+/// The path must already exist; virtual editor files need a separate path-identity policy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapturedSource {
     descriptor: SourceDescriptor,
@@ -37,10 +38,6 @@ impl CapturedSource {
 
     pub fn revision(&self) -> SourceRevision {
         self.descriptor.revision()
-    }
-
-    pub fn byte_len(&self) -> u64 {
-        self.descriptor.byte_len()
     }
 
     pub(crate) fn descriptor(&self) -> SourceDescriptor {

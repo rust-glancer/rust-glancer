@@ -19,9 +19,7 @@ use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedSourceProvenance, ty::IndexedType};
-use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, SavedSourceReader,
-};
+use rg_parse::{CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, SourceReader};
 use rg_syntax::SourceFile;
 use rg_workspace::WorkspaceMetadata;
 
@@ -50,7 +48,7 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 /// transport-neutral models exported by this crate; the LSP layer only converts those models.
 pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
-    saved_source: SavedSourceReader<'a>,
+    saved_source: SourceReader<'a>,
     workspace: &'a WorkspaceMetadata,
     current_source: Option<CurrentSourceView>,
 }
