@@ -31,7 +31,8 @@ impl<'a> ItemStoreSourceReader<'a> for CrateLowering<'a> {
                 self.generated_items.item(item_ref).with_context(|| {
                     format!(
                         "while attempting to find generated item {:?} from generated source {:?}",
-                        item_ref.item, item_ref.source
+                        item_ref.item(),
+                        item_ref.source()
                     )
                 })?
             }

@@ -19,7 +19,10 @@ use super::{
     crates::{CrateBuilder, ExternPreludeBuilder, KnownModuleFiles},
     macros::{MacroCallOrigin, MacroScopeData},
 };
-use crate::{DefMapBuilder, ModuleBuilder, ModuleDocumentation, ModuleOrigin, Visibility};
+use crate::{
+    DefMapBuilder, GeneratedItemStore, GeneratedSourceStoreId, ModuleBuilder, ModuleDocumentation,
+    ModuleOrigin, Visibility,
+};
 
 mod declarations;
 pub(crate) use self::declarations::DeclarationCollector;
@@ -60,6 +63,7 @@ pub(super) fn collect_crate(
         target_kind: target.kind.clone(),
         known_module_files,
         def_map_builder: builder,
+        generated_items: GeneratedItemStore::new(GeneratedSourceStoreId::Target),
         extern_prelude: ExternPreludeBuilder::new(roots),
         prelude: None,
         member_inputs: HashMap::new(),

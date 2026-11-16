@@ -94,6 +94,44 @@ pub fn demo(_: Co$copied$pied, _: Ne$nested$sted, _: Temp$template$late) {}
 }
 
 #[test]
+fn generated_member_navigation_preserves_macro_locations() {
+    check_analysis_queries(
+        r#"
+//- /src/lib.rs crate:generated_members
+macro_rules! member {
+    ($name:ident) => { fn $name(&self) -> u8 { 1 } };
+}
+macro_rules! owner {
+    ($name:ident, $direct:ident, $nested:ident) => {
+        pub struct $name;
+        impl $name {
+            fn $direct(&self) -> u8 { 1 }
+            member!($nested);
+        }
+    };
+}
+owner!(Value, direct, nested);
+pub trait Service { member!(required); }
+pub fn calls<T: Service>(value: Value, service: T) {
+    value.di$direct$rect();
+    value.nes$nested$ted();
+    service.re$trait$quired();
+}
+"#,
+        &[
+            AnalysisQuery::goto("method from module expansion", "direct"),
+            AnalysisQuery::goto("method from nested member expansion", "nested"),
+            AnalysisQuery::goto("method from trait member expansion", "trait"),
+        ],
+        expect![[r#"
+            fn direct @ 13:15-13:21 // method from module expansion
+            fn nested @ 13:23-13:29 // method from nested member expansion
+            fn required @ 14:29-14:37 // method from trait member expansion
+        "#]],
+    );
+}
+
+#[test]
 fn macro_argument_hover_uses_expansion_provenance() {
     check_analysis_queries(
         FIXTURE,

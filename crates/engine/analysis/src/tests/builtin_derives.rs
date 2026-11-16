@@ -73,12 +73,16 @@ pub fn use_it(original: Wrapper<Value>) {
     let wrapped = original.clone()$0; // ty("generic aliased derive").in_lib("derive_generics")
     let choice = Choice::<NoDefault>::default()$0; // ty("unit default needs no T bound").in_lib("derive_generics")
     let generated = Generated.clone()$0; // ty("derive in macro output").in_lib("derive_generics")
+    let _: Val$0ue; // goto_impl("written derive location").in_lib("derive_generics")
+    let _: Genera$0ted; // goto_impl("macro-generated derive location").in_lib("derive_generics")
 }
 "#,
         expect![[r#"
             nominal struct derive_generics[lib]::crate::Wrapper<nominal struct derive_generics[lib]::crate::Value> // generic aliased derive
             nominal enum derive_generics[lib]::crate::Choice<nominal struct derive_generics[lib]::crate::NoDefault> // unit default needs no T bound
             nominal struct derive_generics[lib]::crate::Generated // derive in macro output
+            impl ::core::clone::Clone for Value @ 4:10-4:15 // written derive location
+            impl ::core::clone::Clone for Generated @ 23:1-23:21 // macro-generated derive location
         "#]],
     );
 }

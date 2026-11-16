@@ -2,9 +2,8 @@ use std::{collections::HashMap, fmt::Write as _, iter, sync::Arc};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
-    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, NameBinding,
-    NameBindingProvenance, Namespace, NamespaceSet, Visibility,
+    DefMap, DefMapBuilder, DefMapSource, ItemSource, LocalDefData, LocalDefKind, ModuleBuilder,
+    ModuleOrigin, NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionRef, GenericDefRef,
@@ -15,9 +14,9 @@ use rg_ir_model::{
 };
 use rg_item_tree::{
     ConstExpr, FieldList, FunctionItem, FunctionQualifiers, GenericArg as ItemGenericArg,
-    GenericParams, ImplPolarity, ItemTreeId, TraitBoundModifier, TypeAliasItem, TypeBound,
-    TypeOrConstParamData, TypeParamData, TypePath, TypePathAnchor, TypePathSegment, TypeRef,
-    VisibilityLevel, WherePredicate,
+    GenericParams, ImplPolarity, ItemTreeId, ItemTreeRef, TraitBoundModifier, TypeAliasItem,
+    TypeBound, TypeOrConstParamData, TypeParamData, TypePath, TypePathAnchor, TypePathSegment,
+    TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_semantic_ir::{
     AssociatedItemStore, AssociatedItemStoreBuilder, CrateItemSource, FunctionData,
@@ -390,16 +389,12 @@ fn local_def(index: usize) -> LocalDefRef {
 }
 
 fn dummy_source() -> ItemSource {
-    ItemSource {
-        // Source coordinates are irrelevant for trait-selection tests; generated fixtures only
-        // need stable dummy identities.
+    // Source coordinates are irrelevant for trait-selection tests; the semantic fixture only
+    // needs a stable dummy identity and does not own any generated syntax.
+    ItemSource::item_tree(ItemTreeRef {
         file_id: FileId::from_raw(0),
-        kind: ItemSourceKind::Generated(GeneratedItemRef {
-            store: ItemStoreId::Scope,
-            source: GeneratedSourceId(0),
-            item: ItemTreeId(0),
-        }),
-    }
+        item: ItemTreeId(0),
+    })
 }
 
 fn fixture_location() -> SourceId {

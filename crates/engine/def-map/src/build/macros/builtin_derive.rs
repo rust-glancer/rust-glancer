@@ -8,7 +8,7 @@
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{CrateRef, FileId, ItemStoreId, ModuleId, ModuleRef, Path, SourceId};
+use rg_ir_model::{CrateRef, FileId, ModuleId, ModuleRef, Path, SourceId};
 use rg_item_tree::{
     BuiltinDeriveKind, BuiltinMacroKind, ConstExpr, DeriveAttrs, FieldItem, GenericArg,
     GenericParams, ImplItem, ImplPolarity, ItemKind, ItemNode, ItemTreeRef, ItemTrees,
@@ -19,9 +19,9 @@ use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
-    AssociatedItemInput, AssociatedItemOwner, CrateResolutionEnv, GeneratedItemRef,
-    GeneratedLocations, ItemSource, ItemSourceKind, LocalDefKind, LocalImplData,
-    MacroDefinitionEnv, NameResolver, build::crates::CrateBuilder, source::GeneratedSourceData,
+    AssociatedItemInput, AssociatedItemOwner, CrateResolutionEnv, GeneratedLocations, ItemSource,
+    ItemSourceKind, LocalDefKind, LocalImplData, MacroDefinitionEnv, NameResolver,
+    build::crates::CrateBuilder, source::GeneratedSourceData,
 };
 
 /// One derived impl waiting to be attached to the module that owns its struct or enum.
@@ -106,17 +106,10 @@ impl BuiltinDeriveExpansion {
         let file_id = self.source.origin_file_id;
         let item = self.source.top_level[0];
         let location = self.source.items[item].location;
-        let source = state.def_map_builder.alloc_generated_source(self.source);
+        let source = state.generated_items.alloc_source(self.source);
         let local_impl = state.def_map_builder.alloc_local_impl(LocalImplData {
             module: self.module,
-            source: ItemSource::synthetic(
-                file_id,
-                GeneratedItemRef {
-                    store: ItemStoreId::Scope,
-                    source,
-                    item,
-                },
-            ),
+            source: ItemSource::synthetic(file_id, state.generated_items.item_ref(source, item)),
             file_id,
             location,
         });
@@ -143,10 +136,13 @@ impl BuiltinDeriveExpansion {
             ItemSourceKind::ItemTree(source) => (package.item(source), source),
             ItemSourceKind::Generated(source) => {
                 let source_data = state
-                    .def_map_builder
-                    .generated_source(source.source)
+                    .generated_items
+                    .source(source.source())
                     .context("fetch generated derive input")?;
-                (source_data.item(source.item), source_data.origin_source)
+                (
+                    state.generated_items.item(source),
+                    source_data.origin_source,
+                )
             }
             ItemSourceKind::Synthetic(_) | ItemSourceKind::Body(_) => return Ok(None),
         };

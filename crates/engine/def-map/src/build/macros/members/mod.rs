@@ -132,7 +132,7 @@ impl AssociatedItemSource {
                     .items
                     .get(written.item)
             }
-            ItemSourceKind::Generated(generated) => self.generated.get(&generated.item),
+            ItemSourceKind::Generated(generated) => self.generated.get(&generated.item()),
             _ => None,
         };
         node.ok_or_else(|| ajika::Error::application("associated declaration source is missing"))

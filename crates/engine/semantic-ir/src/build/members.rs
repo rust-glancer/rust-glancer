@@ -10,6 +10,7 @@ use std::collections::HashMap;
 
 use rg_def_map::{
     AssociatedItemInput, AssociatedItemOwner, CrateDefMapReader, DefMapQuery, GeneratedSourceStore,
+    GeneratedSourceStoreId,
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, FileId, ItemOwner, ItemStoreId, ItemStoreRef};
 use rg_source::{QueryContext, ReadError};
@@ -129,9 +130,14 @@ pub fn associated_declarations(
 ) -> ajika::Result<Option<AssociatedDeclarations>> {
     let target = target_declarations(db, krate)?;
     let headers = target.items.value_ref(db)?;
-    let item_owner = match owner {
-        ItemStoreId::Trait(id) if headers.trait_data(id).is_some() => ItemOwner::Trait(id),
-        ItemStoreId::Impl(id) if headers.impl_data(id).is_some() => ItemOwner::Impl(id),
+    let (item_owner, source_store) = match owner {
+        ItemStoreId::Trait(id) if headers.trait_data(id).is_some() => (
+            ItemOwner::Trait(id),
+            GeneratedSourceStoreId::TraitMembers(id),
+        ),
+        ItemStoreId::Impl(id) if headers.impl_data(id).is_some() => {
+            (ItemOwner::Impl(id), GeneratedSourceStoreId::ImplMembers(id))
+        }
         _ => return Ok(None),
     };
     let input = target.member_inputs.value_ref(db)?.get(db, owner)?;
@@ -145,7 +151,7 @@ pub fn associated_declarations(
         let reader = TargetDeclarationReader::for_target(db, krate)?;
         let env = DefMapQuery::new(CrateDefMapReader(&reader));
         let expanded = input
-            .expand(db, krate, owner, &target.macro_scopes, &env)
+            .expand(db, krate, source_store, &target.macro_scopes, &env)
             .map_err(|error| {
                 ReadError::query_cause(error.as_ref())
                     .unwrap_or_else(|| ajika::Error::application(error.into_boxed_dyn_error()))

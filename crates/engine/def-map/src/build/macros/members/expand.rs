@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_ir_model::{CrateRef, FileId, ItemStoreId, Path};
+use rg_ir_model::{CrateRef, FileId, Path};
 use rg_item_tree::{
     BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmPayload, IncludePathExpression, ItemKind,
     ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem, file_declarations,
@@ -18,8 +18,8 @@ use rg_workspace::{CrateConfig, PackageInput};
 
 use super::{AssociatedItemInput, AssociatedItemSource};
 use crate::{
-    CrateResolutionEnv, GeneratedItemRef, GeneratedItemStore, GeneratedSourceStore, ItemSource,
-    MacroDefinitionEnv,
+    CrateResolutionEnv, GeneratedItemStore, GeneratedSourceStore, GeneratedSourceStoreId,
+    ItemSource, MacroDefinitionEnv,
     build::macros::{
         ItemOrder, MAX_MACRO_EXPANSION_DEPTH, MacroScopeData,
         generated_tree::GeneratedSourceLowering, resolve::ItemMacroResolver,
@@ -101,11 +101,13 @@ impl MemberExpansion<'_> {
 impl AssociatedItemInput {
     /// Expand one owner's member list against the settled module scopes. Members cannot add
     /// module bindings, so this work has no import-resolution fixed point and no mutable DefMap.
+    /// New expansions belong to `source_store`; existing sources retain their original identity,
+    /// including members whose entire impl was emitted by a module-level macro.
     pub fn expand(
         &self,
         db: &QueryContext<'_>,
         krate: CrateRef,
-        store: ItemStoreId,
+        source_store: GeneratedSourceStoreId,
         scopes: &ajika::Output<MacroScopeData>,
         env: &(impl CrateResolutionEnv + MacroDefinitionEnv),
     ) -> anyhow::Result<ExpandedAssociatedItems> {
@@ -121,14 +123,13 @@ impl AssociatedItemInput {
             input,
             db,
             krate,
-            store,
             scopes,
             env,
             cfg: config.cfg(),
             edition: config.edition,
             pending: Vec::new(),
             items: Vec::new(),
-            generated: GeneratedItemStore::default(),
+            generated: GeneratedItemStore::new(source_store),
             files: HashSet::from([input.source.file_id]),
         }
         .build()
@@ -141,7 +142,6 @@ struct MemberExpansionBuilder<'a, 'db, E> {
     input: &'a AssociatedItemSource,
     db: &'a QueryContext<'db>,
     krate: CrateRef,
-    store: ItemStoreId,
     scopes: &'a ajika::Output<MacroScopeData>,
     env: &'a E,
     cfg: CfgEvaluator<'a>,
@@ -383,11 +383,7 @@ impl<E: CrateResolutionEnv + MacroDefinitionEnv> MemberExpansionBuilder<'_, '_, 
                     self.pending.push(PendingMember {
                         source: ItemSource::generated(
                             parent.source.file_id,
-                            GeneratedItemRef {
-                                store: self.store,
-                                source: source_id,
-                                item: id,
-                            },
+                            self.generated.item_ref(source_id, id),
                         ),
                         item: data.items[id].clone(),
                         origin_source: parent.origin_source,

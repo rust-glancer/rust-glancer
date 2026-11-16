@@ -69,8 +69,8 @@ pub use self::{
     },
     source::{
         BodyItemSourceRef, GeneratedExpansionLocations, GeneratedItemRef, GeneratedItemStore,
-        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore, ItemSource,
-        ItemSourceKind,
+        GeneratedLocation, GeneratedLocations, GeneratedSourceId, GeneratedSourceStore,
+        GeneratedSourceStoreId, ItemSource, ItemSourceKind,
     },
     visible::{VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

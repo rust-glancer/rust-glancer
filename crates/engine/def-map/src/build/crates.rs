@@ -26,8 +26,8 @@ use super::{
     output::CrateBuildOutput,
 };
 use crate::{
-    CrateData, DefMapBuilder, ItemScopeBuilder, MacroExpansionLimitReport, MacroSourceFileRequest,
-    NameBinding, Namespace,
+    CrateData, DefMapBuilder, GeneratedItemStore, ItemScopeBuilder, MacroExpansionLimitReport,
+    MacroSourceFileRequest, NameBinding, Namespace,
 };
 
 /// Collects one crate's declarations and build-only macro work before freezing.
@@ -48,6 +48,7 @@ pub(crate) struct CrateBuilder {
     /// source files. Frozen DefMaps retain only the selected `definition_file` ids.
     pub(crate) known_module_files: Arc<KnownModuleFiles>,
     pub(crate) def_map_builder: DefMapBuilder,
+    pub(crate) generated_items: GeneratedItemStore,
     pub(crate) extern_prelude: ExternPreludeBuilder,
     pub(crate) prelude: Option<ModuleRef>,
     pub(crate) member_inputs: HashMap<AssociatedItemOwner, AssociatedItemInput>,
@@ -86,7 +87,6 @@ impl CrateBuilder {
             .iter()
             .find(|value| value.key() == "target_pointer_width")
             .and_then(|value| value.value().parse().ok());
-        let (def_map, generated_items) = self.def_map_builder.into_parts();
         let data = CrateData::new(
             self.target_kind,
             target_pointer_width,
@@ -94,11 +94,11 @@ impl CrateBuilder {
             Some(self.root_module),
             self.extern_prelude.freeze(),
             self.prelude,
-            def_map,
+            self.def_map_builder.build(),
         );
         CrateBuildOutput {
             data,
-            generated_items,
+            generated_items: self.generated_items,
             macro_scopes: self.macro_scopes,
             member_inputs: self.member_inputs,
             macro_expansion_limit,

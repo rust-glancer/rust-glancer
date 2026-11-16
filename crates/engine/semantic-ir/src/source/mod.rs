@@ -7,7 +7,10 @@
 mod ownership;
 mod resolve;
 
-use rg_def_map::{GeneratedExpansionLocations, GeneratedLocations, ItemSource, ItemSourceKind};
+use rg_def_map::{
+    GeneratedExpansionLocations, GeneratedLocations, GeneratedSourceStore, GeneratedSourceStoreId,
+    ItemSource, ItemSourceKind,
+};
 use rg_ir_model::{CrateRef, FileId, ItemStoreId, PackageSlot, SourceId, SourceLocation, Span};
 use rg_item_tree::{DeclarationSourceStore, SourceLocations, file_declaration_sources};
 use rg_source::QueryContext;
@@ -56,21 +59,19 @@ impl<'db> SavedDeclarationSourceView<'db> {
                 ItemSourceKind::Generated(generated) | ItemSourceKind::Synthetic(generated) => {
                     // Expansion slots are local to the query that produced them. The source ref
                     // routes directly to module output or one member owner, without searching others.
-                    let sources = if generated.store == ItemStoreId::Scope {
-                        target_declarations(db, krate)?
+                    let sources = match generated.source_store() {
+                        GeneratedSourceStoreId::Target => target_declarations(db, krate)?
                             .generated_sources
-                            .value_ref(db)?
-                    } else {
-                        associated_declarations(db, krate, generated.store)?
-                            .as_ref()
-                            .ok_or_else(|| {
-                                ajika::Error::application("generated source owner is absent")
-                            })?
-                            .sources
-                            .value_ref(db)?
+                            .value_ref(db)?,
+                        GeneratedSourceStoreId::TraitMembers(id) => {
+                            Self::member_sources(db, krate, ItemStoreId::Trait(id))?
+                        }
+                        GeneratedSourceStoreId::ImplMembers(id) => {
+                            Self::member_sources(db, krate, ItemStoreId::Impl(id))?
+                        }
                     };
                     let locations = sources
-                        .get(generated.source)
+                        .get(generated.source())
                         .ok_or_else(|| ajika::Error::application("generated source is absent"))?;
                     match locations {
                         GeneratedLocations::Inherited(input) => source = *input,
@@ -95,6 +96,18 @@ impl<'db> SavedDeclarationSourceView<'db> {
                 }
             }
         }
+    }
+
+    fn member_sources(
+        db: &'db QueryContext<'db>,
+        krate: CrateRef,
+        owner: ItemStoreId,
+    ) -> ajika::Result<&'db GeneratedSourceStore> {
+        associated_declarations(db, krate, owner)?
+            .as_ref()
+            .ok_or_else(|| ajika::Error::application("generated source owner is absent"))?
+            .sources
+            .value_ref(db)
     }
 
     pub fn initializer_preview(&self, occurrence: SourceId) -> Option<&'db str> {

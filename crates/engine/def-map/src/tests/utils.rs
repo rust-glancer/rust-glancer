@@ -783,7 +783,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         match source.kind {
             ItemSourceKind::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
             ItemSourceKind::Generated(item_ref) | ItemSourceKind::Synthetic(item_ref) => {
-                format!("generated#{}:{}", item_ref.source.0, item_ref.item.0)
+                format!("generated#{}:{}", item_ref.source().0, item_ref.item().0)
             }
             ItemSourceKind::Body(_) => panic!("Body is not expected"),
         }

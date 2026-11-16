@@ -16,8 +16,7 @@ use std::{borrow::Cow, collections::HashSet, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use rg_ir_model::{
-    CrateRef, DefId, DefMapRef, FileId, ItemStoreId, LocalDefId, LocalDefRef, LocalImplId,
-    ModuleId, ModuleRef,
+    CrateRef, DefId, DefMapRef, FileId, LocalDefId, LocalDefRef, LocalImplId, ModuleId, ModuleRef,
 };
 use rg_item_tree::{
     EnumItem, ExternBlockItem, ExternCrateItem, FunctionItem, ImportAlias, ItemKind, ItemNode,
@@ -29,8 +28,8 @@ use rg_text::Name;
 use rg_workspace::TargetKind;
 
 use crate::{
-    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
-    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath, ItemSource,
+    ItemSourceKind, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
     MacroSourceFileRequest, ModuleBuilder, ModuleDocumentation, ModuleFileSelection, ModuleOrigin,
     NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
     build::{
@@ -138,23 +137,18 @@ impl<'a> DeclarationCollector<'a> {
         self.changed = true;
         let items = self
             .state
-            .def_map_builder
-            .generated_source(generated_source)
+            .generated_items
+            .source(generated_source)
             .expect("new generated source should exist")
             .top_level
-            .clone();
+            .iter()
+            .map(|&item| self.state.generated_items.item_ref(generated_source, item))
+            .collect::<Vec<_>>();
         self.collect_items(
             origin.module,
-            items.into_iter().map(|item| {
-                ItemSource::generated(
-                    origin.file_id,
-                    GeneratedItemRef {
-                        store: ItemStoreId::Scope,
-                        source: generated_source,
-                        item,
-                    },
-                )
-            }),
+            items
+                .into_iter()
+                .map(|item| ItemSource::generated(origin.file_id, item)),
             |index| origin.order.generated_child(index),
             origin.module_file_context,
         )?;
@@ -188,9 +182,8 @@ impl<'a> DeclarationCollector<'a> {
             ),
             ItemSourceKind::Generated(source) => Cow::Owned(
                 self.state
-                    .def_map_builder
-                    .generated_source(source.source)
-                    .and_then(|data| data.item(source.item))
+                    .generated_items
+                    .item(source)
                     .expect("generated item should exist while collecting declarations")
                     .clone(),
             ),
@@ -339,8 +332,8 @@ impl<'a> DeclarationCollector<'a> {
         let (source, dollar_crate) = match source.kind {
             ItemSourceKind::Generated(generated) => (
                 self.state
-                    .def_map_builder
-                    .generated_source(generated.source)
+                    .generated_items
+                    .source(generated.source())
                     .expect("generated call source should exist")
                     .origin_source,
                 self.dollar_crate,
@@ -745,8 +738,8 @@ impl<'a> DeclarationCollector<'a> {
             ItemSourceKind::ItemTree(written) => written,
             ItemSourceKind::Generated(generated) => {
                 self.state
-                    .def_map_builder
-                    .generated_source(generated.source)
+                    .generated_items
+                    .source(generated.source())
                     .expect("generated owner source exists")
                     .origin_source
             }

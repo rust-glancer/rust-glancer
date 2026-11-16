@@ -70,7 +70,7 @@ impl GeneratedOrigin {
             expansion,
         )
         .context("lower macro expansion declarations")?;
-        let source = state.def_map_builder.alloc_generated_source(source);
+        let source = state.generated_items.alloc_source(source);
         let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         let result = DeclarationCollector::new(
             state,
