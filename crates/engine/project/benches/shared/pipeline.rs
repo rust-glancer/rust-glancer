@@ -12,9 +12,9 @@ use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, Seman
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
 use rg_parse::{SavedSourceReader, saved_syntax};
 use rg_semantic_ir::{
-    AssociatedItemStore, CrateItemSource, ItemLookupEnv, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData,
-    body_owners, target_declarations,
+    AssociatedItemStore, CrateItemSource, ItemLookupEnv, LookupAnswer, LookupQuestion,
+    SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData, body_owners,
+    target_declarations,
 };
 use rg_source::{
     QueryContext, QueryDatabase, QueryServices, ReadError, SourceInput, SourcePresence,
@@ -240,12 +240,10 @@ impl CrateItemSource for Declarations {
         )))
     }
 
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self.items.get(&krate).map(|data| data.items.lang_items()))
-    }
-
-    fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
-        Ok(self.items.get(&krate).map(|data| &data.lookup_env))
+    fn lookup_env(&self, _krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
+        Err(ReadError::Query(ajika::Error::contract(
+            "lookup preparation is outside the header benchmark",
+        )))
     }
 
     fn lookup_candidates(
@@ -254,8 +252,7 @@ impl CrateItemSource for Declarations {
         question: &LookupQuestion,
     ) -> Result<LookupAnswer, ReadError> {
         let indexes = self.items[&use_site]
-            .lookup_env
-            .visible_crates()
+            .visible_crates
             .iter()
             .filter_map(|krate| self.items.get(krate).map(|data| &data.lookup));
         question.answer(

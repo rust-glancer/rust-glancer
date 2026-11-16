@@ -1,7 +1,7 @@
 //! Candidate lookup over one use site's saved visibility.
 //!
-//! Preparing a lookup reads only its small visibility and language-item environment. Candidate
-//! questions go through the source that owns the indexes. Lookup only selects declarations;
+//! Lookup retains a small environment of final language-item identities. Candidate questions go
+//! through the source that owns visibility and candidate indexes. Lookup only selects declarations;
 //! type reasoning still proves their applicability.
 
 use rg_ir_model::{
@@ -17,7 +17,7 @@ use super::{
     ItemStoreQuery, SemanticItemSource,
     candidates::{LookupAnswer, LookupQuestion},
 };
-use crate::{ItemLookupEnv, ItemReader, TraitImplSelfHead, item::lang_item::LangItemTarget};
+use crate::{ItemLookupEnv, ItemReader, TraitImplSelfHead};
 
 /// A use-site view. Candidate answers have the same error channel as its semantic source.
 #[derive(Debug, Clone)]
@@ -61,9 +61,7 @@ impl<'item> ItemLookupQuery<'item> {
     }
     /// Returns the exact visible nominal type carrying one compiler language identity.
     pub fn lang_type(&self, lang_item: LangItem) -> Option<TypeDefRef> {
-        let LangItemTarget::Item(SemanticItemRef::TypeDef(type_ref)) =
-            self.lookup_env.lang_item(lang_item)?
-        else {
+        let SemanticItemRef::TypeDef(type_ref) = self.lookup_env.lang_item(lang_item)? else {
             return None;
         };
         Some(type_ref)
@@ -71,37 +69,26 @@ impl<'item> ItemLookupQuery<'item> {
 
     /// Returns the exact visible trait carrying one compiler language identity.
     pub fn lang_trait(&self, lang_item: LangItem) -> Option<TraitDefRef> {
-        let LangItemTarget::Item(SemanticItemRef::Trait(trait_ref)) =
-            self.lookup_env.lang_item(lang_item)?
-        else {
+        let SemanticItemRef::Trait(trait_ref) = self.lookup_env.lang_item(lang_item)? else {
             return None;
         };
         Some(trait_ref)
     }
 
-    fn lang_member(&self, lang_item: LangItem) -> Result<Option<SemanticItemRef>, ReadError> {
-        match self.lookup_env.lang_item(lang_item) {
-            Some(target) => target.resolve(|owner| self.items.associated_items(owner)),
-            None => Ok(None),
+    /// Find a function by its compiler language identity, including associated functions.
+    pub fn lang_function(&self, lang_item: LangItem) -> Option<FunctionRef> {
+        match self.lookup_env.lang_item(lang_item)? {
+            SemanticItemRef::Function(function) => Some(function),
+            _ => None,
         }
     }
 
-    /// Find a function by its compiler language identity. Unlike nominal types and traits, the
-    /// function can be a deferred member, so this may read or build its owner's member store.
-    pub fn lang_function(&self, lang_item: LangItem) -> Result<Option<FunctionRef>, ReadError> {
-        Ok(match self.lang_member(lang_item)? {
-            Some(SemanticItemRef::Function(function)) => Some(function),
-            _ => None,
-        })
-    }
-
     /// Find an associated type such as `Deref::Target` by its compiler language identity.
-    /// Its real member ID is obtained from the owner store, which may need to be built first.
-    pub fn lang_type_alias(&self, lang_item: LangItem) -> Result<Option<TypeAliasRef>, ReadError> {
-        Ok(match self.lang_member(lang_item)? {
-            Some(SemanticItemRef::TypeAlias(alias)) => Some(alias),
+    pub fn lang_type_alias(&self, lang_item: LangItem) -> Option<TypeAliasRef> {
+        match self.lookup_env.lang_item(lang_item)? {
+            SemanticItemRef::TypeAlias(alias) => Some(alias),
             _ => None,
-        })
+        }
     }
 
     /// Expands visible inherent impls to their function items through the caller's query source.

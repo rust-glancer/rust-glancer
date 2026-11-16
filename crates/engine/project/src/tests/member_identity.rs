@@ -10,7 +10,7 @@ use rg_item_tree::LangItem;
 use rg_semantic_ir::{GenericsQuery, ItemLookupQuery, ItemReader, ItemStoreQuery};
 use rg_std::CancellationToken;
 
-use crate::{Project, testonly::ProjectSourceFixture};
+use crate::{Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
 fn member_identity_survives_access_order_editor_bodies_and_restart() {
@@ -211,7 +211,6 @@ fn calls() {
                 .expect("language items");
             let output = lookup
                 .lang_type_alias(LangItem::FnOnceOutput)
-                .expect("language item query")
                 .expect("associated language item");
             let ItemStoreId::Trait(id) = output.store.id else {
                 panic!("trait member identity");
@@ -236,6 +235,93 @@ fn calls() {
     drop(project);
     let restarted = fixture.build_project();
     assert_eq!(check(&restarted, true, false), identities);
+}
+
+#[test]
+fn lang_item_identity_follows_expanded_members_through_saves_and_restart() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /src/lib.rs crate:lang_items
+#[lang = "fn_once"]
+pub trait Callable<Args> {
+    include!("prefix.rs");
+    #[lang = "fn_once_output"] type Output;
+}
+pub trait IntoIterator {
+    include!("prefix.rs");
+    type Item;
+    type IntoIter;
+    #[lang = "into_iter"] fn into_iter(self) -> Self::IntoIter;
+}
+
+//- /src/prefix.rs
+type Before;
+fn before(&self);
+"#,
+    );
+    let check = |project: &Project| {
+        project.inspect(|snapshot| {
+            let context = snapshot
+                .file_context_for_path(fixture.path("src/lib.rs"))
+                .expect("route source")
+                .expect("target");
+            let reader = ItemReader(snapshot.declarations());
+            let lookup =
+                ItemLookupQuery::build_from(reader, context.crate_ref, &CancellationToken::new())
+                    .expect("prepared lookup");
+            let output = lookup
+                .lang_type_alias(LangItem::FnOnceOutput)
+                .expect("Output identity");
+            let into_iter = lookup
+                .lang_function(LangItem::IntoIter)
+                .expect("into_iter identity");
+            let items = ItemStoreQuery::new(&reader);
+            assert_eq!(
+                items
+                    .type_alias_data(output)
+                    .expect("alias read")
+                    .expect("alias")
+                    .name
+                    .as_str(),
+                "Output"
+            );
+            assert_eq!(
+                items
+                    .function_data(into_iter)
+                    .expect("function read")
+                    .expect("function")
+                    .name
+                    .as_str(),
+                "into_iter"
+            );
+            (output, into_iter)
+        })
+    };
+
+    let mut project = fixture.build_project();
+    let original = check(&project);
+    let prefix = fixture.path("src/prefix.rs");
+
+    // Moving source locations preserves the identities exposed by the prepared environment.
+    fs::write(&prefix, "\n\ntype Before;\nfn before(&self);\n").expect("move members");
+    project
+        .apply_changes([SavedFileChange::fs_path(&prefix)])
+        .expect("publish source movement");
+    assert_eq!(check(&project), original);
+
+    // Extra macro output precedes both language items. The prepared references must follow the
+    // declarations after member allocation changes, including when restored from the saved cache.
+    fs::write(
+        &prefix,
+        "type Before; type Another; fn before(&self); fn another(&self);\n",
+    )
+    .expect("insert members");
+    project
+        .apply_changes([SavedFileChange::fs_path(&prefix)])
+        .expect("publish expanded members");
+    let changed = check(&project);
+    drop(project);
+    assert_eq!(check(&fixture.build_project()), changed);
 }
 
 #[test]

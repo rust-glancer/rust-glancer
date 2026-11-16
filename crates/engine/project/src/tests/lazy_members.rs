@@ -19,7 +19,10 @@ fn file_local_requests_preserve_lazy_member_capture() {
             r#"
 //- /src/lib.rs crate:lazy_file_queries
 mod other;
-trait Service { fn required(&self); }
+trait Service {
+    #[lang = "fn_once_output"] type Output;
+    fn required(&self);
+}
 struct Selected;
 impl Service for Selected { $completion$ }
 impl Selected { fn visible() {} }

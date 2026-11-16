@@ -3,6 +3,7 @@
 mod body_owners;
 pub(crate) mod impl_headers;
 mod item_store;
+mod lang_items;
 mod lookup;
 mod lower_crate;
 mod members;

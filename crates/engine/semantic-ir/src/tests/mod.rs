@@ -16,7 +16,10 @@ use self::utils::{
     SemanticQuery, check_project_semantic_ir, check_project_semantic_queries,
     check_project_semantic_queries_with_sysroot,
 };
-use crate::{CrateItemSource as _, ItemLookupQuery, testonly::SemanticIrFixture};
+use crate::{
+    CrateItemSource as _, ItemLookupQuery, ItemStoreQuery, target_declarations,
+    testonly::SemanticIrFixture,
+};
 
 #[test]
 fn indexed_lookup_env_keeps_language_items_per_use_site() {
@@ -24,15 +27,21 @@ fn indexed_lookup_env_keeps_language_items_per_use_site() {
         r#"
 //- /dep/src/lib.rs crate:dep root:dep
 #[lang = "deref"]
-pub trait DependencyDeref {}
+pub trait DependencyDeref {
+    #[lang = "deref_target"] type DependencyTarget;
+}
 
 //- /app/src/lib.rs crate:app root:app deps:dep
 #[lang = "deref"]
-pub trait LibraryDeref {}
+pub trait LibraryDeref {
+    #[lang = "deref_target"] type LibraryTarget;
+}
 
 //- /app/src/main.rs crate:app root:app deps:dep kind:bin
 #[lang = "deref"]
-trait BinaryDeref {}
+trait BinaryDeref {
+    #[lang = "deref_target"] type BinaryTarget;
+}
 
 fn main() {}
 "#,
@@ -45,25 +54,45 @@ fn main() {}
         ]
         .map(|(package, kind)| view.crate_ref(package, kind));
         let items = view.items();
+        let declarations = ItemStoreQuery::new(&items);
         let cancellation = CancellationToken::new();
 
         // Each target's local language item wins over dependencies. Interleaving repeated queries
         // also checks that sharing the query cache does not mix library and binary choices.
-        for use_site in [library, dependency, binary, binary, dependency, library] {
-            let expected = view
-                .all_items(DefMapRef::Crate(use_site))
-                .iter()
-                .find_map(|item| match item.item() {
-                    SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
-                    _ => None,
-                })
-                .expect("target declares its language item");
+        // This fixture does not run project startup. Preparing lookup must work directly too.
+        for (use_site, prefix) in [
+            (library, "Library"),
+            (dependency, "Dependency"),
+            (binary, "Binary"),
+            (binary, "Binary"),
+            (dependency, "Dependency"),
+            (library, "Library"),
+        ] {
             let query = ItemLookupQuery::build_from(items, use_site, &cancellation)
                 .expect("target lookup succeeds");
+            let trait_ref = query.lang_trait(LangItem::Deref).expect("Deref identity");
+            let alias_ref = query
+                .lang_type_alias(LangItem::DerefTarget)
+                .expect("Target identity");
             assert_eq!(
-                query.lang_trait(LangItem::Deref),
-                Some(expected),
-                "wrong language item for {use_site:?}",
+                declarations
+                    .trait_data(trait_ref)
+                    .expect("trait read")
+                    .expect("trait")
+                    .name
+                    .as_str(),
+                format!("{prefix}Deref"),
+                "wrong trait for {use_site:?}",
+            );
+            assert_eq!(
+                declarations
+                    .type_alias_data(alias_ref)
+                    .expect("alias read")
+                    .expect("alias")
+                    .name
+                    .as_str(),
+                format!("{prefix}Target"),
+                "wrong associated type for {use_site:?}",
             );
         }
     });
@@ -352,14 +381,12 @@ pub struct Parser;
         let runtime = view.crate_ref("runtime", TargetKind::Lib);
         let derive_macro = view.crate_ref("derive_macro", TargetKind::ProcMacro);
         let parser = view.crate_ref("parser", TargetKind::Lib);
-        let items = view.items();
         let visible_from = |use_site| {
-            let mut crates = items
-                .0
-                .lookup_env(use_site)
-                .expect("target lookup environment should load")
-                .expect("target lookup environment should exist")
-                .visible_crates()
+            let mut crates = target_declarations(view.db(), use_site)
+                .expect("target declarations should build")
+                .visible_crates
+                .value_ref(view.db())
+                .expect("target visibility should load")
                 .as_slice()
                 .to_vec();
             crates.sort_by_key(|crate_ref| (crate_ref.package.0, crate_ref.crate_id.0));

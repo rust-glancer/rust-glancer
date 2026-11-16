@@ -2,7 +2,7 @@
 
 use rg_ir_model::CrateRef;
 use rg_profile::{ProfileMeasurement, ProfileThreadContext};
-use rg_semantic_ir::target_declarations;
+use rg_semantic_ir::{ItemLookupEnv, target_declarations};
 use rg_source::{QueryDatabase, SourceInput};
 use rg_workspace::WorkspaceMetadata;
 
@@ -27,7 +27,11 @@ pub(crate) fn build_state(
         let profile = ProfileThreadContext::capture();
         let declarations = db.parallel_map(&targets, |db, &target| {
             let _profile = profile.enter();
-            target_declarations(db, target)?.metadata.value(db)
+            let metadata = target_declarations(db, target)?.metadata.value(db)?;
+            // Lang items need final member IDs before the project is published. Preparation can
+            // expand selected owners and capture includes, so it precedes source validation too.
+            ItemLookupEnv::for_crate(db, target)?;
+            Ok(metadata)
         })?;
         timer.finish();
         // Warm replay can capture inputs while checking old dependencies. Validate the resulting

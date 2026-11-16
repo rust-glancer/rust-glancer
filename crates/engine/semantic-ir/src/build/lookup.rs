@@ -31,9 +31,9 @@ fn lookup_preparation(
     use_site: CrateRef,
 ) -> ajika::Result<LookupPreparation> {
     let declarations = target_declarations(db, use_site)?;
-    let env = declarations.lookup_env.value_ref(db)?;
+    let visible = declarations.visible_crates.value_ref(db)?;
     let mut indexes = Vec::new();
-    for &krate in env.visible_crates() {
+    for &krate in visible {
         db.check_cancelled()?;
         let declarations = target_declarations(db, krate)?;
         indexes.push(PreparedLookupIndex {

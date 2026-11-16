@@ -2,9 +2,9 @@ use std::{collections::HashMap, fmt::Write as _, iter, sync::Arc};
 
 use expect_test::Expect;
 use rg_def_map::{
-    DefMap, DefMapBuilder, DefMapQuery, DefMapSource, GeneratedItemRef, GeneratedSourceId,
-    ItemSource, ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin,
-    NameBinding, NameBindingProvenance, Namespace, NamespaceSet, Visibility,
+    DefMap, DefMapBuilder, DefMapSource, GeneratedItemRef, GeneratedSourceId, ItemSource,
+    ItemSourceKind, LocalDefData, LocalDefKind, ModuleBuilder, ModuleOrigin, NameBinding,
+    NameBindingProvenance, Namespace, NamespaceSet, Visibility,
 };
 use rg_ir_model::{
     AssocItemId, CrateId, CrateRef, DefId, DefMapRef, FileId, FloatTy, FunctionRef, GenericDefRef,
@@ -22,9 +22,9 @@ use rg_item_tree::{
 use rg_semantic_ir::{
     AssociatedItemStore, AssociatedItemStoreBuilder, CrateItemSource, FunctionData,
     FunctionSignature, GenericParamSource, GenericsQuery, ImplData, ItemLookupEnv, ItemLookupIndex,
-    ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemSource, SemanticItemView, SourceSelection, StructData,
-    SymbolNameIndex, TraitData, TypeAliasData, TypeAliasSignature,
+    ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LookupAnswer, LookupQuestion,
+    SemanticItemSource, SemanticItemView, SourceSelection, StructData, SymbolNameIndex, TraitData,
+    TypeAliasData, TypeAliasSignature,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
@@ -248,10 +248,6 @@ impl CrateItemSource for TraitSelectionFixture {
                     .is_none_or(|file| item.source().file_id == file)
             })
             .collect())
-    }
-
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        Ok(self.crate_items(krate).map(ItemStore::lang_items))
     }
 
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
@@ -942,6 +938,7 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             members,
             target: target(),
             lookup_index: ItemLookupIndex::default(),
+            // This semantic fixture declares no lang attributes; source-based fixtures cover them.
             lookup_env: ItemLookupEnv::default(),
             dependencies: Vec::new(),
             function_refs,
@@ -968,18 +965,6 @@ impl<'a> TraitSelectionFixtureParser<'a> {
                 .trait_refs_by_name
                 .insert(data.name.to_string(), trait_ref);
         }
-        // The fixture skips semantic package indexing, so build the saved lookup environment here
-        // before constructing the lookup index used by trait queries.
-        let lookup_env = ItemLookupEnv::build(
-            DefMapQuery::new(&fixture)
-                .item_lookup_crates_from(fixture.target)
-                .expect("fixture crate visibility should resolve"),
-            &fixture.store,
-            ItemReader(&fixture),
-            || Ok(()),
-        )
-        .expect("fixture lookup environment should build");
-        fixture.lookup_env = lookup_env;
         fixture.lookup_index =
             ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new(), &fixture.members);
         fixture

@@ -7,8 +7,8 @@ use rg_source::ReadError;
 use rg_std::CancellationToken;
 
 use crate::{
-    AssociatedItemStore, ItemLookupEnv, LangItemIndex, LookupAnswer, LookupQuestion,
-    SemanticItemSource, SemanticItemView, SourceSelection, SymbolNameData, SymbolNameIndex,
+    AssociatedItemStore, ItemLookupEnv, LookupAnswer, LookupQuestion, SemanticItemSource,
+    SemanticItemView, SourceSelection, SymbolNameData, SymbolNameIndex,
 };
 
 /// Acquire item, language-item and lookup payloads independently, or enumerate their targets.
@@ -35,7 +35,6 @@ pub trait CrateItemSource: Sync {
         origin: DefMapRef,
         selection: SourceSelection,
     ) -> Result<Vec<SemanticItemView<'_>>, ReadError>;
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError>;
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError>;
     fn lookup_candidates(
         &self,
@@ -93,10 +92,6 @@ impl<'a> ItemReader<'a> {
         selection: SourceSelection,
     ) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         self.0.source_items(origin, selection)
-    }
-
-    pub(crate) fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        self.0.lang_items(krate)
     }
 
     /// Search names before acquiring signatures. Macro owners contribute discovered names;

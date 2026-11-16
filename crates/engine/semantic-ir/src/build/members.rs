@@ -2,8 +2,9 @@
 //!
 //! Target indexing publishes the headers first. For `impl<T> Bag<T> { methods!(); }`, the header
 //! already describes `Bag<T>` and its generics, but the functions emitted by `methods!()` belong
-//! to a separate query. That query expands the member list and lowers its declarations only when
-//! a reader asks for them. Body lowering and inference remain separate work after that.
+//! to a separate query. That query expands the member list and lowers its declarations when asked.
+//! Project preparation asks for owners with written lang items; other owners wait for a reader.
+//! Body lowering and inference remain separate work after that.
 
 use std::collections::HashMap;
 
@@ -16,8 +17,8 @@ use rg_std::Shrink as _;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, SavedSourceResolver,
-    SourceSelection, TargetDeclarationReader, target_declarations,
+    AssociatedItemStore, AssociatedItemStoreBuilder, BodyOwnerData, ItemStore, LangItemIndex,
+    SavedSourceResolver, SourceSelection, TargetDeclarationReader, target_declarations,
 };
 
 const OWNERS_PER_PAGE: usize = 64;
@@ -104,6 +105,8 @@ impl AssociatedItemInputs {
 #[ajika::output]
 pub struct AssociatedDeclarations {
     items: AssociatedItemStore,
+    /// Final identities can be read without acquiring signatures or source maps.
+    lang_items: LangItemIndex,
     sources: GeneratedSourceStore,
     /// The owner's file and readable include files reached while expanding its members.
     /// These files may be absent from the module file manifest produced at startup.
@@ -132,7 +135,12 @@ pub fn associated_declarations(
         _ => return Ok(None),
     };
     let input = target.member_inputs.value_ref(db)?.get(db, owner)?;
+    let store = ItemStoreRef {
+        origin: DefMapRef::Crate(krate),
+        id: owner,
+    };
     let mut builder = AssociatedItemStoreBuilder::default();
+    let mut lang_items = LangItemIndex::default();
     let (mut sources, files) = {
         let reader = TargetDeclarationReader::for_target(db, krate)?;
         let env = DefMapQuery::new(CrateDefMapReader(&reader));
@@ -143,19 +151,20 @@ pub fn associated_declarations(
                     .unwrap_or_else(|| ajika::Error::application(error.into_boxed_dyn_error()))
             })?;
         for (source, item) in expanded.items {
-            builder.lower(source, item_owner, &item);
+            if let Some(id) = builder.lower(source, item_owner, &item)
+                && let Some(lang_item) = item.lang_item
+            {
+                lang_items.insert(lang_item, id.semantic_ref(store));
+            }
         }
         (expanded.sources, expanded.files)
     };
     let mut items = builder.build();
     items.shrink_to_fit();
+    lang_items.shrink_to_fit();
     sources.shrink_to_fit();
-    let store = ItemStoreRef {
-        origin: DefMapRef::Crate(krate),
-        id: owner,
-    };
     let bodies: Vec<_> = BodyOwnerData::for_members(headers, &items, store).collect();
-    AssociatedDeclarations::new(db, items, sources, files, bodies).map(Some)
+    AssociatedDeclarations::new(db, items, lang_items, sources, files, bodies).map(Some)
 }
 
 /// Gather body metadata through the same source selection used by signature scans. Owners are

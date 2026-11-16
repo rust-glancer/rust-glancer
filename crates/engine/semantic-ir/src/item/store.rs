@@ -30,7 +30,7 @@ pub struct ItemStoreBuilder {
     pub type_aliases: Arena<TypeAliasId, TypeAliasData>,
     pub consts: Arena<ConstId, ConstData>,
     pub statics: Arena<StaticId, StaticData>,
-    pub(crate) lang_items: LangItemIndex,
+    lang_items: LangItemIndex,
 }
 
 impl ItemStoreBuilder {
@@ -124,7 +124,7 @@ pub struct ItemStore {
     type_aliases: Arena<TypeAliasId, TypeAliasData>,
     consts: Arena<ConstId, ConstData>,
     statics: Arena<StaticId, StaticData>,
-    pub(crate) lang_items: LangItemIndex,
+    lang_items: LangItemIndex,
 }
 
 impl ItemStore {
@@ -170,7 +170,7 @@ impl ItemStore {
         self.local_items.get(local_def).copied().flatten()
     }
 
-    pub fn lang_items(&self) -> &LangItemIndex {
+    pub(crate) fn lang_items(&self) -> &LangItemIndex {
         &self.lang_items
     }
 

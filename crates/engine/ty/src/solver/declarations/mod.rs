@@ -739,12 +739,9 @@ where
     fn lang_item(&self, item: LangItem) -> Option<DefId> {
         let (context, _) = self.solving?;
         if item == LangItem::DerefTarget {
-            return self
-                .load(|| {
-                    context
-                        .item_lookup()
-                        .lang_type_alias(rg_item_tree::LangItem::DerefTarget)
-                })
+            return context
+                .item_lookup()
+                .lang_type_alias(rg_item_tree::LangItem::DerefTarget)
                 .map(DefId::TypeAlias);
         }
         let source = match item {

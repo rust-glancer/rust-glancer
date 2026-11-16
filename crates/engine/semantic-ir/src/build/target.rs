@@ -16,7 +16,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{ItemKind, ItemTrees};
 use rg_source::{QueryContext, ReadError};
-use rg_std::{MemorySize, Shrink as _};
+use rg_std::{MemorySize, Shrink as _, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -27,8 +27,8 @@ use super::{
 };
 use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
-    ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
-    LookupKeys, LookupQuestion, SavedSourceResolver, SemanticItemSource, SemanticItemView,
+    ItemLookupShard, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer, LookupKeys,
+    LookupQuestion, SavedSourceResolver, SemanticItemSource, SemanticItemView,
     SourceOwnershipIndex, SourceSelection, SymbolNameData, SymbolNameIndex,
     item::AssociatedItemHints,
 };
@@ -60,8 +60,8 @@ pub struct TargetSourceFiles {
 ///
 /// `items` contains module declarations and trait/impl headers. Their associated declarations
 /// are separate owner queries: this result keeps the inputs and macro scopes needed to build
-/// them, along with cheap name hints for deciding which owners to open. Those member queries
-/// are left for readers that need their declarations or include files.
+/// them, along with cheap name hints for deciding which owners to open. Lang-item preparation
+/// demands the selected owners after this query completes; other owners wait for their readers.
 #[ajika::output]
 pub struct TargetDeclarations {
     metadata: TargetDeclarationMetadata,
@@ -70,8 +70,12 @@ pub struct TargetDeclarations {
     generated_sources: GeneratedSourceStore,
     member_inputs: AssociatedItemInputs,
     macro_scopes: MacroScopeData,
-    lang_items: LangItemIndex,
-    lookup_env: ItemLookupEnv,
+    /// Module-level identities are already allocated; member identities come from their owners.
+    scope_lang_items: LangItemIndex,
+    /// Owners with written lang attributes, selected without predicting their member IDs.
+    lang_item_owners: Vec<ItemStoreId>,
+    /// Visibility is available without preparing lang items or acquiring member declarations.
+    visible_crates: UniqueVec<CrateRef>,
     lookup_shards: Vec<ajika::Output<ItemLookupShard>>,
     lookup_keys: LookupKeys,
     body_owners: Vec<BodyOwnerData>,
@@ -95,7 +99,8 @@ pub fn target_declarations(
     let mut data = built.data;
     let TargetItemData {
         items,
-        lookup_env,
+        visible_crates,
+        lang_item_owners,
         lookup,
         generated_sources,
         symbol_names,
@@ -132,7 +137,7 @@ pub fn target_declarations(
         },
         macro_expansion_limit: built.macro_expansion_limit,
     };
-    let lang_items = items.lang_items().clone();
+    let scope_lang_items = items.lang_items().clone();
     let member_inputs = AssociatedItemInputs::publish(db, &items, built.member_inputs)?;
     let (lookup_keys, shards) = lookup.into_parts();
     let lookup_shards = shards
@@ -148,8 +153,9 @@ pub fn target_declarations(
         generated_sources,
         member_inputs,
         built.macro_scopes,
-        lang_items,
-        lookup_env,
+        scope_lang_items,
+        lang_item_owners,
+        visible_crates,
         lookup_shards,
         lookup_keys,
         body_owners,
@@ -162,7 +168,8 @@ pub fn target_declarations(
 /// searching names does not acquire lookup tables, member signatures, or generated source maps.
 pub struct TargetItemData {
     pub items: ItemStore,
-    pub lookup_env: ItemLookupEnv,
+    pub visible_crates: UniqueVec<CrateRef>,
+    pub lang_item_owners: Vec<ItemStoreId>,
     pub lookup: ItemLookupIndex,
     pub generated_sources: GeneratedSourceStore,
     pub symbol_names: SymbolNameIndex,
@@ -184,6 +191,7 @@ impl TargetItemData {
         let mut items = ItemStore::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
         let mut lookup_hints = HashMap::new();
+        let mut lang_item_owners = Vec::new();
         let mut source_ownership = SourceOwnershipIndex::default();
         let mut symbol_names = SymbolNameIndex {
             declarations: SymbolNameData::for_target(&items, data.def_map()),
@@ -213,12 +221,9 @@ impl TargetItemData {
                 .ok_or_else(|| ajika::Error::contract("collected owner has no member input"))?;
             let mut hints = AssociatedItemHints::default();
             let mut written_names = Vec::new();
-            for (source, item) in input.declarations(db, items.crate_ref())? {
-                if let Some(lang_item) = item.lang_item {
-                    items
-                        .lang_items
-                        .insert_member(lang_item, owner, source, &item.kind);
-                }
+            let mut has_lang_items = false;
+            for (_, item) in input.declarations(db, items.crate_ref())? {
+                has_lang_items |= item.lang_item.is_some();
                 match &item.kind {
                     ItemKind::Function(_) => hints.functions.extend(item.name.clone()),
                     ItemKind::Const(_) => hints.consts.extend(item.name.clone()),
@@ -232,6 +237,14 @@ impl TargetItemData {
                 // Match the name retained by semantic lowering for incomplete declarations too.
                 written_names.push(item.name.clone().unwrap_or_else(Name::missing));
             }
+            // The owner query will allocate final IDs and validate each attribute's target kind.
+            // Keep only the owner here: preceding macro expansions can shift a member's ID.
+            // TODO: Discover lang attributes hidden entirely inside unselected member macros
+            // without expanding every owner. Opening unrelated stores must not change the index.
+            if has_lang_items {
+                lang_item_owners.push(owner.id);
+            }
+
             // Reuse the lookup-hint walk for symbol search. Member lowering assigns the final
             // IDs, so these written names select a whole owner, not syntax-order IDs.
             if hints.has_macros {
@@ -260,9 +273,6 @@ impl TargetItemData {
             impl_header_resolutions(&items, &ItemResolutionQuery::new(definitions, local))?;
         let visible_crates =
             DefMapQuery::new(definitions).item_lookup_crates_from(items.crate_ref())?;
-        let env = ItemLookupEnv::build(visible_crates, &items, ItemReader(dependencies), || {
-            db.check_cancelled().map_err(ReadError::Query)
-        })?;
 
         let mut self_heads = HashMap::new();
         for header in headers {
@@ -279,9 +289,11 @@ impl TargetItemData {
         items.shrink_to_fit();
         lookup.shrink_to_fit();
         symbol_names.shrink_to_fit();
+        lang_item_owners.shrink_to_fit();
         Ok(Self {
             items,
-            lookup_env: env,
+            visible_crates,
+            lang_item_owners,
             lookup,
             generated_sources,
             symbol_names,
@@ -505,13 +517,12 @@ impl CrateItemSource for TargetDeclarationReader<'_> {
         Ok(selected)
     }
 
-    fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
-        self.acquire(krate, |result| &result.lang_items)
-            .map_err(ReadError::Query)
-    }
-
     fn lookup_env(&self, krate: CrateRef) -> Result<Option<&ItemLookupEnv>, ReadError> {
-        self.acquire(krate, |result| &result.lookup_env)
+        if !self.targets.contains(&krate) {
+            return Ok(None);
+        }
+        ItemLookupEnv::for_crate(self.db, krate)
+            .map(Some)
             .map_err(ReadError::Query)
     }
 
