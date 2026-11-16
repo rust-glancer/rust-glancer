@@ -20,6 +20,7 @@ mod store;
 mod type_path_resolution;
 mod view;
 
+pub(crate) use self::associated::AssociatedItemHints;
 pub use self::{
     associated::{AssociatedItemStore, AssociatedItemStoreBuilder},
     context::{SelfTypeOwner, TypePathContext},

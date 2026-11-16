@@ -610,7 +610,7 @@ where
                 let Some(function) = self
                     .context
                     .item_lookup_query()
-                    .lang_function(LangItem::IntoIter)
+                    .lang_function(LangItem::IntoIter)?
                 else {
                     return Ok(true);
                 };

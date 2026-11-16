@@ -23,8 +23,8 @@ use rg_semantic_ir::{
     AssociatedItemStore, AssociatedItemStoreBuilder, CrateItemSource, FunctionData,
     FunctionSignature, GenericParamSource, GenericsQuery, ImplData, ItemLookupEnv, ItemLookupIndex,
     ItemLookupQuery, ItemReader, ItemStore, ItemStoreBuilder, LangItemIndex, LookupAnswer,
-    LookupQuestion, SemanticItemSource, SemanticItemView, StructData, SymbolNameData, TraitData,
-    TypeAliasData, TypeAliasSignature,
+    LookupQuestion, SemanticItemSource, SemanticItemView, StructData,
+    SymbolNameData, TraitData, TypeAliasData, TypeAliasSignature,
 };
 use rg_source::ReadError;
 use rg_std::{CancellationToken, ExpectedUnique, UniqueVec};
@@ -41,6 +41,7 @@ use crate::{
 pub(super) struct TraitSelectionFixture {
     def_map: DefMap,
     pub(super) store: ItemStore,
+    members: HashMap<ItemStoreId, AssociatedItemStore>,
     pub(super) target: CrateRef,
     lookup_index: ItemLookupIndex,
     lookup_env: ItemLookupEnv,
@@ -73,14 +74,19 @@ impl TraitSelectionFixture {
         self.dependency(krate).map(|dependency| &dependency.store)
     }
 
+    fn member_store(&self, store: ItemStoreRef) -> Option<&AssociatedItemStore> {
+        let krate = store.origin.as_crate_ref()?;
+        let members = if krate == self.target {
+            &self.members
+        } else {
+            &self.dependency(krate)?.members
+        };
+        members.get(&store.id)
+    }
+
     pub(super) fn lookup_query(&self) -> ItemLookupQuery<'_> {
-        ItemLookupQuery::from_indexes(
-            &self.lookup_env,
-            iter::once(&self.lookup_index)
-                .chain(self.dependencies.iter().map(|dep| &dep.lookup_index))
-                .collect(),
-            CancellationToken::new(),
-        )
+        ItemLookupQuery::build_from(ItemReader(self), self.target, &CancellationToken::new())
+            .expect("fixture lookup environment should load")
     }
 
     pub(super) fn type_ref_by_name(&self, name: &str) -> Option<TypeDefRef> {
@@ -96,7 +102,7 @@ impl TraitSelectionFixture {
         trait_ref: TraitDefRef,
         name: &str,
     ) -> Option<TypeAliasRef> {
-        let members = self.store.associated_items(trait_ref.member_store())?;
+        let members = self.member_store(trait_ref.member_store())?;
         members.items().iter().find_map(|item| {
             let AssocItemId::TypeAlias(id) = item else {
                 return None;
@@ -175,14 +181,15 @@ impl CrateItemSource for TraitSelectionFixture {
         &self,
         store: ItemStoreRef,
     ) -> Result<Option<&AssociatedItemStore>, ReadError> {
-        Ok(store
-            .origin
-            .as_crate_ref()
-            .and_then(|krate| self.crate_items(krate))
-            .and_then(|items| items.associated_items(store)))
+        Ok(self.member_store(store))
     }
 
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'_>>, ReadError> {
+        if item.store().id != ItemStoreId::Scope {
+            return Ok(self
+                .member_store(item.store())
+                .and_then(|members| members.item(item)));
+        }
         Ok(item
             .origin()
             .as_crate_ref()
@@ -205,12 +212,27 @@ impl CrateItemSource for TraitSelectionFixture {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
         Ok(origin
             .as_crate_ref()
             .and_then(|krate| self.crate_items(krate))
-            .map(|items| items.semantic_items().collect())
+            .map(|items| items.scope_items().collect())
             .unwrap_or_default())
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'_>>, ReadError> {
+        let mut result = CrateItemSource::scope_items(self, origin)?;
+        if let Some(items) = origin
+            .as_crate_ref()
+            .and_then(|krate| self.crate_items(krate))
+        {
+            for owner in items.member_stores() {
+                if let Some(members) = self.member_store(owner) {
+                    result.extend(members.semantic_items(owner));
+                }
+            }
+        }
+        Ok(result)
     }
 
     fn lang_items(&self, krate: CrateRef) -> Result<Option<&LangItemIndex>, ReadError> {
@@ -231,11 +253,12 @@ impl CrateItemSource for TraitSelectionFixture {
         question: &LookupQuestion,
     ) -> Result<LookupAnswer, ReadError> {
         assert_eq!(use_site, self.target);
-        Ok(question.answer(
+        question.answer(
             iter::once(&self.lookup_index)
                 .chain(self.dependencies.iter().map(|dep| &dep.lookup_index))
                 .flat_map(|index| index.shards_for(question)),
-        ))
+            |owner| CrateItemSource::associated_items(self, owner),
+        )
     }
 
     fn symbol_names(&self, _krate: CrateRef) -> Result<&[SymbolNameData], ReadError> {
@@ -254,6 +277,7 @@ struct TraitSelectionDependency {
     target: CrateRef,
     def_map: DefMap,
     store: ItemStore,
+    members: HashMap<ItemStoreId, AssociatedItemStore>,
     lookup_index: ItemLookupIndex,
     lookup_env: ItemLookupEnv,
 }
@@ -263,14 +287,15 @@ impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
         &self,
         store: ItemStoreRef,
     ) -> Result<Option<&'a AssociatedItemStore>, ReadError> {
-        Ok(store
-            .origin
-            .as_crate_ref()
-            .and_then(|krate| self.crate_items(krate))
-            .and_then(|items| items.associated_items(store)))
+        Ok(self.member_store(store))
     }
 
     fn item(&self, item: SemanticItemRef) -> Result<Option<SemanticItemView<'a>>, ReadError> {
+        if item.store().id != ItemStoreId::Scope {
+            return Ok(self
+                .member_store(item.store())
+                .and_then(|members| members.item(item)));
+        }
         Ok(item
             .origin()
             .as_crate_ref()
@@ -293,12 +318,16 @@ impl<'a> SemanticItemSource<'a> for &'a TraitSelectionFixture {
             }))
     }
 
-    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+    fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
         Ok(origin
             .as_crate_ref()
             .and_then(|krate| self.crate_items(krate))
-            .map(|items| items.semantic_items().collect())
+            .map(|items| items.scope_items().collect())
             .unwrap_or_default())
+    }
+
+    fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError> {
+        CrateItemSource::all_items(*self, origin)
     }
 }
 
@@ -347,6 +376,7 @@ fn dummy_source() -> ItemSource {
         // need stable dummy identities.
         file_id: FileId::from_raw(0),
         kind: ItemSourceKind::Generated(GeneratedItemRef {
+            store: ItemStoreId::Scope,
             source: GeneratedSourceId(0),
             item: ItemTreeId(0),
         }),
@@ -879,12 +909,14 @@ impl<'a> TraitSelectionFixtureParser<'a> {
             };
             function_refs.push(FunctionRef { store, id });
         }
-        for (id, members) in members {
-            builder.set_members(id, members.build());
-        }
+        let members = members
+            .into_iter()
+            .map(|(id, members)| (id, members.build()))
+            .collect();
         let mut fixture = TraitSelectionFixture {
             def_map: def_map_builder.build(),
             store: builder.build(),
+            members,
             target: target(),
             lookup_index: ItemLookupIndex::default(),
             lookup_env: ItemLookupEnv::default(),
@@ -925,7 +957,8 @@ impl<'a> TraitSelectionFixtureParser<'a> {
         )
         .expect("fixture lookup environment should build");
         fixture.lookup_env = lookup_env;
-        fixture.lookup_index = ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new());
+        fixture.lookup_index =
+            ItemLookupIndex::build_from_store(&fixture.store, &HashMap::new(), &fixture.members);
         fixture
     }
 
@@ -1446,9 +1479,8 @@ impl TraitSelectionSnapshot {
     }
 
     fn render_associated_ty_name(&self, associated_ty: TypeAliasRef) -> String {
-        self.fixture
-            .store
-            .semantic_item_view(associated_ty.into())
+        CrateItemSource::item(&self.fixture, associated_ty.into())
+            .expect("fixture associated type")
             .and_then(|item| item.name())
             .map(ToString::to_string)
             .unwrap_or_else(|| format!("type#{}", associated_ty.id.0))

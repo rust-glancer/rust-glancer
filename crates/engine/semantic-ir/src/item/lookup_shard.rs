@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{
-    CrateRef, DefMapRef, FunctionRef, ImplId, ImplRef, TraitDefRef, TraitId, TraitImplRef,
-    TypeDefRef,
+    CrateRef, DefMapRef, ImplId, ImplRef, TraitDefRef, TraitId, TraitImplRef, TypeDefRef,
 };
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
@@ -19,23 +18,25 @@ pub struct ItemLookupShard {
     // Inherent lookup starts from a receiver type. These maps jump directly to impls whose
     // already-resolved `Self` type mentions that receiver.
     pub(crate) inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
-    pub(crate) inherent_functions_by_type_and_name:
-        HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
+    pub(crate) inherent_function_owners_by_type_and_name:
+        HashMap<TypeDefRef, HashMap<Name, UniqueVec<ImplRef>>>,
     pub(crate) structural_inherent_impls: UniqueVec<ImplRef>,
-    pub(crate) structural_inherent_functions_by_name: HashMap<Name, UniqueVec<FunctionRef>>,
+    pub(crate) structural_function_owners_by_name: HashMap<Name, UniqueVec<ImplRef>>,
     // Implementation navigation and qualified paths still ask which impls mention one nominal
     // type. Trait-item lookup uses the trait-keyed map below instead.
     pub(crate) trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<IndexedTraitImplRef>>,
     pub(crate) trait_impls_by_trait: HashMap<TraitDefRef, IndexedTraitImpls>,
     // A named trait item selects its declaring traits before any impl proof. Completion starts
-    // from one of the two broad trait surfaces. Once a trait is selected, the function maps adapt
-    // its proof back into declarations without reopening the trait item every time.
+    // from one of the two broad trait surfaces. Written names narrow owners; macro-bearing owners
+    // are conservative candidates. Only a request for members opens the selected store.
     pub(crate) traits_with_functions: UniqueVec<TraitDefRef>,
     pub(crate) traits_with_associated_items: UniqueVec<TraitDefRef>,
     pub(crate) traits_by_item_name: HashMap<Name, TraitItemTraitRefs>,
-    pub(crate) trait_functions_by_trait: HashMap<TraitDefRef, UniqueVec<FunctionRef>>,
-    pub(crate) trait_functions_by_trait_and_name:
-        HashMap<TraitDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
+    // Include empty traits: no functions in a known trait differs from an unavailable owner.
+    pub(crate) declared_traits: UniqueVec<TraitDefRef>,
+    pub(crate) traits_with_macros: UniqueVec<TraitDefRef>,
+    pub(crate) inherent_macro_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
+    pub(crate) structural_macro_impls: UniqueVec<ImplRef>,
 }
 
 impl ItemLookupShard {
@@ -47,14 +48,14 @@ impl ItemLookupShard {
             .map(UniqueVec::len)
             .sum::<usize>()
             + self
-                .inherent_functions_by_type_and_name
+                .inherent_function_owners_by_type_and_name
                 .values()
                 .flat_map(HashMap::values)
                 .map(UniqueVec::len)
                 .sum::<usize>()
             + self.structural_inherent_impls.len()
             + self
-                .structural_inherent_functions_by_name
+                .structural_function_owners_by_name
                 .values()
                 .map(UniqueVec::len)
                 .sum::<usize>()
@@ -75,17 +76,14 @@ impl ItemLookupShard {
                 .values()
                 .map(TraitItemTraitRefs::entry_count)
                 .sum::<usize>()
+            + self.declared_traits.len()
+            + self.traits_with_macros.len()
             + self
-                .trait_functions_by_trait
+                .inherent_macro_impls_by_type
                 .values()
                 .map(UniqueVec::len)
                 .sum::<usize>()
-            + self
-                .trait_functions_by_trait_and_name
-                .values()
-                .flat_map(HashMap::values)
-                .map(UniqueVec::len)
-                .sum::<usize>()
+            + self.structural_macro_impls.len()
     }
 
     /// Return one trait's structural receiver-head candidates followed by conservative fallbacks.

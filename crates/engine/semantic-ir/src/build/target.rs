@@ -7,11 +7,14 @@ use std::{
 };
 
 use rg_def_map::{
-    CrateData, CrateDataSource, CrateDefMapReader, CrateDependencies, DefMapQuery,
-    GeneratedItemStore, GeneratedSourceStore, MacroExpansionLimitReport, MacroScopeData,
+    AssociatedItemInput, AssociatedItemOwner, CrateData, CrateDataSource, CrateDefMapReader,
+    CrateDependencies, DefMapQuery, GeneratedItemStore, GeneratedSourceStore,
+    MacroExpansionLimitReport, MacroScopeData,
 };
-use rg_ir_model::{CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef};
-use rg_item_tree::ItemTrees;
+use rg_ir_model::{
+    CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef,
+};
+use rg_item_tree::{ItemKind, ItemTrees};
 use rg_parse::TargetFileManifest;
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
@@ -25,6 +28,7 @@ use crate::{
     AssociatedItemStore, BodyOwnerData, CrateItemSource, ItemLookupEnv, ItemLookupIndex,
     ItemLookupShard, ItemReader, ItemResolutionQuery, ItemStore, LangItemIndex, LookupAnswer,
     LookupKeys, LookupQuestion, SemanticItemSource, SemanticItemView, SymbolNameData,
+    item::AssociatedItemHints,
 };
 
 /// Project startup reads this together to restore file routing and report macro expansion limits.
@@ -62,8 +66,19 @@ pub fn target_declarations(
     let (built, trees, sources) =
         CrateData::build_target(db, krate, &DefMapQuery::new(definitions))?;
     let mut data = built.data;
-    let (items, lookup_env, lookup, generated_sources) =
-        ItemStore::build_target(db, &data, trees, built.generated_items, &dependencies)?;
+    let TargetItemData {
+        items,
+        lookup_env,
+        lookup,
+        generated_sources,
+    } = TargetItemData::build(
+        db,
+        &data,
+        trees,
+        built.generated_items,
+        &built.member_inputs,
+        &dependencies,
+    )?;
     let mut body_owners = Vec::new();
     for owner in BodyOwnerData::for_crate(&items, data.def_map()) {
         db.check_cancelled()?;
@@ -109,17 +124,69 @@ pub fn target_declarations(
     )
 }
 
-impl ItemStore {
-    /// Lower a target's settled scopes into semantic items and build their lookup index.
-    pub fn build_target(
+/// Transient construction result. The target query publishes these payloads independently so
+/// searching names does not acquire lookup tables, member signatures, or generated source maps.
+pub struct TargetItemData {
+    pub items: ItemStore,
+    pub lookup_env: ItemLookupEnv,
+    pub lookup: ItemLookupIndex,
+    pub generated_sources: GeneratedSourceStore,
+}
+
+impl TargetItemData {
+    /// Lower module declarations and owner headers, then build lookup and search hints.
+    /// Member syntax is inspected for names and language attributes, without expanding calls or
+    /// constructing member signatures. This is enough to select an owner for a later query.
+    pub fn build(
         db: &QueryContext<'_>,
         data: &CrateData,
         trees: ItemTrees,
         generated_items: GeneratedItemStore,
+        member_inputs: &HashMap<AssociatedItemOwner, AssociatedItemInput>,
         dependencies: &(impl CrateDataSource + CrateItemSource),
-    ) -> ajika::Result<(Self, ItemLookupEnv, ItemLookupIndex, GeneratedSourceStore)> {
-        let mut items = Self::lower_crate(data.def_map(), &trees, &generated_items)
+    ) -> ajika::Result<Self> {
+        let mut items = ItemStore::lower_crate(data.def_map(), &trees, &generated_items)
             .map_err(|error| ajika::Error::application(error.into_boxed_dyn_error()))?;
+        let mut lookup_hints = HashMap::new();
+        let owners: Vec<_> = items
+            .traits_with_refs()
+            .map(|(owner, data)| {
+                (
+                    owner.member_store(),
+                    AssociatedItemOwner::Trait(data.local_def.local_def),
+                )
+            })
+            .chain(items.impls_with_refs().map(|(owner, data)| {
+                (
+                    owner.member_store(),
+                    AssociatedItemOwner::Impl(data.local_impl.local_impl),
+                )
+            }))
+            .collect();
+        for (owner, collected) in owners {
+            let input = member_inputs
+                .get(&collected)
+                .ok_or_else(|| ajika::Error::contract("collected owner has no member input"))?;
+            let mut hints = AssociatedItemHints::default();
+            for (source, item) in input.declarations(db, items.crate_ref())? {
+                if let Some(lang_item) = item.lang_item {
+                    items
+                        .lang_items
+                        .insert_member(lang_item, owner, source, &item.kind);
+                }
+                match &item.kind {
+                    ItemKind::Function(_) => hints.functions.extend(item.name.clone()),
+                    ItemKind::Const(_) => hints.consts.extend(item.name.clone()),
+                    ItemKind::TypeAlias(_) => hints.has_types = true,
+                    ItemKind::MacroCall(_) => {
+                        hints.has_macros = true;
+                        continue;
+                    }
+                    _ => continue,
+                }
+            }
+            lookup_hints.insert(owner.id, hints);
+        }
         drop(trees);
         let generated_sources = generated_items.into_sources();
 
@@ -150,10 +217,15 @@ impl ItemStore {
                 self_heads.insert(header.impl_ref, head);
             }
         }
-        let mut lookup = ItemLookupIndex::build_from_store(&items, &self_heads);
+        let mut lookup = ItemLookupIndex::build_from_headers(&items, &self_heads, lookup_hints);
         items.shrink_to_fit();
         lookup.shrink_to_fit();
-        Ok((items, env, lookup, generated_sources))
+        Ok(Self {
+            items,
+            lookup_env: env,
+            lookup,
+            generated_sources,
+        })
     }
 }
 

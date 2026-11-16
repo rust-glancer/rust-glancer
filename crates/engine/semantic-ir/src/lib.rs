@@ -23,7 +23,7 @@ pub use rg_source::ReadError;
 pub use self::{
     build::{
         AssociatedDeclarations, BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader, SymbolNameData,
-        TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations,
+        TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, TargetItemData,
         associated_declarations, saved_body_owner, target_declarations,
     },
     item::{

@@ -211,6 +211,7 @@ fn calls() {
                 .expect("language items");
             let output = lookup
                 .lang_type_alias(LangItem::FnOnceOutput)
+                .expect("language item query")
                 .expect("associated language item");
             let ItemStoreId::Trait(id) = output.store.id else {
                 panic!("trait member identity");

@@ -15,6 +15,7 @@ pub use self::{
     members::{AssociatedDeclarations, associated_declarations, saved_body_owner},
     symbol_names::SymbolNameData,
     target::{
-        TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, target_declarations,
+        TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, TargetItemData,
+        target_declarations,
     },
 };

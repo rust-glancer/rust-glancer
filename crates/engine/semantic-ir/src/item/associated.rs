@@ -1,9 +1,23 @@
 use rg_arena::Arena;
 use rg_ir_model::{AssocItemId, ConstId, FunctionId, ItemStoreRef, SemanticItemRef, TypeAliasId};
 use rg_std::{MemorySize, Shrink};
+use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{ConstData, FunctionData, SemanticItemView, TypeAliasData, view::SemanticItemData};
+
+/// Cheap hints for selecting owners before reading their members.
+///
+/// Startup records written names only. For `impl Bag { methods!(); }`, the empty name lists do
+/// not mean that `Bag` has no methods: `has_macros` keeps it as a candidate until the independent
+/// member query has expanded the call.
+#[derive(Default)]
+pub(crate) struct AssociatedItemHints {
+    pub functions: Vec<Name>,
+    pub consts: Vec<Name>,
+    pub has_types: bool,
+    pub has_macros: bool,
+}
 
 /// Functions, associated types and constants declared inside one trait or impl block.
 ///

@@ -4,13 +4,13 @@
 //! declarations or dependencies change. This environment is saved separately from candidate shards,
 //! so later queries can read them without loading the candidate tables.
 
-use rg_ir_model::{CrateRef, SemanticItemRef};
+use rg_ir_model::CrateRef;
 use rg_item_tree::LangItem;
 use rg_source::ReadError;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
-use super::lang_item::VisibleLangItems;
+use super::lang_item::{LangItemTarget, VisibleLangItems};
 use crate::{ItemReader, ItemStore};
 
 /// Saved lookup choices for one crate, including its visible dependencies.
@@ -69,7 +69,7 @@ impl ItemLookupEnv {
         &self.visible_crates
     }
 
-    pub(crate) fn lang_item(&self, lang_item: LangItem) -> Option<SemanticItemRef> {
+    pub(crate) fn lang_item(&self, lang_item: LangItem) -> Option<LangItemTarget> {
         self.lang_items.target(lang_item)
     }
 }
