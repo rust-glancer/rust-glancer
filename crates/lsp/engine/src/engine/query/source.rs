@@ -19,10 +19,7 @@ impl QueryRunner<'_> {
         let Some(context) = Self::file_context(snapshot, path)? else {
             return Ok(None);
         };
-        let Some(line_index) = snapshot.file_line_index(context.crate_ref.package, context.file)?
-        else {
-            return Ok(None);
-        };
+        let line_index = snapshot.sources().line_index(context.file)?;
         Ok(line_index
             .offset_from_utf16_position(position::parse_position(position))
             .map(|offset| (context, offset)))

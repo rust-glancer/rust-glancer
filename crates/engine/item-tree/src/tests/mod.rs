@@ -707,11 +707,11 @@ pub fn add_two_numbers(left: i32, right: i32) -> i32 {
 "#,
     );
     let trees = db.item_trees(0);
-    let [target_root] = db.parse_db().packages()[0].targets() else {
+    let [target_root] = db.workspace().packages()[0].targets.as_slice() else {
         panic!("fixture should contain one target root");
     };
     let file_tree = trees
-        .file(target_root.root_file)
+        .file(db.file_id(&target_root.src_path))
         .expect("target root item tree should exist");
     let function = file_tree
         .top_level

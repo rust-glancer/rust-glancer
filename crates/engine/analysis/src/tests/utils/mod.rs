@@ -5,9 +5,12 @@ use std::{fmt::Write as _, path::Path};
 use expect_test::Expect;
 use rg_body_ir::{BodyReader, ExprData, ExprKind};
 use rg_ir_model::{BodySource, CrateRef, FileId, PackageSlot, Span};
-use rg_ir_view::IndexedViewDb;
-use rg_parse::{CargoTargetId, ParseDb, SavedSourceReader};
-use rg_semantic_ir::testonly::{SemanticIrFixture, SemanticIrView};
+use rg_ir_view::{IndexedViewDb, testonly::render_indexed_type};
+use rg_parse::SavedSourceReader;
+use rg_semantic_ir::{
+    complete_source_ownership,
+    testonly::{SemanticIrFixture, SemanticIrView},
+};
 use rg_workspace::{TargetKind, testonly::WorkspaceFixture};
 use test_fixture::{
     CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers,
@@ -19,8 +22,8 @@ use crate::{
     CompletionApplicability, CompletionClientCapabilities, CompletionInsertText, CompletionItem,
     CompletionKind, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
     NavigationTargetKind, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery,
-    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SavedSourceView, SymbolAt,
-    SymbolKind, WorkspaceSymbol,
+    ReferenceSearchFile, RenameEdit, RenameResult, RenameTarget, SymbolAt, SymbolKind,
+    WorkspaceSymbol,
 };
 
 /// Queries written beside their markers are removed before the fixture reaches analysis.
@@ -437,10 +440,7 @@ struct AnalysisFixture<'db> {
 
 impl<'db> AnalysisFixture<'db> {
     fn analysis(&self) -> Analysis<'db> {
-        Analysis::new(
-            self.view_db(),
-            SavedSourceView::new(self.parse_db(), SavedSourceReader::new(self.semantic.db())),
-        )
+        Analysis::new(self.view_db(), self.semantic.workspace())
     }
 
     fn view_db(&self) -> IndexedViewDb<'db> {
@@ -449,13 +449,8 @@ impl<'db> AnalysisFixture<'db> {
             self.semantic.definitions(),
             self.semantic.items(),
             self.bodies(),
-            self.parse_db(),
             self.semantic.db().services().cancellation.clone(),
         )
-    }
-
-    fn parse_db(&self) -> &'db ParseDb {
-        self.semantic.parse_db()
     }
 
     fn bodies(&self) -> BodyReader<'db> {
@@ -488,39 +483,21 @@ impl<'db> AnalysisFixture<'db> {
     ) -> (CrateRef, FileId) {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
-        let reader = self.semantic.definitions();
-
-        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
-            if !selected.matches_package(package.package_name()) {
+        let sources = SavedSourceReader::new(self.semantic.db());
+        for (owner, target) in self.semantic.workspace().targets() {
+            let package = &self.semantic.workspace().packages()[owner.package.0];
+            if !selected.matches_package(&package.name) || target.kind != selected.kind {
                 continue;
             }
-
-            let Some(file) = package
-                .parsed_files()
-                .find(|file| file.path().ends_with(normalized_path))
-            else {
-                continue;
-            };
-            let file_id = file.file_id();
-            for target in package
-                .targets()
-                .iter()
-                .filter(|target| target.kind == selected.kind)
-            {
-                let owner = CrateRef {
-                    package: PackageSlot(package_slot),
-                    crate_id: rg_ir_model::CrateId(target.id.0),
-                };
-                let definitions = reader
-                    .def_map(owner)
-                    .expect("fixture target definitions should load")
-                    .expect("fixture target should exist");
-                if definitions
-                    .modules()
-                    .iter()
-                    .any(|module| module.origin.files().any(|file| file == file_id))
+            let ownership = complete_source_ownership(self.semantic.db(), owner)
+                .expect("fixture source ownership should resolve");
+            for file in ownership.files() {
+                if sources
+                    .path(file)
+                    .expect("fixture file path")
+                    .ends_with(normalized_path)
                 {
-                    matches.push((owner, file_id));
+                    matches.push((owner, file));
                 }
             }
         }
@@ -537,20 +514,10 @@ impl<'db> AnalysisFixture<'db> {
     fn target_for(&self, selected: &AnalysisTarget) -> CrateRef {
         let mut matches = Vec::new();
 
-        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
-            if !selected.matches_package(package.package_name()) {
-                continue;
-            }
-
-            for target in package
-                .targets()
-                .iter()
-                .filter(|target| target.kind == selected.kind)
-            {
-                matches.push(CrateRef {
-                    package: PackageSlot(package_slot),
-                    crate_id: rg_ir_model::CrateId(target.id.0),
-                });
+        for (krate, target) in self.semantic.workspace().targets() {
+            let package = &self.semantic.workspace().packages()[krate.package.0];
+            if selected.matches_package(&package.name) && target.kind == selected.kind {
+                matches.push(krate);
             }
         }
 
@@ -763,11 +730,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                     dump,
                     "{}",
                     ty.as_ref()
-                        .map(|ty| rg_ir_view::testonly::render_indexed_type(
-                            &self.db.view_db(),
-                            self.db.parse_db(),
-                            ty,
-                        ))
+                        .map(|ty| render_indexed_type(&self.db.view_db(), ty))
                         .unwrap_or_else(|| "<none>".to_string())
                 )
                 .expect("string writes should not fail");
@@ -934,7 +897,7 @@ impl AnalysisQuerySnapshot<'_, '_> {
                 writeln!(
                     dump,
                     "{}",
-                    self.render_expr_symbol(expr_data, body_view.source_at(expr_data.source),)
+                    self.render_expr_symbol(expr_data, body_view.source_at(expr_data.source))
                 )
                 .expect("string writes should not fail");
             }
@@ -1417,16 +1380,17 @@ impl AnalysisQuerySnapshot<'_, '_> {
     }
 
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
-        let parsed_package = self
+        let metadata = self
             .db
-            .parse_db()
+            .semantic
+            .workspace()
             .packages()
             .get(package.0)
             .expect("reference package should exist while rendering file path");
         let relative_path = self.db.render_file_path(package, file_id);
 
-        if self.db.parse_db().packages().len() > 1 {
-            format!("{}/{relative_path}", parsed_package.package_name())
+        if self.db.semantic.workspace().packages().len() > 1 {
+            format!("{}/{relative_path}", metadata.name)
         } else {
             relative_path
         }
@@ -1580,15 +1544,19 @@ impl AnalysisSymbolSnapshot<'_> {
     fn render_crate_ref(&self, crate_ref: CrateRef) -> String {
         let package = self
             .db
-            .parse_db()
+            .semantic
+            .workspace()
             .packages()
             .get(crate_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
-        let target = package
-            .target(CargoTargetId(crate_ref.crate_id.0))
-            .expect("target should exist while rendering workspace symbol");
+        let target = self
+            .db
+            .semantic
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target should exist");
 
-        format!("{}[{}]", package.package_name(), target.kind)
+        format!("{}[{}]", package.name, target.kind)
     }
 
     fn render_file_span(

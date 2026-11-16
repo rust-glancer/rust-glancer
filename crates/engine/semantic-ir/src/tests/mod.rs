@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 
 use expect_test::expect;
 use rg_def_map::LocalDefKind;
-use rg_ir_model::{CrateId, CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
+use rg_ir_model::{CrateRef, DefMapRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::LangItem;
 use rg_std::CancellationToken;
 use rg_workspace::TargetKind;
@@ -130,14 +130,11 @@ pub struct Library;
                 })
                 .expect("dependency should declare SharedType");
             let app = view.package_slot_by_name("app");
-            let test_crates = view.parse_db().packages()[app.0]
+            let test_crates = view
+                .workspace()
                 .targets()
-                .iter()
-                .filter(|target| target.kind == TargetKind::Test)
-                .map(|target| CrateRef {
-                    package: app,
-                    crate_id: CrateId(target.id.0),
-                })
+                .filter(|(krate, target)| krate.package == app && target.kind == TargetKind::Test)
+                .map(|(krate, _)| krate)
                 .collect::<Vec<_>>();
 
             let items = view.items();

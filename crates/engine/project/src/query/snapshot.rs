@@ -1,9 +1,8 @@
 //! Read-only access to one published project generation.
 
-use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel, SavedSourceView};
+use rg_analysis::{Analysis, ReferenceSearchFile, ReferenceSearchLabel};
 use rg_ir_model::{CrateRef, PackageSlot};
 use rg_ir_view::IndexedViewDb;
-use rg_parse::SavedSourceReader;
 use rg_semantic_ir::TargetDeclarationReader;
 use rg_source::QueryContext;
 
@@ -34,10 +33,7 @@ impl<'a> ProjectSnapshot<'a> {
     /// Build a facade over the active operation. Individual feature reads acquire their
     /// declarations and bodies as they need them.
     pub fn analysis(&self) -> Analysis<'a> {
-        Analysis::new(
-            self.view_db(),
-            SavedSourceView::new(self.state.parse_db(), SavedSourceReader::new(self.db)),
-        )
+        Analysis::new(self.view_db(), self.state.workspace())
     }
 
     pub(crate) fn view_db(&self) -> IndexedViewDb<'a> {
@@ -46,7 +42,6 @@ impl<'a> ProjectSnapshot<'a> {
             rg_def_map::CrateDefMapReader(self.declarations),
             rg_semantic_ir::ItemReader(self.declarations),
             rg_body_ir::BodyReader::new(self.db, self.declarations),
-            self.state.parse_db(),
             self.db.services().cancellation.clone(),
         )
     }

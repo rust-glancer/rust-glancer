@@ -77,7 +77,7 @@ impl ReferenceSourceSelection {
         // dependency files can be rejected from their text without building any syntax tree.
         // Keep generated owners even when the text lacks a label. `include!` also prevents this
         // shortcut: the included file may contain references absent from the invocation's text.
-        let text = db.saved_text(file)?;
+        let text = db.sources().text(file)?;
         // A capture such as `caf\u{e9}` need not contain its decoded name in the file text.
         // Escapes require the syntax pass below before we can rule out its references.
         if !labels.iter().any(|label| text.contains(label.as_str()))

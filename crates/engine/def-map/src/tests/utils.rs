@@ -3,8 +3,7 @@ use rg_ir_model::{
     CrateId, CrateRef, DefId, DefMapRef, FileId, ModuleId, ModuleRef, PackageSlot, Path,
 };
 use rg_item_tree::VisibilityLevel;
-use rg_parse::{CargoTarget, Package, ParseDb};
-use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
+use rg_workspace::{CargoTarget, Package, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
     DefMap, ImportData, ImportKind, ItemSource, ItemSourceKind, LocalDefKind, NameBinding,
@@ -151,8 +150,8 @@ impl DefMapFixtureDb {
         }
     }
 
-    fn parse_db(&self) -> &ParseDb {
-        self.fixture.parse_db()
+    fn workspace(&self) -> &WorkspaceMetadata {
+        self.fixture.workspace()
     }
 
     pub(super) fn def_map_db(&self) -> &DefMapDb {
@@ -169,32 +168,12 @@ impl DefMapFixtureDb {
     }
 
     fn target(&self, package_name: &str, expected_kind: TargetKind) -> FixtureCrate<'_> {
-        let (package_slot, package) = self
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .find(|(_, package)| package.package_name() == package_name)
-            .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"));
-        let target = package
-            .targets()
-            .iter()
-            .find(|target| target.kind == expected_kind)
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture package `{package_name}` should have a {:?} target",
-                    expected_kind
-                )
-            });
-
+        let (crate_ref, target) = self.fixture.target(package_name, expected_kind);
         FixtureCrate {
             db: self,
-            package,
+            package: &self.workspace().packages()[crate_ref.package.0],
             target,
-            crate_ref: CrateRef {
-                package: PackageSlot(package_slot),
-                crate_id: CrateId(target.id.0),
-            },
+            crate_ref,
         }
     }
 }
@@ -220,7 +199,7 @@ impl<'a> FixtureCrate<'a> {
             .and_then(|module| module.scope.entry(name));
         FixtureEntry {
             db: self.db,
-            package_name: self.package.package_name(),
+            package_name: &self.package.name,
             target: self.target,
             name: name.to_string(),
             entry,
@@ -346,7 +325,7 @@ impl<'a> FixtureEntry<'a> {
             DefId::EnumVariant(variant_ref) => variant_ref.origin,
         };
         let crate_ref = origin.as_crate_ref()?;
-        self.db.parse_db().packages().get(crate_ref.package.0)?;
+        self.db.workspace().packages().get(crate_ref.package.0)?;
         self.db.def_map(crate_ref)?;
 
         Some(FixtureBindingOrigin {
@@ -386,29 +365,28 @@ impl FixtureBindingOrigin<'_> {
     }
 
     fn source_file_name(&self) -> Option<String> {
-        let (crate_ref, file_id) = match self.def {
+        let file_id = match self.def {
             DefId::Local(local_def_ref) => {
                 let crate_ref = local_def_ref.origin.as_crate_ref()?;
                 let local_def = self
                     .db
                     .def_map(crate_ref)?
                     .local_def(local_def_ref.local_def)?;
-                (crate_ref, local_def.file_id)
+                local_def.file_id
             }
             DefId::EnumVariant(variant_ref) => {
                 let crate_ref = variant_ref.origin.as_crate_ref()?;
                 let def_map = self.db.def_map(crate_ref)?;
                 let variant = def_map.local_enum_variant(variant_ref.local_enum_variant)?;
                 let enum_def = def_map.local_def(variant.enum_def)?;
-                (crate_ref, enum_def.file_id)
+                enum_def.file_id
             }
             DefId::Module(_) => return None,
         };
 
         self.db
-            .parse_db()
-            .package(crate_ref.package.0)?
-            .file_path(file_id)?
+            .fixture
+            .file_path(file_id)
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
     }
@@ -426,7 +404,7 @@ impl<'a> ProjectDefMapSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let package_dumps = Self::sorted_packages(self.project.parse_db())
+        let package_dumps = Self::sorted_packages(self.project.workspace())
             .into_iter()
             .map(|(package_slot, package)| {
                 PackageDefMapSnapshot {
@@ -441,9 +419,9 @@ impl<'a> ProjectDefMapSnapshot<'a> {
         package_dumps.join("\n\n")
     }
 
-    fn sorted_packages(parse: &ParseDb) -> Vec<(usize, &Package)> {
-        let mut packages = parse.packages().iter().enumerate().collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+    fn sorted_packages(workspace: &WorkspaceMetadata) -> Vec<(usize, &Package)> {
+        let mut packages = workspace.packages().iter().enumerate().collect::<Vec<_>>();
+        packages.sort_by(|left, right| left.1.name.cmp(&right.1.name));
         packages
     }
 }
@@ -506,32 +484,9 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
     }
 
     fn crate_ref(&self, query: &PathResolutionQuery) -> (CrateRef, &'a CargoTarget) {
-        let (package_slot, package) = self
-            .project
-            .parse_db()
-            .packages()
-            .iter()
-            .enumerate()
-            .find(|(_, package)| package.package_name() == query.package_name)
-            .unwrap_or_else(|| panic!("fixture package `{}` should exist", query.package_name));
-        let target = package
-            .targets()
-            .iter()
-            .find(|target| target.kind == query.target_kind)
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture package `{}` should have a {} target",
-                    query.package_name, query.target_kind
-                )
-            });
-
-        (
-            CrateRef {
-                package: PackageSlot(package_slot),
-                crate_id: CrateId(target.id.0),
-            },
-            target,
-        )
+        self.project
+            .fixture
+            .target(query.package_name, query.target_kind.clone())
     }
 
     fn module_id(&self, crate_ref: CrateRef, module_path: &str) -> ModuleId {
@@ -616,10 +571,10 @@ impl<'a> PackageDefMapSnapshot<'a> {
     fn render(&self) -> String {
         let crate_dumps = Self::sorted_targets(self.package)
             .into_iter()
-            .map(|target| {
+            .map(|(target_id, target)| {
                 let crate_ref = CrateRef {
                     package: PackageSlot(self.package_slot),
-                    crate_id: CrateId(target.id.0),
+                    crate_id: CrateId(target_id),
                 };
                 CrateDefMapSnapshot {
                     project: self.project,
@@ -634,12 +589,12 @@ impl<'a> PackageDefMapSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        format!("package {}\n\n{crate_dumps}", self.package.package_name())
+        format!("package {}\n\n{crate_dumps}", self.package.name)
     }
 
-    fn sorted_targets(package: &Package) -> Vec<&CargoTarget> {
-        let mut targets = package.targets().iter().collect::<Vec<_>>();
-        targets.sort_by(|left, right| {
+    fn sorted_targets(package: &Package) -> Vec<(usize, &CargoTarget)> {
+        let mut targets = package.analyzed_targets().enumerate().collect::<Vec<_>>();
+        targets.sort_by(|(_, left), (_, right)| {
             (
                 left.kind.sort_order(),
                 left.name.as_str(),
@@ -667,7 +622,7 @@ struct CrateDefMapSnapshot<'a> {
 impl<'a> CrateDefMapSnapshot<'a> {
     fn render(&self) -> String {
         let def_map = self.def_map();
-        let mut dump = format!("{} [{}]\n", self.package.package_name(), self.target.kind);
+        let mut dump = format!("{} [{}]\n", self.package.name, self.target.kind);
 
         for (idx, (module_path, module_id)) in self.sorted_modules().into_iter().enumerate() {
             if idx > 0 {
@@ -774,7 +729,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
         };
         let crate_ref = origin.as_crate_ref()?;
         self.project
-            .parse_db()
+            .workspace()
             .packages()
             .get(crate_ref.package.0)?;
         self.project.def_map(crate_ref)?;
@@ -820,7 +775,7 @@ impl<'a> CrateDefMapSnapshot<'a> {
     }
 
     fn render_item_tree_ref(&self, item_ref: rg_item_tree::ItemTreeRef) -> String {
-        let file_label = Self::file_label(self.package, item_ref.file_id);
+        let file_label = self.file_label(item_ref.file_id);
         format!("{file_label}#{}", item_ref.item.0)
     }
 
@@ -855,10 +810,11 @@ impl<'a> CrateDefMapSnapshot<'a> {
         }
     }
 
-    fn file_label(package: &Package, file_id: FileId) -> String {
-        package
+    fn file_label(&self, file_id: FileId) -> String {
+        self.project
+            .fixture
             .file_path(file_id)
-            .and_then(|path| path.file_name())
+            .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>")
             .to_string()
@@ -956,24 +912,19 @@ impl ResolvedDefOrigin<'_> {
         let crate_ref = module_ref.origin.origin_crate();
         let package = self
             .project
-            .parse_db()
+            .workspace()
             .packages()
             .get(crate_ref.package.0)
             .expect("package slot should exist while dumping");
-        let target = package
-            .target(
-                self.project
-                    .def_map_db()
-                    .package(crate_ref.package)
-                    .and_then(|package| package.crate_data(crate_ref.crate_id))
-                    .expect("semantic crate should exist while dumping")
-                    .cargo_target(),
-            )
-            .expect("target id should exist while dumping");
+        let target = self
+            .project
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target should exist");
 
         format!(
             "{}[{}]::{}",
-            package.package_name(),
+            package.name,
             target.kind,
             self.module_path(crate_ref, module_ref.module),
         )

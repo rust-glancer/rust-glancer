@@ -9,7 +9,7 @@ use rg_ir_model::{
     BodyRef, CrateRef, DefMapRef, FileId, ImplRef, ItemStoreRef, LocalDefRef, ModuleRef,
     PackageSlot, Path, SemanticItemRef, SourceId, Span,
 };
-use rg_parse::{CurrentSource, Package, ParseDb, SavedSourceReader};
+use rg_parse::{CurrentSource, SavedSourceReader};
 use rg_semantic_ir::{
     AssociatedItemStore, ItemLookupQuery, ItemReader, SemanticItemSource, SemanticItemView,
     SourceSelection, TypePathContext, TypePathResolution,
@@ -22,6 +22,7 @@ use rg_ty::{
     lookup::ItemPathQuery,
     lowering::{TypeLoweringAnchor, TypePathResolver},
 };
+use rg_workspace::{CrateConfig, PackageInput};
 
 /// Read-only database handle used by all indexed-data views.
 ///
@@ -32,7 +33,6 @@ pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefinitionReader<'db>,
     pub(crate) semantic_ir: ItemReader<'db>,
     pub(crate) body_ir: BodyReader<'db>,
-    parse: &'db ParseDb,
     queries: &'db QueryContext<'db>,
     cancellation: CancellationToken,
 }
@@ -70,21 +70,23 @@ impl<'db> IndexedViewDb<'db> {
         def_map: DefinitionReader<'db>,
         semantic_ir: ItemReader<'db>,
         body_ir: BodyReader<'db>,
-        parse: &'db ParseDb,
         cancellation: CancellationToken,
     ) -> Self {
         Self {
             def_map,
             semantic_ir,
             body_ir,
-            parse,
             queries,
             cancellation,
         }
     }
 
-    pub(crate) fn saved_text(&self, file: FileId) -> anyhow::Result<Arc<str>> {
-        Ok(SavedSourceReader::new(self.queries).text(file)?)
+    pub fn sources(&self) -> SavedSourceReader<'db> {
+        SavedSourceReader::new(self.queries)
+    }
+
+    pub(crate) fn crate_config(&self, krate: CrateRef) -> anyhow::Result<CrateConfig> {
+        Ok(CrateConfig::read(self.queries, krate)?)
     }
 
     /// Share the captured syntax with body providers in this operation.
@@ -109,7 +111,7 @@ impl<'db> IndexedViewDb<'db> {
             &self.def_map,
             &self.semantic_ir,
             &self.body_ir,
-            SavedSourceReader::new(self.queries),
+            self.queries,
             source,
             self.cancellation.clone(),
         )
@@ -182,15 +184,11 @@ impl<'db> IndexedViewDb<'db> {
 
     /// Returns the edition whose syntax rules apply at a crate_ref use site.
     pub fn crate_edition(&self, crate_ref: CrateRef) -> anyhow::Result<RustEdition> {
-        Ok(self
-            .parse
-            .package(crate_ref.package.0)
-            .context("crate has no parsed package")?
-            .edition())
+        Ok(PackageInput::at(crate_ref.package).edition(self.queries)?)
     }
 
-    pub(crate) fn package_name(&self, package: PackageSlot) -> Option<&str> {
-        self.parse.package(package.0).map(Package::package_name)
+    pub(crate) fn package_name(&self, package: PackageSlot) -> anyhow::Result<String> {
+        Ok(PackageInput::at(package).name(self.queries)?)
     }
 
     /// Returns the edition whose syntax rules apply to declarations owned by this origin.

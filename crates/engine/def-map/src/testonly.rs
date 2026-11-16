@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+
 use rg_arena::Arena;
-use rg_ir_model::{CrateId, CrateRef, PackageSlot};
-use rg_parse::{CargoTarget, CargoTargetId, Package, ParseDb};
+use rg_ir_model::{CrateId, CrateRef, FileId, PackageSlot};
 use rg_source::ReadError;
 use rg_workspace::{
-    TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, testonly::WorkspaceFixture,
+    CargoTarget, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, testonly::WorkspaceFixture,
 };
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -30,21 +31,9 @@ impl PackageDefMaps {
         }
     }
 
-    /// Returns all semantic crates in crate-id order.
-    pub fn crates(&self) -> &[CrateData] {
-        self.crates.as_slice()
-    }
-
     /// Returns one semantic crate by its package-local identity.
     pub fn crate_data(&self, crate_id: CrateId) -> Option<&CrateData> {
         self.crates.get(crate_id)
-    }
-
-    /// Finds the semantic crate produced from one parsed Cargo target.
-    pub fn crate_for_cargo_target(&self, cargo_target: CargoTargetId) -> Option<CrateId> {
-        self.crates
-            .iter_with_ids()
-            .find_map(|(crate_id, data)| (data.cargo_target() == cargo_target).then_some(crate_id))
     }
 
     pub fn def_map(&self, crate_id: CrateId) -> Option<&DefMap> {
@@ -91,8 +80,8 @@ impl CrateDataSource for DefMapDb {
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
-    _workspace: WorkspaceFixture,
-    parse: ParseDb,
+    workspace: WorkspaceFixture,
+    interner: ajika::Interner,
     def_map: DefMapDb,
 }
 
@@ -123,17 +112,22 @@ impl DefMapFixture {
     }
 
     fn build_workspace(workspace: WorkspaceFixture) -> Self {
-        let (parse, def_map) = build_fixture_definitions(workspace.metadata())
+        let (interner, def_map) = build_fixture_definitions(workspace.metadata())
             .expect("fixture definitions should build");
         Self {
-            _workspace: workspace,
-            parse,
+            workspace,
+            interner,
             def_map,
         }
     }
 
-    pub fn parse_db(&self) -> &ParseDb {
-        &self.parse
+    pub fn workspace(&self) -> &WorkspaceMetadata {
+        self.workspace.metadata()
+    }
+
+    pub fn file_path(&self, file: FileId) -> PathBuf {
+        file.path(&self.interner)
+            .expect("fixture file path should resolve")
     }
 
     pub fn def_map_db(&self) -> &DefMapDb {
@@ -147,54 +141,27 @@ impl DefMapFixture {
     }
 
     pub fn package_slot_by_name(&self, package_name: &str) -> PackageSlot {
-        self.parse_db()
+        self.workspace()
             .packages()
             .iter()
             .enumerate()
-            .find_map(|(idx, package)| {
-                (package.package_name() == package_name).then_some(PackageSlot(idx))
-            })
+            .find_map(|(idx, package)| (package.name == package_name).then_some(PackageSlot(idx)))
             .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"))
     }
 
     pub fn crate_ref(&self, package_name: &str, expected_kind: TargetKind) -> CrateRef {
-        let (package_slot, target) = self.target(package_name, expected_kind);
-        let crate_id = self
-            .def_map
-            .package(package_slot)
-            .and_then(|package| package.crate_for_cargo_target(target.id))
-            .expect("fixture target should have a semantic crate");
-        CrateRef {
-            package: package_slot,
-            crate_id,
-        }
+        self.target(package_name, expected_kind).0
     }
 
     pub fn target(
         &self,
         package_name: &str,
         expected_kind: TargetKind,
-    ) -> (PackageSlot, &CargoTarget) {
-        let package_slot = self.package_slot_by_name(package_name);
-        let package = self
-            .parse_db()
-            .package(package_slot.0)
-            .expect("fixture package slot should exist");
-        let target = package
-            .targets()
-            .iter()
-            .find(|target| target.kind == expected_kind)
-            .unwrap_or_else(|| {
-                panic!(
-                    "fixture package `{package_name}` should have a {:?} target",
-                    expected_kind
-                )
-            });
-
-        (package_slot, target)
-    }
-
-    pub fn package(&self, package: PackageSlot) -> Option<&Package> {
-        self.parse_db().package(package.0)
+    ) -> (CrateRef, &CargoTarget) {
+        let slot = self.package_slot_by_name(package_name);
+        self.workspace()
+            .targets_for_package(slot)
+            .find(|(_, target)| target.kind == expected_kind)
+            .expect("fixture target should exist")
     }
 }

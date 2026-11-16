@@ -8,11 +8,10 @@ use std::{
 
 use rg_ir_model::{CrateRef, FileId, ModuleRef, PackageSlot};
 use rg_item_tree::{ItemTrees, TargetSources, file_declarations, target_sources};
-use rg_parse::{CargoTarget, CargoTargetId, TargetFileManifest};
 use rg_source::{SourceInput, SourcePresence};
 use rg_std::NativeOsString;
 use rg_text::Name;
-use rg_workspace::{PackageInput, TargetInput, WorkspaceMetadata};
+use rg_workspace::{CargoTarget, PackageInput, TargetInput, WorkspaceMetadata};
 
 use super::{
     CrateBuildOutput, MacroSourceFileRequest, MacroSourceFileResolution,
@@ -57,7 +56,7 @@ impl CrateData {
         db: &rg_source::QueryContext<'_>,
         krate: CrateRef,
         dependencies: &(impl CrateResolutionEnv + MacroDefinitionEnv),
-    ) -> ajika::Result<(CrateBuildOutput, ItemTrees, TargetFileManifest)> {
+    ) -> ajika::Result<(CrateBuildOutput, ItemTrees)> {
         let build = || -> anyhow::Result<_> {
             let config = TargetInput::at(krate);
             let package = PackageInput::at(krate.package);
@@ -70,16 +69,15 @@ impl CrateData {
             };
             sources.acquire(&manifest)?;
             let target = CargoTarget {
-                id: CargoTargetId(krate.crate_id.0),
                 name: config.name(db)?,
                 kind: config.kind(db)?,
                 src_path: sources.file_path(manifest.root)?,
-                root_file: manifest.root,
             };
             let roots = CrateDependencies::at(krate).roots(db)?;
             let mut state = collect_crate(
                 krate,
                 &target,
+                manifest.root,
                 package.edition(db)?,
                 package.cfg(db)?.as_ref().clone(),
                 sources.trees(),
@@ -96,11 +94,7 @@ impl CrateData {
                 &package.origin(db)?,
             )?;
             resolve_crate(dependencies, &mut sources, &mut state)?;
-            let manifest = TargetFileManifest {
-                root: manifest.root,
-                files: sources.trees.files().map(|tree| tree.file).collect(),
-            };
-            Ok((state.finish(&package.name(db)?), sources.trees, manifest))
+            Ok((state.finish(&package.name(db)?), sources.trees))
         };
         build().map_err(|error| {
             for cause in error.chain() {

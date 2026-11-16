@@ -40,10 +40,6 @@ impl SourceInput {
             .map_err(ajika::Error::application)
     }
 
-    pub fn captured(inputs: &ajika::Inputs, file: FileId) -> Option<Arc<SourceEntry>> {
-        inputs.peek(Self::CAPTURE, &file)?.ok()
-    }
-
     pub fn evict_saved_text(inputs: &ajika::Inputs) {
         for (_, entry) in inputs.entries(Self::CAPTURE) {
             if let Ok(entry) = entry {

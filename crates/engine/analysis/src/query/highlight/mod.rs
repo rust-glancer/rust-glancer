@@ -27,15 +27,10 @@ impl<'a, 'db> FormatStringHighlighter<'a, 'db> {
         file: FileId,
         range: Option<Span>,
     ) -> anyhow::Result<Vec<Highlight>> {
-        let Some(syntax) = self.0.source_syntax(crate_ref, file)? else {
-            return Ok(Vec::new());
-        };
-        let Some(package) = self.0.saved_source.parse.package(crate_ref.package.0) else {
-            return Ok(Vec::new());
-        };
+        let syntax = self.0.source_syntax(crate_ref, file)?;
         let mut highlights = Vec::new();
         for span in SourceOccurrenceView::new(self.0.view_db())
-            .format_string_spans(package, crate_ref, file, &syntax, range)?
+            .format_string_spans(crate_ref, file, &syntax, range)?
         {
             rg_std::check_cancel!(self.0, "format string highlighting");
             if span.intersection(range.unwrap_or(span)).is_none() {

@@ -10,16 +10,16 @@ mod syntax_owner;
 mod types;
 
 use anyhow::Context as _;
-use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefinitionReader;
 use rg_ir_model::{BodyId, BodyRef, CrateRef, DefMapRef, FileId, Span};
 use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, Package, SavedSourceReader,
-    enclosing_inline_module_path,
+    CurrentSource, DeclarationAssociationIndex, SavedSourceReader, enclosing_inline_module_path,
 };
 use rg_semantic_ir::ItemReader;
+use rg_source::QueryContext;
 use rg_std::{Cancelable, CancellationToken, Cancelled, ExpectedUnique};
 use rg_syntax::{AstNode as _, ast};
+use rg_workspace::CrateConfig;
 
 use self::body::CurrentBodyBuilder;
 pub use self::types::{
@@ -62,7 +62,7 @@ pub struct CurrentSourceBuilder<'request, 'db> {
     def_map: &'request DefinitionReader<'db>,
     semantic_ir: &'request ItemReader<'db>,
     saved_bodies: &'request BodyReader<'db>,
-    saved_source: SavedSourceReader<'db>,
+    db: &'db QueryContext<'db>,
     source: &'request CurrentSource,
     cancellation: CancellationToken,
 }
@@ -78,7 +78,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
         def_map: &'request DefinitionReader<'db>,
         semantic_ir: &'request ItemReader<'db>,
         saved_bodies: &'request BodyReader<'db>,
-        saved_source: SavedSourceReader<'db>,
+        db: &'db QueryContext<'db>,
         source: &'request CurrentSource,
         cancellation: CancellationToken,
     ) -> Self {
@@ -86,7 +86,7 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             def_map,
             semantic_ir,
             saved_bodies,
-            saved_source,
+            db,
             source,
             cancellation,
         }
@@ -97,7 +97,6 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
     #[rg_std::cancelable("prepare current target")]
     pub fn build_target(
         self,
-        package: &Package,
         crate_ref: CrateRef,
         file: FileId,
         associations: &DeclarationAssociationIndex,
@@ -110,24 +109,15 @@ impl<'request, 'db> CurrentSourceBuilder<'request, 'db> {
             rg_std::check_cancel!(self.cancellation, "current preparation phase");
             Ok(())
         };
-        // Bodies and declaration-only contexts use the same Cargo target's cfg policy.
-        let cargo_target = self
-            .def_map
-            .crate_data(crate_ref)
-            .context("load current target definitions")?
-            .context("current crate has no definition data")?
-            .cargo_target();
-        let target = package
-            .target(cargo_target)
-            .context("current crate has no parse target")?;
-        let cfg = CfgEvaluator::new(package.cfg_options(), target.enables_test_cfg());
+        let config = CrateConfig::read(self.db, crate_ref)?;
+        let cfg = config.cfg();
 
         let mut next_body_id = 0;
         let mut current = CurrentSourceStore::default();
         let saved_bodies = self.saved_bodies;
         let mut built = CurrentBodyBuilder::new(
-            package.edition(),
-            self.saved_source,
+            config.edition,
+            SavedSourceReader::new(self.db),
             cfg,
             self.def_map,
             self.semantic_ir,

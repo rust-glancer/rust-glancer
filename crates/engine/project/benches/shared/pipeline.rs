@@ -10,7 +10,7 @@ use rg_def_map::{
 };
 use rg_ir_model::{BodyKey, CrateRef, DefMapRef, ItemStoreRef, LocalDefRef, SemanticItemRef};
 use rg_item_tree::{FileTree, ItemTrees, file_declarations, target_sources};
-use rg_parse::{ParseDb, SavedSourceReader, TargetFileManifest, saved_syntax};
+use rg_parse::{SavedSourceReader, saved_syntax};
 use rg_semantic_ir::{
     AssociatedItemStore, CrateItemSource, ItemLookupEnv, LangItemIndex, LookupAnswer,
     LookupQuestion, SemanticItemView, SourceSelection, SymbolNameIndex, TargetItemData,
@@ -68,12 +68,8 @@ impl BenchWorkspace {
         )
     }
 
-    pub(crate) fn parse_roots(
-        &self,
-        db: &QueryContext<'_>,
-        inputs: &ajika::Inputs,
-    ) -> ajika::Result<ParseDb> {
-        let mut manifests = Vec::with_capacity(self.targets.len());
+    pub(crate) fn parse_roots(&self, db: &QueryContext<'_>) -> ajika::Result<()> {
+        let sources = SavedSourceReader::new(db);
         for &krate in &self.targets {
             let path = TargetInput::at(krate).root_path(db)?;
             let file = SourcePresence::at(path)
@@ -81,23 +77,9 @@ impl BenchWorkspace {
                 .expect("benchmark target root should exist");
             let edition = PackageInput::at(krate.package).edition(db)?;
             saved_syntax(db, file, edition)?;
-            manifests.push(TargetFileManifest {
-                root: file,
-                files: vec![file],
-            });
+            sources.line_index(file)?;
         }
-        let parse = ParseDb::from_target_manifests(
-            &self.workspace,
-            inputs,
-            self.targets.iter().copied().zip(&manifests),
-        )?;
-        // Include coordinate indexing in this parsing stage. These indexes belong to the query
-        // operation, not the startup file inventory.
-        let sources = SavedSourceReader::new(db);
-        for file in parse.packages().iter().flat_map(|pkg| pkg.parsed_files()) {
-            sources.line_index(file.file_id())?;
-        }
-        Ok(parse)
+        Ok(())
     }
 
     pub(crate) fn item_trees(&self, db: &QueryContext<'_>) -> ajika::Result<Vec<Arc<FileTree>>> {
@@ -121,7 +103,7 @@ impl BenchWorkspace {
         // against completed definitions without demanding the dependency's semantic items.
         for &krate in &self.targets {
             let dependencies = DefMapQuery::new(CrateDefMapReader(&scopes.declarations));
-            let (built, trees, _) = CrateData::build_target(db, krate, &dependencies)?;
+            let (built, trees) = CrateData::build_target(db, krate, &dependencies)?;
             scopes.declarations.definitions.insert(krate, built.data);
             scopes.targets.push(PreparedTarget {
                 krate,

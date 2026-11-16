@@ -1,5 +1,5 @@
 use rg_body_ir::testonly::BodyIrFixture;
-use rg_ir_model::{Span, identity::DeclarationRef};
+use rg_ir_model::{FileId, Span, identity::DeclarationRef};
 use rg_parse::{LineIndex, SavedSourceReader};
 
 use crate::{
@@ -16,12 +16,14 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
         let [target] = view.semantic().targets() else {
             panic!("source occurrence fixture should have one target");
         };
-        let package = &view.parse_db().packages()[target.package.0];
-        let file_id = package
-            .parsed_files()
-            .find(|file| file.path().ends_with("src/lib.rs"))
-            .expect("fixture should contain src/lib.rs")
-            .file_id();
+        let root = &view
+            .semantic()
+            .workspace()
+            .target(*target)
+            .expect("fixture target")
+            .src_path;
+        let file_id = FileId::for_path(&view.semantic().db().interner(), root)
+            .expect("fixture file identity");
         let sources = SavedSourceReader::new(view.semantic().db());
         let line_index = sources
             .line_index(file_id)
@@ -31,7 +33,6 @@ pub(super) fn check_source_occurrences(fixture: &str, cases: &[(&str, &str)]) {
             view.semantic().definitions(),
             view.semantic().items(),
             view.body_reader(),
-            view.parse_db(),
             rg_std::CancellationToken::new(),
         );
 

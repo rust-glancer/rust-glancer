@@ -4,6 +4,7 @@ use anyhow::Context as _;
 use expect_test::Expect;
 use rg_analysis::WorkspaceSymbol;
 use rg_ir_model::{CrateRef, FileId, PackageSlot};
+use rg_workspace::Package;
 use test_fixture::fixture_path_for_snapshot;
 
 use crate::{
@@ -40,10 +41,6 @@ impl HostFixture {
         Self {
             fixture: ProjectFixture::build_with_fake_sysroot(spec),
         }
-    }
-
-    pub(super) fn file_id_for_path(&self, relative_path: &str) -> FileId {
-        self.fixture.file_id_for_path(relative_path)
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
@@ -235,14 +232,18 @@ impl HostFixture {
             return;
         };
         let package = self.package(project, context.crate_ref.package);
-        let path = package
-            .file_path(context.file)
-            .expect("file context has a parsed path");
+        let path = project.inspect(|snapshot| {
+            snapshot
+                .sources()
+                .path(context.file)
+                .expect("file path")
+                .to_path_buf()
+        });
         writeln!(
             dump,
             "- {} {} -> {}",
-            package.package_name(),
-            self.display_path(path),
+            package.name,
+            self.display_path(&path),
             self.render_crate_ref(project, context.crate_ref)
         )
         .expect("string writes should not fail");
@@ -287,29 +288,31 @@ impl HostFixture {
     }
 
     fn symbol_path(&self, project: &Project, symbol: &WorkspaceSymbol) -> String {
-        let package = self.package(project, symbol.crate_ref.package);
-        let path = package
-            .file_path(symbol.file_id)
-            .expect("workspace symbol file should be parsed");
-        self.display_path(path)
+        project.inspect(|snapshot| {
+            self.display_path(
+                snapshot
+                    .sources()
+                    .path(symbol.file_id)
+                    .expect("symbol path"),
+            )
+        })
     }
 
     fn render_crate_ref(&self, project: &Project, crate_ref: CrateRef) -> String {
         let package = self.package(project, crate_ref.package);
-        // Crate ids are allocated in parsed Cargo-target order. Use that stable source shape here
-        // because the semantic payload may have been offloaded by the time the fixture is rendered.
-        let target = package
-            .targets()
-            .get(crate_ref.crate_id.0)
-            .expect("target should exist while rendering host fixture");
-        format!("{}[{}]", package.package_name(), target.kind)
+        let target = project
+            .workspace()
+            .target(crate_ref)
+            .expect("fixture target");
+        format!("{}[{}]", package.name, target.kind)
     }
 
-    fn package<'a>(&self, project: &'a Project, package: PackageSlot) -> &'a rg_parse::Package {
+    fn package<'a>(&self, project: &'a Project, package: PackageSlot) -> &'a Package {
         project
             .state
-            .parse_db()
-            .package(package.0)
+            .workspace()
+            .packages()
+            .get(package.0)
             .expect("fixture package should exist")
     }
 
@@ -334,8 +337,8 @@ impl HostFixture {
     ) -> Vec<String> {
         host.inspect(|snapshot| {
             let package_slot =
-                ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
-            let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
+                ProjectFixture::package_slot_by_name_in(snapshot.state.workspace(), package_name);
+            let file_id = ProjectFixture::file_id_for_path_in(snapshot, path);
             let target = snapshot
                 .crates_for_file(package_slot, file_id)
                 .expect("fixture target lookup should start")

@@ -212,19 +212,18 @@ fn complete_impl_projection_applies_each_targets_cfg_and_survives_cancelled_prep
                     &CancellationToken::new(),
                 )
                 .expect("capture source");
-            let package = fixture
+            let test_cfg = fixture
                 .project()
-                .state
-                .parse_db()
-                .package(crate_ref.package.0)
-                .expect("parse package exists");
-            let test_cfg = package.targets()[crate_ref.crate_id.0].enables_test_cfg();
+                .workspace()
+                .target(crate_ref)
+                .expect("fixture target")
+                .kind
+                .enables_test_cfg();
             enabled_targets.push(test_cfg);
             for (marker, cancel) in [("header", true), ("header", false), ("receiver", false)] {
                 let offset =
                     u32::try_from(current.offset(marker)).expect("fixture offset fits u32");
                 let result = db.current_source_builder(source.source()).build_target(
-                    package,
                     crate_ref,
                     file,
                     source

@@ -1,7 +1,6 @@
-//! Demand the roots of a saved project and restore its routing from their manifests.
+//! Demand saved declarations and retain their source-membership facts for routing.
 
 use rg_ir_model::CrateRef;
-use rg_parse::ParseDb;
 use rg_profile::{ProfileMeasurement, ProfileThreadContext};
 use rg_semantic_ir::target_declarations;
 use rg_source::{QueryDatabase, SourceInput};
@@ -10,6 +9,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     MacroExpansionLimitBuildSummary,
     profile::metric,
+    source_index::ProjectSourceIndex,
     state::{ProjectGenerationId, ProjectState},
 };
 
@@ -20,46 +20,32 @@ pub(crate) fn build_state(
 ) -> ajika::Result<ProjectState> {
     let inputs = database.inputs().clone();
     let operation = metric::QUERY_OPERATION.start_timer();
-    let (parse, module_files, reports) = database.run(|db| {
+    let (sources, reports) = database.run(|db| {
         // Targets appear in dependency-first order. Concurrent demands share Ajika's completed
         // results while a target's import fixed point keeps its unfinished scopes local.
         let timer = metric::DECLARATIONS.start_timer();
         let profile = ProfileThreadContext::capture();
         let declarations = db.parallel_map(&targets, |db, &target| {
             let _profile = profile.enter();
-            let declarations = target_declarations(db, target)?;
-            let metadata = declarations.metadata.value(db)?;
-            Ok((declarations, metadata))
+            target_declarations(db, target)?.metadata.value(db)
         })?;
         timer.finish();
-        let parse = ParseDb::from_target_manifests(
-            &workspace,
-            &inputs,
-            targets
-                .iter()
-                .copied()
-                .zip(declarations.iter().map(|(_, metadata)| &metadata.sources)),
-        )?;
-
         // Warm replay can capture inputs while checking old dependencies. Validate the resulting
         // view inside the operation, before Ajika can checkpoint it.
         let timer = metric::SOURCE_VALIDATION.start_timer();
         SourceInput::validate_saved(&inputs, &db.interner())?;
         timer.finish();
-        let module_files = targets
-            .iter()
-            .copied()
-            .zip(
-                declarations
-                    .iter()
-                    .map(|(_, metadata)| metadata.module_files.clone()),
-            )
-            .collect();
+        let sources = ProjectSourceIndex::new(
+            targets
+                .iter()
+                .copied()
+                .zip(declarations.iter().map(|metadata| metadata.sources.clone())),
+        );
         let reports = declarations
             .iter()
-            .filter_map(|(_, metadata)| metadata.macro_expansion_limit.clone())
+            .filter_map(|metadata| metadata.macro_expansion_limit.clone())
             .collect::<Vec<_>>();
-        Ok((parse, module_files, reports))
+        Ok((sources, reports))
     })?;
     operation.finish();
 
@@ -75,7 +61,7 @@ pub(crate) fn build_state(
     metric::METADATA_BYTES_WRITTEN.record(ProfileMeasurement::Bytes(stats.metadata_bytes_written));
 
     // A captured file may belong to a member query that startup has not demanded. Module
-    // manifests cannot prove that it is detached. Keep the revision observation, but release
+    // collection cannot prove that it is detached. Keep the revision observation, but release
     // reloadable text just as for eagerly discovered files.
     // TODO: Retire captures once live input reachability can be proven without eager discovery.
     // Partial declaration ownership cannot prove absence, and expansion also observes files that
@@ -84,9 +70,8 @@ pub(crate) fn build_state(
     Ok(ProjectState {
         generation_id: ProjectGenerationId::fresh(),
         workspace,
-        parse,
+        sources,
         targets,
-        module_files,
         macro_expansion_limit_summary: MacroExpansionLimitBuildSummary::capture(&reports),
         reports,
     })

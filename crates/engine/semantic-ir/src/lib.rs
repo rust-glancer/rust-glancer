@@ -25,8 +25,8 @@ pub use self::{
     build::{
         AssociatedDeclarations, BodyOwnerData, ItemStoreLowerer, ItemStoreSourceReader,
         SymbolNameData, SymbolNameIndex, TargetDeclarationMetadata, TargetDeclarationReader,
-        TargetDeclarations, TargetItemData, associated_declarations, body_owners, saved_body_owner,
-        target_declarations,
+        TargetDeclarations, TargetItemData, TargetSourceFiles, associated_declarations,
+        body_owners, saved_body_owner, target_declarations,
     },
     item::{
         AssociatedItemStore, AssociatedItemStoreBuilder, ConstData, ConstSignature, EnumData,

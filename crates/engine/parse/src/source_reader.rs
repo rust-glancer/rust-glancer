@@ -12,7 +12,7 @@ use rg_text::RustEdition;
 
 use crate::{LineIndex, saved_syntax};
 
-/// Operation-scoped source access. A file does not have to appear in startup's parse inventory:
+/// Operation-scoped source access. A file does not have to be discovered by module collection:
 /// declaration queries can discover includes later and use the same source authority here.
 #[derive(Debug, Clone, Copy)]
 pub struct SavedSourceReader<'db> {

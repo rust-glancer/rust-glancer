@@ -14,7 +14,7 @@ use rg_source::{QueryContext, SourceInput, SourcePresence};
 use rg_std::NativeOsString;
 use rg_text::RustEdition;
 use rg_tt::{Span as TtSpan, TopSubtree};
-use rg_workspace::{PackageInput, TargetInput};
+use rg_workspace::{CrateConfig, PackageInput};
 
 use super::{AssociatedItemInput, AssociatedItemSource};
 use crate::{
@@ -116,9 +116,7 @@ impl AssociatedItemInput {
                 files: Vec::new(),
             });
         };
-        let package = PackageInput::at(krate.package);
-        let cfg_options = package.cfg(db)?;
-        let kind = TargetInput::at(krate).kind(db)?;
+        let config = CrateConfig::read(db, krate)?;
         MemberExpansionBuilder {
             input,
             db,
@@ -126,8 +124,8 @@ impl AssociatedItemInput {
             store,
             scopes,
             env,
-            cfg: CfgEvaluator::new(&cfg_options, kind.enables_test_cfg()),
-            edition: package.edition(db)?,
+            cfg: config.cfg(),
+            edition: config.edition,
             pending: Vec::new(),
             items: Vec::new(),
             generated: GeneratedItemStore::default(),

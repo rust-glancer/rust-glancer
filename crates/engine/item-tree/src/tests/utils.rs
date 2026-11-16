@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 use rg_ir_model::FileId;
-use rg_parse::{CargoTarget, Package};
+use rg_workspace::{CargoTarget, Package};
 
 use crate::{
     BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
@@ -11,30 +11,28 @@ use crate::{
 };
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
-    let db = ItemTreeFixtureDb::build(fixture);
+    let db = ItemTreeFixture::build(fixture);
     let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Structure).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
 pub(super) fn check_project_item_tree_with_declarations(fixture: &str, expect: Expect) {
-    let db = ItemTreeFixtureDb::build(fixture);
+    let db = ItemTreeFixture::build(fixture);
     let actual = ProjectItemTreeSnapshot::new(&db, SnapshotMode::Declarations).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
 
-type ItemTreeFixtureDb = ItemTreeFixture;
-
 /// Project-level item-tree snapshot context.
 /// Renders package sections such as `package demo`.
 struct ProjectItemTreeSnapshot<'a> {
-    db: &'a ItemTreeFixtureDb,
+    db: &'a ItemTreeFixture,
     mode: SnapshotMode,
 }
 
 impl<'a> ProjectItemTreeSnapshot<'a> {
-    fn new(db: &'a ItemTreeFixtureDb, mode: SnapshotMode) -> Self {
+    fn new(db: &'a ItemTreeFixture, mode: SnapshotMode) -> Self {
         Self { db, mode }
     }
 
@@ -45,6 +43,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
             .map(|(package_slot, package)| {
                 let item_trees = self.db.item_trees(package_slot);
                 PackageItemTreeSnapshot {
+                    db: self.db,
                     package,
                     item_trees,
                     mode: self.mode,
@@ -59,12 +58,12 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     fn sorted_packages(&self) -> Vec<(usize, &Package)> {
         let mut packages = self
             .db
-            .parse_db()
+            .workspace()
             .packages()
             .iter()
             .enumerate()
             .collect::<Vec<_>>();
-        packages.sort_by(|left, right| left.1.package_name().cmp(right.1.package_name()));
+        packages.sort_by(|left, right| left.1.name.cmp(&right.1.name));
         packages
     }
 }
@@ -72,6 +71,7 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
 /// Package-level item-tree snapshot context with file-label access.
 /// Renders target/file sections such as `file lib.rs`.
 struct PackageItemTreeSnapshot<'a> {
+    db: &'a ItemTreeFixture,
     package: &'a Package,
     item_trees: &'a crate::ItemTrees,
     mode: SnapshotMode,
@@ -83,7 +83,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             .sorted_target_roots()
             .into_iter()
             .map(|target| {
-                self.render_target_root(target, target.root_file)
+                self.render_target_root(target, self.db.file_id(&target.src_path))
                     .trim_end()
                     .to_string()
             })
@@ -103,7 +103,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
         format!(
             "package {}\n\ntargets\n{target_dumps}\n\nfiles\n{file_dumps}",
-            self.package.package_name()
+            self.package.name
         )
     }
 
@@ -462,9 +462,9 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     }
 
     fn file_label(&self, file_id: FileId) -> String {
-        self.package
+        self.db
             .file_path(file_id)
-            .and_then(|path| path.file_name())
+            .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("<unknown>")
             .to_string()
@@ -501,7 +501,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
     }
 
     fn sorted_target_roots(&self) -> Vec<&CargoTarget> {
-        let mut target_roots = self.package.targets().iter().collect::<Vec<_>>();
+        let mut target_roots = self.package.analyzed_targets().collect::<Vec<_>>();
         target_roots.sort_by(|left_target, right_target| {
             (
                 left_target.kind.sort_order(),
@@ -519,17 +519,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
     fn sorted_files(&self) -> Vec<&FileTree> {
         let mut files = self.item_trees.files().collect::<Vec<_>>();
-        files.sort_by(|left, right| {
-            let left_path = self
-                .package
-                .file_path(left.file)
-                .expect("item-tree file should exist while sorting");
-            let right_path = self
-                .package
-                .file_path(right.file)
-                .expect("item-tree file should exist while sorting");
-            left_path.cmp(right_path)
-        });
+        files.sort_by_key(|tree| self.db.file_path(tree.file));
         files
     }
 

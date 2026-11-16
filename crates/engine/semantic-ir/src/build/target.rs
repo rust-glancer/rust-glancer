@@ -15,9 +15,8 @@ use rg_ir_model::{
     CrateRef, DefMapRef, FileId, ItemStoreId, ItemStoreRef, LocalDefRef, SemanticItemRef,
 };
 use rg_item_tree::{ItemKind, ItemTrees};
-use rg_parse::TargetFileManifest;
 use rg_source::{QueryContext, ReadError};
-use rg_std::Shrink as _;
+use rg_std::{MemorySize, Shrink as _};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -39,9 +38,22 @@ use crate::{
 pub struct TargetDeclarationMetadata {
     /// Sources reached during module collection. Member includes are discovered by their owner's
     /// query and do not extend this startup manifest.
-    pub sources: TargetFileManifest,
-    pub module_files: Vec<FileId>,
+    pub sources: TargetSourceFiles,
     pub macro_expansion_limit: Option<MacroExpansionLimitReport>,
+}
+
+/// Files discovered while collecting a target's module declarations.
+///
+/// Discovery can visit a file before cfg evaluation excludes its module. `collected` retains
+/// those observations for publication and graph checks; `modules` names the files that actually
+/// contribute module scopes and is the preferred route for editor requests. Neither set includes
+/// files that will only be discovered by lazy member expansion.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+pub struct TargetSourceFiles {
+    /// Sorted unique file identities observed during collection.
+    pub collected: Vec<FileId>,
+    /// Sorted unique identities of files contributing module scopes.
+    pub modules: Vec<FileId>,
 }
 
 /// Handles for the independently readable parts of one target's declarations.
@@ -77,8 +89,9 @@ pub fn target_declarations(
 ) -> ajika::Result<TargetDeclarations> {
     let dependencies = TargetDeclarationReader::for_target(db, krate)?;
     let definitions = CrateDefMapReader(&dependencies);
-    let (built, trees, sources) =
-        CrateData::build_target(db, krate, &DefMapQuery::new(definitions))?;
+    let (built, trees) = CrateData::build_target(db, krate, &DefMapQuery::new(definitions))?;
+    let mut collected = trees.files().map(|tree| tree.file).collect::<Vec<_>>();
+    collected.sort_unstable();
     let mut data = built.data;
     let TargetItemData {
         items,
@@ -109,12 +122,14 @@ pub fn target_declarations(
         .collect();
     module_files.sort_unstable();
     module_files.dedup();
-    for &file in &sources.files {
+    for &file in &collected {
         source_ownership.record(file, ItemStoreRef::scope(DefMapRef::Crate(krate)));
     }
     let metadata = TargetDeclarationMetadata {
-        sources,
-        module_files,
+        sources: TargetSourceFiles {
+            collected,
+            modules: module_files,
+        },
         macro_expansion_limit: built.macro_expansion_limit,
     };
     let lang_items = items.lang_items().clone();

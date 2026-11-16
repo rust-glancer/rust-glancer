@@ -12,7 +12,7 @@ use rg_ir_view::{
     member::{FunctionParameterView, MemberView},
     ty::locals::BodyView,
 };
-use rg_parse::{CurrentSource, syntax_edition};
+use rg_parse::{CurrentSource, SavedSourceReader, syntax_edition};
 use rg_std::UniqueVec;
 use rg_syntax::{
     AstNode as _,
@@ -327,24 +327,21 @@ pub(super) enum InlaySource<'a, 'db> {
         source: &'a CurrentSource,
         file: FileId,
     },
-    Saved {
-        analysis: &'a Analysis<'db>,
-        package: PackageSlot,
-    },
+    Saved(SavedSourceReader<'db>),
 }
 
 impl<'a, 'db> InlaySource<'a, 'db> {
     fn new(analysis: &'a Analysis<'db>, package: PackageSlot, file: FileId) -> Self {
         match analysis.current_source(package, file) {
             Some(source) => Self::Current { source, file },
-            None => Self::Saved { analysis, package },
+            None => Self::Saved(analysis.saved_source),
         }
     }
 
     pub(super) fn current(&self) -> Option<&CurrentSource> {
         match self {
             Self::Current { source, .. } => Some(source),
-            Self::Saved { .. } => None,
+            Self::Saved(_) => None,
         }
     }
 
@@ -355,9 +352,7 @@ impl<'a, 'db> InlaySource<'a, 'db> {
                 file: source_file,
             } if *source_file == file => Ok(source.text_for_span(span).map(ToString::to_string)),
             Self::Current { .. } => Ok(None),
-            Self::Saved { analysis, package } => {
-                analysis.saved_source_text_for_span(*package, file, span)
-            }
+            Self::Saved(sources) => Ok(sources.text_for_span(file, span)?),
         }
     }
 
@@ -368,9 +363,7 @@ impl<'a, 'db> InlaySource<'a, 'db> {
                 file: source_file,
             } if *source_file == file => Ok(source.line_for_offset(offset)),
             Self::Current { .. } => Ok(None),
-            Self::Saved { analysis, package } => {
-                analysis.saved_source_line_for_offset(*package, file, offset)
-            }
+            Self::Saved(sources) => Ok(Some(sources.line_index(file)?.position(offset).line)),
         }
     }
 }

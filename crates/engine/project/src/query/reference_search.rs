@@ -46,7 +46,7 @@ impl<'a> ReferenceSearchPlanner<'a> {
         let mut crates = UniqueVec::new();
         for package in packages {
             rg_std::check_cancel!(cancellation, "reference package planning");
-            for crate_ref in self.state.crate_refs_for_package(package) {
+            for (crate_ref, _) in self.state.workspace().targets_for_package(package) {
                 crates.push(crate_ref);
             }
         }

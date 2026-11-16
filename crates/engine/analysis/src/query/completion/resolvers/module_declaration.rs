@@ -11,8 +11,9 @@
 //! is intentionally excluded because its filename no longer follows those conventions.
 
 use anyhow::Context as _;
-use rg_ir_model::FileId;
-use rg_ir_view::display::syntax::SyntaxRenderer;
+use rg_ir_model::{CrateRef, FileId};
+use rg_ir_view::{display::syntax::SyntaxRenderer, source::IndexedModuleFileBase};
+use rg_parse::ModuleFileContext;
 
 use crate::{
     Analysis,
@@ -29,16 +30,12 @@ use crate::{
 /// Discovers conventional sibling module files and renders their stem as `mod name` candidates.
 pub(super) struct ModuleDeclarationCompletionResolver<'a, 'db> {
     analysis: &'a Analysis<'db>,
-    crate_ref: rg_ir_model::CrateRef,
+    crate_ref: CrateRef,
     file_id: FileId,
 }
 
 impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
-    pub(super) fn new(
-        analysis: &'a Analysis<'db>,
-        crate_ref: rg_ir_model::CrateRef,
-        file_id: FileId,
-    ) -> Self {
+    pub(super) fn new(analysis: &'a Analysis<'db>, crate_ref: CrateRef, file_id: FileId) -> Self {
         Self {
             analysis,
             crate_ref,
@@ -68,14 +65,24 @@ impl<'a, 'db> ModuleDeclarationCompletionResolver<'a, 'db> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
+        // Resolve child filenames relative to the declaration's module context. Source paths
+        // need no crate lookup: the selected site already tells us how Rust interprets the file.
+        let path = self.analysis.saved_source.path(self.file_id)?;
+        let mut context = match site.source().file_base() {
+            IndexedModuleFileBase::TargetRoot => ModuleFileContext::for_target_root(path),
+            IndexedModuleFileBase::Conventional => ModuleFileContext::from_definition_file(path),
+            IndexedModuleFileBase::PathAttribute => {
+                ModuleFileContext::for_path_attribute_file(path)
+            }
+        };
+        // TODO: Carry direct `#[path]` overrides on inline-module ancestors in the indexed source
+        // site. Their directory cannot be reconstructed from the semantic name alone.
+        for module_name in site.source().inline_module_path() {
+            context = context.descend_inline(module_name, None);
+        }
         let mut completions = Vec::new();
-        for candidate in self
-            .analysis
-            .module_file_candidates(
-                self.file_id,
-                site.source().file_base(),
-                site.source().inline_module_path(),
-            )
+        for candidate in context
+            .candidate_module_names()
             .context("list module declaration candidates")?
         {
             rg_std::check_cancel!(self.analysis, "completion candidate");

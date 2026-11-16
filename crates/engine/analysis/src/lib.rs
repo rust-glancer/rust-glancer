@@ -18,16 +18,12 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 pub use rg_ir_view::SymbolKind;
-use rg_ir_view::{
-    IndexedViewDb,
-    source::{IndexedModuleFileBase, IndexedSourceProvenance},
-    ty::IndexedType,
-};
+use rg_ir_view::{IndexedViewDb, source::IndexedSourceProvenance, ty::IndexedType};
 use rg_parse::{
-    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, ModuleFileContext,
-    ParseDb, SavedSourceReader, parse_source_file,
+    CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, SavedSourceReader,
 };
 use rg_syntax::SourceFile;
+use rg_workspace::WorkspaceMetadata;
 
 pub use self::{
     model::{
@@ -50,11 +46,12 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 /// Request-scoped façade for editor queries over one frozen project view.
 ///
 /// Most operations start with a file and source offset, then combine semantic facts from
-/// `IndexedViewDb` with exact source text from the matching parse snapshot. Results use the
+/// `IndexedViewDb` with exact source text from the matching saved source inputs. Results use the
 /// transport-neutral models exported by this crate; the LSP layer only converts those models.
 pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
-    saved_source: SavedSourceView<'a>,
+    saved_source: SavedSourceReader<'a>,
+    workspace: &'a WorkspaceMetadata,
     current_source: Option<CurrentSourceView>,
 }
 
@@ -92,10 +89,11 @@ impl<'a> Analysis<'a> {
     }
 
     /// Builds a query API over one request-scoped indexed view and its matching source snapshot.
-    pub fn new(view_db: IndexedViewDb<'a>, saved_source: SavedSourceView<'a>) -> Self {
+    pub fn new(view_db: IndexedViewDb<'a>, workspace: &'a WorkspaceMetadata) -> Self {
         Self {
+            saved_source: view_db.sources(),
             view_db,
-            saved_source,
+            workspace,
             current_source: None,
         }
     }
@@ -116,14 +114,12 @@ impl<'a> Analysis<'a> {
         &self,
         crate_ref: CrateRef,
         file: FileId,
-    ) -> anyhow::Result<Option<SourceFile>> {
+    ) -> anyhow::Result<SourceFile> {
         let edition = self.view_db().crate_edition(crate_ref)?;
         if let Some(source) = self.current_source(crate_ref.package, file) {
-            return Ok(Some(source.parse().tree()));
+            return Ok(source.parse().tree());
         }
-        Ok(self
-            .saved_source_text_for_file(crate_ref.package, file)?
-            .map(|text| parse_source_file(&text, edition).tree()))
+        Ok(self.saved_source.syntax(file, edition)?.tree())
     }
 
     /// Kernels may finish their last unit as cancellation arrives. Check both sides of the
@@ -139,44 +135,12 @@ impl<'a> Analysis<'a> {
         Ok(result)
     }
 
-    pub(crate) fn saved_source_text_for_span(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-        span: Span,
-    ) -> anyhow::Result<Option<String>> {
-        self.saved_source.text_for_span(package, file, span)
-    }
-
-    pub(crate) fn saved_source_text_for_file(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> anyhow::Result<Option<String>> {
-        self.saved_source.file_text(package, file)
-    }
-
-    pub(crate) fn saved_source_line_for_offset(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<u32>> {
-        self.saved_source.line_for_offset(package, file, offset)
-    }
-
-    pub(crate) fn module_file_candidates(
-        &self,
-        file: FileId,
-        file_base: IndexedModuleFileBase,
-        inline_module_path: &[String],
-    ) -> anyhow::Result<Vec<String>> {
-        self.saved_source
-            .module_file_candidates(file, file_base, inline_module_path)
-    }
-
     pub(crate) fn declared_features(&self, package: PackageSlot) -> &[String] {
-        self.saved_source.declared_features(package)
+        self.workspace
+            .packages()
+            .get(package.0)
+            .map(|package| package.declared_features.as_slice())
+            .unwrap_or_default()
     }
 
     pub(crate) fn current_source(
@@ -714,86 +678,5 @@ impl CurrentSourceView {
         file: FileId,
     ) -> Option<&DeclarationAssociationIndex> {
         (self.package == package && self.file == file).then_some(&self.associations)
-    }
-}
-
-/// Saved-source companion to the indexed facts used by `Analysis`.
-///
-/// Editor queries need facts that are intentionally absent from semantic indexes: exact source
-/// slices for rename and inlay labels, full files for edit planning, line positions, declared
-/// Cargo features, and conventional sibling files for `mod name;`. Keeping that access here lets
-/// `rg_ir_view` stay focused on reusable indexed facts.
-#[derive(Debug, Clone, Copy)]
-pub struct SavedSourceView<'a> {
-    parse: &'a ParseDb,
-    sources: SavedSourceReader<'a>,
-}
-
-impl<'a> SavedSourceView<'a> {
-    pub fn new(parse: &'a ParseDb, sources: SavedSourceReader<'a>) -> Self {
-        Self { parse, sources }
-    }
-
-    fn declared_features(&self, package: PackageSlot) -> &[String] {
-        self.parse
-            .package(package.0)
-            .map(rg_parse::Package::declared_features)
-            .unwrap_or_default()
-    }
-
-    /// Lists conventional out-of-line child modules below one file-backed source position.
-    fn module_file_candidates(
-        &self,
-        file: FileId,
-        file_base: IndexedModuleFileBase,
-        inline_module_path: &[String],
-    ) -> anyhow::Result<Vec<String>> {
-        let path = self.sources.path(file)?;
-        let mut context = match file_base {
-            IndexedModuleFileBase::TargetRoot => ModuleFileContext::for_target_root(path),
-            IndexedModuleFileBase::Conventional => ModuleFileContext::from_definition_file(path),
-            IndexedModuleFileBase::PathAttribute => {
-                ModuleFileContext::for_path_attribute_file(path)
-            }
-        };
-        // TODO: Carry direct `#[path]` overrides on inline-module ancestors in the indexed source
-        // site. Their directory cannot be reconstructed from the semantic name alone.
-        for module_name in inline_module_path {
-            context = context.descend_inline(module_name, None);
-        }
-        context
-            .candidate_module_names()
-            .context("list module declaration completion candidates")
-    }
-
-    fn text_for_span(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-        span: Span,
-    ) -> anyhow::Result<Option<String>> {
-        if self.parse.package(package.0).is_none() {
-            return Ok(None);
-        }
-        Ok(self.sources.text_for_span(file, span)?)
-    }
-
-    fn file_text(&self, package: PackageSlot, file: FileId) -> anyhow::Result<Option<String>> {
-        if self.parse.package(package.0).is_none() {
-            return Ok(None);
-        }
-        Ok(Some(self.sources.text(file)?.to_string()))
-    }
-
-    fn line_for_offset(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<u32>> {
-        if self.parse.package(package.0).is_none() {
-            return Ok(None);
-        }
-        Ok(Some(self.sources.line_index(file)?.position(offset).line))
     }
 }

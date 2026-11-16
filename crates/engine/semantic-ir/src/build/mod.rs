@@ -16,6 +16,6 @@ pub use self::{
     symbol_names::{SymbolNameData, SymbolNameIndex},
     target::{
         TargetDeclarationMetadata, TargetDeclarationReader, TargetDeclarations, TargetItemData,
-        target_declarations,
+        TargetSourceFiles, target_declarations,
     },
 };

@@ -172,8 +172,8 @@ pub fn wanted() -> u8 { 1u8 }
             assert_eq!(definitions.len(), 1);
             assert_eq!(
                 snapshot
-                    .file_path(context.crate_ref.package, definitions[0].file_id)
-                    .expect("source path query")
+                    .sources()
+                    .path(definitions[0].file_id)
                     .expect("included path"),
                 fixture
                     .path("src/methods.rs")
@@ -183,15 +183,16 @@ pub fn wanted() -> u8 { 1u8 }
             let span = definitions[0].span.expect("included name span");
             assert_eq!(
                 snapshot
-                    .file_text_for_span(context.crate_ref.package, definitions[0].file_id, span)
+                    .sources()
+                    .text_for_span(definitions[0].file_id, span)
                     .expect("included source text")
                     .as_deref(),
                 Some("wanted")
             );
             let position = snapshot
-                .file_line_index(context.crate_ref.package, definitions[0].file_id)
+                .sources()
+                .line_index(definitions[0].file_id)
                 .expect("included line index")
-                .expect("line index")
                 .utf16_position(span.start);
             assert_eq!((position.line, position.column), (0, 7));
             let reader = ItemReader(snapshot.declarations());
@@ -370,11 +371,8 @@ pub fn needle_free() {}
                 );
                 for symbol in symbols {
                     let text = snapshot
-                        .file_text_for_span(
-                            symbol.crate_ref.package,
-                            symbol.file_id,
-                            symbol.span.expect("symbol navigation span"),
-                        )
+                        .sources()
+                        .text_for_span(symbol.file_id, symbol.span.expect("symbol navigation span"))
                         .expect("symbol navigation text")
                         .expect("symbol source");
                     // Template names navigate to the invocation. The written member after that

@@ -11,15 +11,12 @@ description.workspace = true
 [dependencies]
 ajika.workspace = true
 anyhow.workspace = true
-rg_cfg_eval.workspace = true
 rg_ir_model.workspace = true
 rg_source.workspace = true
 rg_syntax.workspace = true
 wincode.workspace = true
-rg_arena.workspace = true
 rg_std.workspace = true
 rg_text.workspace = true
-rg_workspace.workspace = true
 
 [lints]
 workspace = true

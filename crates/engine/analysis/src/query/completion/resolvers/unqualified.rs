@@ -229,9 +229,12 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             // not have that tree, so load saved source only for this source-edit policy and still
             // build at most one syntax tree on their request path.
             let loaded_source = if syntax_context.is_none() {
-                self.analysis
-                    .saved_source_text_for_file(self.query.crate_ref.package, self.query.file_id)
-                    .context("load auto-import source text")?
+                Some(
+                    self.analysis
+                        .saved_source
+                        .text(self.query.file_id)
+                        .context("load auto-import source text")?,
+                )
             } else {
                 None
             };

@@ -9,8 +9,9 @@
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodySource, BuiltinMacroExprKind, CrateRef, FileId, Span};
-use rg_parse::{Package, enclosing_inline_module_path};
+use rg_parse::enclosing_inline_module_path;
 use rg_syntax::{AstNode, AstToken as _, SourceFile, SyntaxNode, WalkEvent, ast};
+use rg_workspace::CrateConfig;
 
 use super::{
     BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,
@@ -22,19 +23,13 @@ impl BodyMacroExpander<'_, '_> {
     /// Skip literals supplied by the macro definition: they were not written in the call.
     pub fn format_string_spans(
         &mut self,
-        package: &Package,
+        config: &CrateConfig,
         crate_ref: CrateRef,
         file: FileId,
         syntax: &SourceFile,
         range: Option<Span>,
     ) -> anyhow::Result<Vec<Span>> {
-        let Some(data) = self.def_maps.crate_data(crate_ref)? else {
-            return Ok(Vec::new());
-        };
-        let Some(target) = package.target(data.cargo_target()) else {
-            return Ok(Vec::new());
-        };
-        let cfg = CfgEvaluator::new(package.cfg_options(), target.enables_test_cfg());
+        let cfg = config.cfg();
         let mut spans = Vec::new();
         for call in self.format_macro_calls(syntax.syntax(), cfg)? {
             let span = Span::from_text_range(call.syntax().text_range());
@@ -72,7 +67,7 @@ impl BodyMacroExpander<'_, '_> {
                 module,
                 BodySource::written(file, span),
                 BodyMacroCallOrigin::Source,
-                package.edition(),
+                config.edition,
             )
             .with_cfg(cfg);
             self.collect_format_call(site, &call, &mut spans)?;

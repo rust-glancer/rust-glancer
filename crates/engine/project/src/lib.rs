@@ -7,6 +7,7 @@ mod profile;
 mod project;
 mod project_queries;
 mod query;
+mod source_index;
 mod state;
 mod stats;
 

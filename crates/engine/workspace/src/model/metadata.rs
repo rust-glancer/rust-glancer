@@ -86,18 +86,15 @@ impl WorkspaceMetadata {
             input.set_name(update, package.name.clone())?;
             input.set_origin(update, package.origin.clone())?;
             input.set_generated_sources(update, package.cargo_generated_sources.clone())?;
-            for (index, target) in package.analyzed_targets().enumerate() {
-                let input = TargetInput::at(CrateRef {
-                    package: slot,
-                    crate_id: CrateId(index),
-                });
-                input.set_root_path(
-                    update,
-                    NativeOsString::from_os_str(target.src_path.as_os_str()),
-                )?;
-                input.set_name(update, target.name.clone())?;
-                input.set_kind(update, target.kind.clone())?;
-            }
+        }
+        for (krate, target) in self.targets() {
+            let input = TargetInput::at(krate);
+            input.set_root_path(
+                update,
+                NativeOsString::from_os_str(target.src_path.as_os_str()),
+            )?;
+            input.set_name(update, target.name.clone())?;
+            input.set_kind(update, target.kind.clone())?;
         }
         WorkspaceInput::at(()).set_target_cfg(update, self.target_cfg_options.clone())
     }
@@ -249,6 +246,43 @@ impl WorkspaceMetadata {
     /// Returns all known packages.
     pub fn packages(&self) -> &[Package] {
         &self.packages
+    }
+
+    /// All analyzed targets in package order, with the same identities used by workspace inputs.
+    pub fn targets(&self) -> impl Iterator<Item = (CrateRef, &CargoTarget)> {
+        (0..self.packages.len()).flat_map(move |slot| self.targets_for_package(PackageSlot(slot)))
+    }
+
+    /// Target slots follow the filtered Cargo order, including for non-workspace packages
+    /// where only library targets are analyzed. Declaration collection uses these same identities.
+    pub fn targets_for_package(
+        &self,
+        package: PackageSlot,
+    ) -> impl Iterator<Item = (CrateRef, &CargoTarget)> {
+        self.packages
+            .get(package.0)
+            .into_iter()
+            .flat_map(move |metadata| {
+                metadata
+                    .analyzed_targets()
+                    .enumerate()
+                    .map(move |(index, target)| {
+                        (
+                            CrateRef {
+                                package,
+                                crate_id: CrateId(index),
+                            },
+                            target,
+                        )
+                    })
+            })
+    }
+
+    pub fn target(&self, krate: CrateRef) -> Option<&CargoTarget> {
+        self.packages
+            .get(krate.package.0)?
+            .analyzed_targets()
+            .nth(krate.crate_id.0)
     }
 
     /// Returns one package by normalized package id.

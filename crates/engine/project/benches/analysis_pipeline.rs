@@ -18,11 +18,9 @@ fn parse_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     bencher
         .with_inputs(|| workspace.database())
         .bench_local_refs(|database| {
-            let inputs = database.inputs().clone();
-            let parse = database
-                .run(|db| workspace.parse_roots(db, &inputs))
+            database
+                .run(|db| workspace.parse_roots(db))
                 .expect("target roots should parse");
-            black_box_drop(parse);
         });
 }
 
@@ -32,9 +30,8 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     bencher
         .with_inputs(|| {
             let mut database = workspace.database();
-            let inputs = database.inputs().clone();
             database
-                .run(|db| workspace.parse_roots(db, &inputs))
+                .run(|db| workspace.parse_roots(db))
                 .expect("capture target roots");
             database
         })

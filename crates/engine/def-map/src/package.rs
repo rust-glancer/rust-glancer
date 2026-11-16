@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{CrateRef, ModuleId, ModuleRef};
-use rg_parse::CargoTargetId;
 use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use rg_workspace::TargetKind;
@@ -11,13 +10,10 @@ use crate::map::DefMap;
 
 /// Definition and resolution state for one semantic crate.
 ///
-/// Cargo targets are source/project inputs. The semantic engine assigns a package-local `CrateId`
-/// while retaining the originating target id and kind here. The id lets source-facing operations
-/// return to parsed data; the kind preserves language boundaries such as the difference between a
-/// proc-macro export and its host-side implementation crate.
+/// The crate's identity is its configured target's `CrateRef`. The target kind preserves language
+/// boundaries such as the difference between a proc-macro export and its host-side implementation.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CrateData {
-    cargo_target: CargoTargetId,
     target_kind: TargetKind,
     // Const arithmetic must use the compilation target even when it differs from the host.
     target_pointer_width: Option<u32>,
@@ -33,7 +29,6 @@ pub struct CrateData {
 impl CrateData {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        cargo_target: CargoTargetId,
         target_kind: TargetKind,
         target_pointer_width: Option<u32>,
         name: String,
@@ -43,7 +38,6 @@ impl CrateData {
         def_map: DefMap,
     ) -> Self {
         Self {
-            cargo_target,
             target_kind,
             target_pointer_width,
             name,
@@ -52,11 +46,6 @@ impl CrateData {
             prelude,
             def_map,
         }
-    }
-
-    /// Returns the parsed Cargo target that produced this semantic crate.
-    pub fn cargo_target(&self) -> CargoTargetId {
-        self.cargo_target
     }
 
     /// Returns the Cargo target role whose language rules apply to this semantic crate.

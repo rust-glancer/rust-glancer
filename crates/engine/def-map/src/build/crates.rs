@@ -12,7 +12,7 @@ use std::{
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{CrateRef, DefId, FileId, ModuleId, ModuleRef};
-use rg_parse::{CargoTargetId, ModuleFileContext};
+use rg_parse::ModuleFileContext;
 use rg_std::NativeOsString;
 use rg_text::{Name, RustEdition};
 use rg_workspace::TargetKind;
@@ -36,7 +36,6 @@ use crate::{
 /// Crate-wide context and pending macro work stay here.
 pub(crate) struct CrateBuilder {
     pub(crate) crate_ref: CrateRef,
-    pub(crate) cargo_target: CargoTargetId,
     pub(crate) crate_name: String,
     pub(crate) root_module: ModuleId,
     pub(crate) edition: RustEdition,
@@ -89,7 +88,6 @@ impl CrateBuilder {
             .and_then(|value| value.value().parse().ok());
         let (def_map, generated_items) = self.def_map_builder.into_parts();
         let data = CrateData::new(
-            self.cargo_target,
             self.target_kind,
             target_pointer_width,
             self.crate_name,

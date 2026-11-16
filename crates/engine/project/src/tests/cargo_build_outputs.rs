@@ -71,9 +71,16 @@ pub struct GeneratedChild;
     let mut project = Project::builder(workspace)
         .build()
         .expect("passive generated-source fixture should build");
-    assert!(project.state.parse_db().contains_file_path(
-        &fs::canonicalize(&generated).expect("generated source should canonicalize")
-    ));
+    project.inspect(|snapshot| {
+        assert!(
+            snapshot
+                .file_context_for_source_path(
+                    &fs::canonicalize(&generated).expect("generated source path")
+                )
+                .expect("generated source routing")
+                .is_some()
+        )
+    });
     assert_symbol_count(&project, "RecoveredGenerated", 1);
     assert_symbol_count(&project, "NestedRecovered", 1);
     assert_symbol_count(&project, "MacroRecovered", 1);
@@ -88,13 +95,12 @@ pub struct GeneratedChild;
             .expect("recovered generated symbol should exist");
         assert_eq!(
             snapshot
-                .file_path(generated_symbol.crate_ref.package, generated_symbol.file_id)
+                .sources()
+                .path(generated_symbol.file_id)
                 .expect("source path"),
-            Some(
-                fs::canonicalize(&generated)
-                    .expect("generated source should canonicalize")
-                    .as_path()
-            )
+            fs::canonicalize(&generated)
+                .expect("generated source should canonicalize")
+                .as_path()
         );
     });
 
@@ -261,7 +267,12 @@ include!(concat!(env!("OUT_DIR"), "/generated.rs"));
             .iter()
             .any(|package| package.cargo_generated_sources.is_some())
     );
-    assert!(project.state.parse_db().contains_file_path(&generated));
+    assert!(project.inspect(|snapshot| {
+        snapshot
+            .file_context_for_source_path(&generated)
+            .expect("source routing")
+            .is_some()
+    }));
     assert_symbol_count(&project, "DiscoveredAfterStartup", 1);
 }
 

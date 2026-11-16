@@ -1,7 +1,6 @@
 //! Prepare and infer one saved body owner with the same worklist as current-source analysis.
 
 use rg_arena::Arena;
-use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{CrateDefMapReader, DefinitionReader};
 use rg_ir_model::{BodyId, BodyKey};
 use rg_item_tree::SourceLocations as _;
@@ -11,7 +10,7 @@ use rg_semantic_ir::{
 };
 use rg_source::{QueryContext, ReadError};
 use rg_std::Shrink as _;
-use rg_workspace::{PackageInput, TargetInput};
+use rg_workspace::CrateConfig;
 
 use super::{
     lower::{
@@ -53,11 +52,9 @@ pub fn prepare_saved_body(
     let readers = TargetDeclarationReader::for_target(db, key.krate)?;
     let definitions: DefinitionReader<'_> = CrateDefMapReader(&readers);
     let items = ItemReader(&readers);
-    let package = PackageInput::at(key.krate.package);
-    let edition = package.edition(db)?;
-    let cfg = package.cfg(db)?;
-    let target_kind = TargetInput::at(key.krate).kind(db)?;
-    let cfg = CfgEvaluator::new(&cfg, target_kind.enables_test_cfg());
+    let config = CrateConfig::read(db, key.krate)?;
+    let edition = config.edition;
+    let cfg = config.cfg();
     let source = BodyTaskSource::Tracked { db, edition };
     let cancellation = db.services().cancellation.clone();
     let build = || -> anyhow::Result<_> {

@@ -3,7 +3,6 @@ use rg_ir_model::{
     BodyKey, BodyRef, ConstRef, CrateRef, DefMapRef, FunctionRef, ItemStoreRef, LocalDefRef,
     ModuleRef, SavedBodyOwner, SemanticItemRef, StaticRef,
 };
-use rg_parse::ParseDb;
 use rg_semantic_ir::{
     AssociatedItemStore, ItemStoreQuery, SemanticItemSource, SemanticItemView, SourceSelection,
     body_owners,
@@ -53,10 +52,6 @@ pub struct BodyIrView<'db> {
 impl<'db> BodyIrView<'db> {
     pub fn semantic(&self) -> SemanticIrView<'db> {
         self.semantic
-    }
-
-    pub fn parse_db(&self) -> &'db ParseDb {
-        self.semantic.parse_db()
     }
 
     pub fn body_reader(&self) -> BodyReader<'db> {

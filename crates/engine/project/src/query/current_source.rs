@@ -3,11 +3,12 @@
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use rg_analysis::{Analysis, CurrentSourceView, SavedSourceRelationship, SavedSourceView};
+use rg_analysis::{Analysis, CurrentSourceView, SavedSourceRelationship};
 use rg_body_ir::{CurrentSourceBuildCheckpoint, CurrentSourceBuildSummary, CurrentSourceSelection};
 use rg_ir_model::{CrateRef, FileId};
 use rg_parse::{CurrentSource, DeclarationAssociationIndex, LineIndex, SavedSourceReader};
 use rg_source::SourceRevision;
+use rg_workspace::PackageInput;
 
 use super::ProjectSnapshot;
 
@@ -38,7 +39,7 @@ impl<'a> ProjectSnapshot<'a> {
         let (_, file) = target;
         rg_std::check_cancel!(cancellation, "document source");
         // An opened include may have been discovered after startup. Its captured source owns
-        // the saved revision even when the parse inventory has no entry for this file.
+        // the saved revision even when module collection has not discovered this file.
         let saved = SavedSourceReader::new(self.query_context());
         if saved.revision(file)? != SourceRevision::from_bytes(source.as_bytes()) {
             return self
@@ -57,19 +58,12 @@ impl<'a> ProjectSnapshot<'a> {
         cancellation: &rg_std::CancellationToken,
     ) -> anyhow::Result<CurrentSourceView> {
         rg_std::check_cancel!(cancellation, "current source");
-        let package = self
-            .state
-            .parse_db()
-            .package(crate_ref.package.0)
-            .context("current-source target has no parse package")?;
-        let current_source = Arc::new(CurrentSource::new(
-            Arc::<str>::from(source),
-            package.edition(),
-        ));
+        let edition = PackageInput::at(crate_ref.package).edition(self.query_context())?;
+        let current_source = Arc::new(CurrentSource::new(Arc::<str>::from(source), edition));
         let current_syntax = current_source.parse().tree();
         let saved = SavedSourceReader::new(self.query_context());
         let saved_syntax = saved
-            .syntax(file, package.edition())
+            .syntax(file, edition)
             .context("parse saved syntax for declaration association")?
             .tree();
         let associations = Arc::new(DeclarationAssociationIndex::new(
@@ -100,11 +94,6 @@ impl<'a> ProjectSnapshot<'a> {
         checkpoint: impl FnMut(CurrentSourceBuildCheckpoint) -> anyhow::Result<()>,
     ) -> anyhow::Result<(Analysis<'a>, CurrentSourceBuildSummary)> {
         let view_db = self.view_db();
-        let package = self
-            .state
-            .parse_db()
-            .package(crate_ref.package.0)
-            .context("current-source target has no parse package")?;
         let associations = current_source_view
             .declaration_associations(crate_ref.package, file)
             .context("current-source target has no declaration associations")?;
@@ -113,7 +102,6 @@ impl<'a> ProjectSnapshot<'a> {
         let (current, summary) = view_db
             .current_source_builder(current_source_view.source())
             .build_target(
-                package,
                 crate_ref,
                 file,
                 associations,
@@ -122,14 +110,8 @@ impl<'a> ProjectSnapshot<'a> {
                 checkpoint,
             )
             .context("prepare current-source target")?;
-        let analysis = Analysis::new(
-            view_db.with_current_source(current),
-            SavedSourceView::new(
-                self.state.parse_db(),
-                SavedSourceReader::new(self.query_context()),
-            ),
-        )
-        .with_current_source(current_source_view);
+        let analysis = Analysis::new(view_db.with_current_source(current), self.state.workspace())
+            .with_current_source(current_source_view);
         Ok((analysis, summary))
     }
 }

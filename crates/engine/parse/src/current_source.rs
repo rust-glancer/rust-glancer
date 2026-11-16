@@ -14,7 +14,7 @@ use crate::{LineIndex, parse_source_file};
 
 /// Source data derived from one immutable editor document snapshot.
 ///
-/// This value has no project identity and is never retained in the parse database. A caller must
+/// This value has no project identity and is never installed as saved source. A caller must
 /// still pair it with a saved `(package, file)` interpretation before borrowing global semantics.
 #[derive(Debug, Clone)]
 pub struct CurrentSource {

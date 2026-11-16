@@ -18,7 +18,7 @@ use std::{
 
 use expect_test::expect;
 use rg_analysis::ReferenceQuery;
-use rg_ir_model::{PackageSlot, Span};
+use rg_ir_model::Span;
 use rg_source::CapturedSource;
 
 use self::utils::{HostFixture, HostObservation};
@@ -70,18 +70,22 @@ pub struct Before;
     let canonical = path
         .canonicalize()
         .expect("published fixture source should canonicalize");
-    let entry = project.state.parse_db().packages()[0]
-        .parsed_files()
-        .find(|file| file.path() == canonical)
-        .expect("published captured source should remain available");
+    let file_id =
+        project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &canonical));
     assert_eq!(summary.changed_files.len(), 1);
-    assert_eq!(entry.source_revision(), captured.revision());
     project.inspect(|snapshot| {
         assert_eq!(
             snapshot
-                .file_source_text(PackageSlot(0), entry.file_id())
+                .sources()
+                .revision(file_id)
+                .expect("saved revision"),
+            captured.revision()
+        );
+        assert_eq!(
+            snapshot
+                .sources()
+                .text(file_id)
                 .expect("published captured source should reload from matching disk")
-                .expect("published source is available")
                 .as_ref(),
             "pub struct Captured;\n"
         );
@@ -105,7 +109,7 @@ pub struct Published;
     let path = fixture.path("src/lib.rs");
     let mut project = fixture.build_project();
     let published_generation = project.generation_id();
-    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    let file_id = project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &path));
 
     let captured = CapturedSource::new(&path, "pub struct Proposed;\n")
         .expect("existing fixture source should capture");
@@ -126,12 +130,13 @@ pub struct Published;
     assert_eq!(project.generation_id(), published_generation);
 
     // Restore the disk proof for the still-published generation, then verify that the failed
-    // proposal never leaked into its ParseDb.
+    // proposal never leaked into its saved source inputs.
     std::fs::write(&path, "pub struct Published;\n")
         .expect("published fixture source should be restored");
     let text = project.inspect(|snapshot| {
         snapshot
-            .file_text_for_span(PackageSlot(0), file_id, Span { start: 0, end: 21 })
+            .sources()
+            .text_for_span(file_id, Span { start: 0, end: 21 })
             .expect("published source should load after rejected proposal")
             .expect("published source span should exist")
     });
@@ -232,7 +237,7 @@ pub struct Published;
 }
 
 #[test]
-fn saved_module_rename_retires_historical_source() {
+fn saved_module_rename_updates_source_routing() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -267,17 +272,19 @@ pub struct Before;
 
     assert_eq!(summary.changed_files.len(), 3);
     assert!(
-        !project.state.parse_db().contains_file_path(&old_canonical),
-        "renamed module source should leave the package file table",
+        project.inspect(|snapshot| snapshot
+            .file_context_for_source_path(&old_canonical)
+            .expect("old file routing")
+            .is_none()),
+        "the old module path should no longer have an owning crate",
     );
 
-    // A later save proves that the retired path cannot poison every candidate forked from this
-    // generation.
+    // A subsequent save must accept the new source layout too.
     std::fs::write(&new, "pub struct After;\n")
         .expect("renamed module should accept a later saved edit");
     project
         .apply_changes([SavedFileChange::fs_path(&new)])
-        .expect("later save should not validate the retired module path");
+        .expect("later save should accept the renamed module");
 }
 
 #[test]
@@ -296,15 +303,13 @@ pub struct Before;
     );
     let path = fixture.path("src/lib.rs");
     let project = fixture.build_project();
-    let file_id = ProjectFixture::file_id_for_path_in(project.state.parse_db(), &path);
+    let file_id = project.inspect(|snapshot| ProjectFixture::file_id_for_path_in(snapshot, &path));
     std::fs::write(&path, "\n\npub struct After;\n")
         .expect("newer fixture source should be written");
 
     let error = project
         .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
-            snapshot
-                .file_line_index(PackageSlot(0), file_id)
-                .map(|index| index.cloned())
+            Ok(snapshot.sources().line_index(file_id)?.clone())
         })
         .expect_err("line index reload should reject a newer source revision");
     assert!(
@@ -695,12 +700,12 @@ pub struct Independent;
     );
     let project = fixture.build_project();
     project.inspect(|snapshot| {
-        let dep_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "dep");
-        let app_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "app");
-        let dep_file = ProjectFixture::file_id_for_path_in(
-            snapshot.parse_db(),
-            &fixture.path("crates/dep/src/lib.rs"),
-        );
+        let dep_package =
+            ProjectFixture::package_slot_by_name_in(snapshot.state.workspace(), "dep");
+        let app_package =
+            ProjectFixture::package_slot_by_name_in(snapshot.state.workspace(), "app");
+        let dep_file =
+            ProjectFixture::file_id_for_path_in(snapshot, &fixture.path("crates/dep/src/lib.rs"));
         let dep_target = snapshot
             .crates_for_file(dep_package, dep_file)
             .expect("dep target lookup should succeed")
@@ -718,11 +723,13 @@ pub struct Independent;
             .into_iter()
             .map(|target| {
                 snapshot
-                    .parse_db()
-                    .package(target.package.0)
+                    .state
+                    .workspace()
+                    .packages()
+                    .get(target.package.0)
                     .expect("reference search target package should exist")
-                    .package_name()
-                    .to_owned()
+                    .name
+                    .clone()
             })
             .collect::<BTreeSet<_>>();
 
@@ -735,7 +742,7 @@ pub struct Independent;
 }
 
 #[test]
-fn reparses_known_file_in_place() {
+fn saved_declaration_changes_refresh_workspace_symbols() {
     let mut fixture = HostFixture::build(
         r#"
 //- /Cargo.toml
@@ -748,7 +755,6 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let before_file_id = fixture.file_id_for_path("src/lib.rs");
 
     fixture.check(
         &[HostObservation::workspace_symbols("User")],
@@ -780,12 +786,6 @@ pub struct Account;
             workspace symbols `User`
             - <none>
         "#]],
-    );
-
-    let after_file_id = fixture.file_id_for_path("src/lib.rs");
-    assert_eq!(
-        after_file_id, before_file_id,
-        "known file reparses should keep the package-local FileId stable"
     );
 }
 
