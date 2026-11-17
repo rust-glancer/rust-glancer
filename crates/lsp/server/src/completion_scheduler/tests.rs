@@ -1,11 +1,12 @@
 use std::{
-    future::pending,
+    future::{Future, pending},
     path::{Path, PathBuf},
+    pin::Pin,
 };
 
-use rg_lsp_proto::{EngineError, QueryError, QueryScope, QueryValue};
+use rg_lsp_proto::{EngineError, OpenDocumentsRevision, QueryError, QueryScope, QueryValue};
 use tokio::sync::{mpsc, oneshot};
-use tower_lsp_server::gen_lsp_types::{Position, Range};
+use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangePartial};
 
 use super::{
     CompletionAttemptOutcome, CompletionRequest, CompletionScheduler,
@@ -39,37 +40,23 @@ async fn document_advance_is_an_attempt_transition_not_a_query_error() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sibling_edits_do_not_interrupt_a_target_document_attempt() {
+async fn sibling_edits_interrupt_semantic_attempts() {
     let scheduler = CompletionScheduler::default();
-    let (editor, _path, captured) = open_document();
+    let (editor, path, _) = open_document();
     let sibling = synthetic_test_path("workspace/src/sibling.rs");
     editor.open(sibling.clone(), Some(1), "pub struct Sibling;".to_string());
+    let captured = editor.document(Some(path)).expect("target capture");
     let request = scheduler.capture_request(&captured, Position::new(0, 20));
     let (started, mut starts) = mpsc::unbounded_channel();
-    let (finish, finished) = oneshot::channel();
     let response = enqueue(
         &request,
         &captured,
         20,
-        observed_job(
-            1,
-            started,
-            Box::pin(async move {
-                let _ = finished.await;
-            }),
-        ),
+        observed_job(1, started, Box::pin(pending())),
     );
     assert_eq!(starts.recv().await, Some(1));
-
     change(&editor, &sibling, 19, "Changed");
-    tokio::task::yield_now().await;
-    assert!(
-        !finish.is_closed(),
-        "a sibling edit must leave target-only semantic work running"
-    );
-
-    finish.send(()).expect("target attempt should still finish");
-    assert_completed(response.wait().await);
+    assert_document_advanced(response.wait().await);
     drop(request);
     assert_eq!(scheduler.session_count(), 0);
 }
@@ -253,7 +240,7 @@ async fn dropping_every_waiter_cancels_work_and_releases_the_session_queue() {
     let (dropped, dropped_rx) = oneshot::channel();
     let response = request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 1)),
-        captured.document_revision_watch(),
+        captured.editor_revision_watch(),
         Box::pin(async move {
             let _notice = DropNotice(Some(dropped));
             started
@@ -311,7 +298,7 @@ async fn query_errors_remain_completed_attempt_outcomes() {
     let unavailable_request = scheduler.capture_request(&captured, Position::new(0, 1));
     let unavailable = unavailable_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 1)),
-        captured.document_revision_watch(),
+        captured.editor_revision_watch(),
         Box::pin(async { Err(QueryError::SavedSourceChanged) }),
     );
     let CompletionAttemptOutcome::Completed(Err(QueryError::SavedSourceChanged)) =
@@ -324,7 +311,7 @@ async fn query_errors_remain_completed_attempt_outcomes() {
     let failed_request = scheduler.capture_request(&captured, Position::new(0, 2));
     let failed = failed_request.enqueue_attempt(
         AttemptKey::for_capture(&captured, Position::new(0, 2)),
-        captured.document_revision_watch(),
+        captured.editor_revision_watch(),
         Box::pin(async { Err(QueryError::Internal(EngineError::new("semantic failure"))) }),
     );
     let CompletionAttemptOutcome::Completed(Err(error)) = failed.wait().await else {
@@ -353,7 +340,7 @@ fn enqueue(
 ) -> AttemptWaiter {
     request.enqueue_attempt(
         AttemptKey::for_capture(captured, Position::new(0, character)),
-        captured.document_revision_watch(),
+        captured.editor_revision_watch(),
         run,
     )
 }
@@ -368,7 +355,13 @@ fn observed_job(
             .send(label)
             .expect("test should observe every started completion");
         wait.await;
-        Ok(QueryValue::new(Vec::new(), QueryScope::SavedProject))
+        Ok(QueryValue::new(
+            Vec::new(),
+            QueryScope::Editor {
+                target: None,
+                open_documents_revision: OpenDocumentsRevision::new(1),
+            },
+        ))
     })
 }
 
@@ -378,14 +371,12 @@ fn change(editor: &EditorStateHandle, path: &Path, character: u32, text: &str) {
             .change(
                 path,
                 Some(2),
-                &[tower_lsp_server::gen_lsp_types::TextDocumentContentChangePartial {
-                    range: Range::new(
-                        Position::new(0, character),
-                        Position::new(0, character),
-                    ),
+                &[TextDocumentContentChangePartial {
+                    range: Range::new(Position::new(0, character), Position::new(0, character),),
                     text: text.to_string(),
-            ..Default::default()
-        }.into()],
+                    ..Default::default()
+                }
+                .into()],
             )
             .expect("incremental change should apply")
     );
@@ -409,7 +400,7 @@ fn assert_replaced(outcome: CompletionAttemptOutcome) {
     assert!(matches!(outcome, CompletionAttemptOutcome::Replaced));
 }
 
-type PinBoxFuture = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+type PinBoxFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 struct DropNotice(Option<oneshot::Sender<()>>);
 

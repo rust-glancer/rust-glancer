@@ -10,7 +10,7 @@ use rg_ir_view::IndexedViewDb;
 use rg_std::UniqueVec;
 
 use crate::{
-    Analysis, SavedSourceRelationship,
+    Analysis,
     model::{ReferenceLocation, SymbolAt},
     source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver, SourceSymbolRole},
 };
@@ -117,9 +117,9 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             SourceSymbolRole::Structural => false,
         };
         if cursor_belongs_to_result && !symbols.contains(&symbol) {
-            // An associated edited header is a real current-source occurrence, even though its
-            // semantic fact comes from the saved project. A body-only scan cannot rediscover the
-            // header, so keep the already proven cursor occurrence explicitly.
+            // The cursor is already resolved, even if its spelling differs from the declaration
+            // used by the name-prefiltered scan: `use User as Account; Account { ... }`.
+            // Keep that proven occurrence when it belongs to the requested search scope.
             symbols.push(symbol);
         }
         Ok(symbols)
@@ -156,16 +156,6 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     .query
                     .accepts_declaration(location.crate_ref, location.file_id)
                 {
-                    continue;
-                }
-                if self
-                    .analysis
-                    .current_source_relationship(location.crate_ref.package, location.file_id)
-                    == Some(SavedSourceRelationship::Different)
-                {
-                    // A current Body IR scan already contains declarations that exist in the
-                    // editor. Projecting a saved fallback here would attach a saved range to
-                    // different current text.
                     continue;
                 }
                 if symbols.iter().any(|symbol| {
@@ -287,19 +277,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     ) -> anyhow::Result<()> {
         let source_symbols = SourceSymbolIndex::new(self.analysis.view_db());
         let selection = hints.source_selection(matcher.subject);
-        let candidates = match scan.file_id {
-            Some(file_id)
-                if self
-                    .analysis
-                    .current_source_relationship(scan.crate_ref.package, file_id)
-                    == Some(SavedSourceRelationship::Different) =>
-            {
-                source_symbols.body_symbols_in_crate(scan.crate_ref, Some(file_id), &selection)?
-            }
-            Some(_) | None => {
-                source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id, &selection)?
-            }
-        };
+        let candidates =
+            source_symbols.symbols_in_crate(scan.crate_ref, scan.file_id, &selection)?;
 
         for candidate in candidates {
             rg_std::check_cancel!(self.analysis, "reference candidate matching");

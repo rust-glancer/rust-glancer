@@ -43,13 +43,11 @@ impl<T> QueryValue<T> {
 /// Editor state that must remain unchanged before a query value can be published.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum QueryScope {
-    /// The query depends only on the serialized saved project.
-    SavedProject,
     /// The query depends on one captured editor document.
     TargetDocument(TargetDocumentRevision),
-    /// The query may return saved ranges from any captured open document.
-    GlobalOperation {
-        target: TargetDocumentRevision,
+    /// The query uses the complete captured editor state. Workspace queries have no target.
+    Editor {
+        target: Option<TargetDocumentRevision>,
         open_documents_revision: OpenDocumentsRevision,
     },
 }
@@ -57,8 +55,8 @@ pub enum QueryScope {
 /// Why a query has no publishable feature value.
 ///
 /// The engine reports saved-source races, temporary resource failures, save requirements, and
-/// internal failures. `EditorChanged` is added by the server after a successful engine response no
-/// longer matches live ingress state.
+/// internal failures. `EditorChanged` means the capture was retired before execution or a successful
+/// result no longer matches live ingress state at publication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
 pub enum QueryError {
     /// Disk no longer matches the saved project used by the request.
@@ -73,26 +71,4 @@ pub enum QueryError {
     SaveRequired { path: PathBuf },
     #[error(transparent)]
     Internal(EngineError),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{QueryError, QueryScope, QueryValue};
-
-    #[test]
-    fn valid_empty_and_retryable_error_have_distinct_wire_shapes() {
-        let success: Result<QueryValue<Vec<usize>>, QueryError> =
-            Ok(QueryValue::new(Vec::new(), QueryScope::SavedProject));
-        let failed: Result<QueryValue<Vec<usize>>, QueryError> =
-            Err(QueryError::SavedSourceChanged);
-
-        let success =
-            serde_json::to_value(success).expect("successful query result should serialize");
-        let failed = serde_json::to_value(failed).expect("failed query result should serialize");
-
-        assert_ne!(success, failed);
-        assert_eq!(success["Ok"]["value"], serde_json::json!([]));
-        assert_eq!(success["Ok"]["scope"], "SavedProject");
-        assert_eq!(failed, serde_json::json!({ "Err": "SavedSourceChanged" }));
-    }
 }

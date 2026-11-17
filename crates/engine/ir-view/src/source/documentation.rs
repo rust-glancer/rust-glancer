@@ -15,7 +15,7 @@ use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 /// `api.rs`. An inline `mod api { ... }` holds both in the declaration's syntax. A crate root
 /// has only a definition file, with no `mod` declaration elsewhere.
 pub struct ModuleDocumentationSource {
-    /// The saved file and span of the `mod` item; absent for a crate root.
+    /// The file and span of the `mod` item; absent for a crate root.
     pub declaration: Option<(FileId, Span)>,
     /// The crate root or out-of-line module's definition file. Inline modules have no separate
     /// file; an out-of-line module can also lack one if its file could not be found.
@@ -49,7 +49,7 @@ impl DocumentationDeclarationIndex {
         }
     }
 
-    /// Match all spans containing this saved byte offset. Repeated occurrences of the same
+    /// Match all spans containing this byte offset. Repeated occurrences of the same
     /// declaration count as one owner; distinct declarations leave the association unknown.
     pub fn declaration_at(&self, offset: u32) -> Option<DeclarationRef> {
         // Skip the prefix in which every span ends before the cursor, then stop once starts
@@ -69,7 +69,6 @@ impl DocumentationDeclarationIndex {
 }
 
 /// Read declarations and module locations to attach source docs to their resolution scope.
-/// Syntax and declaration ranges belong to the same input view.
 pub struct DocumentationSourceView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -80,7 +79,7 @@ impl<'a, 'db> DocumentationSourceView<'a, 'db> {
     }
 
     /// Index declaration spans for link resolution. Build this once for a file, then
-    /// look up each documented item's header in the same input view.
+    /// look up each documented item's header.
     ///
     /// Collecting declarations alone avoids requiring body analysis just to find doc owners.
     /// TODO: Include body-local doc owners when their declarations can be read without scanning

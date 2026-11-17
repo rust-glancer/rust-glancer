@@ -10,51 +10,48 @@ use std::borrow::Cow;
 use rg_lsp_proto::{EngineError, QueryError, QueryScope, QueryValue, TargetDocumentRevision};
 use tower_lsp_server::jsonrpc::{Error, ErrorCode};
 
-use crate::ingress::CapturedDocument;
+use crate::ingress::{CapturedDocument, CapturedEditor};
 
-/// Return a workspace value after verifying that the engine used only saved-project state.
+/// A workspace request has the same editor dependency as a document request, but no cursor.
 pub(crate) fn validate_workspace<T>(
     result: Result<QueryValue<T>, QueryError>,
+    captured: &CapturedEditor,
 ) -> Result<T, QueryError> {
-    let response = result?;
-    let (value, scope) = response.into_parts();
-    if !matches!(scope, QueryScope::SavedProject) {
-        return Err(internal_query_error(
-            "workspace query response unexpectedly depends on editor state",
-        ));
-    }
-    Ok(value)
+    validate_editor(result, captured, None)
 }
 
-/// Check that a global operation belongs to this request and that none of its documents changed.
-pub(super) fn validate_global_operation<T>(
+pub(super) fn validate_document<T>(
     result: Result<QueryValue<T>, QueryError>,
     captured: &CapturedDocument,
 ) -> Result<T, QueryError> {
-    let response = result?;
-    let (value, scope) = response.into_parts();
-    let QueryScope::GlobalOperation {
+    validate_editor(
+        result,
+        captured.editor(),
+        Some(captured.document().target()),
+    )
+}
+
+fn validate_editor<T>(
+    result: Result<QueryValue<T>, QueryError>,
+    captured: &CapturedEditor,
+    expected_target: Option<&TargetDocumentRevision>,
+) -> Result<T, QueryError> {
+    let (value, scope) = result?.into_parts();
+    let QueryScope::Editor {
         target,
         open_documents_revision,
     } = scope
     else {
         return Err(internal_query_error(
-            "global query response has the wrong publication scope",
+            "semantic query response has the wrong publication scope",
         ));
     };
-    validate_target(&target, captured)?;
-    if captured.open_documents_revision() != open_documents_revision {
+    if target.as_ref() != expected_target || open_documents_revision != captured.revision() {
         return Err(internal_query_error(
-            "global query response does not match its captured ingress-state epoch",
+            "semantic query response does not match its captured editor state",
         ));
     }
-    if !captured.is_global_operation_current(&target, open_documents_revision) {
-        tracing::debug!(
-            path = %target.path().display(),
-            session = target.session().get(),
-            revision = target.revision().get(),
-            "analysis result was overtaken before LSP publication"
-        );
+    if !captured.is_current() {
         return Err(QueryError::EditorChanged);
     }
     Ok(value)
@@ -113,7 +110,7 @@ pub(crate) fn into_lsp_error(error: QueryError) -> Error {
         QueryError::SaveRequired { path } => {
             tracing::debug!(
                 path = %path.display(),
-                "global operation requires saved source"
+                "workspace edit requires saved text for this client"
             );
             temporarily_unavailable(&message)
         }
@@ -149,10 +146,13 @@ mod tests {
     use std::path::PathBuf;
 
     use rg_lsp_proto::{QueryError, QueryScope, QueryValue};
-    use tower_lsp_server::{gen_lsp_types::TextDocumentContentChangeEvent, jsonrpc::ErrorCode};
+    use tower_lsp_server::{
+        gen_lsp_types::{TextDocumentContentChangeEvent, TextDocumentContentChangeWholeDocument},
+        jsonrpc::ErrorCode,
+    };
 
     use super::{
-        internal_error, into_lsp_error, validate_global_operation, validate_target_document,
+        internal_error, into_lsp_error, validate_document, validate_target_document,
         validate_workspace,
     };
     use crate::{ingress::EditorStateHandle, tests::synthetic_test_path};
@@ -172,14 +172,29 @@ mod tests {
     }
 
     #[test]
-    fn workspace_query_accepts_empty_saved_project_results() {
-        let result: Result<QueryValue<Vec<usize>>, QueryError> =
-            Ok(QueryValue::new(Vec::new(), QueryScope::SavedProject));
-
+    fn workspace_query_checks_the_complete_editor_revision() {
+        let editor = EditorStateHandle::default();
+        let path = synthetic_test_path("workspace/src/lib.rs");
+        editor.open(path.clone(), Some(1), "fn first() {}".to_string());
+        let captured = editor.capture();
+        let scope = QueryScope::Editor {
+            target: None,
+            open_documents_revision: captured.revision(),
+        };
         assert!(
-            validate_workspace(result)
-                .expect("valid empty analysis should remain successful")
-                .is_empty()
+            validate_workspace(
+                Ok(QueryValue::new(Vec::<usize>::new(), scope.clone())),
+                &captured
+            )
+            .expect("empty result")
+            .is_empty()
+        );
+        editor
+            .change(&path, Some(2), &[full_change("fn second() {}")])
+            .expect("edit");
+        assert_eq!(
+            validate_workspace(Ok(QueryValue::new(1_u8, scope)), &captured),
+            Err(QueryError::EditorChanged)
         );
     }
 
@@ -191,8 +206,8 @@ mod tests {
         let captured = editor
             .document(Some(path.clone()))
             .expect("opened document should be captured");
-        let scope = QueryScope::GlobalOperation {
-            target: captured.document().target().clone(),
+        let scope = QueryScope::Editor {
+            target: Some(captured.document().target().clone()),
             open_documents_revision: captured.open_documents_revision(),
         };
 
@@ -201,7 +216,7 @@ mod tests {
                 .change(&path, Some(2), &[full_change("fn second() {}")])
                 .expect("full change should apply")
         );
-        let error = validate_global_operation(Ok(QueryValue::new(17_u8, scope)), &captured)
+        let error = validate_document(Ok(QueryValue::new(17_u8, scope)), &captured)
             .expect_err("a later editor change should invalidate the value");
 
         assert_eq!(error, QueryError::EditorChanged);
@@ -283,7 +298,7 @@ mod tests {
     }
 
     fn full_change(text: &str) -> TextDocumentContentChangeEvent {
-        tower_lsp_server::gen_lsp_types::TextDocumentContentChangeWholeDocument {
+        TextDocumentContentChangeWholeDocument {
             text: text.to_string(),
         }
         .into()

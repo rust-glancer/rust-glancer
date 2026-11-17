@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{AssociatedItemStore, ItemStore, SemanticItemView};
 
-/// Where to open the source of a saved target-level body before any Body IR exists.
+/// Where to open the source of a target-level body before any Body IR exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct BodyOwnerData {
     pub owner: OuterBodyOwner,

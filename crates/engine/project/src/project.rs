@@ -1,6 +1,7 @@
 //! Owns the accepted source generation and serializes access to its query runtime.
 
 use std::{
+    fmt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -10,9 +11,9 @@ use rg_std::{CancellationToken, MemoryRecorder, MemorySize};
 use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
-    MacroExpansionLimitBuildSummary, ProjectBuilder, ProjectGenerationId, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, ProjectSnapshot, ProjectStats, project_queries::ProjectQueries,
-    state::ProjectState,
+    MacroExpansionLimitBuildSummary, MacroExpansionLimitReport, ProjectBuilder,
+    ProjectGenerationId, ProjectMemoryHooks, ProjectMemoryPurgePoint, ProjectSnapshot,
+    ProjectStats, project_queries::ProjectQueries, state::ProjectState,
 };
 
 #[derive(MemorySize)]
@@ -104,6 +105,15 @@ impl Project {
             .set_session_retention(retention);
     }
 
+    /// Release retained editor inputs after their host capture is superseded. Query memos retain
+    /// their normal bounded session policy; the next operation installs a complete capture again.
+    pub fn release_editor_snapshot(&self) {
+        self.queries
+            .lock()
+            .expect("project query runtime")
+            .release_editor_snapshot();
+    }
+
     /// Release retained query work without discarding editor inputs. The next request can use
     /// the same captures and recompute its answers; this does not save or discard documents.
     pub fn clear_session(&self) {
@@ -127,7 +137,7 @@ impl Project {
 
     pub fn macro_expansion_limit_reports(
         &self,
-    ) -> impl Iterator<Item = &rg_def_map::MacroExpansionLimitReport> {
+    ) -> impl Iterator<Item = &MacroExpansionLimitReport> {
         self.state.reports.iter()
     }
 
@@ -159,8 +169,8 @@ impl Project {
     }
 }
 
-impl std::fmt::Debug for Project {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for Project {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Project")
             .field("state", &self.state)
             .finish_non_exhaustive()

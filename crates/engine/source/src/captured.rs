@@ -4,7 +4,10 @@
 //! keeps that path, text, revision, and byte length in one value, so a later project update cannot
 //! accidentally combine text from one moment with a path identity from another.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{SourceError, SourceRevision, revision::SourceDescriptor};
 
@@ -23,9 +26,14 @@ impl CapturedSource {
             path: path.to_path_buf(),
             source,
         })?;
-        let text = text.into();
-        let descriptor = SourceDescriptor::new(canonical_path, text.as_bytes());
-        Ok(Self { descriptor, text })
+        Ok(Self::from_source_path(canonical_path, text.into()))
+    }
+
+    /// Capture text for an identity already selected by host routing. Unlike `new`, this must not
+    /// consult the filesystem again: a rename after request capture cannot change its identity.
+    pub fn from_source_path(path: PathBuf, text: Arc<str>) -> Self {
+        let descriptor = SourceDescriptor::new(path, text.as_bytes());
+        Self { descriptor, text }
     }
 
     pub fn path(&self) -> &Path {

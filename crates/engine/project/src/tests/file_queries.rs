@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs, sync::Arc};
 
 use rg_analysis::{ReferenceLocation, ReferenceQuery, RenameEdit};
 use rg_body_ir::body_store;
@@ -116,7 +116,7 @@ fn main() {
             .is_some()
     }));
     let path = fixture.path("src/main.rs");
-    let text = std::fs::read_to_string(&path).expect("read binary source");
+    let text = fs::read_to_string(&path).expect("read binary source");
     let (definitions, body) = warm.inspect(|snapshot| {
         let context = snapshot
             .file_context_for_path(&path)
@@ -332,7 +332,7 @@ fn main() {}
     );
     let mut project = fixture.build_project();
     let tool = fixture.path("src/bin/tool.rs");
-    std::fs::remove_file(&tool).expect("remove autodiscovered target");
+    fs::remove_file(&tool).expect("remove autodiscovered target");
     project
         .apply_changes([SavedFileChange::fs_path(tool)])
         .expect("reload Cargo metadata after deleting a target");

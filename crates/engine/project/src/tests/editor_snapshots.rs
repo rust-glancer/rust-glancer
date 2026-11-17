@@ -1,4 +1,4 @@
-use std::{fs, path::Path, sync::Arc, time::Duration};
+use std::{fs, path::Path, slice, sync::Arc, time::Duration};
 
 use rg_analysis::CompletionQuery;
 use rg_ir_model::{PrimitiveTy, Span, UnsignedIntTy};
@@ -82,7 +82,7 @@ pub fn read() { let result: crate::Value = 1; let _ = result; }
     assert_eq!(
         project
             .with_editor_snapshot(
-                std::slice::from_ref(&edited),
+                slice::from_ref(&edited),
                 CancellationToken::new(),
                 |snapshot| result_type(snapshot, &shared),
             )
@@ -191,12 +191,12 @@ pub fn inspect() { let result = Value.get(); let _ = result; }
     query();
     // Idle collection must preserve input identity, editor bytes and reusable query results.
     project.collect();
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved,def_map.construction");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner,def_map.construction");
     query();
     let profile = profile.finish();
     for counter in [
-        "body_ir.saved.owners",
-        "body_ir.saved.inference_owners",
+        "body_ir.owner.owners",
+        "body_ir.owner.inference_owners",
         "def_map.construction.import_resolution.runs",
     ] {
         assert_eq!(
@@ -245,6 +245,25 @@ pub fn inspect() { let result = Value.get(); let _ = result; }
         0
     );
     query();
+
+    let retained_text = project
+        .with_editor_snapshot(&documents, CancellationToken::new(), |snapshot| {
+            let context = snapshot
+                .file_context_for_path(&model)?
+                .expect("edited model");
+            Ok(Arc::downgrade(&snapshot.sources().text(context.file)?))
+        })
+        .expect("capture retained text");
+    drop(documents);
+    assert!(
+        retained_text.upgrade().is_some(),
+        "editor inputs retain unsaved bytes"
+    );
+    project.release_editor_snapshot();
+    assert!(
+        retained_text.upgrade().is_none(),
+        "close releases inputs without another query"
+    );
 
     // The production saved-snapshot API retains its policy even after editor operations.
     assert_eq!(
@@ -299,10 +318,10 @@ fn saving_one_editor_document_preserves_other_edits_and_promotes_saved_results()
     project
         .apply_changes([SavedFileChange::captured(model_edit)])
         .expect("publish saved model");
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner");
     project
         .with_editor_snapshot(
-            std::slice::from_ref(&consumer_edit),
+            slice::from_ref(&consumer_edit),
             CancellationToken::new(),
             |snapshot| {
                 assert_eq!(
@@ -321,7 +340,7 @@ fn saving_one_editor_document_preserves_other_edits_and_promotes_saved_results()
         profile
             .finish()
             .inner()
-            .counter("body_ir.saved.inference_owners")
+            .counter("body_ir.owner.inference_owners")
             .unwrap_or_default(),
         0,
         "saving identical bytes can promote retained inference"

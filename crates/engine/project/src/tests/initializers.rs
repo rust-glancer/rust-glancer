@@ -1,8 +1,7 @@
 use std::fs;
 
-use rg_body_ir::CurrentSourceSelection;
-use rg_ir_model::{PrimitiveTy, Span, UnsignedIntTy};
 use rg_profile::test_support::ProfileTest;
+use rg_source::CapturedSource;
 use rg_std::CancellationToken;
 
 use crate::{Project, SavedFileChange, profile_descriptors, testonly::ProjectSourceFixture};
@@ -27,15 +26,14 @@ pub fn outer() {
     let _ = GENERATED;
 }
 pub const fn neighbor() -> u8 { 1 }
-pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
 "#,
     );
     let path = fixture.path("src/lib.rs");
     let original = fs::read_to_string(&path).expect("fixture source");
-    let profile = ProfileTest::start(profile_descriptors(), "body_ir.saved,body_ir.const_eval");
+    let profile = ProfileTest::start(profile_descriptors(), "body_ir.owner,body_ir.const_eval");
     let mut project = fixture.build_project();
     let profile = profile.finish();
-    for counter in ["body_ir.saved.owners", "body_ir.const_eval.initializers"] {
+    for counter in ["body_ir.owner.owners", "body_ir.const_eval.initializers"] {
         assert_eq!(
             profile.inner().counter(counter).unwrap_or_default(),
             0,
@@ -43,94 +41,45 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
         );
     }
 
-    let check = |project: &Project, text: &str, expected: &[(&str, &str)], current: bool| {
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(&path)
-                .expect("route file")
-                .expect("target");
-            let target = (context.crate_ref, context.file);
-            let analysis = if current {
-                let source = snapshot
-                    .prepare_current_source(target, text, &CancellationToken::new())
-                    .expect("editor source");
-                let (analysis, summary) = snapshot
-                    .analysis_for_current_source(
-                        target,
-                        source,
-                        CurrentSourceSelection::IntersectingRange(Span {
-                            start: 0,
-                            end: text.len() as u32,
-                        }),
-                        |_| Ok(()),
-                    )
-                    .expect("editor bodies");
-                assert!(summary.is_complete(), "{summary:?}");
-                analysis
-            } else {
-                snapshot.analysis()
-            };
-            for &(marker, expected) in expected.iter().chain(
-                [
-                    ("EXPANDED:", "pub const EXPANDED: usize = seed!(); // 5"),
-                    // Item-position macro bodies are not yet lowered. Their source preview remains
-                    // available independently of whether evaluation can produce a value.
-                    ("GENERATED;", "pub const GENERATED: usize = 9 + 9"),
-                ]
-                .iter(),
-            ) {
-                let offset = text.rfind(marker).expect("hover marker") as u32;
-                let hover = analysis
-                    .hover(target.0, target.1, offset)
-                    .expect("hover query")
-                    .expect("hover");
-                assert!(
-                    hover.blocks.iter().any(|block| block
-                        .signature
-                        .as_deref()
-                        .is_some_and(|signature| signature.trim_end() == expected)),
-                    "{marker}: {hover:?}"
-                );
-            }
-            // Saved declaration targets are remapped to editor text by the LSP layer. Here we
-            // check their physical positions after publishing, and current body positions below.
-            if !current {
-                let offset = text.rfind("neighbor()").expect("neighbor call") as u32;
-                let targets = analysis
-                    .goto_definition(target.0, target.1, offset)
-                    .expect("neighbor navigation");
-                let start = text.find("fn neighbor()").expect("neighbor declaration") as u32 + 3;
-                assert_eq!(targets.len(), 1);
-                assert_eq!(
-                    targets[0].span,
-                    Some(Span {
-                        start,
-                        end: start + 8
-                    })
-                );
-            }
-            let offset = text.find("value;").expect("local use") as u32;
-            let targets = analysis
-                .goto_definition(target.0, target.1, offset)
-                .expect("local navigation");
-            let start = text.rfind("value =").expect("local declaration") as u32;
-            assert_eq!(targets.len(), 1);
-            assert_eq!(
-                targets[0].span,
-                Some(Span {
-                    start,
-                    end: start + 5
-                })
-            );
-            assert_eq!(
-                analysis
-                    .type_at(target.0, target.1, offset)
-                    .expect("local type")
-                    .expect("inferred local")
-                    .primitive(),
-                Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8))
-            );
-        });
+    let check = |project: &Project, text: &str, expected: &[(&str, &str)], edited: bool| {
+        let captures = if edited {
+            vec![CapturedSource::new(&path, text.to_owned()).expect("editor source")]
+        } else {
+            Vec::new()
+        };
+        project
+            .with_editor_snapshot(&captures, CancellationToken::new(), |snapshot| {
+                let context = snapshot
+                    .file_context_for_path(&path)
+                    .expect("route file")
+                    .expect("target");
+                let target = (context.crate_ref, context.file);
+                let analysis = snapshot.analysis();
+                for &(marker, expected) in expected.iter().chain(
+                    [
+                        ("EXPANDED:", "pub const EXPANDED: usize = seed!(); // 5"),
+                        // Item-position macro bodies are not yet lowered. Their source preview remains
+                        // available independently of whether evaluation can produce a value.
+                        ("GENERATED;", "pub const GENERATED: usize = 9 + 9"),
+                    ]
+                    .iter(),
+                ) {
+                    let offset = text.rfind(marker).expect("hover marker") as u32;
+                    let hover = analysis
+                        .hover(target.0, target.1, offset)
+                        .expect("hover query")
+                        .expect("hover");
+                    assert!(
+                        hover.blocks.iter().any(|block| block
+                            .signature
+                            .as_deref()
+                            .is_some_and(|signature| signature.trim_end() == expected)),
+                        "{marker}: {hover:?}"
+                    );
+                }
+                Ok(())
+            })
+            .expect("query source view");
     };
     let original_expected = [
         ("LIMIT:", "pub const LIMIT: usize = 2 + 2; // 4"),
@@ -140,41 +89,6 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
         ("LABEL:", "pub const LABEL: &str = \"a  b\""),
     ];
     check(&project, &original, &original_expected, false);
-
-    // Editing one function keeps other saved declarations available. Their hover must still
-    // demand a saved value when this request has not rebuilt the initializer itself.
-    let edited_function = original.replace("let value = neighbor()", "let value = 1 + neighbor()");
-    project.inspect(|snapshot| {
-        let context = snapshot
-            .file_context_for_path(&path)
-            .expect("route file")
-            .expect("target");
-        let target = (context.crate_ref, context.file);
-        let offset = edited_function.rfind("LIMIT;").expect("const reference") as u32;
-        let source = snapshot
-            .prepare_current_source(target, &edited_function, &CancellationToken::new())
-            .expect("edited function source");
-        let (analysis, summary) = snapshot
-            .analysis_for_current_source(
-                target,
-                source,
-                CurrentSourceSelection::AtOffset(offset),
-                |_| Ok(()),
-            )
-            .expect("edited function");
-        assert!(summary.is_complete(), "{summary:?}");
-        let hover = analysis
-            .hover(target.0, target.1, offset)
-            .expect("saved const hover")
-            .expect("hover");
-        assert!(
-            hover
-                .blocks
-                .iter()
-                .any(|block| block.signature.as_deref() == Some(original_expected[0].1)),
-            "{hover:?}"
-        );
-    });
 
     let moved = format!(
         "// moved declarations\n\n{}",
@@ -199,8 +113,8 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
         ("LOCAL;", "static LOCAL: usize = 9 + 9; // 18"),
         original_expected[4],
     ];
-    // A preview-only expression and a preview beyond the display budget must replace the saved
-    // numeric result and short text too, including when the declaration keeps its saved identity.
+    // Changing an initializer must also replace a cached value or preview when the new expression
+    // cannot be evaluated or its preview exceeds the display budget.
     let preview_only = edited
         .replace("{ 10 + 20 }", "neighbor() as usize")
         .replace("\"a  b\"", &format!("\"{}\"", "long text ".repeat(20)));
@@ -242,26 +156,26 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
                 .unwrap_or_default(),
             0
         );
+        // Saving identical bytes promotes the work already performed for the editor capture.
         assert_eq!(
             profile
                 .inner()
                 .counter("body_ir.const_eval.initializers")
-                .unwrap_or_default()
-                == 0,
-            reuses_facts
+                .unwrap_or_default(),
+            0
         );
 
         drop(project);
         let profile = ProfileTest::start(
             profile_descriptors(),
-            "def_map.construction,body_ir.saved,body_ir.const_eval",
+            "def_map.construction,body_ir.owner,body_ir.const_eval",
         );
         project = fixture.build_project();
         check(&project, text, expected, false);
         let profile = profile.finish();
         for counter in [
             "def_map.construction.import_resolution.runs",
-            "body_ir.saved.inference_owners",
+            "body_ir.owner.inference_owners",
             "body_ir.const_eval.initializers",
         ] {
             assert_eq!(
@@ -280,7 +194,7 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
     );
     let profile = ProfileTest::start(
         profile_descriptors(),
-        "def_map.construction,body_ir.saved,body_ir.const_eval",
+        "def_map.construction,body_ir.owner,body_ir.const_eval",
     );
     fs::write(&path, &function_edit).expect("save function body");
     project
@@ -289,7 +203,7 @@ pub fn caller() { let value = neighbor(); let _ = value; let _ = LIMIT; }
     let profile = profile.finish();
     for counter in [
         "def_map.construction.import_resolution.runs",
-        "body_ir.saved.inference_owners",
+        "body_ir.owner.inference_owners",
         "body_ir.const_eval.initializers",
     ] {
         assert_eq!(

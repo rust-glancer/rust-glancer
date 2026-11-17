@@ -1,411 +1,97 @@
-//! Definition, type-definition, and implementation navigation queries.
-//!
-//! Each feature resolves the cursor in one selected crate, then converts its semantic destinations
-//! to editor locations. A single interpretation can still have several destinations.
-
-use std::{
-    collections::HashMap,
-    path::{Path, PathBuf},
-    time::Instant,
-};
-
-use anyhow::Context as _;
-use rg_analysis::{
-    CurrentSourceView, NavigationTarget, NavigationTargetSource, SavedSourceRelationship,
-};
-use rg_ir_model::{CrateRef, FileId, PackageSlot};
-use rg_lsp_proto::{EditorDocumentSnapshot, GlobalPositionSnapshot};
-use rg_parse::LineIndex;
-use rg_project::{DocumentSourceView, ProjectSnapshot};
+use gen_lsp_types::Location;
+use rg_lsp_proto::DocumentPositionSnapshot;
 use rg_std::UniqueVec;
 
-use super::{DocumentSelection, QueryCancellation, QueryRunError, QueryRunner};
-use crate::proto::navigation as navigation_proto;
+use super::{DocumentSelection, QueryCancellation, QueryRunner};
+use crate::proto::navigation::SourceLocations;
 
 impl QueryRunner<'_> {
     pub(crate) fn goto_definition(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        Ok(self
-            .current_navigation_query(input, CurrentNavigationQuery::Definition, cancellation)
-            .context("navigate to definition")?)
+    ) -> anyhow::Result<Vec<Location>> {
+        self.navigation(input, NavigationQuery::Definition, cancellation)
     }
 
     pub(crate) fn goto_type_definition(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        Ok(self
-            .current_navigation_query(input, CurrentNavigationQuery::TypeDefinition, cancellation)
-            .context("navigate to type definition")?)
+    ) -> anyhow::Result<Vec<Location>> {
+        self.navigation(input, NavigationQuery::TypeDefinition, cancellation)
     }
 
     pub(crate) fn goto_implementation(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        self.saved_implementation_query(input, cancellation)
+    ) -> anyhow::Result<Vec<Location>> {
+        self.navigation(input, NavigationQuery::Implementation, cancellation)
     }
 
-    /// Resolve a definition or type definition using the current body and saved declarations.
-    fn current_navigation_query(
-        &mut self,
-        input: GlobalPositionSnapshot,
-        query: CurrentNavigationQuery,
+    fn navigation(
+        &self,
+        input: DocumentPositionSnapshot,
+        query: NavigationQuery,
         cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<Vec<gen_lsp_types::Location>> {
-        let (target, _, documents, position) = input.into_parts();
-        let document = documents
-            .iter()
-            .find(|document| document.target() == &target)
-            .context("target document is absent from navigation input")?;
-        let path = document.source_path().to_path_buf();
-        let started = Instant::now();
+    ) -> anyhow::Result<Vec<Location>> {
         self.with_document_analysis(
             query.name(),
-            document,
-            DocumentSelection::Position(position),
+            input.snapshot(),
+            DocumentSelection::Position(input.position()),
             cancellation,
-            |current| {
-                let Some(current) = current else {
+            |request| {
+                let Some(request) = request else {
                     return Ok(Vec::new());
                 };
-                // Different declarations can project to the same physical location.
-                let mut locations = UniqueVec::new();
-                let mut omitted_unsafe_target = false;
-                let mut destinations = CapturedNavigationDocuments::new(
-                    current.snapshot,
-                    &documents,
-                    cancellation.token(),
-                );
-                let offset = current.offset();
-
-                let source = current.target;
+                let source = request.target;
+                let offset = request.selection.start;
                 let targets = match query {
-                    CurrentNavigationQuery::Definition => current
-                        .analysis
-                        .goto_definition(source.crate_ref, source.file, offset)
-                        .context("resolve definition targets")?,
-                    CurrentNavigationQuery::TypeDefinition => current
-                        .analysis
-                        .goto_type_definition(source.crate_ref, source.file, offset)
-                        .context("resolve type-definition targets")?,
+                    NavigationQuery::Definition => {
+                        request
+                            .analysis
+                            .goto_definition(source.crate_ref, source.file, offset)?
+                    }
+                    NavigationQuery::TypeDefinition => request.analysis.goto_type_definition(
+                        source.crate_ref,
+                        source.file,
+                        offset,
+                    )?,
+                    NavigationQuery::Implementation => request.analysis.goto_implementation(
+                        source.crate_ref,
+                        source.file,
+                        offset,
+                    )?,
                 };
-
+                let sources = SourceLocations::new(request.snapshot, input.snapshot().editor());
+                // Shared declarations and macro expansions can project to the same physical range.
+                let mut locations = UniqueVec::new();
                 for target in targets {
-                    let location = match destinations
-                        .location_for_target(
-                            &target,
-                            (source.crate_ref.package, source.file),
-                            document,
-                            current.source.line_index(),
-                            current.analysis.current_source_view(),
-                        )
-                        .context("convert navigation target for captured documents")?
-                    {
-                        CapturedTargetLocation::Ready(location) => Some(location),
-                        CapturedTargetLocation::Unsafe => {
-                            omitted_unsafe_target = true;
-                            None
-                        }
-                        CapturedTargetLocation::Unavailable => None,
-                    };
-                    if let Some(location) = location {
+                    rg_std::check_cancel!(cancellation, "navigation locations");
+                    if let Some(location) = sources.for_target(&target)? {
                         locations.push(location);
                     }
                 }
-
-                let locations = locations.into_vec();
-
-                tracing::trace!(
-                    query = query.name(),
-                    path = %path.display(),
-                    line = position.line,
-                    character = position.character,
-                    result_count = locations.len(),
-                    elapsed_ms = started.elapsed().as_millis(),
-                    "navigation query finished"
-                );
-
-                if omitted_unsafe_target {
-                    tracing::debug!(
-                        query = query.name(),
-                        path = %path.display(),
-                        "omitted navigation target without a safe current-source location"
-                    );
-                }
-                Ok(locations)
+                Ok(locations.into_vec())
             },
         )
-        .context("prepare navigation analysis")
-    }
-
-    /// Resolve implementations after checking that saved ranges still match all open documents.
-    fn saved_implementation_query(
-        &mut self,
-        input: GlobalPositionSnapshot,
-        cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::Location>, QueryRunError> {
-        self.with_saved_snapshot(cancellation, |snapshot| {
-            Self::require_saved_documents(snapshot, &input, cancellation)?;
-            let document = Self::global_operation_target(&input)?;
-            let path = document.source_path().to_path_buf();
-            let position = input.position();
-            let started = Instant::now();
-            let Some((context, offset)) = Self::file_offset(snapshot, &path, position)
-                .context("resolve implementation position")?
-            else {
-                return Ok(Vec::new());
-            };
-            let analysis = snapshot.analysis();
-            // Different declarations can project to the same physical location.
-            let mut locations = UniqueVec::new();
-
-            for target in analysis
-                .goto_implementation(context.crate_ref, context.file, offset)
-                .context("resolve implementation targets")?
-            {
-                rg_std::check_cancel!(cancellation, "implementation locations");
-                let Some(location) = navigation_proto::location_for_target(snapshot, &target)
-                    .context("convert implementation target")?
-                else {
-                    continue;
-                };
-                locations.push(location);
-            }
-
-            let locations = locations.into_vec();
-
-            tracing::trace!(
-                path = %path.display(),
-                line = position.line,
-                character = position.character,
-                result_count = locations.len(),
-                elapsed_ms = started.elapsed().as_millis(),
-                "implementation query finished"
-            );
-            Ok(locations)
-        })
-        .map_err(Into::into)
     }
 }
 
-/// Which current-body navigation query to run through the shared flow above.
-#[derive(Debug, Clone, Copy)]
-enum CurrentNavigationQuery {
+#[derive(Clone, Copy)]
+enum NavigationQuery {
     Definition,
     TypeDefinition,
+    Implementation,
 }
 
-impl CurrentNavigationQuery {
+impl NavigationQuery {
     fn name(self) -> &'static str {
         match self {
             Self::Definition => "definition",
             Self::TypeDefinition => "type_definition",
+            Self::Implementation => "implementation",
         }
     }
-}
-
-/// Captured source needed to convert saved navigation targets into editor locations.
-///
-/// Most definition targets are unopened and can use their saved source directly. For an open
-/// destination, this value prepares its current line index and compares it with the selected saved
-/// project only if a result actually points there. A dirty destination is mapped through the same
-/// conservative declaration association used by current-body analysis.
-pub(crate) struct CapturedNavigationDocuments<'documents, 'project> {
-    snapshot: ProjectSnapshot<'project>,
-    documents: &'documents [EditorDocumentSnapshot],
-    cancellation: rg_std::CancellationToken,
-    sources: HashMap<(PackageSlot, FileId), CapturedNavigationSource>,
-}
-
-impl<'documents, 'project> CapturedNavigationDocuments<'documents, 'project> {
-    pub(crate) fn new(
-        snapshot: ProjectSnapshot<'project>,
-        documents: &'documents [EditorDocumentSnapshot],
-        cancellation: rg_std::CancellationToken,
-    ) -> Self {
-        Self {
-            snapshot,
-            documents,
-            cancellation,
-            sources: HashMap::new(),
-        }
-    }
-
-    /// Hover links and goto requests must interpret a destination in the same captured text.
-    ///
-    /// A saved target may need its span moved into an open document's unsaved text. A current
-    /// target already uses editor offsets, but those offsets belong only to the request's
-    /// target document. Return `Unsafe` when we cannot establish that correspondence.
-    pub(crate) fn location_for_target(
-        &mut self,
-        target: &NavigationTarget,
-        current_file: (PackageSlot, FileId),
-        current_document: &EditorDocumentSnapshot,
-        current_index: &LineIndex,
-        current_source: Option<&CurrentSourceView>,
-    ) -> anyhow::Result<CapturedTargetLocation> {
-        match target.source {
-            NavigationTargetSource::Saved
-                if (target.crate_ref.package, target.file_id) == current_file =>
-            {
-                // Analysis already prepared this file's syntax and declaration associations.
-                // Borrow them when a link returns to the same file instead of preparing it again.
-                Ok(Self::location_for_open_target(
-                    target,
-                    current_document.path(),
-                    current_index,
-                    current_source,
-                ))
-            }
-            NavigationTargetSource::Saved => self
-                .location_for_saved_target(target)
-                .context("convert saved navigation destination"),
-            NavigationTargetSource::Current => {
-                // Current analysis is built only for the request target. A current span in
-                // another file would have no captured source against which to interpret it.
-                if (target.crate_ref.package, target.file_id) != current_file {
-                    return Ok(CapturedTargetLocation::Unsafe);
-                }
-                Ok(
-                    match navigation_proto::location_for_current_document(
-                        current_document.path(),
-                        current_index,
-                        target,
-                    ) {
-                        Some(location) => CapturedTargetLocation::Ready(location),
-                        None => CapturedTargetLocation::Unavailable,
-                    },
-                )
-            }
-        }
-    }
-
-    /// Convert one saved target after proving which source owns its editor range.
-    #[rg_std::cancelable("navigation source conversion", token = self.cancellation)]
-    fn location_for_saved_target(
-        &mut self,
-        target: &NavigationTarget,
-    ) -> anyhow::Result<CapturedTargetLocation> {
-        let key = (target.crate_ref.package, target.file_id);
-        if !self.sources.contains_key(&key) {
-            let source = self
-                .capture_source(target.crate_ref, target.file_id)
-                .context("prepare captured navigation destination")?;
-            self.sources.insert(key, source);
-        }
-
-        let source = self
-            .sources
-            .get(&key)
-            .expect("captured navigation source should have been inserted");
-        match source {
-            CapturedNavigationSource::Unopened => Ok(match navigation_proto::location_for_target(
-                self.snapshot,
-                target,
-            )? {
-                Some(location) => CapturedTargetLocation::Ready(location),
-                None => CapturedTargetLocation::Unavailable,
-            }),
-            CapturedNavigationSource::Open(open) => {
-                let CapturedOpenNavigationSource { path, source } = open.as_ref();
-                Ok(Self::location_for_open_target(
-                    target,
-                    path,
-                    source.line_index(),
-                    match source {
-                        DocumentSourceView::SavedExact(_) => None,
-                        DocumentSourceView::Current(source) => Some(source),
-                    },
-                ))
-            }
-        }
-    }
-
-    /// Move a saved declaration into the editor using the associations prepared for that text.
-    /// Without a current-source view, the editor text is identical to its saved interpretation.
-    fn location_for_open_target(
-        target: &NavigationTarget,
-        path: &Path,
-        line_index: &LineIndex,
-        source: Option<&CurrentSourceView>,
-    ) -> CapturedTargetLocation {
-        let mapped_span = match source {
-            None => target.span,
-            Some(source) => match (
-                target.span,
-                source.relationship(target.crate_ref.package, target.file_id),
-            ) {
-                (None, _) => None,
-                (Some(span), Some(SavedSourceRelationship::Exact)) => Some(span),
-                (Some(span), Some(SavedSourceRelationship::Different)) => {
-                    let Some(current) = source
-                        .declaration_associations(target.crate_ref.package, target.file_id)
-                        .and_then(|associations| associations.current_header_span_for_saved(span))
-                    else {
-                        return CapturedTargetLocation::Unsafe;
-                    };
-                    Some(current)
-                }
-                (Some(_), None) => return CapturedTargetLocation::Unavailable,
-            },
-        };
-        let mut current_target = target.clone();
-        current_target.source = NavigationTargetSource::Current;
-        current_target.span = mapped_span;
-        match navigation_proto::location_for_current_document(path, line_index, &current_target) {
-            Some(location) => CapturedTargetLocation::Ready(location),
-            None => CapturedTargetLocation::Unavailable,
-        }
-    }
-
-    /// Prepare source conversion state only for a document that receives a result.
-    fn capture_source(
-        &self,
-        crate_ref: CrateRef,
-        file: FileId,
-    ) -> anyhow::Result<CapturedNavigationSource> {
-        let saved_path = self.snapshot.sources().path(file)?;
-        let Some(document) = self
-            .documents
-            .iter()
-            .find(|document| document.source_path() == saved_path)
-        else {
-            return Ok(CapturedNavigationSource::Unopened);
-        };
-        let source = self
-            .snapshot
-            .prepare_document_source((crate_ref, file), document.text(), &self.cancellation)
-            .context("prepare open navigation destination source")?;
-
-        Ok(CapturedNavigationSource::Open(Box::new(
-            CapturedOpenNavigationSource {
-                path: document.path().to_path_buf(),
-                source,
-            },
-        )))
-    }
-}
-
-enum CapturedNavigationSource {
-    /// The editor has no live coordinate space for this saved file.
-    Unopened,
-    /// The editor supplies current coordinates and their relationship to saved source.
-    Open(Box<CapturedOpenNavigationSource>),
-}
-
-struct CapturedOpenNavigationSource {
-    path: PathBuf,
-    source: DocumentSourceView,
-}
-
-pub(crate) enum CapturedTargetLocation {
-    Ready(gen_lsp_types::Location),
-    Unsafe,
-    Unavailable,
 }

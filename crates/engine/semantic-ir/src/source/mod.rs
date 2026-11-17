@@ -1,6 +1,6 @@
 //! Resolve declaration occurrences against the source snapshot of this operation.
 //!
-//! Saved declarations retain source IDs even when byte positions change. This module joins their
+//! Declarations retain source IDs even when byte positions change. This module joins their
 //! source identity to the file tables read through the operation's query context. Generated syntax
 //! takes an extra step: its occurrences identify input tokens, which lead back to those file tables.
 

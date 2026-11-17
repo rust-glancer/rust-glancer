@@ -7,8 +7,6 @@
 //! Preparation freezes an outer owner and all its nested bodies together. Its semantic data and
 //! source tables are separate query outputs: moving code can update locations while inference
 //! reuses the unchanged data. `BodyView` borrows structure, facts, and locations for one operation.
-//! Editor requests use the same preparation and inference, reusing saved facts only when the
-//! complete prepared owner matches.
 
 mod body;
 mod build;

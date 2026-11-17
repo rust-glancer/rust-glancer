@@ -7,10 +7,14 @@ use crate::{
 
 /// Remove the engine-registry route after earlier open/save work for this path finishes.
 pub(crate) async fn did_close(registry: Result<&EngineRegistry>) {
-    let Some(LifecycleEvent::Close { route, .. }) = ingress::lifecycle_event().await else {
+    let Some(LifecycleEvent::Close { route, revision }) = ingress::lifecycle_event().await else {
         tracing::error!("didClose bypassed ordered LSP ingress");
         return;
     };
+
+    if let Ok(engine) = route.engine_client() {
+        engine.invalidate_editor_snapshot(revision).await;
+    }
 
     // Registry ownership uses the normalized source selected at open time. Reusing that route also
     // handles editor spellings such as symlinks and Windows aliases without normalizing twice.

@@ -13,13 +13,12 @@ mod source_symbol;
 #[cfg(test)]
 mod tests;
 
-use std::sync::Arc;
-
 use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, PackageSlot, Span};
 pub use rg_ir_view::SymbolKind;
 use rg_ir_view::{IndexedViewDb, source::IndexedSourceProvenance, ty::IndexedType};
-use rg_parse::{CurrentSource, DeclarationAssociationIndex, DeclarationHeaderCursor, SourceReader};
+use rg_parse::SourceReader;
+use rg_std::{Cancelable, Cancelled};
 use rg_syntax::SourceFile;
 use rg_workspace::WorkspaceMetadata;
 
@@ -30,8 +29,8 @@ pub use self::{
         CompletionKind, CompletionTarget, DocumentOutline, DocumentSymbol, DocumentationLink, Fold,
         FoldKind, Highlight, HighlightKind, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
         InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-        NavigationTargetSource, ReferenceLocation, RenameEdit, RenameResult, RenameTarget,
-        SymbolAt, SyntheticCompletionTarget, WorkspaceSymbol,
+        ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+        SyntheticCompletionTarget, WorkspaceSymbol,
     },
     query::{
         code_action::{CodeActionKinds, CodeActionQuery, CodeActionTrigger},
@@ -44,18 +43,17 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 /// Request-scoped façade for editor queries over one frozen project view.
 ///
 /// Most operations start with a file and source offset, then combine semantic facts from
-/// `IndexedViewDb` with exact source text from the matching saved source inputs. Results use the
-/// transport-neutral models exported by this crate; the LSP layer only converts those models.
+/// `IndexedViewDb` with source text. Results use the transport-neutral models exported by this
+/// crate; the LSP layer only converts those models.
 pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
-    saved_source: SourceReader<'a>,
+    sources: SourceReader<'a>,
     workspace: &'a WorkspaceMetadata,
-    current_source: Option<CurrentSourceView>,
 }
 
-impl rg_std::Cancelable for Analysis<'_> {
-    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), rg_std::Cancelled> {
-        rg_std::Cancelable::check_cancelled(&self.view_db, checkpoint)
+impl Cancelable for Analysis<'_> {
+    fn check_cancelled(&self, checkpoint: &'static str) -> Result<(), Cancelled> {
+        self.view_db.check_cancelled(checkpoint)
     }
 }
 
@@ -73,8 +71,8 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Highlight documentation in the request's source, using saved declarations for link targets.
-    /// Examples need syntax only; this operation does not require current or saved body analysis.
+    /// Highlight documentation and resolve its links.
+    /// Examples need syntax only; this operation does not require body analysis.
     pub fn documentation_highlights(
         &self,
         crate_ref: CrateRef,
@@ -86,38 +84,25 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Builds a query API over one request-scoped indexed view and its matching source snapshot.
     pub fn new(view_db: IndexedViewDb<'a>, workspace: &'a WorkspaceMetadata) -> Self {
         Self {
-            saved_source: view_db.sources(),
+            sources: view_db.sources(),
             view_db,
             workspace,
-            current_source: None,
         }
-    }
-
-    /// Attach captured syntax and its associations with saved declarations. Body queries also
-    /// prepare matching current Body IR; documentation queries only need this source view.
-    pub fn with_current_source(mut self, current_source: CurrentSourceView) -> Self {
-        self.current_source = Some(current_source);
-        self
     }
 
     pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
         &self.view_db
     }
 
-    /// Use the editor's parsed source when available; otherwise parse the saved file.
     pub(crate) fn source_syntax(
         &self,
         crate_ref: CrateRef,
         file: FileId,
     ) -> anyhow::Result<SourceFile> {
         let edition = self.view_db().crate_edition(crate_ref)?;
-        if let Some(source) = self.current_source(crate_ref.package, file) {
-            return Ok(source.parse().tree());
-        }
-        Ok(self.saved_source.syntax(file, edition)?.tree())
+        Ok(self.sources.syntax(file, edition)?.tree())
     }
 
     /// Kernels may finish their last unit as cancellation arrives. Check both sides of the
@@ -139,94 +124,6 @@ impl<'a> Analysis<'a> {
             .get(package.0)
             .map(|package| package.declared_features.as_slice())
             .unwrap_or_default()
-    }
-
-    pub(crate) fn current_source(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> Option<&CurrentSource> {
-        let current = self.current_source.as_ref()?;
-        current.relationship(package, file)?;
-        Some(current.source())
-    }
-
-    /// Borrow the editor syntax and declaration associations already prepared for this request.
-    /// A saved-source analysis has no current-source view.
-    pub fn current_source_view(&self) -> Option<&CurrentSourceView> {
-        self.current_source.as_ref()
-    }
-
-    /// Return how this request's source relates to one saved file interpretation.
-    pub fn current_source_relationship(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> Option<SavedSourceRelationship> {
-        self.current_source.as_ref()?.relationship(package, file)
-    }
-
-    pub(crate) fn declaration_associations(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> Option<&DeclarationAssociationIndex> {
-        self.current_source
-            .as_ref()?
-            .declaration_associations(package, file)
-    }
-
-    /// Find the saved header token that represents the current token under the cursor.
-    ///
-    /// Matching uses the request's ordinary current parse and its prepared declaration
-    /// associations. New, renamed, or ambiguous declarations have no safe saved header.
-    fn associated_saved_header_at(
-        &self,
-        crate_ref: CrateRef,
-        file: FileId,
-        current_offset: u32,
-    ) -> anyhow::Result<Option<AssociatedSavedHeader>> {
-        let Some(source) = self.current_source(crate_ref.package, file) else {
-            return Ok(None);
-        };
-        let syntax = source.parse().tree();
-        let Some(cursor) = DeclarationHeaderCursor::at(&syntax, current_offset) else {
-            return Ok(None);
-        };
-        let Some(saved) = self
-            .declaration_associations(crate_ref.package, file)
-            .and_then(|associations| associations.saved_header_span(&cursor))
-        else {
-            return Ok(None);
-        };
-        Ok(Some(AssociatedSavedHeader {
-            current: cursor.current_span(),
-            saved,
-        }))
-    }
-
-    /// Translate a current header-token offset before calling a scanner backed by saved source.
-    ///
-    /// Equal files use the offset directly. Different files require a unique declaration pairing
-    /// and corresponding unchanged header token; other current offsets have no saved coordinate.
-    pub(crate) fn saved_header_offset_for_current(
-        &self,
-        crate_ref: CrateRef,
-        file: FileId,
-        current_offset: u32,
-    ) -> anyhow::Result<Option<u32>> {
-        match self.current_source_relationship(crate_ref.package, file) {
-            Some(SavedSourceRelationship::Exact) => return Ok(Some(current_offset)),
-            Some(SavedSourceRelationship::Different) => {}
-            // Analyses without a current-source companion are ordinary saved-source queries.
-            None => return Ok(Some(current_offset)),
-        }
-
-        let Some(association) = self.associated_saved_header_at(crate_ref, file, current_offset)?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(association.saved_offset_for(current_offset)))
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -276,93 +173,9 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        // Saved and exact source can share one offset. Edited source is read in four explicit
-        // layers: current Body IR, its request-local declaration header, module-level current
-        // syntax, then an unchanged header paired to saved semantics. None of those paths
-        // interpret the current offset in a saved scanner.
-        let index = SourceSymbolIndex::new(self.view_db());
-        match self.current_source_relationship(crate_ref.package, file_id) {
-            Some(SavedSourceRelationship::Different) => {
-                let current_body_symbols = index.body_symbols_at(crate_ref, file_id, offset)?;
-                let (body_roots, body_symbols): (Vec<_>, Vec<_>) = current_body_symbols
-                    .into_iter()
-                    .partition(|symbol| matches!(symbol.symbol(), SymbolAt::FunctionBody { .. }));
-                let body_symbols = Self::narrowest_source_symbols(body_symbols);
-                if !body_symbols.is_empty() {
-                    return Ok(body_symbols);
-                }
-
-                let current_signature_symbols = Self::narrowest_source_symbols(
-                    index.current_signature_symbols_at(crate_ref, file_id, offset)?,
-                );
-                if !current_signature_symbols.is_empty() {
-                    return Ok(current_signature_symbols);
-                }
-
-                if let Some(symbol) =
-                    self.current_module_use_source_symbol(crate_ref, file_id, offset)?
-                {
-                    return Ok(vec![symbol]);
-                }
-
-                // A body root spans its whole declaration so queries can identify the owning
-                // function. In a dirty header that broad structural fact must not hide a narrower
-                // unchanged token with saved semantics. Keep it only as the final fallback when
-                // none of the editor-facing source layers recognize the cursor.
-                Ok(
-                    match self.associated_header_source_symbol(crate_ref, file_id, offset)? {
-                        Some(symbol) => vec![symbol],
-                        None => Self::narrowest_source_symbols(body_roots),
-                    },
-                )
-            }
-            Some(SavedSourceRelationship::Exact) | None => Ok(Self::narrowest_source_symbols(
-                index.symbols_at(crate_ref, file_id, offset)?,
-            )),
-        }
-    }
-
-    /// Resolve a module-level import spelling from current syntax in its matching saved module.
-    fn current_module_use_source_symbol(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        current_offset: u32,
-    ) -> anyhow::Result<Option<SourceSymbol>> {
-        let Some(source) = self.current_source(crate_ref.package, file_id) else {
-            return Ok(None);
-        };
-        let syntax = source.parse().tree();
-        let symbols = SourceSymbolIndex::new(self.view_db()).current_module_use_symbols_at(
-            crate_ref,
-            file_id,
-            &syntax,
-            current_offset,
-        )?;
-        Ok(Self::narrowest_source_symbols(symbols).into_iter().next())
-    }
-
-    /// Find saved semantics for a current header token that has one matching saved declaration.
-    fn associated_header_source_symbol(
-        &self,
-        crate_ref: CrateRef,
-        file_id: FileId,
-        current_offset: u32,
-    ) -> anyhow::Result<Option<SourceSymbol>> {
-        let Some(association) =
-            self.associated_saved_header_at(crate_ref, file_id, current_offset)?
-        else {
-            return Ok(None);
-        };
-        let symbols = SourceSymbolIndex::new(self.view_db()).saved_declaration_symbols_at(
-            crate_ref,
-            file_id,
-            association.saved_span().start,
-        )?;
-        Ok(Self::narrowest_source_symbols(symbols)
-            .into_iter()
-            .next()
-            .and_then(|symbol| symbol.for_associated_header(association.current_span())))
+        Ok(Self::narrowest_source_symbols(
+            SourceSymbolIndex::new(self.view_db()).symbols_at(crate_ref, file_id, offset)?,
+        ))
     }
 
     fn narrowest_source_symbols(mut symbols: Vec<SourceSymbol>) -> Vec<SourceSymbol> {
@@ -575,12 +388,12 @@ impl<'a> Analysis<'a> {
         })
     }
 
-    /// Returns an outline directly from syntax, without requiring a saved file identity.
+    /// Returns an outline directly from syntax, without requiring a file identity.
     pub fn document_symbols_from_syntax(syntax: &SourceFile) -> Vec<DocumentSymbol> {
         query::symbols::SymbolCollector::document_symbols_from_syntax(syntax)
     }
 
-    /// Returns folding ranges directly from syntax, without requiring a saved file identity.
+    /// Returns folding ranges directly from syntax, without requiring a file identity.
     pub fn folding_ranges_from_syntax(syntax: &SourceFile) -> Vec<Fold> {
         query::folding::SyntaxFoldCollector::collect(syntax)
     }
@@ -590,91 +403,5 @@ impl<'a> Analysis<'a> {
         self.run_query("workspace_symbols", || {
             query::symbols::SymbolCollector::new(self).workspace_symbols(query)
         })
-    }
-}
-
-/// One token range proven to name the same declaration in current and saved source.
-struct AssociatedSavedHeader {
-    current: Span,
-    saved: Span,
-}
-
-impl AssociatedSavedHeader {
-    fn current_span(&self) -> Span {
-        self.current
-    }
-
-    fn saved_span(&self) -> Span {
-        self.saved
-    }
-
-    /// Preserve the cursor's position within an associated header token.
-    fn saved_offset_for(&self, current_offset: u32) -> u32 {
-        let within_token = current_offset
-            .saturating_sub(self.current.start)
-            .min(self.current.len());
-        self.saved.start + within_token.min(self.saved.len())
-    }
-}
-
-/// Whether the captured request text is byte-for-byte equal to one saved source interpretation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SavedSourceRelationship {
-    Exact,
-    Different,
-}
-
-/// Current request source paired with the selected saved file identity.
-///
-/// The identity check keeps queries into other files on their saved source coordinates.
-#[derive(Debug, Clone)]
-pub struct CurrentSourceView {
-    source: Arc<CurrentSource>,
-    package: PackageSlot,
-    file: FileId,
-    relationship: SavedSourceRelationship,
-    associations: Arc<DeclarationAssociationIndex>,
-}
-
-impl CurrentSourceView {
-    pub fn new(
-        source: Arc<CurrentSource>,
-        package: PackageSlot,
-        file: FileId,
-        relationship: SavedSourceRelationship,
-        associations: Arc<DeclarationAssociationIndex>,
-    ) -> Self {
-        Self {
-            source,
-            package,
-            file,
-            relationship,
-            associations,
-        }
-    }
-
-    pub fn source(&self) -> &CurrentSource {
-        &self.source
-    }
-
-    /// Clone the shared source handle without copying its text or parsed syntax tree.
-    pub fn shared_source(&self) -> Arc<CurrentSource> {
-        Arc::clone(&self.source)
-    }
-
-    pub fn relationship(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> Option<SavedSourceRelationship> {
-        (self.package == package && self.file == file).then_some(self.relationship)
-    }
-
-    pub fn declaration_associations(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> Option<&DeclarationAssociationIndex> {
-        (self.package == package && self.file == file).then_some(&self.associations)
     }
 }

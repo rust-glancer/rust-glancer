@@ -164,6 +164,11 @@ impl ProjectQueries {
         self.database.set_session_retention(retention);
     }
 
+    pub(crate) fn release_editor_snapshot(&mut self) {
+        self.database.replace_inputs(self.saved.clone());
+        self.editor = None;
+    }
+
     pub(crate) fn clear_session(&mut self) {
         self.database.clear_session();
     }

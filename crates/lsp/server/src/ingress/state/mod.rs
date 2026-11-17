@@ -12,9 +12,8 @@
 //! never a partly updated value.
 //!
 //! A document request captures the target text and the other open documents at the same moment.
-//! Most queries send only the target to the engine. Cross-file operations can also send the open
-//! documents, because their saved source ranges are safe only while those documents still match
-//! the saved project.
+//! Semantic queries send every applicable open document to the engine: an unsaved declaration in
+//! one file can change an answer in another. Syntax-only requests send just their target document.
 //!
 //! Completion and inlay queries can follow edits made after their first capture. Completion moves
 //! its cursor into the new text: typing `ck` after `RwLo|` moves the captured cursor to `RwLock|`.
@@ -30,13 +29,15 @@ mod lifecycle;
 
 use std::{
     collections::HashMap,
+    ffi::OsStr,
+    fmt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, Weak},
 };
 
 use rg_lsp_proto::{
-    DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
-    OpenDocumentsRevision, SaveProposal, TargetDocumentRevision,
+    DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot,
+    OpenDocumentSession, OpenDocumentsRevision, SaveProposal, TargetDocumentRevision,
 };
 use rg_std::NormalizedPathBuf;
 use tokio::sync::watch;
@@ -50,17 +51,14 @@ use crate::{engine_client::EngineClient, engine_registry::OpenDocumentRoute};
 /// Editor state selected for one document request before its handler starts.
 ///
 /// The target, other open documents, and their engine routes all come from the same locked read of
-/// `EditorState`. `target_document` builds input for an ordinary document read. `global_position`
-/// also includes open documents routed to the same engine. This value is immutable; completion and
+/// `EditorState`. Semantic requests include every applicable open document; syntax-only requests
+/// need just `target_document`. This value is immutable; completion and
 /// inlay queries may replace it with a newer capture, but a capture never refreshes itself in place.
 #[derive(Clone, Debug)]
 pub(crate) struct CapturedDocument {
     document: Arc<EditorDocumentSnapshot>,
-    document_revision: Arc<DocumentRevisionNode>,
-    open_documents_revision: Arc<OpenDocumentsRevisionNode>,
     route: Result<OpenDocumentRoute, Arc<str>>,
-    open_documents: Arc<[CapturedOpenDocument]>,
-    editor: Weak<Mutex<EditorState>>,
+    editor: CapturedEditor,
 }
 
 impl CapturedDocument {
@@ -97,30 +95,118 @@ impl CapturedDocument {
             .with_source_path(target_route.source_path().to_path_buf()))
     }
 
-    /// Build cross-file engine input from open documents assigned to the target's engine.
-    ///
-    /// Every route was captured before the handler started. If a Rust document is still being
-    /// routed, we cannot yet tell whether its unsaved text belongs to this engine, so the operation
-    /// waits instead of omitting that document from the safety check.
-    pub(crate) fn global_position(
+    pub(crate) fn semantic_document(
         &self,
         engine_client: &EngineClient,
+    ) -> Result<DocumentSnapshot, DocumentUnavailable> {
+        self.target_document(engine_client)?;
+        self.editor
+            .snapshot(engine_client)?
+            .select(self.document.target())
+            .ok_or_else(|| {
+                DocumentUnavailable::new(
+                    Some(self.document.path().to_path_buf()),
+                    "the target document is absent from its captured editor input",
+                )
+            })
+    }
+
+    pub(crate) fn editor(&self) -> &CapturedEditor {
+        &self.editor
+    }
+
+    /// Check the target document only, ignoring edits in other open documents.
+    pub(crate) fn is_target_current(&self, target: &TargetDocumentRevision) -> bool {
+        self.editor.state.upgrade().is_some_and(|editor| {
+            editor
+                .lock()
+                .expect("editor state mutex should not be poisoned")
+                .is_target_current(target)
+        })
+    }
+
+    pub(crate) fn open_documents_revision(&self) -> OpenDocumentsRevision {
+        self.editor.open_documents_revision.revision
+    }
+
+    /// Watch for changes to any captured document, including sibling edits and route changes.
+    pub(crate) fn editor_revision_watch(&self) -> EditorRevisionWatch {
+        EditorRevisionWatch {
+            captured: Arc::clone(&self.editor.open_documents_revision),
+        }
+    }
+
+    /// Take a newer snapshot and move `position` through edits made since this capture.
+    ///
+    /// The recorded edit links explain how a position moved without storing old document text. For
+    /// example, an insertion of `ck` after `RwLo|` moves the position from column 4 to column 6.
+    /// After applying those links, this method asks the live `EditorState` for a new immutable
+    /// snapshot of the same open session.
+    pub(crate) fn recapture_position(
+        &self,
         position: Position,
-    ) -> Result<GlobalPositionSnapshot, DocumentUnavailable> {
-        let target_route = self.route.as_ref().map_err(|reason| {
-            DocumentUnavailable::new(Some(self.document.path().to_path_buf()), Arc::clone(reason))
+    ) -> Result<(Self, Position), PositionRecaptureError> {
+        let editor = self.editor.state.upgrade().ok_or_else(|| {
+            PositionRecaptureError::Unavailable(Arc::from("the editor state no longer exists"))
         })?;
-        if !target_route.engine_client().same_engine(engine_client) {
+        let mut recaptured = editor
+            .lock()
+            .expect("editor state mutex should not be poisoned")
+            .recapture_position(self, position)?;
+        recaptured.0.editor.state = Arc::downgrade(&editor);
+        Ok(recaptured)
+    }
+
+    /// Take the newest snapshot for the same open session.
+    ///
+    /// Closing and reopening the path ends the old request's session; it must not follow the
+    /// new document just because the path is the same.
+    pub(crate) fn recapture(&self) -> Result<Self, DocumentUnavailable> {
+        let path = self.document.path();
+        let editor = self.editor.state.upgrade().ok_or_else(|| {
+            DocumentUnavailable::new(
+                Some(path.to_path_buf()),
+                "the editor state no longer exists",
+            )
+        })?;
+        let mut captured = editor
+            .lock()
+            .expect("editor state mutex should not be poisoned")
+            .document(Some(path.to_path_buf()))?;
+        if captured.document.session() != self.document.session() {
             return Err(DocumentUnavailable::new(
-                Some(self.document.path().to_path_buf()),
-                "the selected engine does not match the captured target route",
+                Some(path.to_path_buf()),
+                "the captured document session has ended",
             ));
         }
+        captured.editor.state = Arc::downgrade(&editor);
+        Ok(captured)
+    }
 
+    fn is_rust_path(path: &Path) -> bool {
+        path.extension().and_then(OsStr::to_str) == Some("rs")
+    }
+}
+
+/// Complete captured editor state, also used by requests without a target document.
+#[derive(Clone, Debug)]
+pub(crate) struct CapturedEditor {
+    open_documents_revision: Arc<OpenDocumentsRevisionNode>,
+    open_documents: Arc<[CapturedOpenDocument]>,
+    state: Weak<Mutex<EditorState>>,
+}
+
+impl CapturedEditor {
+    /// Resolve applicable inputs using the captured routes. Unknown routes and conflicting aliases
+    /// cannot be omitted: either might hide an override that changes the request's meaning.
+    pub(crate) fn snapshot(
+        &self,
+        engine_client: &EngineClient,
+    ) -> Result<EditorSnapshot, DocumentUnavailable> {
         let mut documents = Vec::new();
         let mut text_by_source_path = HashMap::<&NormalizedPathBuf, &str>::new();
         for captured in self.open_documents.iter() {
-            if !Self::is_rust_path(&captured.path) {
+            if !CapturedDocument::is_rust_path(&captured.path) {
                 continue;
             }
             let route = captured.route.as_ref().map_err(|reason| {
@@ -155,127 +241,40 @@ impl CapturedDocument {
             );
         }
 
-        let snapshot = GlobalPositionSnapshot::new(
-            self.document.target().clone(),
-            self.open_documents_revision.revision,
-            documents,
-            position,
-        );
-        if snapshot.target_document().is_none() {
-            return Err(DocumentUnavailable::new(
-                Some(self.document.path().to_path_buf()),
-                "the target document is absent from its captured global-operation input",
-            ));
-        }
-        Ok(snapshot)
+        Ok(EditorSnapshot::new(self.revision(), documents))
     }
 
-    /// Check that no relevant editor state changed while a global operation was running.
-    ///
-    /// Analysis may finish after another editor change. Callers publish the result only when this
-    /// check confirms that both the target document and the captured open-documents revision are
-    /// unchanged.
-    pub(crate) fn is_global_operation_current(
-        &self,
-        target: &TargetDocumentRevision,
-        open_documents_revision: OpenDocumentsRevision,
-    ) -> bool {
-        self.editor.upgrade().is_some_and(|editor| {
-            editor
-                .lock()
-                .expect("editor state mutex should not be poisoned")
-                .is_global_operation_current(target, open_documents_revision)
-        })
-    }
-
-    /// Check the target document only, ignoring edits in other open documents.
-    pub(crate) fn is_target_current(&self, target: &TargetDocumentRevision) -> bool {
-        self.editor.upgrade().is_some_and(|editor| {
-            editor
-                .lock()
-                .expect("editor state mutex should not be poisoned")
-                .is_target_current(target)
-        })
-    }
-
-    pub(crate) fn open_documents_revision(&self) -> OpenDocumentsRevision {
+    pub(crate) fn revision(&self) -> OpenDocumentsRevision {
         self.open_documents_revision.revision
     }
 
-    /// Watch for a new text revision or a new open session for this target document.
-    pub(crate) fn document_revision_watch(&self) -> DocumentRevisionWatch {
-        DocumentRevisionWatch {
-            captured: Arc::clone(&self.document_revision),
-        }
-    }
-
-    /// Take a newer snapshot and move `position` through edits made since this capture.
-    ///
-    /// The recorded edit links explain how a position moved without storing old document text. For
-    /// example, an insertion of `ck` after `RwLo|` moves the position from column 4 to column 6.
-    /// After applying those links, this method asks the live `EditorState` for a new immutable
-    /// snapshot of the same open session.
-    pub(crate) fn recapture_position(
-        &self,
-        position: Position,
-    ) -> Result<(Self, Position), PositionRecaptureError> {
-        let editor = self.editor.upgrade().ok_or_else(|| {
-            PositionRecaptureError::Unavailable(Arc::from("the editor state no longer exists"))
-        })?;
-        let mut recaptured = editor
-            .lock()
-            .expect("editor state mutex should not be poisoned")
-            .recapture_position(self, position)?;
-        recaptured.0.editor = Arc::downgrade(&editor);
-        Ok(recaptured)
-    }
-
-    /// Take the newest snapshot for the same open session.
-    ///
-    /// Closing and reopening the path ends the old request's session; it must not follow the
-    /// new document just because the path is the same.
-    pub(crate) fn recapture(&self) -> Result<Self, DocumentUnavailable> {
-        let path = self.document.path();
-        let editor = self.editor.upgrade().ok_or_else(|| {
-            DocumentUnavailable::new(
-                Some(path.to_path_buf()),
-                "the editor state no longer exists",
-            )
-        })?;
-        let mut captured = editor
-            .lock()
-            .expect("editor state mutex should not be poisoned")
-            .document(Some(path.to_path_buf()))?;
-        if captured.document.session() != self.document.session() {
-            return Err(DocumentUnavailable::new(
-                Some(path.to_path_buf()),
-                "the captured document session has ended",
-            ));
-        }
-        captured.editor = Arc::downgrade(&editor);
-        Ok(captured)
-    }
-
-    fn is_rust_path(path: &Path) -> bool {
-        path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs")
+    pub(crate) fn is_current(&self) -> bool {
+        self.state.upgrade().is_some_and(|state| {
+            state
+                .lock()
+                .expect("editor state mutex should not be poisoned")
+                .open_documents_revision
+                .revision
+                == self.revision()
+        })
     }
 }
 
-/// Notification that the target document has moved to another text revision or session.
+/// Semantic attempts are superseded by any edit, including changes to sibling declarations.
 #[derive(Clone, Debug)]
-pub(crate) struct DocumentRevisionWatch {
-    captured: Arc<DocumentRevisionNode>,
+pub(crate) struct EditorRevisionWatch {
+    captured: Arc<OpenDocumentsRevisionNode>,
 }
 
-impl DocumentRevisionWatch {
+impl EditorRevisionWatch {
     pub(crate) fn is_superseded(&self) -> bool {
-        *self.captured.superseded.borrow()
+        self.captured.successor.borrow().is_some()
     }
 
     pub(crate) async fn superseded(&mut self) {
-        let mut superseded = self.captured.superseded.subscribe();
-        while !*superseded.borrow_and_update() {
-            if superseded.changed().await.is_err() {
+        let mut successor = self.captured.successor.subscribe();
+        while successor.borrow_and_update().is_none() {
+            if successor.changed().await.is_err() {
                 return;
             }
         }
@@ -300,7 +299,7 @@ impl PositionRecaptureError {
     }
 }
 
-/// One node in the history of open-document states used by global operations.
+/// One node in the history of open-document states used by semantic operations.
 ///
 /// Links point only forward. `EditorState` owns the newest node, while a live capture keeps the
 /// links after its revision alive. Once the oldest capture advances or drops, obsolete links are
@@ -320,39 +319,11 @@ impl OpenDocumentsRevisionNode {
     }
 }
 
-impl std::fmt::Debug for OpenDocumentsRevisionNode {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for OpenDocumentsRevisionNode {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("OpenDocumentsRevisionNode")
             .field("revision", &self.revision)
             .field("has_successor", &self.successor.borrow().is_some())
-            .finish()
-    }
-}
-
-/// Signal attached to one target document revision.
-///
-/// Unlike the global-operation history, this node is advanced only by changes to its own open
-/// session. Completion can therefore ignore unrelated sibling edits without maintaining a second
-/// document store or revision counter.
-struct DocumentRevisionNode {
-    superseded: watch::Sender<bool>,
-}
-
-impl DocumentRevisionNode {
-    fn new() -> Self {
-        let (superseded, _) = watch::channel(false);
-        Self { superseded }
-    }
-
-    fn supersede(&self) {
-        self.superseded.send_replace(true);
-    }
-}
-
-impl std::fmt::Debug for DocumentRevisionNode {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        fmt.debug_struct("DocumentRevisionNode")
-            .field("superseded", &*self.superseded.borrow())
             .finish()
     }
 }
@@ -402,7 +373,7 @@ impl EditorChange {
     }
 }
 
-/// One open document as it appeared in the same global capture as the request target.
+/// One open document as it appeared in the same editor capture as the request target.
 #[derive(Clone, Debug)]
 struct CapturedOpenDocument {
     path: PathBuf,
@@ -491,6 +462,23 @@ impl EditorStateHandle {
             .change(path, client_version, changes)
     }
 
+    pub(crate) fn invalidate(&self, path: &Path) -> Option<SequencedLifecycleEvent> {
+        let mut state = self
+            .state
+            .lock()
+            .expect("editor state mutex should not be poisoned");
+        let revision = state.open_documents_revision.revision;
+        let entry = state.documents.get_mut(path)?;
+        let route = entry.open.as_ref()?.route.clone();
+        let (event, tail) = SequencedLifecycleEvent::new(
+            entry.tail.clone(),
+            LifecycleEvent::Invalidate { route, revision },
+            None,
+        );
+        entry.tail = tail;
+        Some(event)
+    }
+
     pub(crate) fn save(
         &self,
         path: &Path,
@@ -519,8 +507,18 @@ impl EditorStateHandle {
             .lock()
             .expect("editor state mutex should not be poisoned")
             .document(path)?;
-        captured.editor = Arc::downgrade(&self.state);
+        captured.editor.state = Arc::downgrade(&self.state);
         Ok(captured)
+    }
+
+    pub(crate) fn capture(&self) -> CapturedEditor {
+        let mut capture = self
+            .state
+            .lock()
+            .expect("editor state mutex should not be poisoned")
+            .capture();
+        capture.state = Arc::downgrade(&self.state);
+        capture
     }
 
     pub(crate) fn diagnostics_publications(
@@ -596,7 +594,6 @@ impl EditorState {
                 open: Some(OpenDocument {
                     session,
                     current: Some(document),
-                    document_revision: Arc::new(DocumentRevisionNode::new()),
                     route,
                 }),
                 last_session: session,
@@ -643,8 +640,6 @@ impl EditorState {
                     .and_then(|entry| entry.open.as_mut())
                     .expect("checked open document should remain open");
                 open.current = None;
-                open.document_revision.supersede();
-                open.document_revision = Arc::new(DocumentRevisionNode::new());
                 self.advance_open_documents_revision(EditorChange::Document {
                     path: path.to_path_buf(),
                     session,
@@ -670,8 +665,6 @@ impl EditorState {
             applied.text,
         ));
         open.current = Some(document);
-        open.document_revision.supersede();
-        open.document_revision = Arc::new(DocumentRevisionNode::new());
         self.advance_open_documents_revision(EditorChange::Document {
             path: path.to_path_buf(),
             session,
@@ -716,18 +709,20 @@ impl EditorState {
         {
             return None;
         }
+        let revision = self.advance_open_documents_revision(EditorChange::Other);
         let entry = self.documents.get_mut(path)?;
         let open = entry.open.take()?;
-        open.document_revision.supersede();
         let cleanup = ClosedDocumentCleanup::new(weak_state, path.to_path_buf(), open.session);
         let (sequenced, current) = SequencedLifecycleEvent::new(
             entry.tail.clone(),
-            LifecycleEvent::Close { route: open.route },
+            LifecycleEvent::Close {
+                route: open.route,
+                revision,
+            },
             Some(cleanup),
         );
         entry.last_session = open.session;
         entry.tail = current;
-        self.advance_open_documents_revision(EditorChange::Other);
         Some(sequenced)
     }
 
@@ -758,6 +753,14 @@ impl EditorState {
             ));
         };
 
+        Ok(CapturedDocument {
+            document: Arc::clone(document),
+            route: open.route.analysis_route(),
+            editor: self.capture(),
+        })
+    }
+
+    fn capture(&self) -> CapturedEditor {
         let open_documents = self
             .documents
             .iter()
@@ -769,15 +772,11 @@ impl EditorState {
                 })
             })
             .collect::<Vec<_>>();
-
-        Ok(CapturedDocument {
-            document: Arc::clone(document),
-            document_revision: Arc::clone(&open.document_revision),
+        CapturedEditor {
             open_documents_revision: Arc::clone(&self.open_documents_revision),
-            route: open.route.analysis_route(),
             open_documents: open_documents.into(),
-            editor: Weak::new(),
-        })
+            state: Weak::new(),
+        }
     }
 
     fn recapture_position(
@@ -807,7 +806,7 @@ impl EditorState {
         // captured revision must therefore reach the latest revision without a gap. Edits to the
         // target move its request position; sibling edits and route changes only select a newer
         // complete snapshot.
-        let mut revision = Arc::clone(&captured.open_documents_revision);
+        let mut revision = Arc::clone(&captured.editor.open_documents_revision);
         while !Arc::ptr_eq(&revision, &self.open_documents_revision) {
             let Some(step) = revision.successor.borrow().clone() else {
                 return Err(PositionRecaptureError::Unavailable(Arc::from(
@@ -824,20 +823,6 @@ impl EditorState {
                 PositionRecaptureError::Unavailable(Arc::from(unavailable.reason().to_string()))
             })?;
         Ok((recaptured, position))
-    }
-
-    fn is_global_operation_current(
-        &self,
-        target: &TargetDocumentRevision,
-        open_documents_revision: OpenDocumentsRevision,
-    ) -> bool {
-        self.open_documents_revision.revision == open_documents_revision
-            && self
-                .documents
-                .get(target.path())
-                .and_then(|entry| entry.open.as_ref())
-                .and_then(|open| open.current.as_ref())
-                .is_some_and(|document| document.target() == target)
     }
 
     fn is_target_current(&self, target: &TargetDocumentRevision) -> bool {
@@ -971,7 +956,6 @@ struct DocumentEntry {
 struct OpenDocument {
     session: OpenDocumentSession,
     current: Option<Arc<EditorDocumentSnapshot>>,
-    document_revision: Arc<DocumentRevisionNode>,
     route: SessionRoute,
 }
 

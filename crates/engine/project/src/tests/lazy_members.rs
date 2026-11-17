@@ -1,16 +1,13 @@
 use std::fs;
 
-use rg_analysis::{CompletionQuery, ReferenceQuery, SavedSourceRelationship, SymbolKind};
-use rg_body_ir::{BodyReader, CurrentSourceSelection};
+use rg_analysis::{CompletionQuery, ReferenceQuery, SymbolKind};
+use rg_body_ir::BodyReader;
 use rg_ir_model::{BodyId, BodyKey, DefMapRef, PrimitiveTy, SemanticItemRef, UnsignedIntTy};
 use rg_semantic_ir::{ItemReader, complete_source_ownership};
 use rg_source::CapturedSource;
 use rg_std::CancellationToken;
 
-use crate::{
-    AnalysisChangeSummary, DocumentSourceView, Project, SavedFileChange,
-    testonly::ProjectSourceFixture,
-};
+use crate::{AnalysisChangeSummary, Project, SavedFileChange, testonly::ProjectSourceFixture};
 
 #[test]
 fn file_local_requests_preserve_lazy_member_capture() {
@@ -529,7 +526,7 @@ pub fn before_member() {}
 }
 
 #[test]
-fn opened_lazy_include_prepares_saved_and_current_source() {
+fn opened_lazy_include_uses_saved_and_edited_inputs() {
     let fixture = ProjectSourceFixture::build_with_fake_sysroot(
         r#"
 //- /src/lib.rs crate:opened_lazy_include
@@ -544,60 +541,27 @@ pub fn included(&self) { let local = 1u16; let _ = $inside$local; }
     let edited = saved.replace("1u16", "1u32");
     for _ in 0..2 {
         let project = fixture.build_project();
-        project.inspect(|snapshot| {
-            let context = snapshot
-                .file_context_for_path(fixture.path("src/methods.rs"))
-                .expect("route opened include")
-                .expect("include has a target");
-            let target = (context.crate_ref, context.file);
-            let offset = fixture.markers().position("inside").offset;
-            let cancellation = CancellationToken::new();
-            for (text, relationship, ty) in [
-                (&saved, SavedSourceRelationship::Exact, UnsignedIntTy::U16),
-                (
-                    &edited,
-                    SavedSourceRelationship::Different,
-                    UnsignedIntTy::U32,
-                ),
-            ] {
-                let document = snapshot
-                    .prepare_document_source(target, text, &cancellation)
-                    .expect("prepare opened include");
-                assert_eq!(
-                    matches!(&document, DocumentSourceView::SavedExact(_)),
-                    relationship == SavedSourceRelationship::Exact,
-                );
-                // Exercise explicit current preparation for unchanged text too. Edited text
-                // reaches it through document preparation, as it does for an open editor.
-                let current = match document {
-                    DocumentSourceView::SavedExact(_) => snapshot
-                        .prepare_current_source(target, text, &cancellation)
-                        .expect("prepare unchanged include explicitly"),
-                    DocumentSourceView::Current(current) => current,
-                };
-                assert_eq!(
-                    current.relationship(context.crate_ref.package, context.file),
-                    Some(relationship),
-                );
-                let (analysis, summary) = snapshot
-                    .analysis_for_current_source(
-                        target,
-                        current,
-                        CurrentSourceSelection::AtOffset(offset),
-                        |_| Ok(()),
-                    )
-                    .expect("prepare included method body");
-                assert!(summary.is_complete(), "{summary:?}");
-                assert_eq!(
-                    analysis
-                        .type_at(context.crate_ref, context.file, offset)
-                        .expect("query opened include")
-                        .expect("local type")
-                        .primitive(),
-                    Some(PrimitiveTy::UnsignedInt(ty)),
-                );
-            }
-        });
+        for (text, ty) in [(&saved, UnsignedIntTy::U16), (&edited, UnsignedIntTy::U32)] {
+            let path = fixture.path("src/methods.rs");
+            let source = CapturedSource::new(&path, text.clone()).expect("editor include");
+            project
+                .with_editor_snapshot(&[source], CancellationToken::new(), |snapshot| {
+                    let context = snapshot
+                        .file_context_for_path(&path)?
+                        .expect("included source");
+                    let offset = fixture.markers().position("inside").offset;
+                    assert_eq!(
+                        snapshot
+                            .analysis()
+                            .type_at(context.crate_ref, context.file, offset)?
+                            .expect("local type")
+                            .primitive(),
+                        Some(PrimitiveTy::UnsignedInt(ty))
+                    );
+                    Ok(())
+                })
+                .expect("opened include query");
+        }
     }
 }
 

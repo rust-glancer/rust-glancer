@@ -1,9 +1,8 @@
 //! Source scanning over semantic item signatures.
 //!
 //! Semantic item stores own signature data, while the indexed view owns the source interpretation
-//! of that data. The same scanner works for saved and edited inputs. It finds fields, variants,
-//! associated functions, and nested
-//! type paths without making source-query APIs part of either storage layer. Completion can select
+//! of that data. This scanner finds fields, variants, associated functions, and nested type paths
+//! without making source-query APIs part of either storage layer. Completion can select
 //! qualified or unqualified paths, explicit associated bindings, and a possible binding before
 //! `=`. When recovery leaves no path at all, the scanner can still return the narrowest item scope
 //! containing the cursor.

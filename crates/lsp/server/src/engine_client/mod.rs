@@ -20,7 +20,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::{EngineError, EngineResult, EngineServiceClient, QueryError, QueryValue};
+use rg_lsp_proto::{
+    EngineError, EngineResult, EngineServiceClient, OpenDocumentsRevision, QueryError, QueryValue,
+};
 use tarpc::client::RpcError as TarpcRpcError;
 use tokio::sync::watch;
 
@@ -49,6 +51,16 @@ impl EngineClient {
             engine_service_client,
             project_status: Arc::new(EngineProjectStatusState::new()),
         }
+    }
+
+    pub(crate) async fn invalidate_editor_snapshot(&self, revision: OpenDocumentsRevision) {
+        self.notify(
+            "invalidate_editor_snapshot",
+            move |client, context| async move {
+                client.invalidate_editor_snapshot(context, revision).await
+            },
+        )
+        .await;
     }
 
     /// Whether two route values address the same engine process and status owner.

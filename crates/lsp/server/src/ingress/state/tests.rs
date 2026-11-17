@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use rg_lsp_proto::EngineServiceClient;
 use tarpc::client::Config as TarpcClientConfig;
-use tower_lsp_server::gen_lsp_types::{Position, Range, TextDocumentContentChangeEvent};
+use tower_lsp_server::gen_lsp_types::{
+    Position, Range, TextDocumentContentChangeEvent, TextDocumentContentChangePartial,
+    TextDocumentContentChangeWholeDocument,
+};
 
 use super::{
     DiagnosticsPublication, DocumentRevision, EditorStateHandle, LifecycleEvent,
@@ -66,7 +69,7 @@ fn close_and_reopen_establishes_a_new_session_boundary() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let invalidation = captured.document_revision_watch();
+    let invalidation = captured.editor_revision_watch();
 
     let closed = state.close(&path).expect("open document should close");
     let reopened = state.open(path.clone(), Some(1), "fn second() {}".to_string());
@@ -86,10 +89,7 @@ fn close_and_reopen_establishes_a_new_session_boundary() {
         "fn second() {}"
     );
     assert!(invalidation.is_superseded());
-    assert!(!captured.is_global_operation_current(
-        captured.document().target(),
-        captured.open_documents_revision(),
-    ));
+    assert!(!captured.editor().is_current());
     assert!(!captured.is_target_current(captured.document().target()));
     assert!(matches!(
         captured.recapture_position(Position::new(0, 8)),
@@ -145,10 +145,7 @@ fn unresolved_or_failed_route_does_not_discard_captured_editor_text() {
     route.publish(Ok(None));
     assert!(captured.engine_client().is_err());
     assert!(
-        !captured.is_global_operation_current(
-            captured.document().target(),
-            captured.open_documents_revision(),
-        ),
+        !captured.editor().is_current(),
         "route publication changes the applicable open-document revision"
     );
     assert_eq!(
@@ -189,9 +186,9 @@ async fn global_input_accepts_matching_aliases_and_rejects_conflicts() {
         .document(Some(primary_path.clone()))
         .expect("primary alias should be captured");
     let snapshot = captured
-        .global_position(&engine_client, Position::new(0, 0))
+        .semantic_document(&engine_client)
         .expect("matching aliases should form one coherent global-operation input");
-    assert_eq!(snapshot.documents().len(), 2);
+    assert_eq!(snapshot.editor().documents().len(), 2);
 
     assert!(
         state
@@ -202,7 +199,7 @@ async fn global_input_accepts_matching_aliases_and_rejects_conflicts() {
         .document(Some(primary_path))
         .expect("primary alias should remain captured");
     let error = captured
-        .global_position(&engine_client, Position::new(0, 0))
+        .semantic_document(&engine_client)
         .expect_err("conflicting aliases must not use last-writer-wins composition");
     assert!(error.reason().contains("conflicting text"));
 }
@@ -232,7 +229,7 @@ async fn global_input_waits_for_every_rust_sibling_route() {
         .document(Some(target))
         .expect("target document should be captured");
     let error = captured
-        .global_position(&engine_client, Position::new(0, 0))
+        .semantic_document(&engine_client)
         .expect_err("an unresolved Rust sibling must keep the global operation unavailable");
 
     assert_eq!(error.path(), Some(sibling.as_path()));
@@ -294,12 +291,9 @@ fn target_change_invalidates_both_target_and_open_document_identity() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let target_invalidation = captured.document_revision_watch();
+    let target_invalidation = captured.editor_revision_watch();
 
-    assert!(captured.is_global_operation_current(
-        captured.document().target(),
-        captured.open_documents_revision(),
-    ));
+    assert!(captured.editor().is_current());
     assert!(captured.is_target_current(captured.document().target()));
     assert!(!target_invalidation.is_superseded());
     assert!(
@@ -308,10 +302,7 @@ fn target_change_invalidates_both_target_and_open_document_identity() {
             .expect("full change should apply")
     );
     assert!(target_invalidation.is_superseded());
-    assert!(!captured.is_global_operation_current(
-        captured.document().target(),
-        captured.open_documents_revision(),
-    ));
+    assert!(!captured.editor().is_current());
     assert!(!captured.is_target_current(captured.document().target()));
 }
 
@@ -325,19 +316,16 @@ fn sibling_edit_invalidates_only_the_open_document_set_identity() {
     let captured = state
         .document(Some(target))
         .expect("target document should be captured");
-    let target_invalidation = captured.document_revision_watch();
+    let target_invalidation = captured.editor_revision_watch();
 
     assert!(
         state
             .change(&sibling, Some(2), &[full("pub struct Second;")])
             .expect("full sibling change should apply")
     );
-    assert!(!target_invalidation.is_superseded());
+    assert!(target_invalidation.is_superseded());
     assert!(
-        !captured.is_global_operation_current(
-            captured.document().target(),
-            captured.open_documents_revision(),
-        ),
+        !captured.editor().is_current(),
         "a sibling change must supersede a global result from the older open-document set"
     );
     assert!(
@@ -550,7 +538,7 @@ fn forward_transformations_drop_with_the_oldest_capture() {
     let captured = state
         .document(Some(path.clone()))
         .expect("opened document should be captured");
-    let old_revision = Arc::downgrade(&captured.open_documents_revision);
+    let old_revision = Arc::downgrade(&captured.editor.open_documents_revision);
 
     assert!(
         state
@@ -567,7 +555,7 @@ fn forward_transformations_drop_with_the_oldest_capture() {
 }
 
 fn incremental(start: (u32, u32), end: (u32, u32), text: &str) -> TextDocumentContentChangeEvent {
-    tower_lsp_server::gen_lsp_types::TextDocumentContentChangePartial {
+    TextDocumentContentChangePartial {
         range: Range::new(Position::new(start.0, start.1), Position::new(end.0, end.1)),
         text: text.to_string(),
         ..Default::default()
@@ -576,7 +564,7 @@ fn incremental(start: (u32, u32), end: (u32, u32), text: &str) -> TextDocumentCo
 }
 
 fn full(text: &str) -> TextDocumentContentChangeEvent {
-    tower_lsp_server::gen_lsp_types::TextDocumentContentChangeWholeDocument {
+    TextDocumentContentChangeWholeDocument {
         text: text.to_string(),
     }
     .into()

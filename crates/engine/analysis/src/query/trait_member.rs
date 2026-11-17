@@ -7,7 +7,7 @@
 //! an ordinary hover or inlay label would use a shorter name.
 
 use anyhow::Context as _;
-use rg_ir_model::{CrateRef, FileId, Span};
+use rg_ir_model::{CrateRef, FileId};
 use rg_ir_view::{
     source::SourceCompletionView,
     trait_impl::{MissingTraitMember, MissingTraitMemberScaffold, TraitImplView},
@@ -16,29 +16,23 @@ use rg_syntax::{AstNode as _, ast};
 
 use crate::Analysis;
 
-/// Resolves missing members for the trait impl currently shown by one analysis request.
-///
-/// Saved-only queries use indexed source sites. Current-source queries use the impl identity chosen
-/// during preparation, including its decision to reuse saved semantics where possible.
-pub(crate) struct TraitImplMemberQuery<'analysis, 'db, 'source> {
+/// Resolve missing trait members and render signatures suitable for insertion into the impl.
+pub(crate) struct TraitImplMemberQuery<'analysis, 'db> {
     analysis: &'analysis Analysis<'db>,
     crate_ref: CrateRef,
     file_id: FileId,
-    source_text: &'source str,
 }
 
-impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
+impl<'analysis, 'db> TraitImplMemberQuery<'analysis, 'db> {
     pub(crate) fn new(
         analysis: &'analysis Analysis<'db>,
         crate_ref: CrateRef,
         file_id: FileId,
-        source_text: &'source str,
     ) -> Self {
         Self {
             analysis,
             crate_ref,
             file_id,
-            source_text,
         }
     }
 
@@ -51,20 +45,7 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
         &self,
         owner_start: u32,
     ) -> anyhow::Result<Vec<MissingTraitMember>> {
-        let edition = self
-            .analysis
-            .view_db()
-            .crate_edition(self.crate_ref)
-            .context("read current trait impl edition")?;
-        let file = self
-            .analysis
-            .current_source(self.crate_ref.package, self.file_id)
-            .filter(|source| source.text() == self.source_text)
-            .map(|source| source.parse())
-            .map_or_else(
-                || rg_parse::parse_source_file(self.source_text, edition).tree(),
-                |parse| parse.tree(),
-            );
+        let file = self.analysis.source_syntax(self.crate_ref, self.file_id)?;
         let Some(impl_) = file
             .syntax()
             .descendants()
@@ -86,30 +67,10 @@ impl<'analysis, 'db, 'source> TraitImplMemberQuery<'analysis, 'db, 'source> {
             return Ok(Vec::new());
         }
         let db = self.analysis.view_db();
-        let span = Span::from_text_range(impl_.syntax().text_range());
-        if let Some(source) = self
-            .analysis
-            .current_source(self.crate_ref.package, self.file_id)
-        {
-            // Source coordinates and selected declarations belong to the same captured document.
-            if source.text() != self.source_text {
-                return Ok(Vec::new());
-            }
-            let Some(impl_ref) = db.selected_current_impl(self.crate_ref, self.file_id, span)
-            else {
-                return Ok(Vec::new());
-            };
-            return TraitImplView::new(db)
-                .missing_members_for_prepared_impl(impl_ref)
-                .context("collect prepared trait impl members");
-        }
-
-        // An exact saved document needs no current-source preparation. Its indexed source site
-        // already carries the resolved trait identity used by the ordinary member projection.
         let owner_start = u32::from(impl_.syntax().text_range().start());
         let Some(site) = SourceCompletionView::new(db)
             .trait_impl_site_at(self.crate_ref, self.file_id, owner_start)
-            .context("resolve saved trait impl owner")?
+            .context("resolve trait impl owner")?
         else {
             return Ok(Vec::new());
         };

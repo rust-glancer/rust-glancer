@@ -329,14 +329,22 @@ crates/vfs/src/lib.rs:64:61 # hover/builtin-derive: FileId Hash
 crates/syntax/src/ast.rs:102:31 # hover/associated-function-item: generic AstNode
 "#;
 
-// This is intentionally a small preservation corpus rather than a second copy of the clean
-// benchmark. Coordinates below refer to the pinned saved checkout. The query model shifts them
-// past the harmless comment inserted by the dirty fixture.
+// Keep a small dirty corpus alongside the clean benchmark. Coordinates below refer to the pinned
+// checkout plus the appended function fixture; the query model shifts them past the leading
+// comment inserted in every dirty document.
 //
-// The selected cases cover current bodies, unchanged declaration headers, use items, and
-// document-wide reads. New module-level semantics and saved-only global operations are outside the
-// dirty-buffer contract and therefore do not contribute noise to this report.
+// The first queries call a newly added function, so they measure declaration invalidation as well
+// as a repeated query in the same editor view. The remaining cases exercise bodies, signatures,
+// imports and document-wide reads after a positional edit.
 const RUST_ANALYZER_DIRTY_CASES_TEXT: &str = r#"
+[textDocument/hover]
+crates/stdx/src/process.rs:276:20 # dirty/hover/added-function-call-first
+crates/stdx/src/process.rs:276:20 # dirty/hover/added-function-call-repeat
+crates/stdx/src/process.rs:277:17 # dirty/hover/added-inferred-local
+
+[textDocument/definition]
+crates/stdx/src/process.rs:276:20 # dirty/definition/added-function-call
+
 [textDocument/definition]
 crates/ide/src/call_hierarchy.rs:36:4 # dirty/definition/body-qualified-call
 crates/ide/src/child_modules.rs:30:48 # dirty/definition/body-associated-function
@@ -406,8 +414,8 @@ mod tests {
             panic!("first dirty query should target a position");
         };
 
-        assert_eq!(position.line(), 37);
-        assert_eq!(position.character(), 4);
+        assert_eq!(position.line(), 277);
+        assert_eq!(position.character(), 20);
     }
 
     #[test]

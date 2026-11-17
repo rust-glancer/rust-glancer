@@ -476,6 +476,33 @@ mod tests {
     }
 
     #[test]
+    fn clamps_display_ranges_to_source_bounds_after_edits() {
+        let cases = [
+            ("same coordinates", "a\nbc\n", (1, 1), (2, 0), (3, 5)),
+            ("shorter line", "a\nbc\n", (1, 1), (1, 9), (3, 4)),
+            ("shorter document", "a\nbc", (0, 0), (3, 0), (0, 4)),
+            ("vanished range", "a", (1, 0), (3, 0), (1, 1)),
+            ("empty document", "", (0, 0), (3, 0), (0, 0)),
+            ("UTF-16 columns", "a\n😀b", (1, 2), (3, 0), (6, 7)),
+            ("surrogate boundary", "é😀b", (0, 2), (0, 4), (2, 7)),
+            ("CRLF columns", "a\r\n😀b\r\n", (1, 2), (1, 9), (7, 8)),
+            ("trailing empty line", "a\n", (0, 0), (3, 0), (0, 2)),
+        ];
+        let position = |(line, column)| Position { line, column };
+        for (name, text, start, end, expected) in cases {
+            let index = LineIndex::new(text);
+            assert_eq!(
+                (
+                    index.offset_from_utf16_position_clamped(position(start)),
+                    index.offset_from_utf16_position_clamped(position(end)),
+                ),
+                expected,
+                "{name}",
+            );
+        }
+    }
+
+    #[test]
     fn clamps_utf16_positions_inside_line_endings_to_line_end() {
         let index = LineIndex::new("a\r\nbb\n");
         let cases = [

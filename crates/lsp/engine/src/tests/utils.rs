@@ -1,6 +1,9 @@
 use std::{
+    cmp::Reverse,
     collections::HashMap,
+    ffi::OsStr,
     fmt::Write as _,
+    fs,
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
@@ -10,17 +13,18 @@ use std::{
 
 use expect_test::Expect;
 use gen_lsp_types::{
-    CodeAction, CompletionItem, CompletionItemTextEdit, Contents, DocumentChange,
-    DocumentHighlight, DocumentHighlightKind, DocumentSymbol, FoldingRange, FoldingRangeKind,
-    Hover, InlayHint, InlayHintKind, Label, Location, Position, Range, TextEdit, Tooltip,
-    WorkspaceEdit,
+    CodeAction, CodeActionContext, CodeActionKind, CodeActionTriggerKind, CompletionItem,
+    CompletionItemTextEdit, Contents, DocumentChange, DocumentHighlight, DocumentHighlightKind,
+    DocumentSymbol, Edit, FoldingRange, FoldingRangeKind, Hover, InlayHint, InlayHintKind, Label,
+    Location, Position, Range, TextEdit, Tooltip, Uri, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CapturedSourceInput, CodeActionRequestContext, CompletionClientCapabilities,
-    DocumentRevision, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
-    FoldingClientCapabilities, GlobalPositionSnapshot, OpenDocumentSession, OpenDocumentsRevision,
-    QueryError, QueryValue, SaveProposal, SavedProjectChanges, ServiceNotification,
-    SysrootDiscovery, TargetDocumentRevision, path_to_file_uri,
+    DocumentPositionSnapshot, DocumentRevision, DocumentSnapshot, EditorDocumentSnapshot,
+    EditorSnapshot, EngineConfig, EngineResult, EngineService, FoldingClientCapabilities,
+    OpenDocumentSession, OpenDocumentsRevision, QueryError, QueryScope, QueryValue, SaveProposal,
+    SavedProjectChanges, ServiceNotification, SysrootDiscovery, file_uri_to_path, path_to_file_uri,
+    semantic_tokens_legend,
 };
 use rg_parse::LineIndex;
 use rg_workspace::SysrootSources;
@@ -36,7 +40,7 @@ use test_fixture::{
 
 use crate::{
     MemoryControl, Service, ServiceNotificationsSink, engine::ProjectConfiguration,
-    service::ServiceNotificationPublisher,
+    proto::position, service::ServiceNotificationPublisher,
 };
 
 pub(super) struct LspEngineFixture {
@@ -188,7 +192,7 @@ impl LspEngineFixture {
     }
 
     pub(super) async fn did_open_saved(&self, path: &str, version: i32) {
-        let text = std::fs::read_to_string(self.fixture.path(path))
+        let text = fs::read_to_string(self.fixture.path(path))
             .expect("fixture saved document should be readable");
         self.record_document(self.fixture.path(path), Some(version), text);
     }
@@ -245,76 +249,85 @@ impl LspEngineFixture {
             );
     }
 
-    fn capture_open_documents(
-        &self,
-        path: PathBuf,
-    ) -> (
-        TargetDocumentRevision,
-        OpenDocumentsRevision,
-        Vec<EditorDocumentSnapshot>,
-    ) {
-        let mut documents = self
-            .documents
-            .lock()
-            .expect("fixture editor documents should not be poisoned")
-            .clone();
-        let target = documents
-            .entry(path.clone())
-            .or_insert_with(|| TestDocument {
-                source_path: path.canonicalize().unwrap_or_else(|_| path.clone()),
-                version: None,
-                text: std::fs::read_to_string(&path)
-                    .expect("fixture query document should be readable"),
-                revision: 1,
-            });
-        let target_revision = DocumentRevision::new(target.revision);
-        let open_documents_revision = documents
+    fn editor_snapshot(&self, target: Option<PathBuf>) -> EditorSnapshot {
+        let mut documents = self.documents.lock().expect("fixture documents").clone();
+        if let Some(path) = target {
+            documents
+                .entry(path.clone())
+                .or_insert_with(|| TestDocument {
+                    source_path: path.canonicalize().expect("fixture source path"),
+                    version: None,
+                    text: fs::read_to_string(&path).expect("fixture source"),
+                    revision: 1,
+                });
+        }
+        let revision = documents
             .values()
             .map(|document| document.revision)
             .max()
             .unwrap_or(1);
-        let open_documents = documents
-            .into_iter()
-            .map(|(path, document)| {
-                EditorDocumentSnapshot::new(
-                    path,
-                    OpenDocumentSession::new(1),
-                    DocumentRevision::new(document.revision),
-                    document.version,
-                    document.text,
-                )
-                .with_source_path(document.source_path)
-            })
-            .collect();
-        let target =
-            TargetDocumentRevision::new(path, OpenDocumentSession::new(1), target_revision);
-
-        (
-            target,
-            OpenDocumentsRevision::new(open_documents_revision),
-            open_documents,
+        EditorSnapshot::new(
+            OpenDocumentsRevision::new(revision),
+            documents
+                .into_iter()
+                .map(|(path, document)| {
+                    EditorDocumentSnapshot::new(
+                        path,
+                        OpenDocumentSession::new(1),
+                        DocumentRevision::new(document.revision),
+                        document.version,
+                        document.text,
+                    )
+                    .with_source_path(document.source_path)
+                })
+                .collect(),
         )
     }
 
-    fn document_snapshot(&self, path: PathBuf) -> EditorDocumentSnapshot {
-        let (target, _, documents) = self.capture_open_documents(path);
-        documents
-            .into_iter()
-            .find(|document| document.target() == &target)
-            .expect("fixture target should be present in its captured open documents")
+    fn document_snapshot(&self, path: PathBuf) -> DocumentSnapshot {
+        let editor = self.editor_snapshot(Some(path.clone()));
+        let target = editor
+            .documents()
+            .iter()
+            .find(|document| document.path() == path)
+            .expect("target document")
+            .target()
+            .clone();
+        editor
+            .select(&target)
+            .expect("fixture capture contains its target")
     }
 
-    fn global_position_snapshot(
-        &self,
-        path: PathBuf,
-        position: Position,
-    ) -> GlobalPositionSnapshot {
-        let (target, open_documents_revision, documents) = self.capture_open_documents(path);
-        GlobalPositionSnapshot::new(target, open_documents_revision, documents, position)
+    pub(super) async fn check_workspace_symbols(&self, query: &str, expected: &[&str]) {
+        let editor = self.editor_snapshot(None);
+        let revision = editor.revision();
+        let response = self
+            .service
+            .clone()
+            .workspace_symbol(context::current(), editor, query.to_owned())
+            .await
+            .expect("editor workspace search");
+        assert_eq!(
+            response.scope(),
+            &QueryScope::Editor {
+                target: None,
+                open_documents_revision: revision
+            }
+        );
+        let names = response
+            .value()
+            .iter()
+            .map(|symbol| symbol.base_symbol_information.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, expected);
+    }
+
+    fn position_snapshot(&self, path: PathBuf, position: Position) -> DocumentPositionSnapshot {
+        self.document_snapshot(path).with_position(position)
     }
     pub(super) async fn did_save_dirty(&self, dirty: &DirtyDocument) {
         let path = self.fixture.path(dirty.path);
-        std::fs::write(&path, dirty.text.text())
+        fs::write(&path, dirty.text.text())
             .expect("fixture dirty document should be writable before save");
         self.did_save_current(dirty.path)
             .await
@@ -325,9 +338,9 @@ impl LspEngineFixture {
         self.notifications.clear();
         let document = self.document_snapshot(self.fixture.path(path));
         let proposal = SaveProposal::new(
-            document.target().clone(),
-            document.client_version(),
-            document.text().to_string(),
+            document.document().target().clone(),
+            document.document().client_version(),
+            document.document().text().to_string(),
         );
 
         self.service
@@ -338,10 +351,10 @@ impl LspEngineFixture {
 
     pub(super) async fn external_file_changed(&self, path: &str, text: &str) {
         self.notifications.clear();
-        std::fs::write(self.fixture.path(path), text)
+        fs::write(self.fixture.path(path), text)
             .expect("fixture external change should be writable");
         let path = self.fixture.path(path);
-        let changes = if path.extension().and_then(std::ffi::OsStr::to_str) == Some("rs") {
+        let changes = if path.extension().and_then(OsStr::to_str) == Some("rs") {
             SavedProjectChanges::new(
                 vec![CapturedSourceInput::new(path, text.to_string())],
                 Vec::new(),
@@ -358,12 +371,12 @@ impl LspEngineFixture {
     }
 
     pub(super) fn write_file_without_notification(&self, path: &str, text: &str) {
-        std::fs::write(self.fixture.path(path), text)
+        fs::write(self.fixture.path(path), text)
             .expect("fixture source should be writable without a notification");
     }
 
     pub(super) fn remove_file_without_notification(&self, path: &str) {
-        std::fs::remove_file(self.fixture.path(path))
+        fs::remove_file(self.fixture.path(path))
             .expect("fixture source should be removable without a notification");
     }
 
@@ -453,7 +466,7 @@ impl LspEngineFixture {
             .await;
     }
 
-    pub(super) async fn check_dirty_global_operations_require_save(
+    pub(super) async fn check_dirty_global_operations(
         &self,
         dirty: &DirtyDocument,
         marker: &'static str,
@@ -466,7 +479,7 @@ impl LspEngineFixture {
             .clone()
             .references(
                 context::current(),
-                self.global_position_snapshot(path.clone(), position),
+                self.position_snapshot(path.clone(), position),
                 true,
             )
             .await;
@@ -475,7 +488,7 @@ impl LspEngineFixture {
             .clone()
             .goto_implementation(
                 context::current(),
-                self.global_position_snapshot(path.clone(), position),
+                self.position_snapshot(path.clone(), position),
             )
             .await;
         let prepare_rename = self
@@ -483,7 +496,7 @@ impl LspEngineFixture {
             .clone()
             .prepare_rename(
                 context::current(),
-                self.global_position_snapshot(path.clone(), position),
+                self.position_snapshot(path.clone(), position),
             )
             .await;
         let rename = self
@@ -491,19 +504,48 @@ impl LspEngineFixture {
             .clone()
             .rename(
                 context::current(),
-                self.global_position_snapshot(path.clone(), position),
+                self.position_snapshot(path.clone(), position),
                 new_name.to_string(),
+                false,
             )
             .await;
 
-        for required_path in [
-            Self::expect_save_required(references, "dirty references query"),
-            Self::expect_save_required(implementation, "dirty implementation query"),
-            Self::expect_save_required(prepare_rename, "dirty prepare-rename query"),
-            Self::expect_save_required(rename, "dirty rename query"),
-        ] {
-            assert_eq!(required_path, path);
-        }
+        assert!(
+            !references
+                .expect("dirty references")
+                .into_value()
+                .is_empty()
+        );
+        implementation.expect("dirty implementation query");
+        assert!(
+            prepare_rename
+                .expect("dirty prepare rename")
+                .into_value()
+                .is_some()
+        );
+        Self::expect_save_required(rename, "rename without versioned edits");
+        let edit = self
+            .service
+            .clone()
+            .rename(
+                context::current(),
+                self.position_snapshot(path, position),
+                new_name.to_string(),
+                true,
+            )
+            .await
+            .expect("versioned dirty rename")
+            .into_value()
+            .expect("rename edit");
+        let mut rendered = String::new();
+        self.render_workspace_edit(&mut rendered, &edit);
+        assert_eq!(
+            rendered
+                .lines()
+                .filter(|line| line.contains(" -> "))
+                .count(),
+            4
+        );
     }
 
     pub(super) async fn check_rename_after_save(
@@ -534,11 +576,11 @@ impl LspEngineFixture {
     ) {
         let path = self.marker_path(markers, marker);
         let position = self.marker_position(markers, marker);
-        let input = self.global_position_snapshot(path, position);
+        let input = self.position_snapshot(path, position);
         let outcome = self
             .service
             .clone()
-            .rename(context::current(), input, new_name.to_string())
+            .rename(context::current(), input, new_name.to_string(), true)
             .await
             .expect("rename query should succeed");
         let edit = outcome.into_value();
@@ -551,6 +593,26 @@ impl LspEngineFixture {
         expect.assert_eq(&render_responses([(title, rendered)]));
     }
 
+    pub(super) async fn check_dirty_completion_error(
+        &self,
+        document: &DirtyDocument,
+        expected: QueryError,
+    ) {
+        let input = self
+            .document_snapshot(self.fixture.path(document.path))
+            .with_position(Position::new(0, 0));
+        let outcome = self
+            .service
+            .clone()
+            .completion(
+                context::current(),
+                input,
+                CompletionClientCapabilities::default(),
+            )
+            .await;
+        assert_eq!(outcome, Err(expected));
+    }
+
     pub(super) async fn check_rename_error(
         &self,
         marker: &'static str,
@@ -559,11 +621,11 @@ impl LspEngineFixture {
     ) {
         let path = self.marker_path(QueryMarkers::Saved, marker);
         let position = self.marker_position(QueryMarkers::Saved, marker);
-        let input = self.global_position_snapshot(path, position);
+        let input = self.position_snapshot(path, position);
         let outcome = self
             .service
             .clone()
-            .rename(context::current(), input, new_name.to_string())
+            .rename(context::current(), input, new_name.to_string(), true)
             .await;
 
         assert_eq!(outcome, Err(expected));
@@ -580,7 +642,9 @@ impl LspEngineFixture {
             .clone()
             .formatting(
                 context::current(),
-                self.document_snapshot(self.fixture.path(path)),
+                self.document_snapshot(self.fixture.path(path))
+                    .document()
+                    .clone(),
             )
             .await
             .expect("formatting query should succeed");
@@ -603,7 +667,9 @@ impl LspEngineFixture {
             .clone()
             .folding_range(
                 context::current(),
-                self.document_snapshot(self.fixture.path(path)),
+                self.document_snapshot(self.fixture.path(path))
+                    .document()
+                    .clone(),
                 FoldingClientCapabilities { line_folding_only },
             )
             .await
@@ -633,7 +699,7 @@ impl LspEngineFixture {
             LspQuery::GotoDefinition { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.global_position_snapshot(path, position);
+                let input = self.position_snapshot(path, position);
                 let outcome = self
                     .service
                     .clone()
@@ -647,7 +713,7 @@ impl LspEngineFixture {
             LspQuery::GotoTypeDefinition { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.global_position_snapshot(path, position);
+                let input = self.position_snapshot(path, position);
                 let outcome = self
                     .service
                     .clone()
@@ -661,7 +727,7 @@ impl LspEngineFixture {
             LspQuery::GotoImplementation { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.global_position_snapshot(path, position);
+                let input = self.position_snapshot(path, position);
                 let outcome = self
                     .service
                     .clone()
@@ -679,7 +745,7 @@ impl LspEngineFixture {
             } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.global_position_snapshot(path, position);
+                let input = self.position_snapshot(path, position);
                 let outcome = self
                     .service
                     .clone()
@@ -697,7 +763,7 @@ impl LspEngineFixture {
             LspQuery::Hover { marker, .. } => {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
-                let input = self.global_position_snapshot(path.clone(), position);
+                let input = self.position_snapshot(path.clone(), position);
                 let outcome = self
                     .service
                     .clone()
@@ -726,7 +792,7 @@ impl LspEngineFixture {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let document = self.document_snapshot(path.clone());
-                let current_text = document.text().to_string();
+                let current_text = document.document().text().to_string();
                 let input = document.with_position(position);
                 let outcome = self
                     .service
@@ -752,15 +818,15 @@ impl LspEngineFixture {
                 let path = self.marker_path(markers, marker);
                 let position = self.marker_position(markers, marker);
                 let document = self.document_snapshot(path.clone());
-                let current_text = document.text().to_string();
+                let current_text = document.document().text().to_string();
                 let input = document.with_range(Range::new(position, position));
-                let lsp_context = gen_lsp_types::CodeActionContext {
+                let lsp_context = CodeActionContext {
                     diagnostics: Vec::new(),
                     only: only.clone().map(|kind| vec![kind]),
                     trigger_kind: Some(if *automatic {
-                        gen_lsp_types::CodeActionTriggerKind::Automatic
+                        CodeActionTriggerKind::Automatic
                     } else {
-                        gen_lsp_types::CodeActionTriggerKind::Invoked
+                        CodeActionTriggerKind::Invoked
                     }),
                 };
                 let outcome = self
@@ -804,8 +870,8 @@ impl LspEngineFixture {
                     .await
                     .expect("semantic tokens should succeed");
                 let tokens = outcome.into_value();
-                let legend = rg_lsp_proto::semantic_tokens_legend();
-                let index = LineIndex::new(document.text());
+                let legend = semantic_tokens_legend();
+                let index = LineIndex::new(document.document().text());
                 let mut position = Position::default();
                 let mut previous_end = Position::default();
                 for token in tokens.data {
@@ -825,13 +891,11 @@ impl LspEngineFixture {
                     assert!(range.is_none_or(|range| range.start <= position && end <= range.end));
                     previous_end = end;
                     let start_byte = index
-                        .offset_from_utf16_position(crate::proto::position::parse_position(
-                            position,
-                        ))
+                        .offset_from_utf16_position(position::parse_position(position))
                         .expect("token start is a UTF-16 boundary")
                         as usize;
                     let end_byte = index
-                        .offset_from_utf16_position(crate::proto::position::parse_position(end))
+                        .offset_from_utf16_position(position::parse_position(end))
                         .expect("token end is a UTF-16 boundary")
                         as usize;
                     let kind = &legend.token_types[token.token_type as usize];
@@ -851,7 +915,7 @@ impl LspEngineFixture {
                         end.character,
                         kind.as_str(),
                         modifiers,
-                        &document.text()[start_byte..end_byte]
+                        &document.document().text()[start_byte..end_byte]
                     )
                     .expect("snapshot should be writable");
                 }
@@ -878,7 +942,7 @@ impl LspEngineFixture {
         }
     }
 
-    fn marker_path(&self, markers: QueryMarkers<'_>, marker: &str) -> std::path::PathBuf {
+    fn marker_path(&self, markers: QueryMarkers<'_>, marker: &str) -> PathBuf {
         match markers {
             QueryMarkers::Saved => {
                 let marker = self.markers.position(marker);
@@ -892,7 +956,7 @@ impl LspEngineFixture {
         let position = match markers {
             QueryMarkers::Saved => {
                 let marker = self.markers.position(marker);
-                let text = std::fs::read_to_string(self.fixture.path(&marker.path))
+                let text = fs::read_to_string(self.fixture.path(&marker.path))
                     .expect("fixture marker file should be readable");
                 LineIndex::new(&text).utf16_position(marker.offset)
             }
@@ -912,9 +976,13 @@ impl LspEngineFixture {
             return;
         }
 
+        let mut locations = locations
+            .iter()
+            .map(|location| self.render_location(location))
+            .collect::<Vec<_>>();
+        locations.sort();
         for location in locations {
-            writeln!(rendered, "{}", self.render_location(location))
-                .expect("snapshot should be writable");
+            writeln!(rendered, "{location}").expect("snapshot should be writable");
         }
     }
 
@@ -1073,7 +1141,7 @@ impl LspEngineFixture {
             let kind = action
                 .kind
                 .as_ref()
-                .map_or("<none>", gen_lsp_types::CodeActionKind::as_str);
+                .map_or("<none>", CodeActionKind::as_str);
             writeln!(rendered, "{kind} {}", action.title).expect("snapshot should be writable");
             writeln!(
                 rendered,
@@ -1118,9 +1186,9 @@ impl LspEngineFixture {
             let mut source_edits = Vec::new();
             for edit in &document.edits {
                 let edit = match edit {
-                    gen_lsp_types::Edit::TextEdit(edit) => edit,
-                    gen_lsp_types::Edit::AnnotatedTextEdit(edit) => &edit.text_edit,
-                    gen_lsp_types::Edit::SnippetTextEdit(_) => {
+                    Edit::TextEdit(edit) => edit,
+                    Edit::AnnotatedTextEdit(edit) => &edit.text_edit,
+                    Edit::SnippetTextEdit(_) => {
                         panic!("code actions should contain plain text edits")
                     }
                 };
@@ -1132,20 +1200,16 @@ impl LspEngineFixture {
                 )
                 .expect("snapshot should be writable");
                 let start = line_index
-                    .offset_from_utf16_position(crate::proto::position::parse_position(
-                        edit.range.start,
-                    ))
+                    .offset_from_utf16_position(position::parse_position(edit.range.start))
                     .expect("code action edit start should fit captured source");
                 let end = line_index
-                    .offset_from_utf16_position(crate::proto::position::parse_position(
-                        edit.range.end,
-                    ))
+                    .offset_from_utf16_position(position::parse_position(edit.range.end))
                     .expect("code action edit end should fit captured source");
                 assert!(start <= end, "code action edit should not be backwards");
                 source_edits.push((start, end, edit.new_text.as_str()));
             }
 
-            source_edits.sort_by_key(|(start, end, _)| std::cmp::Reverse((*start, *end)));
+            source_edits.sort_by_key(|(start, end, _)| Reverse((*start, *end)));
             let mut result = source.to_string();
             for (start, end, new_text) in source_edits {
                 result.replace_range(
@@ -1174,10 +1238,10 @@ impl LspEngineFixture {
         let line_index = LineIndex::new(source);
         let assert_range = |range: Range, label: &str| {
             let start = line_index
-                .offset_from_utf16_position(crate::proto::position::parse_position(range.start))
+                .offset_from_utf16_position(position::parse_position(range.start))
                 .unwrap_or_else(|| panic!("completion {label:?} has an invalid edit start"));
             let end = line_index
-                .offset_from_utf16_position(crate::proto::position::parse_position(range.end))
+                .offset_from_utf16_position(position::parse_position(range.end))
                 .unwrap_or_else(|| panic!("completion {label:?} has an invalid edit end"));
             assert!(
                 start <= end,
@@ -1307,13 +1371,46 @@ impl LspEngineFixture {
     }
 
     fn render_workspace_edit(&self, rendered: &mut String, edit: &WorkspaceEdit) {
-        let Some(changes) = &edit.changes else {
+        let mut changes = if let Some(documents) = &edit.document_changes {
+            documents
+                .iter()
+                .map(|change| {
+                    let DocumentChange::TextDocumentEdit(change) = change else {
+                        panic!("rename uses text edits");
+                    };
+                    let uri = &change.text_document.text_document_identifier.uri;
+                    let path = file_uri_to_path(uri).expect("fixture edit path");
+                    let documents = self.documents.lock().expect("fixture documents");
+                    let expected_version =
+                        documents.get(&path).and_then(|document| document.version);
+                    assert_eq!(
+                        change.text_document.version, expected_version,
+                        "rename uses the captured version"
+                    );
+                    let edits = change
+                        .edits
+                        .iter()
+                        .map(|edit| {
+                            let Edit::TextEdit(edit) = edit else {
+                                panic!("rename uses plain text edits");
+                            };
+                            edit
+                        })
+                        .collect::<Vec<_>>();
+                    (uri, edits)
+                })
+                .collect::<Vec<_>>()
+        } else if let Some(changes) = &edit.changes {
+            changes
+                .iter()
+                .map(|(uri, edits)| (uri, edits.iter().collect()))
+                .collect()
+        } else {
             writeln!(rendered, "no changes").expect("snapshot should be writable");
             return;
         };
 
-        let mut changes = changes.iter().collect::<Vec<_>>();
-        changes.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+        changes.sort_by_key(|(uri, _)| self.render_uri_path(uri));
 
         for (uri, edits) in changes {
             writeln!(rendered, "{}", self.render_uri_path(uri))
@@ -1357,7 +1454,7 @@ impl LspEngineFixture {
         }
     }
 
-    fn render_uri_path(&self, uri: &gen_lsp_types::Uri) -> String {
+    fn render_uri_path(&self, uri: &Uri) -> String {
         uri.to_file_path()
             .map(|path| self.render_path(path.as_ref()))
             .unwrap_or_else(|()| uri.as_str().to_string())
@@ -1456,7 +1553,7 @@ pub(super) enum LspQuery {
     CodeAction {
         title: String,
         marker: String,
-        only: Option<gen_lsp_types::CodeActionKind>,
+        only: Option<CodeActionKind>,
         automatic: bool,
     },
     DocumentSymbol {
@@ -1539,7 +1636,7 @@ impl LspQuery {
                 modifier.arguments.as_slice(),
             ) {
                 (Self::CodeAction { only, .. }, "only", [String(kind)]) => {
-                    *only = Some(gen_lsp_types::CodeActionKind::from(kind.clone()));
+                    *only = Some(CodeActionKind::from(kind.clone()));
                 }
                 _ => panic!("inline code actions support .only(\"kind\")"),
             }
@@ -1606,11 +1703,7 @@ impl LspQuery {
         }
     }
 
-    pub(super) fn code_action_only(
-        title: &str,
-        marker: &str,
-        only: gen_lsp_types::CodeActionKind,
-    ) -> Self {
+    pub(super) fn code_action_only(title: &str, marker: &str, only: CodeActionKind) -> Self {
         Self::CodeAction {
             title: title.to_string(),
             marker: marker.to_string(),

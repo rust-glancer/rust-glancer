@@ -4,8 +4,8 @@ use rg_ir_view::{
     body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
     display::syntax::SyntaxRenderer,
 };
+use rg_parse::SourceReader;
 
-use super::InlaySource;
 use crate::{
     Analysis,
     model::{DocumentSymbol, InlayHint, InlayHintKind, InlayHintPosition},
@@ -16,20 +16,15 @@ pub(super) fn closing_brace_hints(
     crate_ref: CrateRef,
     file_id: FileId,
     range: Option<Span>,
-    source: &InlaySource<'_, '_>,
+    source: &SourceReader<'_>,
 ) -> anyhow::Result<Vec<InlayHint>> {
     const MIN_LINE_DELTA: u32 = 20;
 
     let mut hints = Vec::new();
     for candidate in ClosingBraceCandidate::collect(analysis, crate_ref, file_id, source)? {
-        let open_line = source.line_for_offset(candidate.file_id, candidate.open_offset())?;
-        let Some(open_line) = open_line else {
-            continue;
-        };
-        let close_line = source.line_for_offset(candidate.file_id, candidate.close_offset())?;
-        let Some(close_line) = close_line else {
-            continue;
-        };
+        let index = source.line_index(candidate.file_id)?;
+        let open_line = index.position(candidate.open_offset()).line;
+        let close_line = index.position(candidate.close_offset()).line;
         if close_line.saturating_sub(open_line) < MIN_LINE_DELTA {
             continue;
         }
@@ -64,22 +59,12 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         file_id: FileId,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<Vec<Self>> {
         let mut candidates = Vec::new();
-        match source.current() {
-            Some(source) => {
-                let syntax = source.parse().tree();
-                for symbol in Analysis::document_symbols_from_syntax(&syntax) {
-                    Self::collect_document_symbol(file_id, &symbol, &mut candidates);
-                }
-            }
-            None => {
-                let outline = analysis.document_symbols(crate_ref, file_id)?;
-                for symbol in outline.symbols {
-                    Self::collect_document_symbol(outline.file_id, &symbol, &mut candidates);
-                }
-            }
+        let outline = analysis.document_symbols(crate_ref, file_id)?;
+        for symbol in outline.symbols {
+            Self::collect_document_symbol(outline.file_id, &symbol, &mut candidates);
         }
         for block in
             BodyStructureView::new(analysis.view_db()).closing_brace_blocks(crate_ref, file_id)?
@@ -132,7 +117,7 @@ impl ClosingBraceCandidate {
         analysis: &Analysis<'_>,
         crate_ref: CrateRef,
         block: &BodyClosingBraceBlock,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<String> {
         let label = match block.kind() {
             BodyClosingBraceBlockKind::Function { name } => {
@@ -157,7 +142,7 @@ impl ClosingBraceCandidate {
         file_id: FileId,
         label: &str,
         detail_span: Option<Span>,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<String> {
         let Some(detail_span) = detail_span else {
             return Ok(label.to_string());
@@ -174,7 +159,7 @@ impl ClosingBraceCandidate {
         file_id: FileId,
         pat: Option<Span>,
         iterable: Option<Span>,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<String> {
         let Some(pat) = Self::source_detail(file_id, pat, source)? else {
             return Ok("// for".to_string());
@@ -189,7 +174,7 @@ impl ClosingBraceCandidate {
     fn source_detail(
         file_id: FileId,
         span: Option<Span>,
-        source: &InlaySource<'_, '_>,
+        source: &SourceReader<'_>,
     ) -> anyhow::Result<Option<String>> {
         let Some(span) = span else {
             return Ok(None);

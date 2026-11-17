@@ -8,9 +8,10 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use futures::StreamExt as _;
 use rg_lsp_proto::{
     CodeActionRequestContext, CompletionClientCapabilities, DocumentPositionSnapshot,
-    DocumentRangeSnapshot, EditorDocumentSnapshot, EngineConfig, EngineResult, EngineService,
-    EngineServiceClient, FoldingClientCapabilities, GlobalPositionSnapshot, QueryError, QueryScope,
-    QueryValue, SaveProposal, SavedProjectChanges,
+    DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig,
+    EngineResult, EngineService, EngineServiceClient, FoldingClientCapabilities,
+    OpenDocumentsRevision, ProjectInitialization, QueryError, QueryScope, QueryValue, SaveProposal,
+    SavedProjectChanges, path_to_file_uri,
 };
 use rg_std::NormalizedPathBuf;
 use tarpc::{
@@ -26,11 +27,11 @@ use tokio::{
 use tower_lsp_server::{
     LanguageServer, LspService, Server,
     gen_lsp_types::{
-        CompletionItem, CompletionItemKind, CompletionItemTextEdit, CompletionParams,
+        CodeAction, CompletionItem, CompletionItemKind, CompletionItemTextEdit, CompletionParams,
         CompletionResponse, DidChangeTextDocumentParams, DidOpenTextDocumentParams,
         DocumentHighlight, DocumentSymbol, FoldingRange, Hover, InitializeParams, InitializeResult,
-        InitializedParams, InlayHint, InlayHintParams, Location, Position, Range, TextEdit, Uri,
-        WorkspaceEdit, WorkspaceSymbol,
+        InitializedParams, InlayHint, InlayHintKind, InlayHintParams, Label, Location, Position,
+        PrepareRenameResult, Range, SemanticTokens, TextEdit, Uri, WorkspaceEdit, WorkspaceSymbol,
     },
     jsonrpc::Result as LspResult,
 };
@@ -42,7 +43,7 @@ use crate::{
     ingress::{self, EditorIngress, EditorStateHandle, LifecycleEvent},
     inlay_refresher::InlayRefresher,
     methods::{
-        CompletionMethodContext, DocumentMethodContext,
+        self, CompletionMethodContext, DocumentMethodContext,
         text_document::{completion::completion, inlay_hint::inlay_hint},
     },
     recent_editor_saves::RecentEditorSaves,
@@ -192,15 +193,15 @@ async fn cancelled_completion_does_not_restart_after_did_change() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn sibling_change_does_not_cancel_or_invalidate_completion() {
+async fn sibling_change_restarts_completion_with_the_new_capture() {
     let mut lsp = EditorLspFixture::open("impl RwLock|").await;
     let sibling = lsp.open_sibling("pub struct Before;").await;
     let request = lsp.request_completion().await;
-    let attempt = lsp.expect_attempt("impl RwLock|").await;
-
+    let mut attempt = lsp.expect_attempt("impl RwLock|").await;
     lsp.change_sibling(&sibling, "pub struct After;").await;
-    attempt.expect_running();
-    attempt.complete(());
+    attempt.expect_cancelled().await;
+    let next = lsp.expect_attempt("impl RwLock|").await;
+    next.complete(());
 
     let response = lsp.expect_completion(request).await;
     let CompletionResponse::CompletionList(response) = response else {
@@ -262,10 +263,9 @@ impl EditorLspFixture {
         let server = tokio::spawn(Server::new(server_input, server_output, socket).serve(service));
         let workspace = synthetic_test_path("workspace");
         let path = workspace.join("src/lib.rs");
-        let workspace_uri = rg_lsp_proto::path_to_file_uri(&workspace)
-            .expect("test workspace should convert to URI");
-        let uri =
-            rg_lsp_proto::path_to_file_uri(&path).expect("test document should convert to URI");
+        let workspace_uri =
+            path_to_file_uri(&workspace).expect("test workspace should convert to URI");
+        let uri = path_to_file_uri(&path).expect("test document should convert to URI");
         let mut fixture = Self {
             client_input,
             client_output: BufReader::new(client_output),
@@ -384,8 +384,8 @@ impl EditorLspFixture {
     fn inlay_hint(line: u32) -> InlayHint {
         InlayHint {
             position: Position::new(line, 9),
-            label: tower_lsp_server::gen_lsp_types::Label::String(": u32".to_string()),
-            kind: Some(tower_lsp_server::gen_lsp_types::InlayHintKind::Type),
+            label: Label::String(": u32".to_string()),
+            kind: Some(InlayHintKind::Type),
             text_edits: None,
             tooltip: None,
             padding_left: None,
@@ -396,7 +396,7 @@ impl EditorLspFixture {
 
     async fn open_sibling(&mut self, text: &str) -> Uri {
         let path = self.workspace.join("src/sibling.rs");
-        let uri = rg_lsp_proto::path_to_file_uri(path).expect("sibling path should convert to URI");
+        let uri = path_to_file_uri(path).expect("sibling path should convert to URI");
         self.send(serde_json::json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",
@@ -660,13 +660,6 @@ impl<T> PendingAttempt<T> {
             .await
             .expect("semantic attempt should be cancelled");
     }
-
-    fn expect_running(&self) {
-        assert!(
-            !self.release.is_closed(),
-            "sibling editor state must not cancel target-only completion"
-        );
-    }
 }
 
 #[derive(Clone)]
@@ -678,7 +671,7 @@ struct RawEditorBackend {
 
 impl LanguageServer for RawEditorBackend {
     async fn initialize(&self, _: InitializeParams) -> LspResult<InitializeResult> {
-        Ok(crate::methods::initialize())
+        Ok(methods::initialize())
     }
 
     async fn initialized(&self, _: InitializedParams) {}
@@ -707,9 +700,9 @@ impl LanguageServer for RawEditorBackend {
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
         let captured = ingress::document_request()
             .expect("raw completion should run inside ordered ingress")
-            .map_err(|unavailable| crate::methods::temporarily_unavailable(unavailable.reason()))?;
+            .map_err(|unavailable| methods::temporarily_unavailable(unavailable.reason()))?;
         let request = ingress::completion_request().ok_or_else(|| {
-            crate::methods::internal_error(anyhow::anyhow!(
+            methods::internal_error(anyhow::anyhow!(
                 "raw completion has no logical request token"
             ))
         })?;
@@ -725,7 +718,7 @@ impl LanguageServer for RawEditorBackend {
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
         let captured = ingress::document_request()
             .expect("raw inlay request should run inside ordered ingress")
-            .map_err(|unavailable| crate::methods::temporarily_unavailable(unavailable.reason()))?;
+            .map_err(|unavailable| methods::temporarily_unavailable(unavailable.reason()))?;
         let context = DocumentMethodContext::new(self.engine_client.clone(), captured);
         inlay_hint(context, params).await
     }
@@ -784,7 +777,10 @@ impl EngineService for GatedEditorEngine {
             .expect("test should observe every completion RPC");
         let _ = released.await;
 
-        let scope = QueryScope::TargetDocument(input.document().target().clone());
+        let scope = QueryScope::Editor {
+            target: Some(input.document().target().clone()),
+            open_documents_revision: input.snapshot().editor().revision(),
+        };
         Ok(QueryValue::new(
             vec![CompletionItem {
                 label: "RwLock".to_string(),
@@ -810,8 +806,16 @@ impl EngineService for GatedEditorEngine {
         _: context::Context,
         _: PathBuf,
         _: EngineConfig,
-    ) -> EngineResult<rg_lsp_proto::ProjectInitialization> {
+    ) -> EngineResult<ProjectInitialization> {
         panic!("test engine only supports editor query scenarios")
+    }
+
+    async fn invalidate_editor_snapshot(
+        self,
+        _: context::Context,
+        _: OpenDocumentsRevision,
+    ) -> EngineResult<()> {
+        Ok(())
     }
 
     async fn initialized(self, _: context::Context) -> EngineResult<()> {
@@ -833,7 +837,7 @@ impl EngineService for GatedEditorEngine {
     async fn goto_definition(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -841,7 +845,7 @@ impl EngineService for GatedEditorEngine {
     async fn goto_type_definition(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -849,7 +853,7 @@ impl EngineService for GatedEditorEngine {
     async fn goto_implementation(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -857,7 +861,7 @@ impl EngineService for GatedEditorEngine {
     async fn references(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
         _: bool,
     ) -> Result<QueryValue<Vec<Location>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
@@ -866,17 +870,17 @@ impl EngineService for GatedEditorEngine {
     async fn prepare_rename(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
-    ) -> Result<QueryValue<Option<tower_lsp_server::gen_lsp_types::PrepareRenameResult>>, QueryError>
-    {
+        _: DocumentPositionSnapshot,
+    ) -> Result<QueryValue<Option<PrepareRenameResult>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
 
     async fn rename(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
         _: String,
+        _: bool,
     ) -> Result<QueryValue<Option<WorkspaceEdit>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -892,7 +896,7 @@ impl EngineService for GatedEditorEngine {
     async fn hover(
         self,
         _: context::Context,
-        _: GlobalPositionSnapshot,
+        _: DocumentPositionSnapshot,
     ) -> Result<QueryValue<Option<Hover>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -902,7 +906,7 @@ impl EngineService for GatedEditorEngine {
         _: context::Context,
         _: DocumentRangeSnapshot,
         _: CodeActionRequestContext,
-    ) -> Result<QueryValue<Vec<tower_lsp_server::gen_lsp_types::CodeAction>>, QueryError> {
+    ) -> Result<QueryValue<Vec<CodeAction>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
 
@@ -917,7 +921,7 @@ impl EngineService for GatedEditorEngine {
     async fn document_symbol(
         self,
         _: context::Context,
-        _: EditorDocumentSnapshot,
+        _: DocumentSnapshot,
     ) -> Result<QueryValue<Vec<DocumentSymbol>>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
@@ -934,9 +938,9 @@ impl EngineService for GatedEditorEngine {
     async fn semantic_tokens(
         self,
         _: context::Context,
-        _: EditorDocumentSnapshot,
-        _: Option<tower_lsp_server::gen_lsp_types::Range>,
-    ) -> Result<QueryValue<tower_lsp_server::gen_lsp_types::SemanticTokens>, QueryError> {
+        _: DocumentSnapshot,
+        _: Option<Range>,
+    ) -> Result<QueryValue<SemanticTokens>, QueryError> {
         panic!("test engine only supports editor query scenarios")
     }
 
@@ -946,7 +950,10 @@ impl EngineService for GatedEditorEngine {
         input: DocumentRangeSnapshot,
     ) -> Result<QueryValue<Vec<InlayHint>>, QueryError> {
         let (release, released) = oneshot::channel();
-        let scope = QueryScope::TargetDocument(input.document().target().clone());
+        let scope = QueryScope::Editor {
+            target: Some(input.document().target().clone()),
+            open_documents_revision: input.snapshot().editor().revision(),
+        };
         self.inlay_attempts
             .send(ObservedInlayAttempt { input, release })
             .expect("test should observe every inlay RPC");
@@ -959,6 +966,7 @@ impl EngineService for GatedEditorEngine {
     async fn workspace_symbol(
         self,
         _: context::Context,
+        _: EditorSnapshot,
         _: String,
     ) -> Result<QueryValue<Vec<WorkspaceSymbol>>, QueryError> {
         panic!("test engine only supports editor query scenarios")

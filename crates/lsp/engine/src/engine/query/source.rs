@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use anyhow::Context as _;
+use gen_lsp_types::Position;
 use rg_project::{FileContext, ProjectSnapshot};
 use rg_text::RustEdition;
 
@@ -14,7 +15,7 @@ impl QueryRunner<'_> {
     pub(super) fn file_offset(
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
-        position: gen_lsp_types::Position,
+        position: Position,
     ) -> anyhow::Result<Option<(FileContext, u32)>> {
         let Some(context) = Self::file_context(snapshot, path)? else {
             return Ok(None);

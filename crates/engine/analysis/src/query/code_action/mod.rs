@@ -1,17 +1,14 @@
-//! Native source actions assembled from current syntax and indexed semantics.
+//! Native source actions assembled from syntax and semantic facts.
 //!
-//! The editor text may contain changes that have not been saved, while name resolution and type
-//! information come from the last indexed project state. A request is therefore handled in three
-//! steps: parse the exact editor text once, let each provider combine it with indexed facts, then
-//! validate and order all proposed edits. The result remains in UTF-8 source coordinates; the LSP
-//! layer later converts ranges and attaches the editor's document version.
+//! Share one parse across the requested providers, let each combine syntax with semantic facts,
+//! then validate and order all proposed edits. The result remains in UTF-8 source coordinates;
+//! the LSP layer later converts ranges and attaches the editor's document version.
 
 mod import_item;
 mod qualified_path;
 mod syntax;
 mod trait_impl;
 
-use anyhow::Context as _;
 use rg_ir_model::{CrateRef, FileId, Span};
 
 use self::syntax::CodeActionSyntax;
@@ -74,10 +71,10 @@ pub enum CodeActionTrigger {
     Unspecified,
 }
 
-/// One code-action request in current UTF-8 source coordinates.
+/// One code-action request in UTF-8 source coordinates.
 #[derive(Debug, Clone, Copy)]
 pub struct CodeActionQuery<'source> {
-    /// Crate interpretation used for saved semantic facts.
+    /// Crate interpretation used for name and type lookup.
     pub crate_ref: CrateRef,
     /// File inside `crate_ref` that owns the captured source.
     pub file_id: FileId,
@@ -143,24 +140,11 @@ impl<'analysis, 'db, 'source> CodeActionResolver<'analysis, 'db, 'source> {
         let mut provider_errors = Vec::new();
         let quick_fix = self.query.kinds.includes(CodeActionKind::QuickFix);
         let rewrite = self.query.kinds.includes(CodeActionKind::RefactorRewrite);
-        // 1. Give every provider the same ordinary parse of the captured editor buffer. LSP
-        // requests already carry this parse in `CurrentSource`; direct analysis callers fall back
-        // to parsing their supplied text here.
+        // 1. Share one parse across the requested providers.
         if quick_fix || rewrite {
-            let edition = self
-                .analysis
-                .view_db()
-                .crate_edition(self.query.crate_ref)
-                .context("read code action crate edition")?;
             let file = self
                 .analysis
-                .current_source(self.query.crate_ref.package, self.query.file_id)
-                .filter(|source| source.text() == self.query.source_text)
-                .map(|source| source.parse())
-                .map_or_else(
-                    || rg_parse::parse_source_file(self.query.source_text, edition).tree(),
-                    |parse| parse.tree(),
-                );
+                .source_syntax(self.query.crate_ref, self.query.file_id)?;
             let syntax = CodeActionSyntax::new(self.query.source_text, file, self.query.range);
 
             // 2. Run only providers requested by the client. Each provider may return no action or

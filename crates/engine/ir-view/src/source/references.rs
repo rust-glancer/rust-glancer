@@ -40,7 +40,7 @@ pub struct ReferenceSourceSelection {
 impl ReferenceSourceSelection {
     /// Choose outer owners in one file; selecting one also includes its nested bodies.
     ///
-    /// This reads declaration metadata and syntax from the active input view, never inferred bodies.
+    /// This reads declaration metadata and syntax, never inferred bodies.
     pub(crate) fn owners(
         &self,
         db: &IndexedViewDb<'_>,

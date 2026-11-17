@@ -1,7 +1,7 @@
-//! Current-body and saved-project impl matching for one receiver.
+//! Body-local and crate-level impl matching for one receiver.
 //!
 //! Associated-item queries ask for a named const or all associated items. Lexical trait discovery
-//! narrows the search, then this query merges current-body and saved impls of those traits.
+//! narrows the search, then this query merges body-local and crate-level impls of those traits.
 //! Inherent impls remain receiver-first.
 //!
 //! These queries expose concrete impls to associated-path lookup. Function references, calls,
@@ -9,27 +9,22 @@
 //! prove their applicability in a live inference table instead of requiring a concrete impl here.
 
 use rg_def_map::DefMapSource;
-use rg_ir_model::{DefMapRef, ScopeId, TraitDefRef};
+use rg_ir_model::{ScopeId, TraitDefRef};
 use rg_semantic_ir::SemanticItemSource;
 use rg_source::ReadError;
 use rg_std::UniqueVec;
 use rg_ty::{Ty, lookup::ReceiverImplMatches};
 
-use crate::resolution::{
-    BodyResolutionContext,
-    cache::{BodyLocalInherentItemNames, BodyTraitSurface},
-};
+use crate::resolution::{BodyResolutionContext, cache::BodyTraitSurface};
 
 /// Receiver matches visible while resolving the current body.
 ///
 /// `receiver_ty` is the canonical receiver used for every match, including completed nominal
-/// generic arguments. `matches` retains substitutions and trait-selection evidence. The local name
-/// set is carried beside them so an active `impl Widget { fn render(...) }` can suppress the stale
-/// saved `render` declaration when consumers expand matched impls into associated items.
+/// generic arguments. `matches` retains substitutions and trait-selection evidence for both
+/// body-local and crate-level impls.
 pub(crate) struct BodyReceiverImplMatches {
     receiver_ty: Ty,
     matches: ReceiverImplMatches,
-    local_inherent_item_names: BodyLocalInherentItemNames,
 }
 
 impl BodyReceiverImplMatches {
@@ -40,35 +35,12 @@ impl BodyReceiverImplMatches {
     pub(crate) fn matches(&self) -> &ReceiverImplMatches {
         &self.matches
     }
-
-    /// Associated-item collection can also check a function before building its candidate.
-    pub(crate) fn saved_function_name_is_shadowed(
-        &self,
-        function_origin: DefMapRef,
-        name: &str,
-    ) -> bool {
-        function_origin.as_crate_ref().is_some()
-            && self.local_inherent_item_names.contains_function(name)
-    }
-
-    pub(crate) fn saved_const_name_is_shadowed(&self, const_origin: DefMapRef, name: &str) -> bool {
-        const_origin.as_crate_ref().is_some() && self.local_inherent_item_names.contains_const(name)
-    }
-
-    pub(crate) fn saved_type_alias_name_is_shadowed(
-        &self,
-        alias_origin: DefMapRef,
-        name: &str,
-    ) -> bool {
-        alias_origin.as_crate_ref().is_some()
-            && self.local_inherent_item_names.contains_type_alias(name)
-    }
 }
 
 /// Adapts body declaration and lexical-scope views to canonical impl matching.
 ///
-/// This query owns the boundary between two sources of declarations: request-local body overlays
-/// and persisted project indexes. It chooses a trait surface, applies Rust's lexical trait scope,
+/// This query owns the boundary between two sources of declarations: body-local declarations
+/// and crate-level declarations. It chooses a trait surface, applies Rust's lexical trait scope,
 /// gathers impl candidates from both sources, and gives the result to
 /// `rg_ty::lookup::ImplQuery` for exact header matching.
 pub(crate) struct BodyImplQuery<'context, 'query, D, I> {
@@ -84,7 +56,7 @@ where
         Self { context }
     }
 
-    /// Match current-body overlays and every trait that can expose an associated item.
+    /// Match body-local impls and every trait that can expose an associated item.
     pub(crate) fn matches_for_receiver_with_associated_items(
         &self,
         scope: ScopeId,
@@ -97,7 +69,7 @@ where
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
-    /// Match current-body overlays and traits declaring one named associated const.
+    /// Match body-local impls and traits declaring one named associated const.
     pub(crate) fn matches_for_receiver_with_const_name(
         &self,
         scope: ScopeId,
@@ -111,7 +83,7 @@ where
         self.matches_for_receiver_with_traits(receiver_ty, trait_refs.iter().copied())
     }
 
-    /// Match current-body inherent impls first, then impls of caller-selected traits.
+    /// Match body-local inherent impls first, then impls of caller-selected traits.
     fn matches_for_receiver_with_traits(
         &self,
         receiver_ty: &Ty,
@@ -132,19 +104,13 @@ where
         let mut inherent_impls = UniqueVec::new();
         let trait_refs = trait_refs.into_iter().collect::<UniqueVec<_>>();
         let mut trait_impls = UniqueVec::new();
-        let mut local_inherent_item_names = BodyLocalInherentItemNames::default();
-        {
-            for receiver in receiver_ty.as_adts() {
-                inherent_impls.extend(
-                    body_items
-                        .inherent_impls_for_type(receiver.def)?
-                        .iter()
-                        .copied(),
-                );
-                if let Some(names) = body_items.inherent_item_names_for_type(receiver.def)? {
-                    local_inherent_item_names.extend(names);
-                }
-            }
+        for receiver in receiver_ty.as_adts() {
+            inherent_impls.extend(
+                body_items
+                    .inherent_impls_for_type(receiver.def)?
+                    .iter()
+                    .copied(),
+            );
         }
         trait_impls.extend(body_items.trait_impls_for_traits(trait_refs.as_slice())?);
 
@@ -155,16 +121,11 @@ where
             trait_impls,
         )?;
 
-        // Current impl items replace saved declarations of the same kind and name. The names come
-        // from every current impl with the receiver's nominal key, not only impls that match the
-        // completed receiver today: an edited header must still hide its stale saved declaration.
-        let saved_matches =
-            impl_query.matches_for_receiver_with_traits(&receiver_ty, trait_refs)?;
-        matches.extend(saved_matches);
+        // Local impls supplement the crate index.
+        matches.extend(impl_query.matches_for_receiver_with_traits(&receiver_ty, trait_refs)?);
         Ok(BodyReceiverImplMatches {
             receiver_ty,
             matches,
-            local_inherent_item_names,
         })
     }
 }

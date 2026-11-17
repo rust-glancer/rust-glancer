@@ -1,17 +1,20 @@
 //! Editor state frozen by the server before it sends a request to an analysis engine.
 //!
 //! The server owns the live document. The engine receives text and ids captured at one moment, not
-//! a handle that can start returning newer text halfway through a query. Most document reads need
-//! one document snapshot. Cross-file operations also receive the other open Rust documents needed
-//! to validate any saved locations or edits they actually return.
+//! a handle that can start returning newer text halfway through a query. Semantic requests receive
+//! all applicable open Rust documents, including requests that return results in just one file.
 //!
 //! An editor snapshot has two paths for different jobs. `target.path` is the path used by the
 //! editor session. `source_path` is the path by which the selected project knows the same file.
 //! Routing chooses `source_path` once, so analysis does not ask the filesystem to rediscover it
 //! after a rename or removal.
 
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
+use gen_lsp_types::{Position, Range};
 use serde::{Deserialize, Serialize};
 
 /// Identifies one period during which a path stays open in the editor.
@@ -45,10 +48,10 @@ impl DocumentRevision {
     }
 }
 
-/// Identifies one captured state of all open documents used by global operations.
+/// Identifies one captured state of all open documents used by semantic operations.
 ///
 /// Opening, closing, editing, or finishing the route for any open document advances this number.
-/// A global result can be published only while the number is still unchanged.
+/// A semantic result can be published only while the number is still unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OpenDocumentsRevision(u64);
 
@@ -94,19 +97,18 @@ impl TargetDocumentRevision {
 
 /// Text and identity of one open Rust document when a request started.
 ///
-/// This value tracks only its own document. A document-local query can therefore ignore edits in
-/// other files. A cross-file operation places it in [`GlobalPositionSnapshot`], which also tracks
-/// the complete open-document state.
+/// Syntax-only requests can use this alone. Semantic requests select it within an
+/// [`EditorSnapshot`], so declarations in other edited files are effective too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditorDocumentSnapshot {
     target: TargetDocumentRevision,
-    /// Path by which the selected saved project knows this document.
+    /// Source identity selected by routing for this document.
     ///
     /// `target.path` is still used to check the editor session. This path is used for project
     /// lookup, and was chosen by routing while the file identity was known.
     source_path: PathBuf,
     client_version: Option<i32>,
-    text: String,
+    text: Arc<str>,
 }
 
 impl EditorDocumentSnapshot {
@@ -122,7 +124,7 @@ impl EditorDocumentSnapshot {
             target: TargetDocumentRevision::new(path, session, revision),
             source_path,
             client_version,
-            text,
+            text: text.into(),
         }
     }
 
@@ -160,163 +162,160 @@ impl EditorDocumentSnapshot {
         &self.text
     }
 
-    /// Add a position to an already captured document.
-    pub fn with_position(self, position: gen_lsp_types::Position) -> DocumentPositionSnapshot {
-        DocumentPositionSnapshot::new(self, position)
-    }
-
-    /// Add a range to an already captured document.
-    pub fn with_range(self, range: gen_lsp_types::Range) -> DocumentRangeSnapshot {
-        DocumentRangeSnapshot::new(self, range)
+    pub fn shared_text(&self) -> Arc<str> {
+        Arc::clone(&self.text)
     }
 }
 
-/// Input for a cross-file operation: the target position and all applicable open Rust documents.
+/// Complete applicable editor inputs, captured together before dispatch.
 ///
-/// Cross-file operations return locations or edits that may depend on several editor documents.
-/// Operations which require a fully saved workspace compare every document before running.
-/// Definition queries instead validate only documents that receive a target and may omit a target
-/// that cannot be mapped safely. A successful result carries `open_documents_revision` back to the
-/// server, which catches another edit that arrived while analysis was running.
+/// Workspace requests use this directly. Document requests select a document within it; both
+/// kinds depend on the same revision, because changing a sibling can change their answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GlobalPositionSnapshot {
-    target: TargetDocumentRevision,
-    open_documents_revision: OpenDocumentsRevision,
+pub struct EditorSnapshot {
+    revision: OpenDocumentsRevision,
     documents: Vec<EditorDocumentSnapshot>,
-    position: gen_lsp_types::Position,
 }
 
-impl GlobalPositionSnapshot {
+impl EditorSnapshot {
     pub fn new(
-        target: TargetDocumentRevision,
-        open_documents_revision: OpenDocumentsRevision,
+        revision: OpenDocumentsRevision,
         mut documents: Vec<EditorDocumentSnapshot>,
-        position: gen_lsp_types::Position,
     ) -> Self {
-        documents.sort_by(|left, right| left.path().cmp(right.path()));
+        documents.sort_by(|a, b| a.path().cmp(b.path()));
         Self {
-            target,
-            open_documents_revision,
+            revision,
             documents,
-            position,
         }
     }
 
-    pub fn target(&self) -> &TargetDocumentRevision {
-        &self.target
-    }
-
-    pub const fn open_documents_revision(&self) -> OpenDocumentsRevision {
-        self.open_documents_revision
+    pub fn revision(&self) -> OpenDocumentsRevision {
+        self.revision
     }
 
     pub fn documents(&self) -> &[EditorDocumentSnapshot] {
         &self.documents
     }
 
-    pub fn target_document(&self) -> Option<&EditorDocumentSnapshot> {
+    pub fn document_for_source(&self, path: &Path) -> Option<&EditorDocumentSnapshot> {
         self.documents
             .iter()
-            .find(|document| document.target() == &self.target)
+            .find(|document| document.source_path() == path)
     }
 
-    pub const fn position(&self) -> gen_lsp_types::Position {
-        self.position
-    }
-
-    pub fn into_parts(
-        self,
-    ) -> (
-        TargetDocumentRevision,
-        OpenDocumentsRevision,
-        Vec<EditorDocumentSnapshot>,
-        gen_lsp_types::Position,
-    ) {
-        (
-            self.target,
-            self.open_documents_revision,
-            self.documents,
-            self.position,
-        )
+    pub fn select(self, target: &TargetDocumentRevision) -> Option<DocumentSnapshot> {
+        let index = self
+            .documents
+            .iter()
+            .position(|document| document.target() == target)?;
+        Some(DocumentSnapshot {
+            editor: self,
+            index,
+        })
     }
 }
 
-/// One captured document and the position to query inside that same text.
+/// A selected document in a complete editor capture.
+///
+/// Selection is checked at construction and on deserialization. Keeping the target in the capture
+/// prevents a request from analyzing one text while translating positions in another.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "DocumentSelection")]
+pub struct DocumentSnapshot {
+    editor: EditorSnapshot,
+    index: usize,
+}
+
+impl TryFrom<DocumentSelection> for DocumentSnapshot {
+    type Error = &'static str;
+
+    fn try_from(value: DocumentSelection) -> Result<Self, Self::Error> {
+        if value.index >= value.editor.documents.len() {
+            return Err("selected document is absent from the editor capture");
+        }
+        Ok(Self {
+            editor: value.editor,
+            index: value.index,
+        })
+    }
+}
+
+impl DocumentSnapshot {
+    pub fn editor(&self) -> &EditorSnapshot {
+        &self.editor
+    }
+
+    pub fn document(&self) -> &EditorDocumentSnapshot {
+        &self.editor.documents[self.index]
+    }
+
+    pub fn with_position(self, position: Position) -> DocumentPositionSnapshot {
+        DocumentPositionSnapshot {
+            snapshot: self,
+            position,
+        }
+    }
+
+    pub fn with_range(self, range: Range) -> DocumentRangeSnapshot {
+        DocumentRangeSnapshot {
+            snapshot: self,
+            range,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct DocumentSelection {
+    editor: EditorSnapshot,
+    index: usize,
+}
+
+/// Cursor in a selected document, interpreted using the complete captured editor state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentPositionSnapshot {
-    document: EditorDocumentSnapshot,
-    position: gen_lsp_types::Position,
+    snapshot: DocumentSnapshot,
+    position: Position,
 }
 
 impl DocumentPositionSnapshot {
-    pub fn new(document: EditorDocumentSnapshot, position: gen_lsp_types::Position) -> Self {
-        Self { document, position }
+    pub fn snapshot(&self) -> &DocumentSnapshot {
+        &self.snapshot
     }
 
     pub fn document(&self) -> &EditorDocumentSnapshot {
-        &self.document
+        self.snapshot.document()
     }
 
-    pub const fn position(&self) -> gen_lsp_types::Position {
+    pub fn position(&self) -> Position {
         self.position
     }
 
-    pub fn into_parts(self) -> (EditorDocumentSnapshot, gen_lsp_types::Position) {
-        (self.document, self.position)
+    pub fn into_parts(self) -> (DocumentSnapshot, Position) {
+        (self.snapshot, self.position)
     }
 }
 
-/// One captured document and the range to query inside that same text.
+/// Range in a selected document, interpreted using the complete captured editor state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocumentRangeSnapshot {
-    document: EditorDocumentSnapshot,
-    range: gen_lsp_types::Range,
+    snapshot: DocumentSnapshot,
+    range: Range,
 }
 
 impl DocumentRangeSnapshot {
-    pub fn new(document: EditorDocumentSnapshot, range: gen_lsp_types::Range) -> Self {
-        Self { document, range }
+    pub fn snapshot(&self) -> &DocumentSnapshot {
+        &self.snapshot
     }
 
     pub fn document(&self) -> &EditorDocumentSnapshot {
-        &self.document
+        self.snapshot.document()
     }
 
-    pub const fn range(&self) -> gen_lsp_types::Range {
+    pub fn range(&self) -> Range {
         self.range
     }
 
-    pub fn into_parts(self) -> (EditorDocumentSnapshot, gen_lsp_types::Range) {
-        (self.document, self.range)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use gen_lsp_types::Position;
-
-    use super::{DocumentRevision, EditorDocumentSnapshot, OpenDocumentSession};
-
-    #[test]
-    fn serialized_position_keeps_text_and_revision_in_one_value() {
-        let input = EditorDocumentSnapshot::new(
-            PathBuf::from("/workspace/src/lib.rs"),
-            OpenDocumentSession::new(4),
-            DocumentRevision::new(9),
-            Some(3),
-            "fn changed() {}".to_string(),
-        )
-        .with_position(Position::new(0, 3));
-
-        let wire = serde_json::to_value(&input).expect("document input should serialize");
-
-        assert_eq!(wire["document"]["target"]["revision"], 9);
-        assert_eq!(wire["document"]["text"], "fn changed() {}");
-        assert_eq!(
-            wire["position"],
-            serde_json::json!({ "line": 0, "character": 3 })
-        );
+    pub fn into_parts(self) -> (DocumentSnapshot, Range) {
+        (self.snapshot, self.range)
     }
 }

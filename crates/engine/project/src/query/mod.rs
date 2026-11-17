@@ -1,7 +1,7 @@
 //! Prepares analysis views and source context for one request.
 //!
-//! A snapshot borrows the accepted project and the active query operation. The
-//! installed input view supplies the source text for all declarations and bodies.
+//! A snapshot borrows the project and query context. File routing selects a crate interpretation;
+//! reference-search planning narrows the crates and files a query needs to scan.
 
 mod reference_search;
 mod snapshot;

@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_lsp_proto::ProjectInitialization;
+use rg_lsp_proto::{OpenDocumentsRevision, ProjectInitialization};
 use rg_project::{AnalysisChangeSummary, Project, ProjectMemoryHooks, SavedFileChange};
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
@@ -57,6 +57,7 @@ pub(super) struct ProjectCoordinator {
     project: ProjectState,
     command_sender: Sender<QueuedEngineCommand>,
     stale_source: Option<PathBuf>,
+    editor_revision: OpenDocumentsRevision,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
@@ -70,8 +71,26 @@ impl ProjectCoordinator {
             project: ProjectState::new(),
             command_sender: sender,
             stale_source: None,
+            editor_revision: OpenDocumentsRevision::new(0),
             memory_hooks,
         }
+    }
+
+    /// Async request submission can overtake a close. Keep a watermark so an older request cannot
+    /// reinstall the capture after its lifecycle invalidation has released it.
+    pub(super) fn invalidate_editor_snapshot(
+        &mut self,
+        revision: OpenDocumentsRevision,
+    ) -> anyhow::Result<()> {
+        self.editor_revision = self.editor_revision.max(revision);
+        if self.project.is_initialized() {
+            self.project.saved_project()?.release_editor_snapshot();
+        }
+        Ok(())
+    }
+
+    pub(super) fn editor_revision(&self) -> OpenDocumentsRevision {
+        self.editor_revision
     }
 
     /// Build declarations and configured bodies before publishing a queryable project.

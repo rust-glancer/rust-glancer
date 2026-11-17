@@ -3,6 +3,8 @@
 mod body_items;
 mod traits;
 
+use rg_ty::solver::DeclarationCache;
+
 pub(crate) use self::{
     body_items::{BodyLocalItemCache, BodyLocalItemIndex},
     traits::{BodyTraitLookupCache, BodyTraitSurface},
@@ -24,5 +26,5 @@ pub(crate) use self::{
 pub(crate) struct BodyResolutionCaches {
     pub(crate) traits: BodyTraitLookupCache,
     pub(crate) body_local_items: BodyLocalItemCache,
-    pub(crate) solver_declarations: rg_ty::solver::DeclarationCache,
+    pub(crate) solver_declarations: DeclarationCache,
 }

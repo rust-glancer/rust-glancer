@@ -11,10 +11,10 @@ use rg_source::ReadError;
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
     AdtTy, ExpectedTyExt, Substitution, TraitApplication, Ty,
-    lookup::{AssociatedItemCandidateRef, AssociatedItemQuery, AssociatedItemRef},
+    lookup::{AssociatedItemCandidateRef, AssociatedItemQuery},
     lowering::{TypeLoweringAnchor, TypeLoweringEnv, TypeLoweringQuery},
     solver::{self, SemanticDeclarations},
-    trait_selection::TraitSelection,
+    trait_selection::{TraitSelection, TraitSelectionQuery},
 };
 
 use super::{BodyReceiverImplMatches, live::FunctionLookup, traits::BodyQualifiedTraitSelection};
@@ -148,39 +148,7 @@ where
             .context
             .impls()
             .matches_for_receiver_with_associated_items(scope, ty)?;
-        let item_query = self.context.item_query();
-        let mut candidates = Vec::new();
-        for candidate in query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())? {
-            let shadows_current_item = match candidate.item() {
-                AssociatedItemRef::Function(function) => {
-                    item_query.function_data(function)?.is_some_and(|data| {
-                        receiver.saved_function_name_is_shadowed(
-                            function.store.origin,
-                            data.name.as_str(),
-                        )
-                    })
-                }
-                AssociatedItemRef::Const(konst) => {
-                    item_query.const_data(konst)?.is_some_and(|data| {
-                        receiver
-                            .saved_const_name_is_shadowed(konst.store.origin, data.name.as_str())
-                    })
-                }
-                AssociatedItemRef::TypeAlias(alias) => {
-                    item_query.type_alias_data(alias)?.is_some_and(|data| {
-                        receiver.saved_type_alias_name_is_shadowed(
-                            alias.store.origin,
-                            data.name.as_str(),
-                        )
-                    })
-                }
-                AssociatedItemRef::EnumVariant(_) => false,
-            };
-            if !shadows_current_item {
-                candidates.push(candidate);
-            }
-        }
-        Ok(candidates)
+        query.candidates_for_matches(receiver.receiver_ty(), receiver.matches())
     }
 
     fn candidates_for_trait_applications(
@@ -396,7 +364,7 @@ where
         )))
     }
 
-    /// Find the first matching inherent const in current-body then saved-project order.
+    /// Find the first matching inherent const in body-local then crate-level order.
     fn inherent_associated_const_candidate(
         &self,
         receiver: &BodyReceiverImplMatches,
@@ -627,11 +595,8 @@ where
             .const_ty(const_ref)?
             .unwrap_or(Ty::Unknown);
         let ty = subst.apply(&ty);
-        rg_ty::trait_selection::TraitSelectionQuery::with_resolver(
-            self.context.ty_context(),
-            &self.context,
-        )
-        .normalize_ty(&ty)
+        TraitSelectionQuery::with_resolver(self.context.ty_context(), &self.context)
+            .normalize_ty(&ty)
     }
 }
 

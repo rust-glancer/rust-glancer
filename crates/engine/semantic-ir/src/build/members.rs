@@ -1,4 +1,4 @@
-//! Build and read the members of one saved trait or impl without opening neighboring owners.
+//! Build and read the members of one trait or impl without opening neighboring owners.
 //!
 //! Target indexing publishes the headers first. For `impl<T> Bag<T> { methods!(); }`, the header
 //! already describes `Bag<T>` and its generics, but the functions emitted by `methods!()` belong
@@ -115,7 +115,7 @@ pub struct AssociatedDeclarations {
     body_owners: Vec<BodyOwnerData>,
 }
 
-/// Open one saved member store using the trait or impl ID from its header.
+/// Open one member store using the trait or impl ID from its header.
 ///
 /// The target query supplies replay inputs and frozen macro scopes, never a prebuilt member list.
 /// Expansion finishes before lowering allocates any member IDs. A direct member or body reference

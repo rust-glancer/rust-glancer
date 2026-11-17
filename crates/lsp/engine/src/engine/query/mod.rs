@@ -1,9 +1,4 @@
-//! Runs editor queries against one saved project.
-//!
-//! A feature method selects the first owning crate for the document. It acquires the
-//! declarations and bodies needed by the feature, prepares selected changes from the
-//! editor text, runs `rg_analysis`, and converts the result to LSP types. Current semantics belong
-//! only to that request; they do not turn the saved project into an unsaved copy.
+//! Runs semantic queries against one complete captured editor view.
 //!
 //! The `lifecycle` module wraps this feature work with cancellation, stale-source recovery, result
 //! tagging, and cleanup of data loaded for the request.
@@ -17,41 +12,41 @@ mod source;
 use std::{sync::Arc, time::Instant};
 
 use anyhow::Context as _;
+use gen_lsp_types::{
+    CodeAction, CompletionItem, DocumentSymbol, FoldingRange, Hover, InlayHint, Position, Range,
+    TextEdit, WorkspaceSymbol,
+};
 use rg_analysis::{
-    Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger, CompletionQuery,
+    Analysis, CodeActionKinds, CodeActionQuery, CodeActionTrigger,
+    CompletionClientCapabilities as AnalysisCompletionClientCapabilities, CompletionQuery,
     CompletionSource,
 };
 use rg_ir_model::Span;
 use rg_lsp_proto::{
     CodeActionRequestContext, CodeActionRequestTrigger, CompletionClientCapabilities,
-    DocumentPositionSnapshot, DocumentRangeSnapshot, EditorDocumentSnapshot,
-    FoldingClientCapabilities, GlobalPositionSnapshot,
+    DocumentPositionSnapshot, DocumentRangeSnapshot, DocumentSnapshot, EditorDocumentSnapshot,
+    EditorSnapshot, FoldingClientCapabilities,
 };
-use rg_parse::{CurrentSource, LineIndex};
-use rg_project::{
-    CurrentSourceBuildCheckpoint, CurrentSourceSelection, DocumentSourceView, FileContext,
-    ProjectSnapshot,
-};
-use rg_std::UniqueVec;
+use rg_parse::{LineIndex, parse_source_file};
+use rg_project::{FileContext, ProjectSnapshot};
+use rg_source::CapturedSource;
+use rg_std::{CancellationToken, UniqueVec};
 
 pub(super) use self::lifecycle::{QueryCancellation, QueryContext};
-use self::{
-    lifecycle::QueryRunError,
-    navigation::{CapturedNavigationDocuments, CapturedTargetLocation},
-};
 use crate::{
     engine::project::ProjectCoordinator,
+    formatting,
     memory::MemoryControl,
     proto::{
         code_action, completion, folding as folding_proto, formatting as formatting_proto, hover,
-        inlay_hint, symbols,
+        inlay_hint, navigation::SourceLocations, position, symbols,
     },
 };
 
 /// Borrows the engine state used by one dispatched analysis request.
 ///
 /// The runner does not own project generations. It prepares the query's analysis surface, borrows
-/// the saved snapshot through `ProjectCoordinator`, and lets the shared lifecycle policy release
+/// the active input view through `ProjectCoordinator`, and lets the shared lifecycle policy release
 /// request-scoped loads before the dispatcher accepts the next command.
 pub(super) struct QueryRunner<'a> {
     project: &'a mut ProjectCoordinator,
@@ -69,152 +64,57 @@ impl<'a> QueryRunner<'a> {
         }
     }
 
-    fn with_saved_snapshot<R>(
+    /// Install the capture before selecting file owners: an edit can add a `mod` declaration
+    /// and change which crate owns a file.
+    fn with_editor_snapshot<R>(
         &self,
+        editor: &EditorSnapshot,
         cancellation: &QueryCancellation<'_>,
         work: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
+        let sources = editor
+            .documents()
+            .iter()
+            .map(|document| {
+                CapturedSource::from_source_path(
+                    document.source_path().to_path_buf(),
+                    document.shared_text(),
+                )
+            })
+            .collect::<Vec<_>>();
         self.project
             .saved_project()?
-            .with_snapshot(cancellation.token(), work)
+            .with_editor_snapshot(&sources, cancellation.token(), work)
     }
 
-    /// Give cancellation logs a stable name for each shared current-source preparation boundary.
-    fn current_source_checkpoint(checkpoint: CurrentSourceBuildCheckpoint) -> &'static str {
-        match checkpoint {
-            CurrentSourceBuildCheckpoint::DeclarationsPrepared => {
-                "after current declaration preparation"
-            }
-            CurrentSourceBuildCheckpoint::SourceParsed => "after current source parsing",
-            CurrentSourceBuildCheckpoint::OwnerAssociated => "after current body owner association",
-            CurrentSourceBuildCheckpoint::BodyLowered => "after current body lowering",
-            CurrentSourceBuildCheckpoint::BodyLocalItemsCollected => {
-                "after current body-local item collection"
-            }
-            CurrentSourceBuildCheckpoint::ImplHeadersResolved => {
-                "after current body-local impl header resolution"
-            }
-            CurrentSourceBuildCheckpoint::PatternBindingsMaterialized => {
-                "after current pattern binding resolution"
-            }
-            CurrentSourceBuildCheckpoint::BodyResolved => "after current body resolution",
-        }
-    }
-
-    /// Find the target document inside a global operation's captured document set.
-    fn global_operation_target(
-        snapshot: &GlobalPositionSnapshot,
-    ) -> anyhow::Result<&EditorDocumentSnapshot> {
-        snapshot
-            .target_document()
-            .context("target document is absent from the global-operation input")
-    }
-
-    /// Return the first open document that does not match this saved project.
-    ///
-    /// References, rename, and implementation navigation return saved byte ranges. They can use
-    /// those ranges only when every applicable open Rust document still has its saved text. A
-    /// document that is not known to the saved project also requires a save.
-    ///
-    /// TODO: Body-local references and rename may eventually use exact current-body spans. Until
-    /// that feature has one complete edit policy, keeping all global operations behind this rule
-    /// is safer and easier to predict than mixing current and saved spans in one response.
-    fn require_saved_documents(
-        snapshot: ProjectSnapshot<'_>,
-        input: &GlobalPositionSnapshot,
-        cancellation: &QueryCancellation<'_>,
-    ) -> anyhow::Result<()> {
-        for document in input.documents() {
-            rg_std::check_cancel!(cancellation, "open document safety");
-            let Some(context) = Self::file_context(snapshot, document.source_path())? else {
-                return Err(lifecycle::SaveRequired(document.path().to_path_buf()).into());
-            };
-            let saved = snapshot.sources().text(context.file)?;
-            if saved.as_ref() != document.text() {
-                return Err(lifecycle::SaveRequired(document.path().to_path_buf()).into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Prepare saved or current-source analysis for one editor source selection.
-    ///
-    /// Exact captured text can use the saved line index and Body IR directly. Changed text follows
-    /// the request-local body path. Cursor and range queries share this source decision but retain
-    /// their different current-body selection rules.
     fn with_document_analysis<R>(
         &self,
         query: &'static str,
-        document: &EditorDocumentSnapshot,
+        input: &DocumentSnapshot,
         selection: DocumentSelection,
         cancellation: &QueryCancellation<'_>,
         work: impl FnOnce(Option<DocumentAnalysis<'_>>) -> anyhow::Result<R>,
     ) -> anyhow::Result<R> {
-        let started = Instant::now();
-        self.with_saved_snapshot(cancellation, |snapshot| {
-            let Some(target) = Self::file_context(snapshot, document.source_path())? else {
+        self.with_editor_snapshot(input.editor(), cancellation, |snapshot| {
+            let Some(target) = Self::file_context(snapshot, input.document().source_path())? else {
                 return work(None);
             };
-            let source = snapshot.prepare_document_source(
-                (target.crate_ref, target.file),
-                document.text(),
-                &cancellation.token(),
-            )?;
-            let Some(selection) = selection.to_current_source_selection(source.line_index()) else {
+            let line_index = snapshot.sources().line_index(target.file)?;
+            let Some(selection) = selection.to_span(line_index) else {
                 return work(None);
             };
-            let (analysis, source) = match source {
-                DocumentSourceView::SavedExact(line_index) => (
-                    snapshot.analysis(),
-                    DocumentAnalysisSource::SavedExact(line_index),
-                ),
-                DocumentSourceView::Current(source_view) => {
-                    let source = source_view.shared_source();
-                    let (analysis, build_summary) = snapshot.analysis_for_current_source(
-                        (target.crate_ref, target.file),
-                        source_view,
-                        selection,
-                        |checkpoint| {
-                            rg_std::check_cancel!(
-                                cancellation,
-                                Self::current_source_checkpoint(checkpoint)
-                            );
-                            Ok(())
-                        },
-                    )?;
-                    tracing::trace!(
-                        query,
-                        complete_current_source_build = build_summary.is_complete(),
-                        "current document bodies prepared"
-                    );
-                    (analysis, DocumentAnalysisSource::Current(source))
-                }
-            };
-            tracing::trace!(
-                query,
-                source = source.name(),
-                ?selection,
-                crate_ref = ?target.crate_ref,
-                elapsed_us = started.elapsed().as_micros(),
-                "document analysis prepared"
-            );
-            work(Some(DocumentAnalysis {
-                snapshot,
-                analysis,
-                target,
-                source,
-                selection,
-            }))
+            tracing::trace!(query, ?selection, crate_ref = ?target.crate_ref, "document analysis prepared");
+            work(Some(DocumentAnalysis { snapshot, analysis: snapshot.analysis(), target, line_index, selection }))
         })
     }
 
-    /// Compute completions from current syntax and body facts plus saved crate-level information.
+    /// Compute completions using captured semantics and feature-specific syntax recovery.
     pub(super) fn completion(
         &mut self,
         input: DocumentPositionSnapshot,
         client_capabilities: CompletionClientCapabilities,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::CompletionItem>, QueryRunError> {
+    ) -> anyhow::Result<Vec<CompletionItem>> {
         let document = input.document();
         let position = input.position();
         let path = document.source_path().to_path_buf();
@@ -223,7 +123,7 @@ impl<'a> QueryRunner<'a> {
         let document_analysis_started = Instant::now();
         self.with_document_analysis(
             "completion",
-            document,
+            input.snapshot(),
             DocumentSelection::Position(position),
             cancellation,
             |current| {
@@ -231,7 +131,7 @@ impl<'a> QueryRunner<'a> {
                     return Ok(Vec::new());
                 };
                 let document_analysis_us = document_analysis_started.elapsed().as_micros();
-                let offset = current.offset();
+                let offset = current.selection.start;
                 let completion_source_started = Instant::now();
                 let completion_source = CompletionSource::new(source_text, offset);
                 let completion_source_us = completion_source_started.elapsed().as_micros();
@@ -242,7 +142,7 @@ impl<'a> QueryRunner<'a> {
                 let target = current.target;
                 rg_std::check_cancel!(cancellation, "before semantic completion");
                 let mut query = CompletionQuery::new(target.crate_ref, target.file, offset)
-                    .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
+                    .with_client_capabilities(AnalysisCompletionClientCapabilities {
                         snippet_support: client_capabilities.snippet_support,
                     });
                 query = match completion_source.as_ref() {
@@ -263,26 +163,17 @@ impl<'a> QueryRunner<'a> {
                     if index % 64 == 0 {
                         rg_std::check_cancel!(cancellation, "completion conversion");
                     }
-                    completions.push(completion::completion_item(
-                        item,
-                        current.source.line_index(),
-                    ));
+                    completions.push(completion::completion_item(item, current.line_index));
                 }
                 let protocol_conversion_us = protocol_conversion_started.elapsed().as_micros();
 
-                let source_name = current.source.name();
-                let analysis_drop_started = Instant::now();
-                drop(current);
-                let analysis_drop_us = analysis_drop_started.elapsed().as_micros();
                 tracing::trace!(
                     result_count = completions.len(),
-                    source = source_name,
                     document_analysis_us,
                     completion_source_us,
                     analysis_compute_us,
                     protocol_conversion_us,
-                    analysis_drop_us,
-                    "completion saved-semantics query phases finished"
+                    "completion query phases finished"
                 );
 
                 tracing::trace!(
@@ -298,7 +189,6 @@ impl<'a> QueryRunner<'a> {
             },
         )
         .context("prepare completion analysis")
-        .map_err(Into::into)
     }
 
     /// Return source actions with complete edits for the captured document and selected range.
@@ -307,8 +197,9 @@ impl<'a> QueryRunner<'a> {
         input: DocumentRangeSnapshot,
         request_context: CodeActionRequestContext,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::CodeAction>, QueryRunError> {
-        let (document, range) = input.into_parts();
+    ) -> anyhow::Result<Vec<CodeAction>> {
+        let (input, range) = input.into_parts();
+        let document = input.document();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
 
@@ -316,7 +207,7 @@ impl<'a> QueryRunner<'a> {
         // range into byte offsets in that exact source text.
         self.with_document_analysis(
             "code_action",
-            &document,
+            &input,
             DocumentSelection::Position(range.start),
             cancellation,
             |current| {
@@ -324,13 +215,12 @@ impl<'a> QueryRunner<'a> {
                     return Ok(Vec::new());
                 };
                 let Some(end) = current
-                    .source
-                    .line_index()
-                    .offset_from_utf16_position(crate::proto::position::parse_position(range.end))
+                    .line_index
+                    .offset_from_utf16_position(position::parse_position(range.end))
                 else {
                     return Ok(Vec::new());
                 };
-                let start = current.offset();
+                let start = current.selection.start;
                 if start > end {
                     return Ok(Vec::new());
                 }
@@ -370,7 +260,7 @@ impl<'a> QueryRunner<'a> {
                         code_action::code_action(
                             document.path(),
                             document.client_version(),
-                            current.source.line_index(),
+                            current.line_index,
                             action,
                         )
                         .context("convert code action")?,
@@ -379,7 +269,6 @@ impl<'a> QueryRunner<'a> {
                 tracing::trace!(
                     path = %path.display(),
                     result_count = lsp_actions.len(),
-                    source = current.source.name(),
                     elapsed_ms = started.elapsed().as_millis(),
                     "code action query finished"
                 );
@@ -387,7 +276,6 @@ impl<'a> QueryRunner<'a> {
             },
         )
         .context("prepare code action analysis")
-        .map_err(Into::into)
     }
 
     /// Return hover information from the selected crate context.
@@ -396,19 +284,16 @@ impl<'a> QueryRunner<'a> {
     /// The input includes those documents so links can follow declarations moved by unsaved edits.
     pub(super) fn hover(
         &mut self,
-        input: GlobalPositionSnapshot,
+        input: DocumentPositionSnapshot,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Option<gen_lsp_types::Hover>, QueryRunError> {
-        let (target, _, documents, position) = input.into_parts();
-        let document = documents
-            .iter()
-            .find(|document| document.target() == &target)
-            .context("target document is absent from hover input")?;
+    ) -> anyhow::Result<Option<Hover>> {
+        let document = input.document();
+        let position = input.position();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         self.with_document_analysis(
             "hover",
-            document,
+            input.snapshot(),
             DocumentSelection::Position(position),
             cancellation,
             |current| {
@@ -417,33 +302,15 @@ impl<'a> QueryRunner<'a> {
                 };
 
                 let target = current.target;
-                let mut destinations = CapturedNavigationDocuments::new(
-                    current.snapshot,
-                    &documents,
-                    cancellation.token(),
-                );
+                let destinations =
+                    SourceLocations::new(current.snapshot, input.snapshot().editor());
                 let hover = if let Some(info) = current
                     .analysis
-                    .hover(target.crate_ref, target.file, current.offset())
+                    .hover(target.crate_ref, target.file, current.selection.start)
                     .context("compute hover")?
                 {
-                    hover::hover(info, current.source.line_index(), |destination| {
-                        Ok(
-                            match destinations
-                                .location_for_target(
-                                    destination,
-                                    (target.crate_ref.package, target.file),
-                                    document,
-                                    current.source.line_index(),
-                                    current.analysis.current_source_view(),
-                                )
-                                .context("convert hover link destination")?
-                            {
-                                CapturedTargetLocation::Ready(location) => Some(location),
-                                CapturedTargetLocation::Unsafe
-                                | CapturedTargetLocation::Unavailable => None,
-                            },
-                        )
+                    hover::hover(info, current.line_index, |destination| {
+                        destinations.for_target(destination)
                     })
                     .context("render hover documentation")?
                 } else {
@@ -455,7 +322,6 @@ impl<'a> QueryRunner<'a> {
                     line = position.line,
                     character = position.character,
                     has_hover = hover.is_some(),
-                    source = current.source.name(),
                     elapsed_ms = started.elapsed().as_millis(),
                     "hover query finished"
                 );
@@ -463,38 +329,24 @@ impl<'a> QueryRunner<'a> {
             },
         )
         .context("prepare hover analysis")
-        .map_err(Into::into)
     }
 
     /// Build the document outline directly from the syntax shown by the editor.
     pub(super) fn document_symbol(
         &mut self,
-        document: EditorDocumentSnapshot,
-    ) -> Result<Vec<gen_lsp_types::DocumentSymbol>, QueryRunError> {
-        let path = document.source_path().to_path_buf();
-        let started = Instant::now();
-        let edition = self
-            .project
-            .saved_project()?
-            .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
-                Self::rust_edition_for_path(snapshot, &path)
-            })
-            .context("resolve document-symbol edition")?;
-        let syntax = rg_parse::parse_source_file(document.text(), edition).tree();
-        let line_index = LineIndex::new(document.text());
-        let lsp_symbols = Analysis::document_symbols_from_syntax(&syntax)
-            .into_iter()
-            .map(|symbol| symbols::document_symbol(&line_index, symbol))
-            .collect::<Vec<_>>();
-
-        tracing::trace!(
-            path = %path.display(),
-            result_count = lsp_symbols.len(),
-            elapsed_ms = started.elapsed().as_millis(),
-            "document symbol query finished"
-        );
-
-        Ok(lsp_symbols)
+        input: DocumentSnapshot,
+        cancellation: &QueryCancellation<'_>,
+    ) -> anyhow::Result<Vec<DocumentSymbol>> {
+        self.with_editor_snapshot(input.editor(), cancellation, |snapshot| {
+            let document = input.document();
+            let edition = Self::rust_edition_for_path(snapshot, document.source_path())?;
+            let syntax = parse_source_file(document.text(), edition).tree();
+            let line_index = LineIndex::new(document.text());
+            Ok(Analysis::document_symbols_from_syntax(&syntax)
+                .into_iter()
+                .map(|symbol| symbols::document_symbol(&line_index, symbol))
+                .collect())
+        })
     }
 
     /// Build folding ranges directly from the syntax shown by the editor.
@@ -502,17 +354,17 @@ impl<'a> QueryRunner<'a> {
         &mut self,
         document: EditorDocumentSnapshot,
         client_capabilities: FoldingClientCapabilities,
-    ) -> Result<Vec<gen_lsp_types::FoldingRange>, QueryRunError> {
+    ) -> anyhow::Result<Vec<FoldingRange>> {
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         let edition = self
             .project
             .saved_project()?
-            .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
+            .with_snapshot(CancellationToken::new(), |snapshot| {
                 Self::rust_edition_for_path(snapshot, &path)
             })
             .context("resolve folding-range edition")?;
-        let syntax = rg_parse::parse_source_file(document.text(), edition).tree();
+        let syntax = parse_source_file(document.text(), edition).tree();
         let line_index = LineIndex::new(document.text());
         let lsp_ranges = Analysis::folding_ranges_from_syntax(&syntax)
             .into_iter()
@@ -543,20 +395,20 @@ impl<'a> QueryRunner<'a> {
     pub(super) fn formatting(
         &mut self,
         document: EditorDocumentSnapshot,
-    ) -> Result<Option<Vec<gen_lsp_types::TextEdit>>, QueryRunError> {
+    ) -> anyhow::Result<Option<Vec<TextEdit>>> {
         let path = document.source_path().to_path_buf();
         let text = document.text();
         let started = Instant::now();
         let edition = {
             self.project
                 .saved_project()?
-                .with_snapshot(rg_std::CancellationToken::new(), |snapshot| {
+                .with_snapshot(CancellationToken::new(), |snapshot| {
                     Self::rust_edition_for_path(snapshot, &path)
                 })
                 .context("resolve formatting edition")?
         };
         let line_index = LineIndex::new(text);
-        let formatted_text = crate::formatting::rustfmt(text, edition, line_index.line_endings())
+        let formatted_text = formatting::rustfmt(text, edition, line_index.line_endings())
             .context("format Rust source")?;
         let edits = formatting_proto::document_edits(text, formatted_text, &line_index)
             .context("build formatting edits")?;
@@ -578,26 +430,27 @@ impl<'a> QueryRunner<'a> {
         input: DocumentRangeSnapshot,
         max_length: Option<usize>,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::InlayHint>, QueryRunError> {
-        let (document, range) = input.into_parts();
+    ) -> anyhow::Result<Vec<InlayHint>> {
+        let (input, range) = input.into_parts();
+        let document = input.document();
         let path = document.source_path().to_path_buf();
         let started = Instant::now();
         self.with_document_analysis(
             "inlay_hint",
-            &document,
+            &input,
             DocumentSelection::Range(range),
             cancellation,
             |current| {
                 let Some(current) = current else {
                     return Ok(Vec::new());
                 };
-                let text_range = current.range();
+                let text_range = current.selection;
                 let target = current.target;
                 rg_std::check_cancel!(cancellation, "before inlay hint analysis");
                 let hints = current
                     .analysis
                     .inlay_hints(target.crate_ref, target.file, Some(text_range), max_length)
-                    .context("compute current body inlay hints")?;
+                    .context("compute inlay hints")?;
 
                 let mut lsp_hints = hints
                     .into_iter()
@@ -607,7 +460,7 @@ impl<'a> QueryRunner<'a> {
                             rg_std::check_cancel!(cancellation, "inlay hint conversion");
                         }
                         Ok(inlay_hint::inlay_hint_with_line_index(
-                            current.source.line_index(),
+                            current.line_index,
                             hint,
                         ))
                     })
@@ -620,7 +473,6 @@ impl<'a> QueryRunner<'a> {
                 tracing::trace!(
                     path = %path.display(),
                     result_count = lsp_hints.len(),
-                    source = current.source.name(),
                     elapsed_ms = started.elapsed().as_millis(),
                     "inlay hint query finished"
                 );
@@ -629,18 +481,18 @@ impl<'a> QueryRunner<'a> {
             },
         )
         .context("prepare inlay hint analysis")
-        .map_err(Into::into)
     }
 
-    /// Search the saved workspace index without loading source files for a document path.
+    /// Search declarations in the complete editor view without selecting a target document.
     pub(super) fn workspace_symbol(
         &mut self,
+        editor: &EditorSnapshot,
         query: &str,
         cancellation: &QueryCancellation<'_>,
-    ) -> Result<Vec<gen_lsp_types::WorkspaceSymbol>, QueryRunError> {
+    ) -> anyhow::Result<Vec<WorkspaceSymbol>> {
         let started = Instant::now();
         let lsp_symbols = self
-            .with_saved_snapshot(cancellation, |snapshot| {
+            .with_editor_snapshot(editor, cancellation, |snapshot| {
                 let analysis = snapshot.analysis();
                 let mut lsp_symbols = UniqueVec::new();
 
@@ -649,7 +501,7 @@ impl<'a> QueryRunner<'a> {
                     .context("search workspace symbols")?
                 {
                     rg_std::check_cancel!(cancellation, "workspace symbol conversion");
-                    let Some(symbol) = symbols::workspace_symbol(snapshot, symbol)
+                    let Some(symbol) = symbols::workspace_symbol(snapshot, editor, symbol)
                         .context("convert workspace symbol")?
                     else {
                         continue;
@@ -671,62 +523,29 @@ impl<'a> QueryRunner<'a> {
     }
 }
 
-/// Editor coordinates used to choose the current bodies needed by one query.
+/// Editor coordinates interpreted in the installed input view.
 enum DocumentSelection {
-    Position(gen_lsp_types::Position),
+    Position(Position),
     /// Inlay coverage may extend past the text after an edit; intersect it with the document.
-    Range(gen_lsp_types::Range),
+    Range(Range),
 }
 
 impl DocumentSelection {
-    fn to_current_source_selection(
-        &self,
-        line_index: &LineIndex,
-    ) -> Option<CurrentSourceSelection> {
+    fn to_span(&self, line_index: &LineIndex) -> Option<Span> {
         match self {
             Self::Position(position) => line_index
-                .offset_from_utf16_position(crate::proto::position::parse_position(*position))
-                .map(CurrentSourceSelection::AtOffset),
+                .offset_from_utf16_position(position::parse_position(*position))
+                .map(|offset| Span {
+                    start: offset,
+                    end: offset,
+                }),
             Self::Range(range) => {
-                let start = line_index.offset_from_utf16_position_clamped(
-                    crate::proto::position::parse_position(range.start),
-                );
-                let end = line_index.offset_from_utf16_position_clamped(
-                    crate::proto::position::parse_position(range.end),
-                );
-                Some(CurrentSourceSelection::IntersectingRange(Span {
-                    start,
-                    end,
-                }))
+                let start = line_index
+                    .offset_from_utf16_position_clamped(position::parse_position(range.start));
+                let end = line_index
+                    .offset_from_utf16_position_clamped(position::parse_position(range.end));
+                Some(Span { start, end })
             }
-        }
-    }
-}
-
-/// Source coordinates retained after document analysis has been prepared.
-///
-/// `DocumentSourceView::Current` is consumed when it is attached to `Analysis`. The response still
-/// needs the captured line index, so this smaller value keeps exactly what protocol conversion
-/// needs. It does not make another saved/current source decision.
-enum DocumentAnalysisSource {
-    /// The captured text is identical to the selected saved file.
-    SavedExact(LineIndex),
-    /// The captured text differs, so matching bodies were rebuilt for this request.
-    Current(Arc<CurrentSource>),
-}
-
-impl DocumentAnalysisSource {
-    fn line_index(&self) -> &LineIndex {
-        match self {
-            Self::SavedExact(line_index) => line_index,
-            Self::Current(source) => source.line_index(),
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Self::SavedExact(_) => "saved_exact",
-            Self::Current(_) => "current",
         }
     }
 }
@@ -736,64 +555,6 @@ struct DocumentAnalysis<'project> {
     snapshot: ProjectSnapshot<'project>,
     analysis: Analysis<'project>,
     target: FileContext,
-    source: DocumentAnalysisSource,
-    selection: CurrentSourceSelection,
-}
-
-impl DocumentAnalysis<'_> {
-    fn offset(&self) -> u32 {
-        match self.selection {
-            CurrentSourceSelection::AtOffset(offset) => offset,
-            CurrentSourceSelection::IntersectingRange(_) => {
-                unreachable!("position query should retain a cursor selection")
-            }
-        }
-    }
-
-    fn range(&self) -> Span {
-        match self.selection {
-            CurrentSourceSelection::IntersectingRange(range) => range,
-            CurrentSourceSelection::AtOffset(_) => {
-                unreachable!("range query should retain a range selection")
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use gen_lsp_types::{Position, Range};
-    use rg_ir_model::Span;
-    use rg_parse::LineIndex;
-    use rg_project::CurrentSourceSelection;
-
-    use super::DocumentSelection;
-
-    #[test]
-    fn inlay_ranges_use_valid_source_bounds_after_edits() {
-        let cases = [
-            ("same coordinates", "a\nbc\n", (1, 1), (2, 0), (3, 5)),
-            ("shorter line", "a\nbc\n", (1, 1), (1, 9), (3, 4)),
-            ("shorter document", "a\nbc", (0, 0), (3, 0), (0, 4)),
-            ("vanished range", "a", (1, 0), (3, 0), (1, 1)),
-            ("empty document", "", (0, 0), (3, 0), (0, 0)),
-            ("UTF-16 columns", "a\n😀b", (1, 2), (3, 0), (6, 7)),
-            ("surrogate boundary", "é😀b", (0, 2), (0, 4), (2, 7)),
-            ("CRLF columns", "a\r\n😀b\r\n", (1, 2), (1, 9), (7, 8)),
-            ("trailing empty line", "a\n", (0, 0), (3, 0), (0, 2)),
-        ];
-        let position = |(line, character)| Position::new(line, character);
-        for (name, text, start, end, expected) in cases {
-            let selection = DocumentSelection::Range(Range::new(position(start), position(end)))
-                .to_current_source_selection(&LineIndex::new(text));
-            assert_eq!(
-                selection,
-                Some(CurrentSourceSelection::IntersectingRange(Span {
-                    start: expected.0,
-                    end: expected.1,
-                })),
-                "{name}",
-            );
-        }
-    }
+    line_index: &'project LineIndex,
+    selection: Span,
 }

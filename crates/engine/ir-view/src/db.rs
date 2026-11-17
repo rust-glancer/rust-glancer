@@ -22,9 +22,7 @@ use rg_workspace::{CrateConfig, PackageInput};
 
 /// Read-only database handle used by all indexed-data views.
 ///
-/// Readers use one fixed input view for declarations, bodies and their source locations.
-/// Demanding lookup candidates never changes which declarations or bodies are visible through
-/// this handle.
+/// Shares declaration, body, and source readers across the views used by a query.
 #[derive(Debug, Clone)]
 pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefinitionReader<'db>,

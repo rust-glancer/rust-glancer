@@ -14,7 +14,7 @@
 //! this resolver asks either scope.
 
 use anyhow::Context as _;
-use rg_ir_model::Span;
+use rg_ir_model::{GenericDefRef, Span};
 use rg_ir_view::{
     lookup::name::NameLookupView,
     source::{IndexedUnqualifiedNameContext, IndexedUnqualifiedNameScope, SourceCompletionView},
@@ -149,7 +149,7 @@ impl<'a, 'db, 'source> ApostropheCompletionResolver<'a, 'db, 'source> {
         &self,
         prefix_span: Span,
         prefix: &str,
-    ) -> anyhow::Result<Option<rg_ir_model::GenericDefRef>> {
+    ) -> anyhow::Result<Option<GenericDefRef>> {
         let source = SourceCompletionView::new(self.analysis.view_db());
         if let Some(site) = source
             .body_syntax_name_site_at(

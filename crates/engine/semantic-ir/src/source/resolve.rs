@@ -49,7 +49,7 @@ impl SourceSelection {
     }
 }
 
-/// Resolve written declaration containers in the source coordinates of this input view.
+/// Find which declaration containers may contribute items at a source position.
 ///
 /// A header in this file can select its own member store without discovering unrelated macros.
 /// A file known only through an include needs reverse ownership discovery. The complete result

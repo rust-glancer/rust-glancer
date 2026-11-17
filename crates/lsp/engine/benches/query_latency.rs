@@ -1,6 +1,7 @@
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -9,9 +10,10 @@ use divan::{Bencher, black_box};
 use gen_lsp_types::{CompletionItem, Hover, InlayHint, Location, Position, Range};
 use rg_lsp_engine::{MemoryControl, Service, ServiceNotificationsSink};
 use rg_lsp_proto::{
-    AnalysisConfig, CompletionClientCapabilities, DocumentRevision, EditorDocumentSnapshot,
-    EngineConfig, EngineService, GlobalPositionSnapshot, OpenDocumentSession,
-    OpenDocumentsRevision, ServiceNotification, SysrootDiscovery, TargetDocumentRevision,
+    AnalysisConfig, CompletionClientCapabilities, DocumentPositionSnapshot, DocumentRevision,
+    DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineConfig, EngineService,
+    OpenDocumentSession, OpenDocumentsRevision, ServiceNotification, SysrootDiscovery,
+    TargetDocumentRevision,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -25,7 +27,7 @@ fn main() {
 }
 
 // =============================================================================
-// Saved and current-source query latency
+// Saved and edited source query latency
 // =============================================================================
 
 // Initialization is intentionally outside Divan's measured closure. Every query begins from a
@@ -45,8 +47,7 @@ fn hover_clean(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// A clean range query should read saved bodies directly instead of rebuilding every body covered
-// by the editor range.
+// Repeated range queries should reuse bodies already computed for this input view.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn inlay_hints_clean(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
@@ -62,13 +63,13 @@ fn inlay_hints_clean(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// Input preparation alternates between two document revisions. The measured query therefore pays
-// for rebuilding the edited body, while declarations and traits still come from the saved project.
+// Input preparation alternates between two document revisions. The measured query pays for the
+// edited body's invalidation; unchanged declaration meaning can still be reused.
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn completion_current_body_after_edit(bencher: Bencher<'_, '_>) {
+fn completion_after_body_edit(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
     let validation_position = engine.prepare_app_dirty();
-    expect_current_body_completions(&engine.completion(APP_SOURCE, validation_position));
+    expect_edited_body_completions(&engine.completion(APP_SOURCE, validation_position));
 
     bencher
         .with_inputs(|| engine.prepare_app_dirty())
@@ -77,20 +78,19 @@ fn completion_current_body_after_edit(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-// A repeated query for one document revision rebuilds only its request-local current-body view.
-// This catches accidental retained caches as well as avoidable repeated-query overhead.
+// Repeating a query in the same input view can reuse lowering and inference through Ajika.
 #[divan::bench(sample_count = 10, sample_size = 1)]
-fn completion_current_body_repeated(bencher: Bencher<'_, '_>) {
+fn completion_edited_body_repeated(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
     let position = engine.prepare_app_dirty();
-    expect_current_body_completions(&engine.completion(APP_SOURCE, position));
+    expect_edited_body_completions(&engine.completion(APP_SOURCE, position));
 
     bencher.bench_local(|| engine.completion(APP_SOURCE, black_box(position)));
 
     engine.shutdown();
 }
 
-// References read the saved global index and verify that every open document still matches it.
+// This capture has no edits, so references can reuse the indexed saved declarations.
 #[divan::bench(sample_count = 10, sample_size = 1)]
 fn references_saved(bencher: Bencher<'_, '_>) {
     let engine = PreparedEngine::new();
@@ -102,12 +102,12 @@ fn references_saved(bencher: Bencher<'_, '_>) {
     engine.shutdown();
 }
 
-fn expect_current_body_completions(completions: &[CompletionItem]) {
+fn expect_edited_body_completions(completions: &[CompletionItem]) {
     assert!(
         completions
             .iter()
             .any(|item| item.label == "query_bench_numbers"),
-        "current-body completion benchmark should contain its newly typed local",
+        "completion benchmark should contain its newly typed local",
     );
 }
 
@@ -146,9 +146,9 @@ impl PreparedEngine {
         let app_path = workspace_root.join(APP_SOURCE);
         let math_path = workspace_root.join(MATH_SOURCE);
         let app_saved_text =
-            std::fs::read_to_string(&app_path).expect("app benchmark source should be readable");
+            fs::read_to_string(&app_path).expect("app benchmark source should be readable");
         let math_saved_text =
-            std::fs::read_to_string(&math_path).expect("math benchmark source should be readable");
+            fs::read_to_string(&math_path).expect("math benchmark source should be readable");
         let app_dirty_text = [
             Self::app_dirty_text(&app_saved_text, 1),
             Self::app_dirty_text(&app_saved_text, 2),
@@ -235,7 +235,7 @@ impl PreparedEngine {
     }
 
     fn hover(&self, relative_path: &str, position: Position) -> Option<Hover> {
-        let input = self.global_position_snapshot(relative_path, position);
+        let input = self.position_snapshot(relative_path, position);
         let outcome = self
             .runtime
             .block_on(self.service.clone().hover(context::current(), input))
@@ -268,7 +268,7 @@ impl PreparedEngine {
     }
 
     fn references(&self, relative_path: &str, position: Position) -> Vec<Location> {
-        let input = self.global_position_snapshot(relative_path, position);
+        let input = self.position_snapshot(relative_path, position);
         let outcome = self
             .runtime
             .block_on(
@@ -338,22 +338,20 @@ impl PreparedEngine {
         )
     }
 
-    fn document_snapshot(&self, relative_path: &str) -> EditorDocumentSnapshot {
-        let (target, _, documents) = self.capture_open_documents(relative_path);
-        documents
-            .into_iter()
-            .find(|document| document.target() == &target)
-            .expect("query benchmark snapshot should contain its target")
+    fn document_snapshot(&self, relative_path: &str) -> DocumentSnapshot {
+        let (target, revision, documents) = self.capture_open_documents(relative_path);
+        EditorSnapshot::new(revision, documents)
+            .select(&target)
+            .expect("benchmark capture contains its target")
     }
 
-    fn global_position_snapshot(
+    fn position_snapshot(
         &self,
         relative_path: &str,
         position: Position,
-    ) -> GlobalPositionSnapshot {
-        let (target, open_documents_revision, documents) =
-            self.capture_open_documents(relative_path);
-        GlobalPositionSnapshot::new(target, open_documents_revision, documents, position)
+    ) -> DocumentPositionSnapshot {
+        self.document_snapshot(relative_path)
+            .with_position(position)
     }
 
     fn shutdown(&self) {

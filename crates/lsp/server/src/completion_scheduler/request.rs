@@ -5,6 +5,7 @@
 //! per-session queue, while a newer non-duplicate message marks it as replaced immediately.
 
 use std::{
+    fmt,
     future::Future,
     pin::Pin,
     sync::{
@@ -97,8 +98,8 @@ impl CompletionRequest {
     }
 }
 
-impl std::fmt::Debug for CompletionRequest {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for CompletionRequest {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("CompletionRequest")
             .field("id", &self.lease.id)
             .field("session", &self.lease.session)

@@ -3,6 +3,7 @@ use rg_ir_model::{
     SourceId, Span, StmtId, identity::DeclarationRef,
 };
 use rg_item_tree::{ItemNode, ItemTreeId};
+use rg_ty::Ty;
 
 use super::{
     BindingData, BodyData, BodyMacroCallData, BodyOwner, BodySource, BodySourceItems,
@@ -184,7 +185,7 @@ impl<'a> BodyView<'a> {
         self.facts.call(expr)
     }
 
-    pub fn expr_ty(self, expr: ExprId) -> Option<&'a rg_ty::Ty> {
+    pub fn expr_ty(self, expr: ExprId) -> Option<&'a Ty> {
         self.facts.exprs.get(expr).map(|facts| &facts.ty)
     }
 
@@ -198,7 +199,7 @@ impl<'a> BodyView<'a> {
         self.facts.exprs.get(expr).map(|facts| &facts.resolution)
     }
 
-    pub fn binding_ty(self, binding: BindingId) -> Option<&'a rg_ty::Ty> {
+    pub fn binding_ty(self, binding: BindingId) -> Option<&'a Ty> {
         self.facts.bindings.get(binding)
     }
 }

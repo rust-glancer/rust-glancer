@@ -23,12 +23,12 @@ mod compact;
 mod output;
 mod query;
 
-use rg_ir_model::{CrateRef, GenericParamRef, TraitDefRef, TypeAliasRef};
+use rg_ir_model::{CrateRef, GenericParamRef, Mutability, TraitDefRef, TypeAliasRef, TypeParamRef};
 use rg_semantic_ir::{GenericParamSource, GenericsQuery, ItemStoreQuery};
 use rg_text::RustEdition;
 use rg_ty::{
-    AdtTy, AliasTy, GenericArg, Lifetime, OpaqueTy, TraitApplication, TraitRefLowering, Ty,
-    signature::SemanticSignatureQuery,
+    AdtTy, AliasTy, ClosureTy, GenericArg, Lifetime, OpaqueTy, TraitApplication, TraitRefLowering,
+    Ty, signature::SemanticSignatureQuery,
 };
 
 pub use self::output::TypePresentation;
@@ -195,7 +195,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 if *lifetime != Lifetime::Erased {
                     output.write_concrete(format_args!("{lifetime} "));
                 }
-                if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                if matches!(mutability, Mutability::Mutable) {
                     output.push_str("mut ");
                 }
                 if parenthesize {
@@ -214,7 +214,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     Ty::Dyn(object)
                         if object.lifetime != Lifetime::Erased || !object.auto_traits.is_empty()
                 );
-                output.push_str(if matches!(mutability, rg_ir_model::Mutability::Mutable) {
+                output.push_str(if matches!(mutability, Mutability::Mutable) {
                     "*mut "
                 } else {
                     "*const "
@@ -228,7 +228,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 }
                 Ok(known)
             }
-            Ty::FnPointer { params, ret } | Ty::Closure(rg_ty::ClosureTy { params, ret, .. }) => {
+            Ty::FnPointer { params, ret } | Ty::Closure(ClosureTy { params, ret, .. }) => {
                 // Closure signatures do not record which of `Fn`, `FnMut`, or `FnOnce` applies.
                 // Use `|User| -> User` so the label shows known types without guessing a bound.
                 let closure = matches!(ty, Ty::Closure(_));
@@ -314,7 +314,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     fn write_type_param(
         &self,
-        param: rg_ir_model::TypeParamRef,
+        param: TypeParamRef,
         application: Option<&TraitApplication>,
         output: &mut TypeOutput<'_>,
     ) -> anyhow::Result<bool> {

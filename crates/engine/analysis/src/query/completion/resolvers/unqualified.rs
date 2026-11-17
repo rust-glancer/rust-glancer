@@ -13,6 +13,7 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
+use rg_ir_model::EnumVariantRef;
 use rg_ir_view::{
     display::syntax::SyntaxRenderer,
     item::details::{DeclarationDetailsContext, DeclarationDetailsView},
@@ -23,8 +24,8 @@ use rg_ir_view::{
 use crate::{
     Analysis,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
+        CompletionAdditionalEdit, CompletionApplicability, CompletionEdit, CompletionInsertText,
+        CompletionItem, CompletionKind, CompletionTarget,
     },
     query::{
         completion::{
@@ -287,11 +288,11 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn visible_expected_variants(
         &self,
         source: &CompletionCandidateSource<'_, '_>,
-        variants: Vec<rg_ir_model::EnumVariantRef>,
+        variants: Vec<EnumVariantRef>,
         lexical: &[LexicalCompletionCandidate],
         module: &[DefinitionCompletionCandidate],
         hidden: &HashSet<(String, NameNamespace)>,
-    ) -> anyhow::Result<Vec<(rg_ir_model::EnumVariantRef, String)>> {
+    ) -> anyhow::Result<Vec<(EnumVariantRef, String)>> {
         let members = MemberView::new(self.analysis.view_db());
         let mut visible = Vec::new();
         for variant_ref in variants {
@@ -349,7 +350,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn push_expected_variant_completions(
         &self,
         syntax: SyntaxRenderer,
-        variants: Vec<(rg_ir_model::EnumVariantRef, String)>,
+        variants: Vec<(EnumVariantRef, String)>,
         pattern_policy: Option<PatternCompletionPolicy>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
@@ -648,12 +649,10 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 Some(detail) => format!("{detail} (use {rendered_path})"),
                 None => format!("use {rendered_path}"),
             });
-            completion
-                .additional_edits
-                .push(crate::CompletionAdditionalEdit {
-                    replace: additional_edit.replace,
-                    new_text: additional_edit.new_text,
-                });
+            completion.additional_edits.push(CompletionAdditionalEdit {
+                replace: additional_edit.replace,
+                new_text: additional_edit.new_text,
+            });
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label
             }) {

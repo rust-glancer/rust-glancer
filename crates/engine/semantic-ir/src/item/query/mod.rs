@@ -40,13 +40,13 @@ pub trait SemanticItemSource<'a>: Clone {
     fn scope_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError>;
 
     /// Enumerate all declarations in the origin, acquiring every associated store as well.
-    /// On a saved target this can expand every member macro; selecting only an impl header should
+    /// For a crate origin this can expand every member macro; selecting only an impl header should
     /// use `scope_items` instead.
     fn all_items(&self, origin: DefMapRef) -> Result<Vec<SemanticItemView<'a>>, ReadError>;
 
     /// Select declaration candidates using an explicit source surface. Written cursor/outline
     /// selection can stay local; exhaustive file scans also discover owners that reuse the file
-    /// through macros. Coordinates refer to the active source view; the caller checks exact ranges.
+    /// through macros. The caller checks exact ranges.
     fn source_items(
         &self,
         origin: DefMapRef,

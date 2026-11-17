@@ -2,15 +2,14 @@
 //!
 //! `respond_to_query` owns the common flow:
 //!
-//! 1. Skip work if the caller has already dropped the response channel, or if the saved project is
-//!    already known to be stale.
+//! 1. Skip work if the caller dropped the response channel, its capture has been retired, or the
+//!    saved project is already known to be stale.
 //! 2. Run the feature query and let expensive phases check whether the response is still wanted.
-//! 3. Tag a successful value with the project and document ids used to compute it.
+//! 3. Tag a successful value with the editor scope used to compute it.
 //! 4. Release the request working set. Ajika can repair its cache on the next operation.
 //!
-//! This layer does not decide whether an editor document is still current. Only server ingress
-//! owns live sessions and revisions, so the engine returns the captured ids and the server checks
-//! them before publishing the value.
+//! Server ingress owns live sessions and revisions. The engine can reject a capture already
+//! retired by a lifecycle command; the server still checks freshness before publishing a value.
 //!
 //! A saved-source race follows a different path. If hover discovers that `src/lib.rs` changed on
 //! disk, hover returns `QueryError::SavedSourceChanged`, records that the saved generation is stale,
@@ -19,12 +18,14 @@
 //! synchronous reindex.
 
 use std::{
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use rg_lsp_proto::{
-    EditorDocumentSnapshot, EngineError, GlobalPositionSnapshot, QueryError, QueryScope, QueryValue,
+    DocumentSnapshot, EditorDocumentSnapshot, EditorSnapshot, EngineError, QueryError, QueryScope,
+    QueryValue, TargetDocumentRevision,
 };
 use rg_project::Project;
 use rg_std::{Cancelable, CancellationToken, Cancelled};
@@ -32,14 +33,14 @@ use rg_std::{Cancelable, CancellationToken, Cancelled};
 use super::QueryRunner;
 use crate::{engine::command::QueryResponder, memory::MemoryReporter};
 
-/// Error kept by `QueryRunner` until the query lifecycle classifies it for the protocol.
+/// Classify a feature's error once, at the boundary that logs and publishes its outcome.
 ///
 /// Most failures keep their rich `anyhow` chain while this layer checks for cancellation, stale
 /// source, and recoverable cache failures. Operations that require saved editor text use the
 /// separate variant because that is an expected request outcome, not an engine failure.
 #[derive(Debug)]
-pub(crate) enum QueryRunError {
-    SaveRequired(std::path::PathBuf),
+enum QueryRunError {
+    SaveRequired(PathBuf),
     Analysis(anyhow::Error),
 }
 
@@ -64,15 +65,9 @@ impl From<anyhow::Error> for QueryRunError {
     }
 }
 
-impl From<Cancelled> for QueryRunError {
-    fn from(error: Cancelled) -> Self {
-        Self::Analysis(error.into())
-    }
-}
-
 #[derive(Debug, derive_more::Display)]
-#[display("save {} before using saved-source analysis", _0.display())]
-pub(super) struct SaveRequired(pub(super) std::path::PathBuf);
+#[display("save {} before sending unversioned workspace edits", _0.display())]
+pub(super) struct SaveRequired(pub(super) PathBuf);
 
 impl std::error::Error for SaveRequired {}
 
@@ -122,27 +117,33 @@ pub(crate) struct QueryContext {
 }
 
 impl QueryContext {
-    pub(crate) fn saved_project(label: &'static str, queue_elapsed: Duration) -> Self {
-        Self {
-            label,
-            queue_elapsed,
-            scope: QueryScope::SavedProject,
-        }
-    }
-
-    pub(crate) fn global_operation(
+    pub(crate) fn editor(
         label: &'static str,
         queue_elapsed: Duration,
-        snapshot: &GlobalPositionSnapshot,
+        snapshot: &EditorSnapshot,
+        target: Option<&TargetDocumentRevision>,
     ) -> Self {
         Self {
             label,
             queue_elapsed,
-            scope: QueryScope::GlobalOperation {
-                target: snapshot.target().clone(),
-                open_documents_revision: snapshot.open_documents_revision(),
+            scope: QueryScope::Editor {
+                target: target.cloned(),
+                open_documents_revision: snapshot.revision(),
             },
         }
+    }
+
+    pub(crate) fn document(
+        label: &'static str,
+        queue_elapsed: Duration,
+        snapshot: &DocumentSnapshot,
+    ) -> Self {
+        Self::editor(
+            label,
+            queue_elapsed,
+            snapshot.editor(),
+            Some(snapshot.document().target()),
+        )
     }
 
     /// Record a query that depends on its target document but not on open sibling documents.
@@ -174,7 +175,7 @@ impl QueryRunner<'_> {
         context: QueryContext,
         respond_to: QueryResponder<T>,
         cancellation: CancellationToken,
-        query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> Result<T, QueryRunError>,
+        query: impl FnOnce(&mut Self, &QueryCancellation<'_>) -> anyhow::Result<T>,
     ) where
         T: Send + 'static,
     {
@@ -193,6 +194,16 @@ impl QueryRunner<'_> {
                 queued_ms = queue_elapsed.as_millis(),
                 "cancelled analysis query skipped"
             );
+            return;
+        }
+
+        if let QueryScope::Editor {
+            open_documents_revision,
+            ..
+        } = &scope
+            && *open_documents_revision < self.project.editor_revision()
+        {
+            let _ = respond_to.send(Err(QueryError::EditorChanged));
             return;
         }
 
@@ -229,7 +240,8 @@ impl QueryRunner<'_> {
                 rg_std::check_cancel!(control, "before query publication");
                 Ok(value)
             })
-        };
+        }
+        .map_err(QueryRunError::from);
         let error = result.as_ref().err().and_then(QueryRunError::as_error);
         let runtime_error = error.and_then(|error| {
             error
@@ -255,7 +267,7 @@ impl QueryRunner<'_> {
                 .err()
                 .and_then(QueryRunError::as_error)
                 .and_then(Project::stale_source_path)
-                .map(std::path::Path::to_path_buf)
+                .map(Path::to_path_buf)
         };
         let saved_source_changed = stale_path.is_some();
         if let Some(stale_path) = &stale_path {
@@ -361,13 +373,18 @@ impl QueryRunner<'_> {
 mod tests {
     use std::{
         cell::Cell,
+        io,
         path::PathBuf,
-        sync::{Arc, mpsc},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
         time::Duration,
     };
 
     use rg_lsp_proto::{
-        DocumentRevision, EditorDocumentSnapshot, GlobalPositionSnapshot, OpenDocumentSession,
+        DocumentRevision, EditorDocumentSnapshot, EditorSnapshot, OpenDocumentSession,
         OpenDocumentsRevision, QueryError, QueryScope, QueryValue,
     };
     use rg_source::ReadError;
@@ -391,7 +408,12 @@ mod tests {
         let query_ran = Cell::new(false);
 
         runner.respond_to_query(
-            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
+            QueryContext::editor(
+                "workspace_symbol",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             respond_to,
             CancellationToken::new(),
             |_, _| {
@@ -404,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn global_operation_returns_the_exact_open_document_identity_used_by_analysis() {
+    fn retired_editor_capture_cannot_overtake_a_new_capture() {
         let document = EditorDocumentSnapshot::new(
             PathBuf::from("/workspace/src/lib.rs"),
             OpenDocumentSession::new(3),
@@ -412,17 +434,34 @@ mod tests {
             Some(5),
             "fn editor() {}".to_string(),
         );
-        let snapshot = GlobalPositionSnapshot::new(
-            document.target().clone(),
-            OpenDocumentsRevision::new(13),
-            vec![document],
-            gen_lsp_types::Position::new(0, 3),
-        );
+        let target = document.target().clone();
+        let snapshot = EditorSnapshot::new(OpenDocumentsRevision::new(13), vec![document])
+            .select(&target)
+            .expect("captured target");
         let memory_control: Arc<dyn MemoryControl> = Arc::new(());
         let mut project = test_project(Arc::clone(&memory_control));
+        project
+            .invalidate_editor_snapshot(OpenDocumentsRevision::new(14))
+            .expect("retire editor capture");
+        let mut runner = QueryRunner::new(&mut project, Arc::clone(&memory_control));
+        let (respond_to, response) = oneshot::channel();
+        runner.respond_to_query(
+            QueryContext::document("references", Duration::ZERO, &snapshot),
+            respond_to,
+            CancellationToken::new(),
+            |_, _| panic!("retired capture must not be reinstalled"),
+        );
+        let response: Result<QueryValue<Vec<usize>>, QueryError> =
+            futures::executor::block_on(response).expect("retired response");
+        assert_eq!(response, Err(QueryError::EditorChanged));
+        let document = snapshot.document().clone();
+        let target = document.target().clone();
+        let snapshot = EditorSnapshot::new(OpenDocumentsRevision::new(15), vec![document])
+            .select(&target)
+            .expect("new capture");
         let mut runner = QueryRunner::new(&mut project, memory_control);
         let (respond_to, response) = oneshot::channel();
-        let context = QueryContext::global_operation("references", Duration::ZERO, &snapshot);
+        let context = QueryContext::document("references", Duration::ZERO, &snapshot);
 
         runner.respond_to_query(context, respond_to, CancellationToken::new(), |_, _| {
             Ok(vec![1_usize])
@@ -434,9 +473,9 @@ mod tests {
         assert_eq!(response.value(), &vec![1]);
         assert_eq!(
             response.scope(),
-            &QueryScope::GlobalOperation {
-                target: snapshot.target().clone(),
-                open_documents_revision: snapshot.open_documents_revision(),
+            &QueryScope::Editor {
+                target: Some(snapshot.document().target().clone()),
+                open_documents_revision: snapshot.editor().revision(),
             }
         );
     }
@@ -449,7 +488,12 @@ mod tests {
         let (respond_to, response) = oneshot::channel();
 
         runner.respond_to_query(
-            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
+            QueryContext::editor(
+                "workspace_symbol",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             respond_to,
             CancellationToken::new(),
             |_, _| Ok(Vec::<usize>::new()),
@@ -459,7 +503,13 @@ mod tests {
             .expect("valid empty query should send a response");
         let response = result.expect("valid empty query should remain successful");
         assert!(response.value().is_empty());
-        assert_eq!(response.scope(), &QueryScope::SavedProject);
+        assert_eq!(
+            response.scope(),
+            &QueryScope::Editor {
+                target: None,
+                open_documents_revision: OpenDocumentsRevision::new(0)
+            }
+        );
     }
 
     #[test]
@@ -472,7 +522,12 @@ mod tests {
         let work_after_checkpoint_ran = Cell::new(false);
 
         runner.respond_to_query(
-            QueryContext::saved_project("completion", Duration::ZERO),
+            QueryContext::editor(
+                "completion",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             respond_to,
             CancellationToken::new(),
             |_, cancellation| {
@@ -502,7 +557,12 @@ mod tests {
         let work_after_checkpoint_ran = Cell::new(false);
 
         runner.respond_to_query(
-            QueryContext::saved_project("inlay_hint", Duration::ZERO),
+            QueryContext::editor(
+                "inlay_hint",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             respond_to,
             cancellation,
             |_, cancellation| {
@@ -527,10 +587,10 @@ mod tests {
     #[test]
     fn cancellation_before_publication_cleans_up_and_allows_the_next_query() {
         #[derive(Debug, Default)]
-        struct Purges(std::sync::atomic::AtomicUsize);
+        struct Purges(AtomicUsize);
         impl MemoryControl for Purges {
             fn try_purge_allocator(&self) -> bool {
-                self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.0.fetch_add(1, Ordering::Relaxed);
                 true
             }
         }
@@ -541,7 +601,12 @@ mod tests {
         let mut runner = QueryRunner::new(&mut project, memory);
         let (sender, response) = oneshot::channel();
         runner.respond_to_query(
-            QueryContext::saved_project("references", Duration::ZERO),
+            QueryContext::editor(
+                "references",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             sender,
             CancellationToken::new(),
             |_, control| {
@@ -553,11 +618,16 @@ mod tests {
             futures::executor::block_on(response).is_err(),
             "obsolete success must not be published"
         );
-        assert_eq!(purges.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+        assert_eq!(purges.0.load(Ordering::Relaxed), 1);
 
         let (sender, response) = oneshot::channel();
         runner.respond_to_query(
-            QueryContext::saved_project("workspace_symbol", Duration::ZERO),
+            QueryContext::editor(
+                "workspace_symbol",
+                Duration::ZERO,
+                &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                None,
+            ),
             sender,
             CancellationToken::new(),
             |_, _| Ok(vec![2_usize]),
@@ -566,7 +636,7 @@ mod tests {
             .expect("next query responds")
             .expect("next query succeeds");
         assert_eq!(result.value(), &[2]);
-        assert_eq!(purges.0.load(std::sync::atomic::Ordering::Relaxed), 2);
+        assert_eq!(purges.0.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -577,14 +647,19 @@ mod tests {
         for source_failed in [false, true] {
             let (sender, response) = oneshot::channel::<Result<QueryValue<()>, QueryError>>();
             runner.respond_to_query(
-                QueryContext::saved_project("references", Duration::ZERO),
+                QueryContext::editor(
+                    "references",
+                    Duration::ZERO,
+                    &EditorSnapshot::new(OpenDocumentsRevision::new(0), Vec::new()),
+                    None,
+                ),
                 sender,
                 CancellationToken::new(),
                 |_, control| {
                     let token = control.token();
                     token.cancel();
                     let error = if source_failed {
-                        ReadError::Query(ajika::Error::application(std::io::Error::other(
+                        ReadError::Query(ajika::Error::application(io::Error::other(
                             "source read failed",
                         )))
                     } else {
@@ -593,7 +668,7 @@ mod tests {
                                 .expect_err("request was cancelled"),
                         )
                     };
-                    Err(anyhow::Error::new(error).context("scan source").into())
+                    Err(anyhow::Error::new(error).context("scan source"))
                 },
             );
             let result = futures::executor::block_on(response);

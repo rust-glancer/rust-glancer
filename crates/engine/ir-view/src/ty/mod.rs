@@ -6,12 +6,15 @@
 
 pub mod locals;
 
+use std::fmt;
+
 use anyhow::Context as _;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ModuleRef, Path, PrimitiveTy, ScopeId, SemanticItemRef,
     TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
+use rg_item_tree::TypeRef;
 use rg_semantic_ir::{ItemStoreQuery, TypePathContext, TypePathResolution};
 use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::{
@@ -36,8 +39,8 @@ use crate::{
 #[derive(Clone, PartialEq, Eq)]
 pub struct IndexedType(Ty);
 
-impl std::fmt::Debug for IndexedType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for IndexedType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("IndexedType(..)")
     }
 }
@@ -264,7 +267,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     fn ty_for_signature_type_ref(
         &self,
         scope: IndexedSignatureTypeScope,
-        type_ref: &rg_item_tree::TypeRef,
+        type_ref: &TypeRef,
     ) -> anyhow::Result<Ty> {
         let item_paths = ItemPathQuery::new(self.db, self.db);
         TypeLoweringQuery::new(&item_paths, &item_paths)

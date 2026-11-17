@@ -1,9 +1,10 @@
 use expect_test::expect;
+use rg_lsp_proto::QueryError;
 
 use super::utils::{LspEngineFixture, LspQuery};
 
 #[tokio::test]
-async fn unsaved_global_declarations_are_syntax_only_until_save() {
+async fn unsaved_global_declarations_support_semantic_queries() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -56,8 +57,21 @@ pub fn demo(user: DirtyUser) {
                 LspQuery::document_symbol("dirty document symbols", "src/lib.rs"),
             ],
             expect![[r#"
-                none // complete dirty field
-                none // hover dirty field
+                // complete dirty field
+                dirty_field Field
+                  detail: pub dirty_field: DirtyName
+                  edit: /src/lib.rs:9:27-9:33 -> dirty_field
+
+                // hover dirty field
+                range: /src/lib.rs:10:22-10:33
+                markdown:
+                  ```rust
+                  lsp_dirty_flow::DirtyUser
+
+                  pub dirty_field: DirtyName
+                  ```
+
+                  Field that exists only in the unsaved buffer.
 
                 // dirty document symbols
                 Struct DirtyUser 1:11-1:20
@@ -68,11 +82,19 @@ pub fn demo(user: DirtyUser) {
         )
         .await;
 
+    fixture
+        .check_workspace_symbols("DirtyUser", &["DirtyUser"])
+        .await;
+    fixture.did_save_dirty(&dirty).await;
+    fixture
+        .check_workspace_symbols("DirtyUser", &["DirtyUser"])
+        .await;
+
     fixture.shutdown().await;
 }
 
 #[tokio::test]
-async fn dirty_imports_and_unchanged_item_headers_use_saved_semantics() {
+async fn dirty_imports_and_item_headers_share_the_active_source() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -180,7 +202,11 @@ impl F$impl$oo {
                 /src/lib.rs:8:11-8:14 // define moved impl type
                 /src/lib.rs:8:11-8:14 // type of moved field
                 read 15:11-15:14 // highlight moved method
-                read 11:15-11:18 // highlight moved field type
+
+                // highlight moved field type
+                read 8:11-8:14
+                read 11:15-11:18
+                read 14:5-14:8
             "#]],
         )
         .await;
@@ -189,7 +215,7 @@ impl F$impl$oo {
 }
 
 #[tokio::test]
-async fn dirty_module_use_paths_resolve_in_saved_module_scope() {
+async fn dirty_module_use_paths_resolve_in_the_active_module_scope() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -256,7 +282,7 @@ pub mod exports {
 }
 
 #[tokio::test]
-async fn dirty_associated_header_type_definition_lowers_transparent_aliases() {
+async fn dirty_header_type_definition_lowers_transparent_aliases() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -306,7 +332,7 @@ pub fn inspect(_: Ali$0as<User>) {} // goto_type("type of an alias in a moved he
 }
 
 #[tokio::test]
-async fn completion_ignores_unsaved_changes_to_a_sibling_declaration() {
+async fn completion_observes_unsaved_sibling_declarations() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -357,8 +383,8 @@ pub struct SavedUser {
 use crate::SavedUser;
 
 pub fn inspect(user: SavedUser) {
-    let _ = user.editor_$0; // complete("complete from saved sibling semantics")
-    let _: Saved$0User = user; // goto("navigate to the saved declaration")
+    let _ = user.editor_$0; // complete("complete from edited sibling semantics")
+    let _: Saved$0User = user; // goto("navigate to the edited declaration")
 }
 "#,
         )
@@ -368,12 +394,15 @@ pub fn inspect(user: SavedUser) {
         .check_dirty(
             &consumer,
             expect![[r#"
-                // complete from saved sibling semantics
+                // complete from edited sibling semantics
+                editor_field Field
+                  detail: pub editor_field: usize
+                  edit: /src/consumer.rs:4:17-4:24 -> editor_field
                 saved_field Field
                   detail: pub saved_field: usize
                   edit: /src/consumer.rs:4:17-4:24 -> saved_field
 
-                /src/lib.rs:3:11-3:20 // navigate to the saved declaration
+                /src/lib.rs:3:11-3:20 // navigate to the edited declaration
             "#]],
         )
         .await;
@@ -382,7 +411,7 @@ pub fn inspect(user: SavedUser) {
 }
 
 #[tokio::test]
-async fn trait_call_definition_uses_current_body_and_maps_the_impl_destination() {
+async fn trait_call_definition_uses_the_edited_impl_destination() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -467,7 +496,7 @@ pub fn inspect(user: User, account: Account) {
 }
 
 #[tokio::test]
-async fn definition_maps_a_saved_target_into_its_dirty_open_document() {
+async fn definition_uses_the_destination_documents_edited_locations() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -556,7 +585,7 @@ pub struct CurrentUser;
 }
 
 #[tokio::test]
-async fn definition_does_not_treat_an_overlapping_saved_range_as_current() {
+async fn removed_declarations_do_not_resolve_through_saved_ranges() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -588,8 +617,8 @@ pub fn inspect() {
         )
         .await;
 
-    // The saved declaration's old numeric range now falls inside the current function body. It
-    // is still a saved declaration, and there is no current declaration to map it to.
+    // The old declaration's numeric range overlaps the edited body. Removed declarations must
+    // not participate in either navigation or highlights.
     fixture
         .check_dirty_queries(
             &dirty,
@@ -598,11 +627,14 @@ pub fn inspect() {
                     "omit a saved declaration removed from current text",
                     "definition",
                 ),
-                LspQuery::document_highlight("highlight only the current reference", "definition"),
+                LspQuery::document_highlight(
+                    "unresolved reference has no highlights",
+                    "definition",
+                ),
             ],
             expect![[r#"
                 none // omit a saved declaration removed from current text
-                read 2:11-2:22 // highlight only the current reference
+                none // unresolved reference has no highlights
             "#]],
         )
         .await;
@@ -611,7 +643,7 @@ pub fn inspect() {
 }
 
 #[tokio::test]
-async fn completion_does_not_depend_on_an_unrelated_open_source() {
+async fn completion_recovers_an_open_source_removed_on_disk() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -656,6 +688,11 @@ pub fn inspect(user: User) {
         )
         .await;
     fixture.remove_file_without_notification("src/removed.rs");
+    // Equal saved bytes keep their reloadable source policy. A disk race first triggers ordinary
+    // source recovery; the next capture can retain this now-unsaved open document.
+    fixture
+        .check_dirty_completion_error(&entry, QueryError::SavedSourceChanged)
+        .await;
 
     fixture
         .check_dirty(
@@ -732,7 +769,7 @@ pub fn demo(local_capture: usize, condition: bool) {
 }
 
 #[tokio::test]
-async fn dirty_completion_uses_saved_semantics_for_changed_incomplete_signature() {
+async fn dirty_completion_uses_the_changed_incomplete_signature() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -766,9 +803,18 @@ pub fn demo<T, const N: usize>(value: Wrapper<Dirty$0 // complete("dirty incompl
             &dirty,
             expect![[r#"
                 // dirty incomplete signature completion
-                Saved Struct
-                  detail: struct Saved
-                  edit: /src/lib.rs:4:46-4:51 -> Saved
+                T TypeParameter
+                  detail: type parameter T
+                  edit: /src/lib.rs:4:46-4:51 -> T
+                N Constant
+                  detail: const parameter N
+                  edit: /src/lib.rs:4:46-4:51 -> N
+                DirtyFixture Struct
+                  detail: struct DirtyFixture
+                  edit: /src/lib.rs:4:46-4:51 -> DirtyFixture
+                Wrapper Struct
+                  detail: struct Wrapper
+                  edit: /src/lib.rs:4:46-4:51 -> Wrapper
             "#]],
         )
         .await;
@@ -777,7 +823,7 @@ pub fn demo<T, const N: usize>(value: Wrapper<Dirty$0 // complete("dirty incompl
 }
 
 #[tokio::test]
-async fn dirty_moved_body_keeps_its_associated_generic_scope() {
+async fn dirty_moved_body_keeps_its_generic_scope() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -825,7 +871,7 @@ pub fn inspect<SessionGeneric: Default>() {
 }
 
 #[tokio::test]
-async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() {
+async fn dirty_impl_completion_uses_its_edited_module_scope() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -851,7 +897,7 @@ async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() 
         .did_change_full(
             "src/lib.rs",
             2,
-            r#"impl Syn$0 // complete("dirty impl header completion")"#,
+            r#"pub struct Edited; impl Edi$0 // complete("dirty impl header completion")"#,
         )
         .await;
 
@@ -860,23 +906,20 @@ async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() 
             &dirty,
             expect![[r#"
                 // dirty impl header completion
-                SyntaxDocumentSymbolCollector Struct
-                  detail: struct SyntaxDocumentSymbolCollector
-                  edit: /src/lib.rs:0:5-0:8 -> SyntaxDocumentSymbolCollector
-                nested Module
-                  detail: mod nested
-                  edit: /src/lib.rs:0:5-0:8 -> nested
+                Edited Struct
+                  detail: struct Edited
+                  edit: /src/lib.rs:0:24-0:27 -> Edited
             "#]],
         )
         .await;
 
-    // An inline module must use its current module path too. Its byte offsets deliberately overlap
-    // different saved syntax, so a saved scanner cannot safely claim this cursor by position.
+    // The new inline module and its declarations are visible before saving too.
     let nested = fixture
         .did_change_full(
             "src/lib.rs",
             3,
             r#"mod nested {
+    pub struct NestedEdited;
     impl Nes$0 // complete("dirty nested impl header completion")
 }"#,
         )
@@ -886,9 +929,9 @@ async fn dirty_impl_completion_does_not_borrow_an_overlapping_saved_impl_site() 
             &nested,
             expect![[r#"
                 // dirty nested impl header completion
-                NestedSaved Struct
-                  detail: struct NestedSaved
-                  edit: /src/lib.rs:1:9-1:12 -> NestedSaved
+                NestedEdited Struct
+                  detail: struct NestedEdited
+                  edit: /src/lib.rs:2:9-2:12 -> NestedEdited
             "#]],
         )
         .await;
@@ -1235,7 +1278,7 @@ mod $0 // complete("dirty empty module declaration at EOF")
 }
 
 #[tokio::test]
-async fn restored_unsaved_open_keeps_exact_syntax_without_new_global_semantics() {
+async fn restored_unsaved_open_uses_its_edited_declarations() {
     let fixture = LspEngineFixture::initialized(
         r#"
         //- /Cargo.toml
@@ -1277,7 +1320,16 @@ pub fn demo(value: Restored) {
                 LspQuery::document_symbol("restored document symbols", "src/lib.rs"),
             ],
             expect![[r#"
-                none // hover restored field
+                // hover restored field
+                range: /src/lib.rs:9:23-9:37
+                markdown:
+                  ```rust
+                  lsp_restored_dirty_flow::Restored
+
+                  pub restored_field: RestoredName
+                  ```
+
+                  Field that exists only in the restored editor buffer.
 
                 // restored document symbols
                 Struct Restored 1:11-1:19

@@ -40,7 +40,7 @@ where
 
     /// Merge body-origin declarations before crate-level declaration indexes.
     ///
-    /// For `value.render()`, body-local and saved reverse-name indexes first answer which traits
+    /// For `value.render()`, body-local and crate-level reverse-name indexes first answer which traits
     /// declare `render`. The combined declaration list is then intersected with the traits visible
     /// at this `scope`. The result still says nothing about `value`'s type; receiver matching starts
     /// only after this name-and-scope filter has selected a small trait universe.

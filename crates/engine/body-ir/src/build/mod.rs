@@ -1,4 +1,4 @@
-//! Lower and infer bodies from the active input view.
+//! Lower bodies, collect their local declarations, and infer expression types and values.
 
 mod local_items;
 mod lower;

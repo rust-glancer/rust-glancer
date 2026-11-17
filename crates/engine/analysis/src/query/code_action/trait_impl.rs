@@ -2,8 +2,8 @@
 //!
 //! Given `trait Service { fn run(&self); }` and `impl Service for Worker {}`, the action inserts a
 //! `run` method with a `todo!()` body into the user's source. The resolved impl header supplies
-//! substituted member signatures from the same editor view. The syntax tree also accounts for
-//! incomplete members that could not be lowered, so the action does not insert them a second time.
+//! substituted member signatures. The syntax tree also accounts for incomplete members that
+//! could not be lowered, so the action does not insert them a second time.
 //!
 //! Trait bounds in the signatures we insert keep full paths so they do not assume imports in the
 //! impl module. Nominal types still use their declared short name. This provider does not add
@@ -102,8 +102,8 @@ impl<'analysis, 'db, 'source> TraitImplCodeActionProvider<'analysis, 'db, 'sourc
             return Ok(None);
         }
 
-        // 2. Resolve the impl from the same source view. Check written members too: an incomplete
-        // member may not lower, but inserting it a second time would still be wrong.
+        // 2. Check written members too: an incomplete member may not lower, but inserting it a
+        // second time would still be wrong.
         let written_members = item_list
             .assoc_items()
             .filter_map(WrittenMemberKey::from_assoc_item)
